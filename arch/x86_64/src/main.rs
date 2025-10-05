@@ -3,7 +3,10 @@
 
 mod vga_buffer;
 mod cpu;
+mod debug_console;
+mod multi_debug;
 
+use kernel::kprintln;
 use alloc::boxed::Box;
 use core::arch::asm;
 use core::panic::PanicInfo;
@@ -11,13 +14,17 @@ use buddy_system_allocator::LockedHeap;
 use lazy_static::lazy_static;
 use spin::Mutex;
 use kernel::cpu::Cpu;
+use kernel::debug::init_debug;
 use kernel::kernel::Kernel;
-use kernel::simple_scheduler::SimpleScheduler;
 use kernel::function_task::FunctionTask;
 use crate::cpu::X86_64;
-use crate::vga_buffer::{Color, ColorCode, Writer};
+use crate::debug_console::QEMU_DEBUG;
+use crate::multi_debug::MultiDebugOutput;
+use crate::vga_buffer::{Color, ColorCode, Writer, VGA_DEBUG};
 
 extern crate alloc;
+
+static CPU: X86_64 = X86_64{};
 
 #[global_allocator]
 static HEAP_ALLOCATOR: LockedHeap<32> = LockedHeap::<32>::new();
@@ -34,15 +41,24 @@ lazy_static! {
     pub static ref WRITER: Mutex<Writer> = Mutex::new(Writer::new(ColorCode::new(Color::Green, Color::Black)));
 }
 
+// Create static array of outputs
+static DEBUG_OUTPUTS: &[&dyn kernel::debug::DebugOutput] = &[
+    &VGA_DEBUG,
+    &QEMU_DEBUG,
+];
+
+// Create multi-output instance
+static MULTI_DEBUG: MultiDebugOutput = MultiDebugOutput::new(DEBUG_OUTPUTS);
+
+
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
     unsafe {
         HEAP_ALLOCATOR.lock().init(&raw mut HEAP as usize, HEAP_SIZE);
     }
+    init_debug(&MULTI_DEBUG);
 
-    let cpu: &dyn Cpu = &X86_64{};
-    let scheduler = &mut SimpleScheduler::new();
-    let idle_task = Box::new(FunctionTask::new("Idle Task", idle_job));
+    let idle_task = FunctionTask::new("Idle Task", idle_job);
     unsafe {
         let stack1: [u8; 1024] = [0; 1024];
         let stack2: [u8; 1024] = [0; 1024];
@@ -54,18 +70,20 @@ pub extern "C" fn _start() -> ! {
         let a = idle_task.stack_pointer();
         println!("{}", a)
     }
-    let mut kernel = Kernel::new(cpu, scheduler, idle_task);
+    let cpu: &'static dyn Cpu = &CPU;
+    let mut kernel = Kernel::new(cpu, idle_task);
 
 
     println!("Init");
 
     kernel.setup();
-    // kernel.schedule(Box::new(FunctionTask::new("A", dummy_job1)));
-    // kernel.schedule(Box::new(FunctionTask::new("B", dummy_job2)));
-    // kernel.start();
+    kernel.schedule(FunctionTask::new("A", dummy_job1));
+    // kernel.schedule(FunctionTask::new("B", dummy_job2));
+    kernel.start();
+
+    println!("Oops, should never reached here, crashing spectacularly.");
 
     loop {
-        // println!("Ops");
     }
 }
 

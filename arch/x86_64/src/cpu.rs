@@ -1,7 +1,4 @@
-use alloc::boxed::Box;
 use kernel::cpu::{Cpu};
-use kernel::function_task::FunctionTask;
-use kernel::task::Task;
 
 pub struct X86_64 {}
 
@@ -18,23 +15,37 @@ impl Cpu for X86_64 {
     fn setup_sys_ticks(&self) {
     }
 
-    fn initialize_task(&self, mut task: Box<Task>) -> Box<Task> {
+    fn initialize_task(&self, stack_pointer: usize, entry_point: usize) -> usize {
+        // Get current RFLAGS to preserve flags
+        let rflags: usize;
         unsafe {
-            let new_rsp = initialize_process_stack(task.stack_pointer(), task.entry_point());
-            task.set_stack_pointer(new_rsp);
-            task
+            core::arch::asm!("pushfq", "pop {}", out(reg) rflags);
+            // Pass ORIGINAL stack pointer - alignment happens in assembly
+            initialize_process_stack(stack_pointer, entry_point, rflags)
         }
     }
 
-    fn swap_context(&self, stack_pointer_to_store: *mut u8, stack_pointer_to_load: *mut u8) {
+    fn swap_context(&self, stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize) {
+    }
+
+    fn switch_to(&self, task_stack_pointer: usize) -> ! {
+        unsafe {
+            restore_context(task_stack_pointer);
+        }
     }
 }
 
 // #[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(include_str!("process_initialization.S"));
+core::arch::global_asm!(include_str!("context_switching.S"));
 
 unsafe extern "C" {
-    /// Calls the assembly function defined in context.S
+    /// Calls the assembly function defined in process_initialization.S
     /// Returns the initial RSP value.
-    pub fn initialize_process_stack(stack_top: usize, entry_point: usize) -> usize;
+    pub fn initialize_process_stack(stack_top: usize, entry_point: usize, rflags: usize) -> usize;
+
+    /// Calls the assembly function defined in context_switching.S
+    /// Restores the context from the given stack pointer and switches to the task.
+    /// This function never returns.
+    pub fn restore_context(stack_pointer: usize) -> !;
 }

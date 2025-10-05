@@ -6,6 +6,7 @@ pub trait Cpu {
     fn enable_interrupts(&self);
     fn disable_interrupts(&self);
     fn setup_sys_ticks(&self);
-    fn initialize_task(&self, task: Box<Task>) -> Box<Task>;
-    fn swap_context(&self, stack_pointer_to_store: *mut u8, stack_pointer_to_load: *mut u8);
+    fn initialize_task(&self, stack_pointer: usize, entry_point: usize) -> usize;
+    fn swap_context(&self, stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize);
+    fn switch_to(&self, task_stack_pointer: usize) -> !;
 }

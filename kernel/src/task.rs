@@ -19,19 +19,24 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(id: u32, name: &'static str, entry_point: usize) -> Task {
+    pub fn new(id: u32, name: &'static str, entry_point: usize) -> Box<Task> {
+        let mut task = Box::new(Task {
+            id,
+            name,
+            state: Created,
+            stack_pointer: 0,  // Will be set correctly below
+            entry_point,
+            stack: [0; 1024],
+        });
+
+        // Now that the task is in its final location on the heap,
+        // calculate the stack pointer based on the actual stack buffer address
         unsafe {
-            let mut stack: [u8; 1024] = [0; 1024];
-            let stack_pointer = stack.as_mut_ptr().add(stack.len()).addr();
-            Task {
-                id,
-                name,
-                state: Created,
-                stack_pointer,
-                entry_point,
-                stack,
-            }
+            let stack_pointer = task.stack.as_mut_ptr().add(task.stack.len()).addr();
+            task.set_stack_pointer(stack_pointer);
         }
+
+        task
     }
     pub fn id(&self) -> u32 {
         self.id

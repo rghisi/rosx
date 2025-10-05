@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use task::{Task, next_id};
 
 #[derive(Copy, Clone, Debug)]
@@ -6,7 +7,7 @@ pub struct FunctionTask {
 }
 
 impl FunctionTask {
-    pub fn new(name: &'static str, job: fn()) -> Task {
+    pub fn new(name: &'static str, job: fn()) -> Box<Task> {
         Task::new(
             next_id(),
             name,

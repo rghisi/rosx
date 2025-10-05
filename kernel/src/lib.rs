@@ -10,3 +10,4 @@ pub mod scheduler;
 pub mod simple_scheduler;
 pub(crate) mod main_thread;
 pub(crate) mod context_switcher;
+pub mod debug;
