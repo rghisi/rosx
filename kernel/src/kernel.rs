@@ -100,10 +100,13 @@ impl Kernel {
             kprintln!("[KERNEL] Before switch - RIP at {:#x} = {:#x}", rip_addr as usize, rip_value);
         }
 
-        self.cpu.switch_to(self.main_thread_task.stack_pointer());
+        // Use swap_context with a dummy pointer since we never return to kernel
+        // The dummy pointer can be anything since we don't care about saving kernel's context
+        let mut dummy_sp: usize = 0;
+        self.cpu.swap_context(&mut dummy_sp as *mut usize, self.main_thread_task.stack_pointer());
 
         // Should never reach here
-        kprintln!("[KERNEL] ERROR: Returned from switch_to!");
+        kprintln!("[KERNEL] ERROR: Returned from kernel start!");
 
     }
 }

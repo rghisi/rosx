@@ -16,16 +16,15 @@ impl Cpu for X86_64 {
     }
 
     fn initialize_task(&self, stack_pointer: usize, entry_point: usize) -> usize {
-        // Get current RFLAGS to preserve flags
-        let rflags: usize;
         unsafe {
-            core::arch::asm!("pushfq", "pop {}", out(reg) rflags);
-            // Pass ORIGINAL stack pointer - alignment happens in assembly
-            initialize_process_stack(stack_pointer, entry_point, rflags)
+            initialize_task_for_swap(stack_pointer, entry_point)
         }
     }
 
     fn swap_context(&self, stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize) {
+        unsafe {
+            swap_context(stack_pointer_to_store, stack_pointer_to_load);
+        }
     }
 
     fn switch_to(&self, task_stack_pointer: usize) -> ! {
@@ -44,8 +43,18 @@ unsafe extern "C" {
     /// Returns the initial RSP value.
     pub fn initialize_process_stack(stack_top: usize, entry_point: usize, rflags: usize) -> usize;
 
+    /// Calls the assembly function defined in process_initialization.S
+    /// Initializes a task's stack for use with swap_context.
+    /// Returns the initial RSP value.
+    pub fn initialize_task_for_swap(stack_top: usize, entry_point: usize) -> usize;
+
     /// Calls the assembly function defined in context_switching.S
     /// Restores the context from the given stack pointer and switches to the task.
     /// This function never returns.
     pub fn restore_context(stack_pointer: usize) -> !;
+
+    /// Calls the assembly function defined in context_switching.S
+    /// Saves the current context to the location pointed by stack_pointer_to_store,
+    /// then loads and restores the context from stack_pointer_to_load.
+    pub fn swap_context(stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize);
 }

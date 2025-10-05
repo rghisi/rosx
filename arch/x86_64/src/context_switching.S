@@ -276,6 +276,42 @@ restore_context:
     push rax
     ret
 
+.global swap_context
+
+# swap_context: Save current context and switch to another task
+# Parameters:
+#   RDI: Pointer to store current stack pointer (*mut usize)
+#   RSI: Stack pointer to load (usize)
+#
+# This function saves the current execution context (all registers + return address)
+# to the current stack, stores the stack pointer, then loads the new stack pointer
+# and restores the context from there.
+swap_context:
+    # Save all callee-saved registers and additional state
+    push rbp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    # Save current stack pointer to the location pointed by RDI
+    mov [rdi], rsp
+
+    # Load new stack pointer from RSI
+    mov rsp, rsi
+
+    # Restore all registers from the new stack
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+
+    # Return (to the new context)
+    ret
+
 # Helper function to print RAX in hex (preserves all registers except AL)
 print_hex_rax:
     push rbx

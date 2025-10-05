@@ -47,6 +47,9 @@ impl Task {
     pub fn stack_pointer(&self) -> usize {
         self.stack_pointer
     }
+    pub fn stack_pointer_mut(&mut self) -> *mut usize {
+        &mut self.stack_pointer as *mut usize
+    }
     pub fn set_stack_pointer(&mut self, new_stack_pointer: usize) {
         self.stack_pointer = new_stack_pointer;
     }

@@ -6,13 +6,12 @@ mod cpu;
 mod debug_console;
 mod multi_debug;
 
-use kernel::kprintln;
-use alloc::boxed::Box;
 use core::arch::asm;
 use core::panic::PanicInfo;
 use buddy_system_allocator::LockedHeap;
 use lazy_static::lazy_static;
 use spin::Mutex;
+use kernel::kprintln;
 use kernel::cpu::Cpu;
 use kernel::debug::init_debug;
 use kernel::kernel::Kernel;
@@ -41,13 +40,11 @@ lazy_static! {
     pub static ref WRITER: Mutex<Writer> = Mutex::new(Writer::new(ColorCode::new(Color::Green, Color::Black)));
 }
 
-// Create static array of outputs
 static DEBUG_OUTPUTS: &[&dyn kernel::debug::DebugOutput] = &[
     &VGA_DEBUG,
     &QEMU_DEBUG,
 ];
 
-// Create multi-output instance
 static MULTI_DEBUG: MultiDebugOutput = MultiDebugOutput::new(DEBUG_OUTPUTS);
 
 
@@ -77,8 +74,8 @@ pub extern "C" fn _start() -> ! {
     println!("Init");
 
     kernel.setup();
-    kernel.schedule(FunctionTask::new("A", dummy_job1));
-    // kernel.schedule(FunctionTask::new("B", dummy_job2));
+    kernel.schedule(FunctionTask::new("1", dummy_job1));
+    kernel.schedule(FunctionTask::new("2", dummy_job2));
     kernel.start();
 
     println!("Oops, should never reached here, crashing spectacularly.");
