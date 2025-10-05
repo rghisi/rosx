@@ -1,4 +1,6 @@
 use alloc::boxed::Box;
+use core::fmt::{Display, Formatter};
+use kprintln;
 use runnable::Runnable;
 use task::TaskState::{Created, Ready, Running, Terminated};
 
@@ -7,25 +9,55 @@ pub enum TaskState {
     Created, Ready, Running, Blocked, Terminated,
 }
 
+impl Display for TaskState {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Created => {write!(f, "Created")}
+            Ready => {write!(f, "Ready")}
+            Running => {write!(f, "Running")}
+            TaskState::Blocked => {write!(f, "Blocked")}
+            Terminated => {write!(f, "Terminated")}
+        }
+    }
+}
+
 pub type TaskEntryPoint = unsafe extern "C" fn() -> !;
+
+// Wrapper function that calls the actual task entry and handles completion
+// Takes the actual entry point as a parameter (passed via RDI in x86_64)
+// Calls task_yield to return control to MainThread when done
+extern "C" fn task_wrapper(actual_entry: usize) {
+    kprintln!("[TASK_WRAPPER] Starting task");
+
+    // Call the actual task function
+    let task_fn: fn() = unsafe { core::mem::transmute(actual_entry) };
+    task_fn();
+
+    kprintln!("[TASK_WRAPPER] Task completed, yielding to MainThread");
+
+    // Yield back to MainThread
+    crate::kernel::task_yield();
+}
 
 pub struct Task {
     id: u32,
     name: &'static str,
     state: TaskState,
     stack_pointer: usize,
-    entry_point: usize,
+    entry_point: usize,        // The wrapper function address
+    actual_entry_point: usize, // The actual task function to be called by wrapper
     stack: [u8; 1024],
 }
 
 impl Task {
-    pub fn new(id: u32, name: &'static str, entry_point: usize) -> Box<Task> {
+    pub fn new(id: u32, name: &'static str, actual_entry_point: usize) -> Box<Task> {
         let mut task = Box::new(Task {
             id,
             name,
             state: Created,
             stack_pointer: 0,  // Will be set correctly below
-            entry_point,
+            entry_point: task_wrapper as usize,  // Use wrapper as the entry point
+            actual_entry_point,                   // Store the actual task function
             stack: [0; 1024],
         });
 
@@ -71,6 +103,9 @@ impl Task {
 
     pub fn entry_point(&self) -> usize {
         self.entry_point
+    }
+    pub fn actual_entry_point(&self) -> usize {
+        self.actual_entry_point
     }
 }
 

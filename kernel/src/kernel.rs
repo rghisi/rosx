@@ -6,6 +6,9 @@ use runnable::Runnable;
 use task::Task;
 
 static mut MAIN_THREAD_PTR: Option<*mut MainThread> = None;
+pub static mut MAIN_THREAD_TASK_PTR: Option<*mut Task> = None;
+pub static mut CURRENT_TASK_PTR: Option<*mut Task> = None;
+static mut CPU_PTR: Option<&'static dyn Cpu> = None;
 
 pub struct Kernel {
     cpu: &'static dyn Cpu,
@@ -36,15 +39,31 @@ impl Kernel {
         self.cpu.setup();
         unsafe {
             MAIN_THREAD_PTR = Some(&mut self.main_thread as *mut MainThread);
+            CPU_PTR = Some(self.cpu);
+            // MAIN_THREAD_TASK_PTR and CURRENT_TASK_PTR will be set later
         }
 
     }
 
     pub fn schedule(&mut self, mut task: Box<Task>) {
-        let new_stack_pointer = self.cpu.initialize_task(task.stack_pointer(), task.entry_point());
+        let new_stack_pointer = self.cpu.initialize_task(
+            task.stack_pointer(),
+            task.entry_point(),
+            task.actual_entry_point()
+        );
         task.set_stack_pointer(new_stack_pointer);
         task.set_ready();
         let _ = self.main_thread.push_task(task);
+    }
+
+   pub fn initialize_task(&mut self, mut task: Box<Task>) {
+        let new_stack_pointer = self.cpu.initialize_task(
+            task.stack_pointer(),
+            task.entry_point(),
+            task.actual_entry_point()
+        );
+        task.set_stack_pointer(new_stack_pointer);
+        task.set_ready();
     }
 
     pub fn start(&mut self) {
@@ -74,7 +93,11 @@ impl Kernel {
         kprintln!("[KERNEL] SP should be in task's own stack buffer");
         kprintln!("[KERNEL] Entry point: {:#x}", entry);
 
-        let new_stack_pointer = self.cpu.initialize_task(original_sp, entry);
+        let new_stack_pointer = self.cpu.initialize_task(
+            original_sp,
+            self.main_thread_task.entry_point(),
+            self.main_thread_task.actual_entry_point()
+        );
 
         kprintln!("[KERNEL] Initialized SP: {:#x}", new_stack_pointer);
         kprintln!("[KERNEL] main_thread_wrapper addr: {:#x}", main_thread_wrapper as usize);
@@ -128,4 +151,30 @@ extern "C" fn main_thread_wrapper() -> ! {
     loop {}
 }
 
+/// Kernel API: Yield control back to the MainThread
+/// This is called by tasks when they complete or want to yield
+/// The current task's context is saved so it can be resumed later
+pub extern "C" fn task_yield() {
+    kprintln!("[KERNEL_API] task_yield called");
+
+    unsafe {
+        if let (Some(cpu), Some(main_task_ptr), Some(current_task_ptr)) =
+            (CPU_PTR, MAIN_THREAD_TASK_PTR, CURRENT_TASK_PTR) {
+
+            let main_task = &mut *main_task_ptr;
+            let current_task = &mut *current_task_ptr;
+
+            // Save current task's context and switch to MainThread
+            cpu.swap_context(
+                current_task.stack_pointer_mut(),
+                main_task.stack_pointer()
+            );
+        }
+    }
+
+    // Should never reach here after swap_context
+    loop {
+        kprintln!("[KERNEL_API] Task yield should not reach here");
+    }
+}
 

@@ -18,8 +18,16 @@ pub(crate) struct MainThread {
 
 impl MainThread {
 
-    pub(crate) fn new(cpu: &'static (dyn Cpu + 'static), idle_task: Box<Task>) -> Self {
+    pub(crate) fn new(cpu: &'static (dyn Cpu + 'static), mut idle_task: Box<Task>) -> Self {
         let main_task = Task::new(0, "Main Thread", 0);
+
+        let new_stack_pointer = cpu.initialize_task(
+            idle_task.stack_pointer(),
+            idle_task.entry_point(),
+            idle_task.actual_entry_point()
+        );
+        idle_task.set_stack_pointer(new_stack_pointer);
+        idle_task.set_ready();
 
         MainThread {
             cpu,
@@ -42,19 +50,36 @@ impl MainThread {
 impl Runnable for MainThread {
     fn run(&mut self) {
         kprintln!("[MAIN_THREAD] run() called!");
+
+        // Set up global pointers for task_yield API
+        unsafe {
+            crate::kernel::MAIN_THREAD_TASK_PTR = Some(&mut *self.task as *mut Task);
+        }
+
         loop {
             if let Some(mut task) = self.ready_tasks.take_next() {
                 kprintln!("[MAIN_THREAD] Scheduling task: {}", task.name());
                 task.set_running();
 
+                // Set current task pointer for task_yield
+                unsafe {
+                    crate::kernel::CURRENT_TASK_PTR = Some(&mut *task as *mut Task);
+                }
+
                 // Swap context: save MainThread's context, load task's context
                 self.cpu.swap_context(self.task.stack_pointer_mut(), task.stack_pointer());
 
                 // When we return here, the task has completed or yielded
-                kprintln!("[MAIN_THREAD] Task {} completed/yielded", task.name());
+                kprintln!("[MAIN_THREAD] Task completed/yielded");
                 task.set_terminated();
+                kprintln!("[MAIN_THREAD] Task terminated: {}", task.state());
             } else {
                 kprintln!("[MAIN_THREAD] No ready tasks, running idle task");
+
+                // Set idle task as current for task_yield
+                unsafe {
+                    crate::kernel::CURRENT_TASK_PTR = Some(&mut *self.idle_task as *mut Task);
+                }
 
                 // Swap to idle task
                 self.cpu.swap_context(self.task.stack_pointer_mut(), self.idle_task.stack_pointer());

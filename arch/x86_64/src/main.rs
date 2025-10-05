@@ -86,8 +86,10 @@ pub extern "C" fn _start() -> ! {
 
 fn idle_job() {
     println!("Idle Task Start");
-    delay(1000000);
-    println!("Idle Task Finish");
+    loop {
+        println!("Idling...");
+        delay(1000000);
+    }
 }
 
 fn dummy_job1() {
