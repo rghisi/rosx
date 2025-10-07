@@ -7,6 +7,7 @@ impl Cpu for X86_64 {
     }
 
     fn enable_interrupts(&self) {
+        crate::interrupts::enable_interrupts();
     }
 
     fn disable_interrupts(&self) {

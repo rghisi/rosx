@@ -56,6 +56,10 @@ impl Runnable for MainThread {
             crate::kernel::MAIN_THREAD_TASK_PTR = Some(&mut *self.task as *mut Task);
         }
 
+        // Now that task system is ready, enable interrupts
+        kprintln!("[MAIN_THREAD] Task system ready, enabling interrupts");
+        self.cpu.enable_interrupts();
+
         loop {
             if let Some(mut task) = self.ready_tasks.take_next() {
                 kprintln!("[MAIN_THREAD] Scheduling task: {}", task.name());
@@ -69,10 +73,18 @@ impl Runnable for MainThread {
                 // Swap context: save MainThread's context, load task's context
                 self.cpu.swap_context(self.task.stack_pointer_mut(), task.stack_pointer());
 
-                // When we return here, the task has completed or yielded
-                kprintln!("[MAIN_THREAD] Task completed/yielded");
-                task.set_terminated();
-                kprintln!("[MAIN_THREAD] Task terminated: {}", task.state());
+                // When we return here, check if task completed or just yielded
+                kprintln!("[MAIN_THREAD] Returned from task: {}", task.name());
+
+                // If task is still Running, it yielded (interrupted), so re-queue it
+                if task.state() == Running {
+                    kprintln!("[MAIN_THREAD] Task yielded, re-queuing");
+                    task.set_ready();
+                    let _ = self.ready_tasks.offer(task);
+                } else {
+                    // Task completed (wrapper set it to terminated)
+                    kprintln!("[MAIN_THREAD] Task terminated: {}", task.state());
+                }
             } else {
                 kprintln!("[MAIN_THREAD] No ready tasks, running idle task");
 

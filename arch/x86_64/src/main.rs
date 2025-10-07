@@ -1,10 +1,12 @@
 #![no_main]
 #![no_std]
+#![feature(abi_x86_interrupt)]
 
 mod vga_buffer;
 mod cpu;
 mod debug_console;
 mod multi_debug;
+mod interrupts;
 
 use core::arch::asm;
 use core::panic::PanicInfo;
@@ -76,6 +78,7 @@ pub extern "C" fn _start() -> ! {
     kernel.setup();
     kernel.schedule(FunctionTask::new("1", dummy_job1));
     kernel.schedule(FunctionTask::new("2", dummy_job2));
+    interrupts::init();
     kernel.start();
 
     println!("Oops, should never reached here, crashing spectacularly.");
@@ -88,19 +91,19 @@ fn idle_job() {
     println!("Idle Task Start");
     loop {
         println!("Idling...");
-        delay(1000000);
+        delay(100000000);
     }
 }
 
 fn dummy_job1() {
     println!("Job 1 Start");
-    delay(1000000);
+    delay(20000000);
     println!("Job 1 Finish");
 }
 
 fn dummy_job2() {
     println!("Job 2 Start");
-    delay(1000000);
+    delay(20000000);
     println!("Job 2 Finish");
 }
 

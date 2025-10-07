@@ -33,7 +33,14 @@ extern "C" fn task_wrapper(actual_entry: usize) {
     let task_fn: fn() = unsafe { core::mem::transmute(actual_entry) };
     task_fn();
 
-    kprintln!("[TASK_WRAPPER] Task completed, yielding to MainThread");
+    kprintln!("[TASK_WRAPPER] Task completed, marking as terminated");
+
+    // Mark task as terminated before yielding
+    unsafe {
+        if let Some(current_task_ptr) = crate::kernel::CURRENT_TASK_PTR {
+            (*current_task_ptr).set_terminated();
+        }
+    }
 
     // Yield back to MainThread
     crate::kernel::task_yield();
