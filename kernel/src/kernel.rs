@@ -3,7 +3,7 @@ use cpu::{Cpu};
 use kprintln;
 use main_thread::MainThread;
 use runnable::Runnable;
-use task::Task;
+use task::{SharedTask, Task};
 
 static mut MAIN_THREAD_PTR: Option<*mut MainThread> = None;
 pub static mut MAIN_THREAD_TASK_PTR: Option<*mut Task> = None;
@@ -13,13 +13,13 @@ static mut CPU_PTR: Option<&'static dyn Cpu> = None;
 pub struct Kernel {
     cpu: &'static dyn Cpu,
     main_thread: MainThread,
-    main_thread_task: Box<Task>,
+    main_thread_task: SharedTask,
 }
 
 impl Kernel {
     pub fn new(
         cpu: &'static (dyn Cpu + 'static),
-        idle_task: Box<Task>,
+        idle_task: SharedTask,
     ) -> Self {
         let main_thread = MainThread::new(cpu, idle_task);
         let main_thread_entrypoint = main_thread_wrapper as usize;
@@ -45,7 +45,7 @@ impl Kernel {
 
     }
 
-    pub fn schedule(&mut self, mut task: Box<Task>) {
+    pub fn schedule(&mut self, mut task: SharedTask) {
         let new_stack_pointer = self.cpu.initialize_task(
             task.stack_pointer(),
             task.entry_point(),
@@ -56,7 +56,7 @@ impl Kernel {
         let _ = self.main_thread.push_task(task);
     }
 
-   pub fn initialize_task(&mut self, mut task: Box<Task>) {
+   pub fn initialize_task(&mut self, mut task: SharedTask) {
         let new_stack_pointer = self.cpu.initialize_task(
             task.stack_pointer(),
             task.entry_point(),

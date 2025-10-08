@@ -4,6 +4,8 @@ use kprintln;
 use runnable::Runnable;
 use task::TaskState::{Created, Ready, Running, Terminated};
 
+pub type SharedTask = Box<Task>;
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum TaskState {
     Created, Ready, Running, Blocked, Terminated,
@@ -57,7 +59,7 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(id: u32, name: &'static str, actual_entry_point: usize) -> Box<Task> {
+    pub fn new(id: u32, name: &'static str, actual_entry_point: usize) -> SharedTask {
         let mut task = Box::new(Task {
             id,
             name,

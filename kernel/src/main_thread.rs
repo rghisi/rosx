@@ -5,20 +5,20 @@ use kprintln;
 use runnable::Runnable;
 use scheduler::Scheduler;
 use simple_scheduler::SimpleScheduler;
-use task::{Task, TaskEntryPoint};
+use task::{SharedTask, Task, TaskEntryPoint};
 use task::TaskState::{Blocked, Created, Ready, Running};
 
 pub(crate) struct MainThread {
     cpu: &'static dyn Cpu,
-    task: Box<Task>,
-    idle_task: Box<Task>,
+    task: SharedTask,
+    idle_task: SharedTask,
     ready_tasks: SimpleScheduler,
-    blocked_tasks: Vec<Box<Task>>,
+    blocked_tasks: Vec<SharedTask>,
 }
 
 impl MainThread {
 
-    pub(crate) fn new(cpu: &'static (dyn Cpu + 'static), mut idle_task: Box<Task>) -> Self {
+    pub(crate) fn new(cpu: &'static (dyn Cpu + 'static), mut idle_task: SharedTask) -> Self {
         let main_task = Task::new(0, "Main Thread", 0);
 
         let new_stack_pointer = cpu.initialize_task(
@@ -38,7 +38,7 @@ impl MainThread {
         }
     }
 
-    pub(crate) fn push_task(&mut self, task: Box<Task>) {
+    pub(crate) fn push_task(&mut self, task: SharedTask) {
         let _ = match task.state() {
             Ready => self.ready_tasks.offer(task),
             // Blocked => self.blocked_tasks.push(task),
