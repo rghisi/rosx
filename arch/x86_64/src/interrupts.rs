@@ -9,6 +9,10 @@ use kernel::kprintln;
 pub const PIC_1_OFFSET: u8 = 0x20;
 pub const PIC_2_OFFSET: u8 = 0x28;
 
+/// Software interrupt vectors for context switching
+/// These are user-defined interrupts triggered by software (INT instruction)
+pub const YIELD_INTERRUPT_VECTOR: u8 = 0x30;
+
 /// Hardware interrupt numbers (after remapping)
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -31,7 +35,14 @@ lazy_static! {
     /// Static IDT
     static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
+
+        // Hardware interrupts
+        idt[InterruptIndex::Timer.as_u8()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIndex::Keyboard.as_u8()].set_handler_fn(keyboard_interrupt_handler);
+
+        // Software interrupts for context switching
+        idt[YIELD_INTERRUPT_VECTOR].set_handler_fn(yield_interrupt_handler);
+
         idt
     };
 }
@@ -44,6 +55,9 @@ pub fn init() {
     IDT.load();
 
     kprintln!("[INTERRUPTS] IDT loaded");
+    kprintln!("[INTERRUPTS] - Timer interrupt registered at vector 0x{:02x}", InterruptIndex::Timer.as_u8());
+    kprintln!("[INTERRUPTS] - Keyboard interrupt registered at vector 0x{:02x}", InterruptIndex::Keyboard.as_u8());
+    kprintln!("[INTERRUPTS] - Yield interrupt registered at vector 0x{:02x}", YIELD_INTERRUPT_VECTOR);
 
     // Initialize and remap PICs
     unsafe {
@@ -96,7 +110,49 @@ pub fn enable_interrupts() {
     kprintln!("[INTERRUPTS] Keyboard interrupt unmasked and ready");
 }
 
-/// Keyboard interrupt handler
+/// Enable timer interrupt for preemptive scheduling
+pub fn enable_timer() {
+    kprintln!("[INTERRUPTS] Enabling timer interrupt");
+
+    unsafe {
+        use x86_64::instructions::port::Port;
+        let mut pic1_data: Port<u8> = Port::new(0x21);
+        let current_mask = pic1_data.read();
+        // Unmask IRQ0 (timer) - bit 0
+        pic1_data.write(current_mask & !0x01);
+    }
+
+    kprintln!("[INTERRUPTS] Timer interrupt enabled (will tick at ~18.2 Hz)");
+}
+
+/// Test function to trigger yield interrupt
+pub fn test_yield_interrupt() {
+    kprintln!("[TEST] About to trigger yield interrupt (INT 0x30)...");
+    unsafe {
+        core::arch::asm!("int 0x30");
+    }
+    kprintln!("[TEST] Returned from yield interrupt");
+}
+
+// ============================================================================
+// Interrupt Handlers
+// ============================================================================
+
+/// Timer interrupt handler (IRQ0)
+/// This will be used for preemptive multitasking
+extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
+    // For now, just acknowledge the timer tick
+    // TODO: Add tick counter and periodic task switching
+    kprintln!("[TIMER] Tick!");
+
+    // Send EOI (End of Interrupt) to PIC
+    unsafe {
+        PICS.lock()
+            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+    }
+}
+
+/// Keyboard interrupt handler (IRQ1)
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
     kprintln!("[INTERRUPT] Keyboard interrupt!");
 
@@ -117,4 +173,23 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
     kprintln!("[INTERRUPT] Calling task_yield");
     kernel::kernel::task_yield();
     kprintln!("[INTERRUPT] Returned from task_yield, handler ending");
+}
+
+/// Yield interrupt handler (Software interrupt INT 0x30)
+/// This is triggered by tasks voluntarily yielding the CPU
+/// For now this is a stub that just prints debug info
+/// Later this will be replaced with assembly that performs context switching
+extern "x86-interrupt" fn yield_interrupt_handler(stack_frame: InterruptStackFrame) {
+    kprintln!("[YIELD_INT] Yield interrupt triggered!");
+    kprintln!("[YIELD_INT] RIP: {:#x}", stack_frame.instruction_pointer.as_u64());
+    kprintln!("[YIELD_INT] CPU Flags: {:#x}", stack_frame.cpu_flags);
+
+    // TODO: This will be replaced with assembly code that:
+    // 1. Saves all GPRs to current task's stack
+    // 2. Saves stack pointer to current task
+    // 3. Calls scheduler to pick next task
+    // 4. Loads next task's stack pointer
+    // 5. Jumps to interrupt_return (which will iretq)
+
+    kprintln!("[YIELD_INT] Handler complete (no context switch yet)");
 }
