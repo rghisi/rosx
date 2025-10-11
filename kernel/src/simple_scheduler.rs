@@ -1,10 +1,10 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use scheduler::{ScheduledTask, Scheduler, SchedulingError, StateCreatedNotAccepted};
-use task::Task;
+use task::{SharedTask, Task};
 
 pub struct SimpleScheduler {
-    tasks: Vec<Box<Task>>,
+    tasks: Vec<SharedTask>,
 }
 
 impl SimpleScheduler {
@@ -16,7 +16,7 @@ impl SimpleScheduler {
 }
 
 impl Scheduler for SimpleScheduler {
-    fn offer(&mut self, task: Box<Task>) -> Result<(), &dyn SchedulingError> {
+    fn offer(&mut self, task: SharedTask) -> Result<(), &dyn SchedulingError> {
         if !task.is_schedulable() {
             return Err(&StateCreatedNotAccepted);
         }
@@ -26,7 +26,7 @@ impl Scheduler for SimpleScheduler {
         Ok(())
     }
 
-    fn take_next(&mut self) -> Option<Box<Task>> {
+    fn take_next(&mut self) -> Option<SharedTask> {
         if self.tasks.is_empty() {
             None
         } else {

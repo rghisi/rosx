@@ -286,28 +286,55 @@ restore_context:
 # This function saves the current execution context (all registers + return address)
 # to the current stack, stores the stack pointer, then loads the new stack pointer
 # and restores the context from there.
+#
+# NOTE: This now saves ALL registers to support context switching from interrupts
 swap_context:
-    # Save all callee-saved registers and additional state
-    push rbp
+    # Save parameters in registers we're about to push anyway
+    # We'll store them in the stack frame in the right positions
+    mov r10, rdi  # r10 = pointer to store current SP
+    mov r11, rsi  # r11 = SP to load
+
+    # Push all 15 general-purpose registers
+    # NOTE: We push the ACTUAL values of r10/r11, not our saved parameters
+    push rax
     push rbx
+    push rcx
+    push rdx
+    push rbp
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
     push r12
     push r13
     push r14
     push r15
 
-    # Save current stack pointer to the location pointed by RDI
-    mov [rdi], rsp
+    # Now RSP points to the base of our saved context (r15)
+    # Save this stack pointer
+    mov [r10], rsp
 
-    # Load new stack pointer from RSI
-    mov rsp, rsi
+    # Load new stack pointer from r11
+    mov rsp, r11
 
     # Restore all registers from the new stack
     pop r15
     pop r14
     pop r13
     pop r12
-    pop rbx
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
     pop rbp
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
 
     # Return (to the new context)
     ret

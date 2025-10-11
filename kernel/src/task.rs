@@ -1,5 +1,6 @@
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
+use kernel::CURRENT_TASK;
 use kprintln;
 use runnable::Runnable;
 use task::TaskState::{Created, Ready, Running, Terminated};
@@ -30,22 +31,44 @@ pub type TaskEntryPoint = unsafe extern "C" fn() -> !;
 // Calls task_yield to return control to MainThread when done
 extern "C" fn task_wrapper(actual_entry: usize) {
     kprintln!("[TASK_WRAPPER] Starting task");
+    kprintln!("[TASK_WRAPPER] actual_entry parameter: {:#x}", actual_entry);
 
     // Call the actual task function
     let task_fn: fn() = unsafe { core::mem::transmute(actual_entry) };
+    kprintln!("[TASK_WRAPPER] About to call function at {:#x}", actual_entry);
     task_fn();
+    kprintln!("[TASK_WRAPPER] Function returned");
 
     kprintln!("[TASK_WRAPPER] Task completed, marking as terminated");
 
     // Mark task as terminated before yielding
     unsafe {
-        if let Some(current_task_ptr) = crate::kernel::CURRENT_TASK_PTR {
-            (*current_task_ptr).set_terminated();
+        if let Some(mut task) = CURRENT_TASK.take() {
+            task.set_terminated();
+            CURRENT_TASK = Some(task);
         }
     }
+    // with_current_task(|task| {
+    //     task.set_terminated();
+    // });
+
+    kprintln!("[TASK_WRAPPER] Task terminated, yielding");
 
     // Yield back to MainThread
     crate::kernel::task_yield();
+}
+
+#[inline(always)]
+pub fn with_current_task<F>(f: F)
+where
+    F: FnOnce(&mut Task),
+{
+    unsafe {
+        if let Some(mut task) = CURRENT_TASK.take() {
+            f(&mut task);
+            CURRENT_TASK = Some(task);
+        }
+    }
 }
 
 pub struct Task {
@@ -53,9 +76,9 @@ pub struct Task {
     name: &'static str,
     state: TaskState,
     stack_pointer: usize,
-    entry_point: usize,        // The wrapper function address
-    actual_entry_point: usize, // The actual task function to be called by wrapper
-    stack: [u8; 1024],
+    entry_point: usize,
+    actual_entry_point: usize,
+    stack: [u8; 4096],
 }
 
 impl Task {
@@ -64,14 +87,12 @@ impl Task {
             id,
             name,
             state: Created,
-            stack_pointer: 0,  // Will be set correctly below
-            entry_point: task_wrapper as usize,  // Use wrapper as the entry point
-            actual_entry_point,                   // Store the actual task function
-            stack: [0; 1024],
+            stack_pointer: 0,
+            entry_point: task_wrapper as usize,
+            actual_entry_point,
+            stack: [0; 4096],
         });
 
-        // Now that the task is in its final location on the heap,
-        // calculate the stack pointer based on the actual stack buffer address
         unsafe {
             let stack_pointer = task.stack.as_mut_ptr().add(task.stack.len()).addr();
             task.set_stack_pointer(stack_pointer);
@@ -93,6 +114,22 @@ impl Task {
     }
     pub fn set_stack_pointer(&mut self, new_stack_pointer: usize) {
         self.stack_pointer = new_stack_pointer;
+
+        // Debug: check stack usage
+        let stack_base = unsafe { self.stack.as_ptr().addr() };
+        let stack_top = stack_base + self.stack.len();
+        let stack_used = stack_top.saturating_sub(new_stack_pointer);
+
+        if stack_used > 512 {
+            kprintln!(
+                "[TASK] Warning: Task {} using {} bytes of stack (SP: {:#x}, base: {:#x}, top: {:#x})",
+                self.id,
+                stack_used,
+                new_stack_pointer,
+                stack_base,
+                stack_top
+            );
+        }
     }
     pub fn state(&self) -> TaskState {
         self.state
@@ -132,3 +169,12 @@ pub fn next_id() -> u32 {
     }
 }
 
+impl Drop for Task {
+    fn drop(&mut self) {
+        kprintln!(
+              "[TASK] Deallocating task {} (state: {})",
+              self.id,
+              self.state
+          );
+    }
+}

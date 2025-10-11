@@ -282,52 +282,60 @@ print_hex_init:
 #   RAX: New stack pointer (pointing to the base of the saved context)
 #
 # Stack layout after initialization (compatible with swap_context):
-#   [RSP + 0]:  r15 (0)
-#   [RSP + 8]:  r14 (0)
-#   [RSP + 16]: r13 (entry_param - will be moved to RDI before call)
-#   [RSP + 24]: r12 (0)
-#   [RSP + 32]: rbx (0)
-#   [RSP + 40]: rbp (0)
-#   [RSP + 48]: return address (entry point)
+# swap_context now saves ALL 15 registers, so we need to match that:
+#   [RSP + 0]:   rax (0)
+#   [RSP + 8]:   rbx (0)
+#   [RSP + 16]:  rcx (0)
+#   [RSP + 24]:  rdx (0)
+#   [RSP + 32]:  rbp (0)
+#   [RSP + 40]:  rsi (0)
+#   [RSP + 48]:  rdi (entry_param - passed to wrapper)
+#   [RSP + 56]:  r8 (0)
+#   [RSP + 64]:  r9 (0)
+#   [RSP + 72]:  r10 (0)
+#   [RSP + 80]:  r11 (0)
+#   [RSP + 88]:  r12 (0)
+#   [RSP + 96]:  r13 (0)
+#   [RSP + 104]: r14 (0)
+#   [RSP + 112]: r15 (0)
+#   [RSP + 120]: return address (entry point)
 #
 initialize_task_for_swap:
     # RDI: Stack top
     # RSI: Entry point (wrapper)
     # RDX: Parameter for entry point (actual task entry)
 
-    # Save RDX before we lose it
-    mov rcx, rdx
+    # Save parameters
+    mov r8, rdx   # r8 = entry_param
+    mov r9, rsi   # r9 = entry point
 
     # Align stack to 16 bytes
     mov rax, rdi
     and rax, ~0xF
 
-    # Reserve space for 6 registers + return address (7 * 8 = 56 bytes)
-    sub rax, 56
+    # Reserve space for 15 registers + return address (16 * 8 = 128 bytes)
+    sub rax, 128
 
-    # Initialize callee-saved registers
-    mov qword ptr [rax + 0], 0    # r15
-    mov qword ptr [rax + 8], 0    # r14
-    mov qword ptr [rax + 16], rcx # r13 = entry_param (we'll move to RDI in wrapper_entry)
-    mov qword ptr [rax + 24], 0   # r12
-    mov qword ptr [rax + 32], 0   # rbx
-    mov qword ptr [rax + 40], 0   # rbp
+    # Initialize all registers to 0 (matching the layout expected by swap_context pop order)
+    # Layout matches restore_context: r15 at offset 0, down to rax at offset 112
+    mov qword ptr [rax + 0], 0     # r15
+    mov qword ptr [rax + 8], 0     # r14
+    mov qword ptr [rax + 16], 0    # r13
+    mov qword ptr [rax + 24], 0    # r12
+    mov qword ptr [rax + 32], 0    # r11
+    mov qword ptr [rax + 40], 0    # r10
+    mov qword ptr [rax + 48], 0    # r9
+    mov qword ptr [rax + 56], 0    # r8
+    mov qword ptr [rax + 64], r8   # rdi = entry_param (passed to task_wrapper)
+    mov qword ptr [rax + 72], 0    # rsi
+    mov qword ptr [rax + 80], 0    # rbp
+    mov qword ptr [rax + 88], 0    # rdx
+    mov qword ptr [rax + 96], 0    # rcx
+    mov qword ptr [rax + 104], 0   # rbx
+    mov qword ptr [rax + 112], 0   # rax
 
-    # Set return address to wrapper_entry (which sets up RDI and calls entry point)
-    lea rcx, [rip + wrapper_entry]
-    mov qword ptr [rax + 48], rcx
-
-    # Store the actual entry point in r12 for wrapper_entry to use
-    mov qword ptr [rax + 24], rsi # r12 = entry point
+    # Set return address (entry point wrapper function)
+    mov qword ptr [rax + 120], r9
 
     # Return the stack pointer
     ret
-
-# wrapper_entry: Called when task first starts
-# Sets up RDI with the parameter and calls the actual entry point
-wrapper_entry:
-    # r13 contains the parameter (actual task entry)
-    # r12 contains the entry point (wrapper function)
-    mov rdi, r13    # Set up first parameter
-    call r12        # Call the wrapper function
-    ret             # Return to MainThread

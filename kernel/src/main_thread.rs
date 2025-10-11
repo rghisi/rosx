@@ -61,22 +61,25 @@ impl Runnable for MainThread {
         self.cpu.enable_interrupts();
 
         loop {
+            kprintln!("[MAIN_THREAD] Loop start");
             if let Some(mut task) = self.ready_tasks.take_next() {
-                kprintln!("[MAIN_THREAD] Scheduling task: {}", task.name());
+                kprintln!("[MAIN_THREAD] Scheduling task: {}", task.id());
                 task.set_running();
 
-                // Set current task pointer for task_yield
+                let task_sp = task.stack_pointer();
+
                 unsafe {
-                    crate::kernel::CURRENT_TASK_PTR = Some(&mut *task as *mut Task);
+                    crate::kernel::CURRENT_TASK = Some(task);
                 }
 
-                // Swap context: save MainThread's context, load task's context
-                self.cpu.swap_context(self.task.stack_pointer_mut(), task.stack_pointer());
+                self.cpu.swap_context(self.task.stack_pointer_mut(), task_sp);
 
-                // When we return here, check if task completed or just yielded
-                kprintln!("[MAIN_THREAD] Returned from task: {}", task.name());
+                let mut task = unsafe {
+                    crate::kernel::CURRENT_TASK.take().expect("Task should be returned from yield")
+                };
 
-                // If task is still Running, it yielded (interrupted), so re-queue it
+                kprintln!("[MAIN_THREAD] Returned from task: {}", task.id());
+
                 if task.state() == Running {
                     kprintln!("[MAIN_THREAD] Task yielded, re-queuing");
                     task.set_ready();
@@ -86,18 +89,31 @@ impl Runnable for MainThread {
                     kprintln!("[MAIN_THREAD] Task terminated: {}", task.state());
                 }
             } else {
-                kprintln!("[MAIN_THREAD] No ready tasks, running idle task");
-
-                // Set idle task as current for task_yield
-                unsafe {
-                    crate::kernel::CURRENT_TASK_PTR = Some(&mut *self.idle_task as *mut Task);
-                }
-
-                // Swap to idle task
-                self.cpu.swap_context(self.task.stack_pointer_mut(), self.idle_task.stack_pointer());
-
-                kprintln!("[MAIN_THREAD] Idle task completed/yielded");
+                panic!("[MAIN_THREAD] Finito!");
+                // kprintln!("[MAIN_THREAD] No ready tasks, running idle task");
+                //
+                // let idle_sp = self.idle_task.stack_pointer();
+                //
+                // // Transfer ownership to CURRENT_TASK for task_yield
+                // unsafe {
+                //     crate::kernel::CURRENT_TASK = Some(core::mem::replace(
+                //         &mut self.idle_task,
+                //         Task::new(0, "placeholder", 0) // Temporary placeholder
+                //     ));
+                // }
+                //
+                // // Swap to idle task
+                // self.cpu.swap_context(self.task.stack_pointer_mut(), idle_sp);
+                //
+                // // Take back idle task
+                // let returned_idle = unsafe {
+                //     crate::kernel::CURRENT_TASK.take().expect("Idle task should be returned")
+                // };
+                // self.idle_task = returned_idle;
+                //
+                // kprintln!("[MAIN_THREAD] Idle task completed/yielded");
             }
+            kprintln!("[MAIN_THREAD] Loop end");
         }
     }
 }

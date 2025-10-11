@@ -116,4 +116,5 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
     // Call task_yield to switch to another task
     kprintln!("[INTERRUPT] Calling task_yield");
     kernel::kernel::task_yield();
+    kprintln!("[INTERRUPT] Returned from task_yield, handler ending");
 }

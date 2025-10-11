@@ -7,7 +7,7 @@ use task::{SharedTask, Task};
 
 static mut MAIN_THREAD_PTR: Option<*mut MainThread> = None;
 pub static mut MAIN_THREAD_TASK_PTR: Option<*mut Task> = None;
-pub static mut CURRENT_TASK_PTR: Option<*mut Task> = None;
+pub static mut CURRENT_TASK: Option<SharedTask> = None;
 static mut CPU_PTR: Option<&'static dyn Cpu> = None;
 
 pub struct Kernel {
@@ -154,27 +154,29 @@ extern "C" fn main_thread_wrapper() -> ! {
 /// Kernel API: Yield control back to the MainThread
 /// This is called by tasks when they complete or want to yield
 /// The current task's context is saved so it can be resumed later
-pub extern "C" fn task_yield() {
+pub fn task_yield() {
     kprintln!("[KERNEL_API] task_yield called");
 
     unsafe {
-        if let (Some(cpu), Some(main_task_ptr), Some(current_task_ptr)) =
-            (CPU_PTR, MAIN_THREAD_TASK_PTR, CURRENT_TASK_PTR) {
+        if let (Some(cpu), Some(main_task_ptr), Some(mut current_task)) =
+            (CPU_PTR, MAIN_THREAD_TASK_PTR, CURRENT_TASK.take()) {
 
             let main_task = &mut *main_task_ptr;
-            let current_task = &mut *current_task_ptr;
 
-            // Save current task's context and switch to MainThread
+
+            let current_task_stack_pointer = current_task.stack_pointer_mut();
+            CURRENT_TASK = Some(current_task);
+
             cpu.swap_context(
-                current_task.stack_pointer_mut(),
+                current_task_stack_pointer,
                 main_task.stack_pointer()
             );
-        }
-    }
 
-    // Should never reach here after swap_context
-    loop {
-        kprintln!("[KERNEL_API] Task yield should not reach here");
+            // After resuming from a context switch, re-enable interrupts
+            // This ensures that if we were called from an interrupt handler,
+            // interrupts are enabled again after we resume
+            cpu.enable_interrupts();
+        }
     }
 }
 

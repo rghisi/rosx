@@ -34,7 +34,13 @@ const HEAP_SIZE: usize = 81920;
 static mut HEAP: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
 
 #[panic_handler]
-fn panic(_panic: &PanicInfo) -> ! {
+fn panic(info: &PanicInfo) -> ! {
+    kprintln!("\n!!! PANIC !!!");
+    if let Some(location) = info.location() {
+        kprintln!("Panic at {}:{}:{}", location.file(), location.line(), location.column());
+    }
+    kprintln!("Message: {}", info.message());
+    kprintln!("System halted.");
     loop {}
 }
 
@@ -97,13 +103,19 @@ fn idle_job() {
 
 fn dummy_job1() {
     println!("Job 1 Start");
-    delay(20000000);
+    for i in 1..10 {
+        delay(2000000);
+        println!("Job 1 tick {}", i);
+    }
     println!("Job 1 Finish");
 }
 
 fn dummy_job2() {
     println!("Job 2 Start");
-    delay(20000000);
+    for i in 1..10 {
+        delay(2000000);
+        println!("Job 2 tick {}", i);
+    }
     println!("Job 2 Finish");
 }
 
