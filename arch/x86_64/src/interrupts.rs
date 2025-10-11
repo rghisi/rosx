@@ -11,7 +11,8 @@ const PIC_2_OFFSET: u8 = 0x28;
 
 /// Software interrupt vectors for context switching
 /// These are user-defined interrupts triggered by software (INT instruction)
-const YIELD_INTERRUPT_VECTOR: u8 = 0x30;
+const YIELD_INTERRUPT_VECTOR: u8 = 0x30;           // Task yields back to kernel
+const SWITCH_TO_TASK_INTERRUPT_VECTOR: u8 = 0x31;  // Kernel switches to task
 
 /// Hardware interrupt numbers (after remapping)
 #[derive(Debug, Clone, Copy)]
@@ -41,7 +42,23 @@ lazy_static! {
         idt[InterruptIndex::Keyboard.as_u8()].set_handler_fn(keyboard_interrupt_handler);
 
         // Software interrupts for context switching
-        idt[YIELD_INTERRUPT_VECTOR].set_handler_fn(yield_interrupt_handler);
+        // Use the raw assembly handlers
+        unsafe {
+            unsafe extern "C" {
+                fn yield_interrupt_handler_asm();
+                fn switch_to_task_interrupt_handler_asm();
+            }
+
+            // Transmute the raw function pointers to the expected type
+            // This is safe because our assembly handlers follow the x86-64 interrupt ABI
+            let yield_handler: extern "x86-interrupt" fn(InterruptStackFrame) =
+                core::mem::transmute(yield_interrupt_handler_asm as *const ());
+            let switch_handler: extern "x86-interrupt" fn(InterruptStackFrame) =
+                core::mem::transmute(switch_to_task_interrupt_handler_asm as *const ());
+
+            idt[YIELD_INTERRUPT_VECTOR].set_handler_fn(yield_handler);
+            idt[SWITCH_TO_TASK_INTERRUPT_VECTOR].set_handler_fn(switch_handler);
+        }
 
         idt
     };
@@ -58,6 +75,7 @@ pub fn init() {
     kprintln!("[INTERRUPTS] - Timer interrupt registered at vector 0x{:02x}", InterruptIndex::Timer.as_u8());
     kprintln!("[INTERRUPTS] - Keyboard interrupt registered at vector 0x{:02x}", InterruptIndex::Keyboard.as_u8());
     kprintln!("[INTERRUPTS] - Yield interrupt registered at vector 0x{:02x}", YIELD_INTERRUPT_VECTOR);
+    kprintln!("[INTERRUPTS] - Switch-to-task interrupt registered at vector 0x{:02x}", SWITCH_TO_TASK_INTERRUPT_VECTOR);
 
     // Initialize and remap PICs
     unsafe {
@@ -166,16 +184,6 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
     }
 }
 
-/// Yield interrupt handler (Software interrupt INT 0x30)
-/// This is triggered by tasks voluntarily yielding the CPU
-/// For now this is a stub that just prints debug info
-/// Later this will be replaced with assembly that performs context switching
-extern "x86-interrupt" fn yield_interrupt_handler(stack_frame: InterruptStackFrame) {
-    kprintln!("[YIELD_INT] Yield interrupt triggered!");
-    kprintln!("[YIELD_INT] RIP: {:#x}", stack_frame.instruction_pointer.as_u64());
-    kprintln!("[YIELD_INT] CPU Flags: {:#x}", stack_frame.cpu_flags);
-    
-    kernel::kernel::handle_yield_interrupt();
-
-    kprintln!("[YIELD_INT] Handler complete (no context switch yet)");
-}
+// Yield interrupt handler is now implemented purely in assembly
+// See yield_interrupt_handler_asm in context_switching.S
+// It calls yield_handler_rust() in kernel.rs for scheduling logic

@@ -179,42 +179,67 @@ extern "C" fn main_thread_wrapper() -> ! {
     loop {}
 }
 
-/// Kernel API: Yield control back to the MainThread
-/// This is called by tasks when they complete or want to yield
-/// The current task's context is saved so it can be resumed later
-#[inline(always)]
-pub fn handle_yield_interrupt() {
-    kprintln!("[KERNEL_API] task_yield called");
+/// Assembly yield interrupt handler calls this function
+/// Called from yield_interrupt_handler_asm with the current stack pointer
+/// Returns the main_thread's stack pointer
+#[no_mangle]
+extern "C" fn yield_handler_rust(current_sp: usize) -> usize {
+    kprintln!("[YIELD_HANDLER] Called with SP: {:#x}", current_sp);
 
     unsafe {
-        if let (Some(cpu), Some(main_task_ptr)) = (CPU_PTR, MAIN_THREAD_TASK_PTR) {
-
+        if let Some(main_task_ptr) = MAIN_THREAD_TASK_PTR {
             let main_task = &mut *main_task_ptr;
 
-            let current_task_stack_pointer: *mut usize;
             if CURRENT_TASK.is_some() {
                 // Normal case: yielding from a task back to main_thread
                 let mut current_task = CURRENT_TASK.take().unwrap();
-                current_task_stack_pointer = current_task.stack_pointer_mut();
+                kprintln!("[YIELD_HANDLER] Saving task {} SP to {:#x}", current_task.id(), current_sp);
+                current_task.set_stack_pointer(current_sp);
                 CURRENT_TASK = Some(current_task);
             } else {
                 // Bootstrap case: main_thread yielding to itself
-                // This switches main_thread from ret-based to iretq-based execution
-                kprintln!("[KERNEL_API] Bootstrap yield: main_thread swapping with itself");
-                current_task_stack_pointer = main_task.stack_pointer_mut();
+                kprintln!("[YIELD_HANDLER] Bootstrap: saving main_thread SP to {:#x}", current_sp);
+                main_task.set_stack_pointer(current_sp);
             }
 
-            kprintln!("[KERNEL_API] about to switch context");
-            cpu.swap_context(
-                current_task_stack_pointer,
-                main_task.stack_pointer()
-            );
-            kprintln!("[KERNEL_API] continuing from switch context");
+            // Return main_thread's stack pointer
+            let new_sp = main_task.stack_pointer();
+            kprintln!("[YIELD_HANDLER] Returning SP: {:#x}", new_sp);
+            new_sp
+        } else {
+            kprintln!("[YIELD_HANDLER] ERROR: MAIN_THREAD_TASK_PTR not set!");
+            current_sp // Return same SP if something is wrong
+        }
+    }
+}
 
-            // After resuming from a context switch, re-enable interrupts
-            // This ensures that if we were called from an interrupt handler,
-            // interrupts are enabled again after we resume
-            cpu.enable_interrupts();
+/// Assembly switch_to_task interrupt handler calls this function
+/// Called from switch_to_task_interrupt_handler_asm with the current stack pointer (main_thread)
+/// Returns the task's stack pointer
+#[no_mangle]
+extern "C" fn switch_to_task_handler_rust(current_sp: usize) -> usize {
+    kprintln!("[SWITCH_HANDLER] Called with SP: {:#x}", current_sp);
+
+    unsafe {
+        if let Some(main_task_ptr) = MAIN_THREAD_TASK_PTR {
+            let main_task = &mut *main_task_ptr;
+
+            // Save main_thread's SP
+            kprintln!("[SWITCH_HANDLER] Saving main_thread SP to {:#x}", current_sp);
+            main_task.set_stack_pointer(current_sp);
+
+            // Get task to switch to
+            if let Some(ref task) = CURRENT_TASK {
+                let task_sp = task.stack_pointer();
+                kprintln!("[SWITCH_HANDLER] Switching to task {} SP: {:#x}", task.id(), task_sp);
+                task_sp
+            } else {
+                kprintln!("[SWITCH_HANDLER] ERROR: No task to switch to!");
+                current_sp
+            }
+        } else {
+            kprintln!("[SWITCH_HANDLER] ERROR: MAIN_THREAD_TASK_PTR not set!");
+            current_sp
         }
     }
 }

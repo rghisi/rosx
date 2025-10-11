@@ -44,6 +44,14 @@ impl Cpu for X86_64 {
         }
         kprintln!("[CPU] Returned from yield interrupt");
     }
+
+    fn trigger_switch_to_task(&self) {
+        kprintln!("[CPU] About to trigger switch-to-task interrupt (INT 0x31)...");
+        unsafe {
+            core::arch::asm!("int 0x31");
+        }
+        kprintln!("[CPU] Returned from switch-to-task interrupt");
+    }
 }
 
 // #[cfg(target_arch = "x86_64")]
@@ -68,4 +76,14 @@ unsafe extern "C" {
     /// This does NOT save the current context - it's used for the initial kernel->task switch.
     /// This function does not return.
     pub fn restore_context_and_iretq(stack_pointer: usize) -> !;
+
+    /// Naked assembly interrupt handler for yield (INT 0x30)
+    /// This is the raw interrupt handler that saves/restores context and calls yield_handler_rust.
+    /// Used for registering in the IDT.
+    pub fn yield_interrupt_handler_asm();
+
+    /// Naked assembly interrupt handler for switch_to_task (INT 0x31)
+    /// Kernel switches to a task.
+    /// Saves kernel context, calls switch_to_task_handler_rust(), restores task context.
+    pub fn switch_to_task_interrupt_handler_asm();
 }

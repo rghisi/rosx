@@ -73,13 +73,14 @@ impl Runnable for MainThread {
                 kprintln!("[MAIN_THREAD] Scheduling task: {}", task.id());
                 task.set_running();
 
-                let task_sp = task.stack_pointer();
-
+                // Set the task as CURRENT_TASK so the interrupt handler can find it
                 unsafe {
                     crate::kernel::CURRENT_TASK = Some(task);
                 }
 
-                self.cpu.swap_context(self.task.stack_pointer_mut(), task_sp);
+                // Trigger INT 0x31 to switch to the task
+                // This will save our context and restore the task's context
+                self.cpu.trigger_switch_to_task();
 
                 let mut task = unsafe {
                     crate::kernel::CURRENT_TASK.take().expect("Task should be returned from yield")
