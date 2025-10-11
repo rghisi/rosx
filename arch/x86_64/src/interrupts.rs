@@ -6,17 +6,17 @@ use kernel::kprintln;
 
 /// PIC (Programmable Interrupt Controller) configuration
 /// Offset PIC interrupts to 0x20-0x2F to avoid conflicts with CPU exceptions (0x00-0x1F)
-pub const PIC_1_OFFSET: u8 = 0x20;
-pub const PIC_2_OFFSET: u8 = 0x28;
+const PIC_1_OFFSET: u8 = 0x20;
+const PIC_2_OFFSET: u8 = 0x28;
 
 /// Software interrupt vectors for context switching
 /// These are user-defined interrupts triggered by software (INT instruction)
-pub const YIELD_INTERRUPT_VECTOR: u8 = 0x30;
+const YIELD_INTERRUPT_VECTOR: u8 = 0x30;
 
 /// Hardware interrupt numbers (after remapping)
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
-pub enum InterruptIndex {
+enum InterruptIndex {
     Timer = PIC_1_OFFSET,
     Keyboard = PIC_1_OFFSET + 1,
 }
@@ -28,7 +28,7 @@ impl InterruptIndex {
 }
 
 /// Chained PICs (primary and secondary)
-pub static PICS: Mutex<ChainedPics> =
+static PICS: Mutex<ChainedPics> =
     Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
 
 lazy_static! {
@@ -125,15 +125,6 @@ pub fn enable_timer() {
     kprintln!("[INTERRUPTS] Timer interrupt enabled (will tick at ~18.2 Hz)");
 }
 
-/// Test function to trigger yield interrupt
-pub fn test_yield_interrupt() {
-    kprintln!("[TEST] About to trigger yield interrupt (INT 0x30)...");
-    unsafe {
-        core::arch::asm!("int 0x30");
-    }
-    kprintln!("[TEST] Returned from yield interrupt");
-}
-
 // ============================================================================
 // Interrupt Handlers
 // ============================================================================
@@ -150,6 +141,11 @@ extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFr
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
     }
+
+    // Call task_yield to switch to another task
+    // kprintln!("[INTERRUPT] Calling task_yield");
+    // kernel::kernel::task_yield();
+    // kprintln!("[INTERRUPT] Returned from task_yield, handler ending");
 }
 
 /// Keyboard interrupt handler (IRQ1)
@@ -168,11 +164,6 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
     }
-
-    // Call task_yield to switch to another task
-    kprintln!("[INTERRUPT] Calling task_yield");
-    kernel::kernel::task_yield();
-    kprintln!("[INTERRUPT] Returned from task_yield, handler ending");
 }
 
 /// Yield interrupt handler (Software interrupt INT 0x30)

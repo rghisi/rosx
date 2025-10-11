@@ -9,4 +9,5 @@ pub trait Cpu {
     fn initialize_task(&self, stack_pointer: usize, entry_point: usize, entry_param: usize) -> usize;
     fn swap_context(&self, stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize);
     fn switch_to(&self, task_stack_pointer: usize) -> !;
+    fn trigger_yield(&self);
 }

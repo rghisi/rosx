@@ -1,9 +1,12 @@
 use kernel::cpu::{Cpu};
+use kernel::kprintln;
 
 pub struct X86_64 {}
 
 impl Cpu for X86_64 {
     fn setup(&self) {
+        crate::interrupts::init();
+        crate::interrupts::enable_timer();
     }
 
     fn enable_interrupts(&self) {
@@ -32,6 +35,14 @@ impl Cpu for X86_64 {
         unsafe {
             restore_context(task_stack_pointer);
         }
+    }
+
+    fn trigger_yield(&self) {
+        kprintln!("[TEST] About to trigger yield interrupt (INT 0x30)...");
+        unsafe {
+            core::arch::asm!("int 0x30");
+        }
+        kprintln!("[TEST] Returned from yield interrupt");
     }
 }
 

@@ -84,7 +84,6 @@ pub extern "C" fn _start() -> ! {
     kernel.setup();
     kernel.schedule(FunctionTask::new("1", dummy_job1));
     kernel.schedule(FunctionTask::new("2", dummy_job2));
-    interrupts::init();
     kernel.start();
 
     println!("Oops, should never reached here, crashing spectacularly.");
