@@ -30,6 +30,15 @@ pub type TaskEntryPoint = unsafe extern "C" fn() -> !;
 // Takes the actual entry point as a parameter (passed via RDI in x86_64)
 // Calls task_yield to return control to MainThread when done
 extern "C" fn task_wrapper(actual_entry: usize) {
+    // DEBUG: Output immediately via port I/O
+    unsafe {
+        core::arch::asm!(
+            "mov al, 'T'",
+            "out 0xe9, al",
+            options(nostack)
+        );
+    }
+
     kprintln!("[TASK_WRAPPER] Starting task");
     kprintln!("[TASK_WRAPPER] actual_entry parameter: {:#x}", actual_entry);
 

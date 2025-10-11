@@ -6,7 +6,7 @@ pub struct X86_64 {}
 impl Cpu for X86_64 {
     fn setup(&self) {
         crate::interrupts::init();
-        crate::interrupts::enable_timer();
+        // crate::interrupts::enable_timer();
     }
 
     fn enable_interrupts(&self) {
@@ -19,9 +19,15 @@ impl Cpu for X86_64 {
     fn setup_sys_ticks(&self) {
     }
 
+    fn switch_to_kernel(&self, stack_pointer: usize) {
+        unsafe {
+            restore_context_and_iretq(stack_pointer);
+        }
+    }
+
     fn initialize_task(&self, stack_pointer: usize, entry_point: usize, entry_param: usize) -> usize {
         unsafe {
-            initialize_task_for_swap(stack_pointer, entry_point, entry_param)
+            initialize_task_for_interrupt(stack_pointer, entry_point, entry_param)
         }
     }
 
@@ -32,11 +38,11 @@ impl Cpu for X86_64 {
     }
 
     fn trigger_yield(&self) {
-        kprintln!("[TEST] About to trigger yield interrupt (INT 0x30)...");
+        kprintln!("[CPU] About to trigger yield interrupt (INT 0x30)...");
         unsafe {
             core::arch::asm!("int 0x30");
         }
-        kprintln!("[TEST] Returned from yield interrupt");
+        kprintln!("[CPU] Returned from yield interrupt");
     }
 }
 
@@ -46,16 +52,20 @@ core::arch::global_asm!(include_str!("context_switching.S"));
 
 unsafe extern "C" {
     /// Calls the assembly function defined in process_initialization.S
-    /// Returns the initial RSP value.
-    pub fn initialize_process_stack(stack_top: usize, entry_point: usize, rflags: usize) -> usize;
-
-    /// Calls the assembly function defined in process_initialization.S
-    /// Initializes a task's stack for use with swap_context.
-    /// Returns the initial RSP value.
-    pub fn initialize_task_for_swap(stack_top: usize, entry_point: usize, entry_param: usize) -> usize;
+    /// Initializes a task's stack for interrupt-driven context switching.
+    /// Creates a fake interrupt frame (15 GPRs + RIP + CS + RFLAGS).
+    /// Returns the initial RSP value pointing to the base of the interrupt frame.
+    pub fn initialize_task_for_interrupt(stack_top: usize, entry_point: usize, entry_param: usize) -> usize;
 
     /// Calls the assembly function defined in context_switching.S
     /// Saves the current context to the location pointed by stack_pointer_to_store,
     /// then loads and restores the context from stack_pointer_to_load.
+    /// Now uses IRETQ instead of RET for interrupt-driven context switching.
     pub fn swap_context(stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize);
+
+    /// Calls the assembly function defined in context_switching.S
+    /// Restores a task's context from the given stack pointer and jumps to it via IRETQ.
+    /// This does NOT save the current context - it's used for the initial kernel->task switch.
+    /// This function does not return.
+    pub fn restore_context_and_iretq(stack_pointer: usize) -> !;
 }

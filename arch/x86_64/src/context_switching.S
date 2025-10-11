@@ -1,52 +1,79 @@
-# --- Context Switching for x86_64 ---
-# This file contains assembly functions for context switching.
+# --- Context Switching for x86_64 (INTERRUPT-DRIVEN VERSION) ---
+# This file contains assembly functions for interrupt-driven context switching.
 #
-# Stack Frame Layout (must match process_initialization.S):
+# Stack Frame Layout (IRETQ-compatible, must match process_initialization.S):
+# This is the layout created by interrupt handlers and expected by interrupt_return.
+# When the CPU takes an interrupt, it automatically pushes RIP, CS, RFLAGS.
+# We save the GPRs on top of that.
+#
 # Offset   Size   Register/Field
 # ------   ----   --------------
-#    0       8    r15
-#    8       8    r14
-#   16       8    r13
-#   24       8    r12
-#   32       8    r11
-#   40       8    r10
-#   48       8    r9
-#   56       8    r8
-#   64       8    rdi
-#   72       8    rsi
-#   80       8    rbp
-#   88       8    rdx
-#   96       8    rcx
-#  104       8    rbx
-#  112       8    rax
-#  120       8    RIP (IRET frame)
-#  128       8    CS  (IRET frame)
-#  136       8    RFLAGS (IRET frame)
-#  144       8    RSP (IRET frame)
-#  152       8    SS  (IRET frame)
+#    0       8    r15            ─┐
+#    8       8    r14             │
+#   16       8    r13             │
+#   24       8    r12             │
+#   32       8    r11             │
+#   40       8    r10             │  General Purpose Registers
+#   48       8    r9              │  (saved by our code)
+#   56       8    r8              │
+#   64       8    rdi             │
+#   72       8    rsi             │
+#   80       8    rbp             │
+#   88       8    rdx             │
+#   96       8    rcx             │
+#  104       8    rbx             │
+#  112       8    rax            ─┘
+#  120       8    RIP            ─┐  IRET Frame
+#  128       8    CS              │  (pushed by CPU on interrupt)
+#  136       8    RFLAGS         ─┘
 # ------
-# Total: 160 bytes (20 QWORDS)
+# Total: 144 bytes (same privilege switching)
+#
+# Note: RSP and SS would be at offsets 144 and 152 if privilege changes,
+# but we're doing same-privilege (kernel-to-kernel) switches for now.
 
-.global swap_context
+# ============================================================================
+# restore_context_and_iretq: Restore registers and return via IRETQ
+# ============================================================================
+# This is the second half of swap_context, exposed as a separate entry point.
+# It's used for the initial kernel->task switch where we don't need to save
+# the kernel's context.
+#
+# Parameters:
+#   RDI: Stack pointer to load (must point to an interrupt frame)
+#
+# This function does not return - it jumps to the task via IRETQ.
+#
+.global restore_context_and_iretq
 
-# swap_context: Save current context and switch to another task
+# ============================================================================
+# swap_context: Save current context and switch to another task (IRETQ version)
+# ============================================================================
+# This is the interrupt-driven version that uses IRETQ instead of RET.
+# It expects the stack to contain a full interrupt frame with IRET fields.
+#
 # Parameters:
 #   RDI: Pointer to store current stack pointer (*mut usize)
-#   RSI: Stack pointer to load (usize)
+#   RSI: Stack pointer to load (usize) - must point to an interrupt frame
 #
-# This function saves the current execution context (all registers + return address)
-# to the current stack, stores the stack pointer, then loads the new stack pointer
-# and restores the context from there.
+# This function:
+#   1. Saves all 15 GPRs to the current stack
+#   2. Stores the current stack pointer
+#   3. Loads the new stack pointer (which points to an interrupt frame)
+#   4. Restores all GPRs from the new stack
+#   5. Uses IRETQ to jump to the new task (popping RIP, CS, RFLAGS)
 #
-# NOTE: This now saves ALL registers to support context switching from interrupts
+# NOTE: The caller must have set up an interrupt frame on the current stack
+# BEFORE calling this function (RIP, CS, RFLAGS below the return address).
+#
+.global swap_context
+
 swap_context:
-    # Save parameters in registers we're about to push anyway
-    # We'll store them in the stack frame in the right positions
+    # Save parameters
     mov r10, rdi  # r10 = pointer to store current SP
     mov r11, rsi  # r11 = SP to load
 
     # Push all 15 general-purpose registers
-    # NOTE: We push the ACTUAL values of r10/r11, not our saved parameters
     push rax
     push rbx
     push rcx
@@ -63,14 +90,15 @@ swap_context:
     push r14
     push r15
 
-    # Now RSP points to the base of our saved context (r15)
+    # RSP now points to the base of our saved context (r15 at top)
     # Save this stack pointer
     mov [r10], rsp
 
-    # Load new stack pointer from r11
+    # Load new stack pointer (points to an interrupt frame)
     mov rsp, r11
 
-    # Restore all registers from the new stack
+    # Restore all 15 general-purpose registers from the new stack
+    # After this, stack will have: [RIP] [CS] [RFLAGS]
     pop r15
     pop r14
     pop r13
@@ -87,7 +115,35 @@ swap_context:
     pop rbx
     pop rax
 
-    # Return (to the new context)
+    # Use IRETQ to restore RIP, CS, RFLAGS and jump to the new task
+    # This pops 3 values (or 5 if privilege changes) and jumps to RIP
+    iretq
+
+restore_context_and_iretq:
+    # This is a separate entry point for direct calls
+    # Load the stack pointer from RDI parameter
+    mov rsp, rdi
+
+    # Restore all 15 general-purpose registers
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rbp
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+
+    # Now stack has: [RIP] [CS] [RFLAGS]
+    # TEMPORARY: Try using ret instead of iretq
+    # This will just pop RIP and jump, ignoring CS and RFLAGS
     ret
 
 # Helper function to print RAX in hex (preserves all registers except AL)

@@ -60,6 +60,13 @@ impl Runnable for MainThread {
         kprintln!("[MAIN_THREAD] Task system ready, enabling interrupts");
         self.cpu.enable_interrupts();
 
+        // CRITICAL: Bootstrap into interrupt-driven mode
+        // This yield will save our context as an interrupt frame and return via iretq
+        // After this, all context switches will be interrupt-driven
+        kprintln!("[MAIN_THREAD] Bootstrapping into interrupt mode...");
+        crate::kernel::task_yield();
+        kprintln!("[MAIN_THREAD] Now running in interrupt-driven mode!");
+
         loop {
             kprintln!("[MAIN_THREAD] Loop start");
             if let Some(mut task) = self.ready_tasks.take_next() {

@@ -64,29 +64,18 @@ pub extern "C" fn _start() -> ! {
     init_debug(&MULTI_DEBUG);
 
     let idle_task = FunctionTask::new("Idle Task", idle_job);
-    unsafe {
-        let stack1: [u8; 1024] = [0; 1024];
-        let stack2: [u8; 1024] = [0; 1024];
-        let sp1 = stack1.as_ptr().addr();
-        let sp12 = stack1.as_ptr().offset(stack1.len() as isize - 1).addr();
-        let sp2 = stack2.as_ptr().addr();
-        let sp22 = stack2.as_ptr().offset(stack2.len() as isize - 1).addr();
-        println!("{} {} {} {}", sp1, sp12, sp2, sp22);
-        let a = idle_task.stack_pointer();
-        println!("{}", a)
-    }
     let cpu: &'static dyn Cpu = &CPU;
     let mut kernel = Kernel::new(cpu, idle_task);
 
 
-    println!("Init");
+    println!("[KERNEL] Booting");
 
     kernel.setup();
     kernel.schedule(FunctionTask::new("1", dummy_job1));
     kernel.schedule(FunctionTask::new("2", dummy_job2));
     kernel.start();
 
-    println!("Oops, should never reached here, crashing spectacularly.");
+    println!("[KERNEL] Oops, should never reached here, crashing spectacularly.");
 
     loop {
     }

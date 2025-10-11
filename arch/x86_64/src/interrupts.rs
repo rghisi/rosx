@@ -174,13 +174,8 @@ extern "x86-interrupt" fn yield_interrupt_handler(stack_frame: InterruptStackFra
     kprintln!("[YIELD_INT] Yield interrupt triggered!");
     kprintln!("[YIELD_INT] RIP: {:#x}", stack_frame.instruction_pointer.as_u64());
     kprintln!("[YIELD_INT] CPU Flags: {:#x}", stack_frame.cpu_flags);
-
-    // TODO: This will be replaced with assembly code that:
-    // 1. Saves all GPRs to current task's stack
-    // 2. Saves stack pointer to current task
-    // 3. Calls scheduler to pick next task
-    // 4. Loads next task's stack pointer
-    // 5. Jumps to interrupt_return (which will iretq)
+    
+    kernel::kernel::handle_yield_interrupt();
 
     kprintln!("[YIELD_INT] Handler complete (no context switch yet)");
 }
