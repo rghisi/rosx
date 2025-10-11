@@ -31,12 +31,6 @@ impl Cpu for X86_64 {
         }
     }
 
-    fn switch_to(&self, task_stack_pointer: usize) -> ! {
-        unsafe {
-            restore_context(task_stack_pointer);
-        }
-    }
-
     fn trigger_yield(&self) {
         kprintln!("[TEST] About to trigger yield interrupt (INT 0x30)...");
         unsafe {
@@ -59,11 +53,6 @@ unsafe extern "C" {
     /// Initializes a task's stack for use with swap_context.
     /// Returns the initial RSP value.
     pub fn initialize_task_for_swap(stack_top: usize, entry_point: usize, entry_param: usize) -> usize;
-
-    /// Calls the assembly function defined in context_switching.S
-    /// Restores the context from the given stack pointer and switches to the task.
-    /// This function never returns.
-    pub fn restore_context(stack_pointer: usize) -> !;
 
     /// Calls the assembly function defined in context_switching.S
     /// Saves the current context to the location pointed by stack_pointer_to_store,
