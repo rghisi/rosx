@@ -181,9 +181,8 @@ pub fn next_id() -> u32 {
 impl Drop for Task {
     fn drop(&mut self) {
         kprintln!(
-              "[TASK] Deallocating task {} (state: {})",
-              self.id,
-              self.state
+              "[TASK] Deallocating task {}",
+              self.id
           );
     }
 }

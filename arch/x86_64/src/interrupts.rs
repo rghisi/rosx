@@ -148,22 +148,19 @@ pub fn enable_timer() {
 // ============================================================================
 
 /// Timer interrupt handler (IRQ0)
-/// This will be used for preemptive multitasking
+/// This triggers preemptive multitasking by forcing a yield
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    // For now, just acknowledge the timer tick
-    // TODO: Add tick counter and periodic task switching
-    kprintln!("[TIMER] Tick!");
-
-    // Send EOI (End of Interrupt) to PIC
+    // Send EOI (End of Interrupt) to PIC first to allow nested interrupts
     unsafe {
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
     }
 
-    // Call task_yield to switch to another task
-    // kprintln!("[INTERRUPT] Calling task_yield");
-    // kernel::kernel::task_yield();
-    // kprintln!("[INTERRUPT] Returned from task_yield, handler ending");
+    // Trigger yield interrupt (INT 0x30) to perform preemptive context switch
+    // This will save the current task's context and switch back to main_thread
+    unsafe {
+        core::arch::asm!("int 0x30");
+    }
 }
 
 /// Keyboard interrupt handler (IRQ1)

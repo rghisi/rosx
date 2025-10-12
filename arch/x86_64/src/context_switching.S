@@ -132,11 +132,16 @@ swap_context:
     pop rax
 
     # Step 7: Jump to target task
-    # Use RET (pops only RIP) instead of IRETQ for now
-    ret
+    # After popping GPRs, RSP points to [RIP] [CS] [RFLAGS]
+    # Use sti + ret for same-privilege switches
+    sti      # Enable interrupts
+    ret      # Jump to task's RIP
 
 restore_context_and_iretq:
-    # This is a separate entry point for direct calls
+    # This is used for the INITIAL boot only - jumping to main_thread_wrapper
+    # We can't use iretq because interrupts are disabled at boot (RFLAGS=0x6)
+    # and the CPU won't allow iretq to enable them from ring 0
+
     # Load the stack pointer from RDI parameter
     mov rsp, rdi
 
@@ -158,8 +163,8 @@ restore_context_and_iretq:
     pop rax
 
     # Now stack has: [RIP] [CS] [RFLAGS]
-    # TEMPORARY: Try using ret instead of iretq
-    # This will just pop RIP and jump, ignoring CS and RFLAGS
+    # For initial boot, just jump to RIP and skip CS/RFLAGS
+    # Interrupts will be enabled later by enable_interrupts()
     ret
 
 # ============================================================================
@@ -214,7 +219,11 @@ switch_to_task_interrupt_handler_asm:
     pop rbx
     pop rax
 
-    ret
+    # Now RSP points to: [RIP] [CS] [RFLAGS]
+    # For now, just ret and let the task enable interrupts itself
+    # We can't use iretq reliably for same-privilege switches
+    sti      # Enable interrupts before returning to task
+    ret      # Jump to task's RIP
 
 # ============================================================================
 # yield_interrupt_handler_asm: Naked assembly yield interrupt handler

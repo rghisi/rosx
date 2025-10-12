@@ -6,7 +6,7 @@ pub struct X86_64 {}
 impl Cpu for X86_64 {
     fn setup(&self) {
         crate::interrupts::init();
-        // crate::interrupts::enable_timer();
+        crate::interrupts::enable_timer();
     }
 
     fn enable_interrupts(&self) {
