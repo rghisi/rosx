@@ -1,9 +1,9 @@
 use alloc::boxed::Box;
 use task::{Task, next_id};
+use wrappers::task_wrapper;
 
 #[derive(Copy, Clone, Debug)]
 pub struct FunctionTask {
-    job: fn(),
 }
 
 impl FunctionTask {
@@ -11,6 +11,7 @@ impl FunctionTask {
         Task::new(
             next_id(),
             name,
+            task_wrapper as usize,
             job as usize
         )
     }

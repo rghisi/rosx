@@ -1,4 +1,3 @@
-use alloc::boxed::Box;
 use alloc::vec::Vec;
 use scheduler::{ScheduledTask, Scheduler, SchedulingError, StateCreatedNotAccepted};
 use task::{SharedTask, Task};

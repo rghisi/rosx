@@ -1,11 +1,12 @@
-use alloc::boxed::Box;
 use alloc::vec::Vec;
 use cpu::Cpu;
+use wrappers::task_wrapper;
 use kprintln;
 use runnable::Runnable;
 use scheduler::Scheduler;
 use simple_scheduler::SimpleScheduler;
-use task::{SharedTask, Task, TaskEntryPoint};
+use state::{CURRENT_TASK, MAIN_THREAD_TASK_PTR};
+use task::{SharedTask, Task};
 use task::TaskState::{Blocked, Created, Ready, Running};
 
 pub(crate) struct MainThread {
@@ -20,7 +21,7 @@ pub(crate) struct MainThread {
 impl MainThread {
 
     pub(crate) fn new(cpu: &'static (dyn Cpu + 'static), mut idle_task: SharedTask) -> Self {
-        let main_task = Task::new(0, "Main Thread", 0);
+        let main_task = Task::new(0, "Main Thread", task_wrapper as usize, 0);
 
         let idle_task_pid = idle_task.id();
         let new_stack_pointer = cpu.initialize_task(
@@ -53,7 +54,7 @@ impl MainThread {
 impl Runnable for MainThread {
     fn run(&mut self) {
         unsafe {
-            crate::kernel::MAIN_THREAD_TASK_PTR = Some(&mut *self.task as *mut Task);
+            MAIN_THREAD_TASK_PTR = Some(&mut *self.task as *mut Task);
         }
 
         self.cpu.enable_interrupts();
@@ -63,18 +64,19 @@ impl Runnable for MainThread {
             if task_option.is_none() {
                 task_option = self.idle_task.take();
             }
+
             let mut task = task_option.unwrap();
             task.set_running();
             let task_stack_pointer = task.stack_pointer();
 
             unsafe {
-                crate::kernel::CURRENT_TASK = Some(task);
+                CURRENT_TASK = Some(task);
             }
 
             self.cpu.swap_context(self.task.stack_pointer_mut(), task_stack_pointer);
 
             let mut task = unsafe {
-                crate::kernel::CURRENT_TASK.take().expect("Task should be returned from yield")
+                CURRENT_TASK.take().expect("Task should be returned from yield")
             };
 
             if task.state() == Running {

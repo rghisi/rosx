@@ -1,8 +1,5 @@
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
-use kernel::CURRENT_TASK;
-use kprintln;
-use runnable::Runnable;
 use task::TaskState::{Created, Ready, Running, Terminated};
 
 pub type SharedTask = Box<Task>;
@@ -23,58 +20,25 @@ impl Display for TaskState {
         }
     }
 }
-
-pub type TaskEntryPoint = unsafe extern "C" fn() -> !;
-
-// Wrapper function that calls the actual task entry and handles completion
-// Takes the actual entry point as a parameter (passed via RDI in x86_64)
-// Calls task_yield to return control to MainThread when done
-extern "C" fn task_wrapper(actual_entry: usize) {
-    let task_fn: fn() = unsafe { core::mem::transmute(actual_entry) };
-    task_fn();
-
-    unsafe {
-        if let Some(mut task) = CURRENT_TASK.take() {
-            task.set_terminated();
-            CURRENT_TASK = Some(task);
-        }
-    }
-
-    crate::kernel::task_yield();
-}
-
-#[inline(always)]
-pub fn with_current_task<F>(f: F)
-where
-    F: FnOnce(&mut Task),
-{
-    unsafe {
-        if let Some(mut task) = CURRENT_TASK.take() {
-            f(&mut task);
-            CURRENT_TASK = Some(task);
-        }
-    }
-}
-
 pub struct Task {
     id: u32,
     name: &'static str,
     state: TaskState,
     stack_pointer: usize,
-    entry_point: usize,
+    entry_point_wrapper: usize,
     actual_entry_point: usize,
     stack: [usize; 256],
 }
 
 impl Task {
-    pub fn new(id: u32, name: &'static str, actual_entry_point: usize) -> SharedTask {
+    pub fn new(id: u32, name: &'static str, entry_wrapper: usize, entry_point: usize) -> SharedTask {
         let mut task = Box::new(Task {
             id,
             name,
             state: Created,
             stack_pointer: 0,
-            entry_point: task_wrapper as usize,
-            actual_entry_point,
+            entry_point_wrapper: entry_wrapper,
+            actual_entry_point: entry_point,
             stack: [0; 256],
         });
 
@@ -117,28 +81,16 @@ impl Task {
     }
 
     pub fn entry_point(&self) -> usize {
-        self.entry_point
+        self.entry_point_wrapper
     }
     pub fn actual_entry_point(&self) -> usize {
         self.actual_entry_point
     }
 }
-
-impl PartialEq<Task> for Task {
-    fn eq(&self, other: &Task) -> bool {
-        self.id == other.id
-    }
-}
-
 static mut NEXT_ID: u32 = 100;
 pub fn next_id() -> u32 {
     unsafe  {
         NEXT_ID += 1;
         NEXT_ID
-    }
-}
-
-impl Drop for Task {
-    fn drop(&mut self) {
     }
 }
