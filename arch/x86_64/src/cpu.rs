@@ -1,9 +1,13 @@
+use core::arch::naked_asm;
 use kernel::cpu::{Cpu};
+use kernel::kprintln;
 
 pub struct X86_64 {}
 
 impl Cpu for X86_64 {
     fn setup(&self) {
+        crate::interrupts::init();
+        crate::interrupts::enable_timer();
     }
 
     fn enable_interrupts(&self) {
@@ -18,7 +22,41 @@ impl Cpu for X86_64 {
 
     fn initialize_task(&self, stack_pointer: usize, entry_point: usize, entry_param: usize) -> usize {
         unsafe {
-            initialize_task_for_swap(stack_pointer, entry_point, entry_param)
+            let mut sp = stack_pointer as *mut usize;
+            sp = sp.sub(1);
+            *sp = entry_point;
+            sp = sp.sub(1);
+            *sp = 0x15;             //r15
+            sp = sp.sub(1);
+            *sp = 0x14;             //r14
+            sp = sp.sub(1);
+            *sp = 0x13;             //r13
+            sp = sp.sub(1);
+            *sp = 0x12;             //r12
+            sp = sp.sub(1);
+            *sp = 0x11;             //r11
+            sp = sp.sub(1);
+            *sp = 0x10;             //r10
+            sp = sp.sub(1);
+            *sp = 0x09;             //r09
+            sp = sp.sub(1);
+            *sp = 0x08;             //r08
+            sp = sp.sub(1);
+            *sp = entry_param;      //rdi
+            sp = sp.sub(1);
+            *sp = 0xa;      //rsi
+            sp = sp.sub(1);
+            *sp = 0x0b;             //rbp
+            sp = sp.sub(1);
+            *sp = 0x0c;      //rdx
+            sp = sp.sub(1);
+            *sp = 0x0d;             //rcx
+            sp = sp.sub(1);
+            *sp = 0x0e;             //rbx
+            sp = sp.sub(1);
+            *sp = 0x0f;             //rax
+
+            sp as usize
         }
     }
 
@@ -28,9 +66,9 @@ impl Cpu for X86_64 {
         }
     }
 
-    fn switch_to(&self, task_stack_pointer: usize) -> ! {
+    fn trigger_yield(&self) {
         unsafe {
-            restore_context(task_stack_pointer);
+            core::arch::asm!("int 0x30");
         }
     }
 }
@@ -41,21 +79,10 @@ core::arch::global_asm!(include_str!("context_switching.S"));
 
 unsafe extern "C" {
     /// Calls the assembly function defined in process_initialization.S
-    /// Returns the initial RSP value.
-    pub fn initialize_process_stack(stack_top: usize, entry_point: usize, rflags: usize) -> usize;
+    /// Initializes a task's stack for interrupt-driven context switching.
+    /// Creates a fake interrupt frame (15 GPRs + RIP + CS + RFLAGS).
+    /// Returns the initial RSP value pointing to the base of the interrupt frame.
+    pub fn initialize_task_stack(stack_top: usize, entry_point: usize, entry_param: usize) -> usize;
 
-    /// Calls the assembly function defined in process_initialization.S
-    /// Initializes a task's stack for use with swap_context.
-    /// Returns the initial RSP value.
-    pub fn initialize_task_for_swap(stack_top: usize, entry_point: usize, entry_param: usize) -> usize;
-
-    /// Calls the assembly function defined in context_switching.S
-    /// Restores the context from the given stack pointer and switches to the task.
-    /// This function never returns.
-    pub fn restore_context(stack_pointer: usize) -> !;
-
-    /// Calls the assembly function defined in context_switching.S
-    /// Saves the current context to the location pointed by stack_pointer_to_store,
-    /// then loads and restores the context from stack_pointer_to_load.
     pub fn swap_context(stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize);
 }
