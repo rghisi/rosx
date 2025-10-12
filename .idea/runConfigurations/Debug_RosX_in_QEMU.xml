@@ -1,0 +1,8 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Debug RosX in QEMU" type="RsRemoteRunConfiguration" debuggerKind="GDB" remoteCommand="localhost:1234" symbolFile="$PROJECT_DIR$/target/rosx/debug/rosx" sysroot="">
+    <method v="2">
+      <option name="RunConfigurationTask" enabled="true" run_configuration_name="x86-64 Bootimage" run_configuration_type="CargoCommandRunConfiguration" />
+      <option name="ToolBeforeRunTask" enabled="true" actionId="Tool_External Tools_QEMU Debug SH" />
+    </method>
+  </configuration>
+</component>

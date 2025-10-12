@@ -63,9 +63,9 @@ impl Runnable for MainThread {
         // CRITICAL: Bootstrap into interrupt-driven mode
         // This yield will save our context as an interrupt frame and return via iretq
         // After this, all context switches will be interrupt-driven
-        kprintln!("[MAIN_THREAD] Bootstrapping into interrupt mode...");
-        crate::kernel::task_yield();
-        kprintln!("[MAIN_THREAD] Now running in interrupt-driven mode!");
+        // kprintln!("[MAIN_THREAD] Bootstrapping into interrupt mode...");
+        // crate::kernel::task_yield();
+        // kprintln!("[MAIN_THREAD] Now running in interrupt-driven mode!");
 
         loop {
             kprintln!("[MAIN_THREAD] Loop start");
