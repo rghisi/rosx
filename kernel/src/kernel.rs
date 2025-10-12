@@ -148,7 +148,6 @@ pub fn task_yield() {
         if let Some(cpu)= CPU_PTR {
             if let Some(mut task) = CURRENT_TASK.take() {
                 if let Some(main) = MAIN_THREAD_TASK_PTR {
-                    task.set_terminated();
                     let task_stack_pointer_reference = task.stack_pointer_mut();
                     CURRENT_TASK = Some(task);
                     cpu.swap_context(task_stack_pointer_reference, main.as_mut().unwrap().stack_pointer())

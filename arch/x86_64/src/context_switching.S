@@ -1,6 +1,7 @@
 .global swap_context
 
 swap_context: # Parameters: RDI = *mut usize (where to store SP), RSI = usize (SP to load)
+    cli
     test rdi, rdi
     jz skip_save
     push r15
@@ -36,5 +37,5 @@ skip_save:
     pop r13
     pop r14
     pop r15
-
+    sti
     ret      # Jump to task's RIP

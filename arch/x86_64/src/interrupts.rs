@@ -33,38 +33,16 @@ static PICS: Mutex<ChainedPics> =
     Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
 
 lazy_static! {
-    /// Static IDT
     static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
 
-        // Hardware interrupts
         idt[InterruptIndex::Timer.as_u8()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIndex::Keyboard.as_u8()].set_handler_fn(keyboard_interrupt_handler);
-
-        // Software interrupts for context switching
-        // Use the raw assembly handlers
-        // unsafe {
-        //     unsafe extern "C" {
-        //         fn yield_interrupt_handler_asm();
-        //         fn switch_to_task_interrupt_handler_asm();
-        //     }
-        //
-        //     // Transmute the raw function pointers to the expected type
-        //     // This is safe because our assembly handlers follow the x86-64 interrupt ABI
-        //     let yield_handler: extern "x86-interrupt" fn(InterruptStackFrame) =
-        //         core::mem::transmute(yield_interrupt_handler_asm as *const ());
-        //     let switch_handler: extern "x86-interrupt" fn(InterruptStackFrame) =
-        //         core::mem::transmute(switch_to_task_interrupt_handler_asm as *const ());
-        //
-        //     idt[YIELD_INTERRUPT_VECTOR].set_handler_fn(yield_handler);
-        //     idt[SWITCH_TO_TASK_INTERRUPT_VECTOR].set_handler_fn(switch_handler);
-        // }
 
         idt
     };
 }
 
-/// Initialize interrupts (IDT and PIC setup, but don't enable yet)
 pub fn init() {
     IDT.load();
 
@@ -124,20 +102,25 @@ extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFr
 
     // Trigger yield interrupt (INT 0x30) to perform preemptive context switch
     // This will save the current task's context and switch back to main_thread
-    unsafe {
-        core::arch::asm!("int 0x30");
-    }
+    // unsafe {
+    //     core::arch::asm!("int 0x30");
+    // }
+    kernel::kernel::task_yield();
 }
 
 /// Keyboard interrupt handler (IRQ1)
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
     use x86_64::instructions::port::Port;
     let mut port: Port<u8> = Port::new(0x60);
-    let _scancode: u8 = unsafe { port.read() };
+    let scancode: u8 = unsafe { port.read() };
 
     unsafe {
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+    }
+    if scancode == 57 {
+        kprintln!("Keyboard interrupt {}", scancode);
+        kernel::kernel::task_yield();
     }
 }
 

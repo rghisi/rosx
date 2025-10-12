@@ -11,7 +11,8 @@ use task::TaskState::{Blocked, Created, Ready, Running};
 pub(crate) struct MainThread {
     cpu: &'static dyn Cpu,
     task: SharedTask,
-    idle_task: SharedTask,
+    idle_task: Option<SharedTask>,
+    idle_task_pid: u32,
     ready_tasks: SimpleScheduler,
     blocked_tasks: Vec<SharedTask>,
 }
@@ -21,6 +22,7 @@ impl MainThread {
     pub(crate) fn new(cpu: &'static (dyn Cpu + 'static), mut idle_task: SharedTask) -> Self {
         let main_task = Task::new(0, "Main Thread", 0);
 
+        let idle_task_pid = idle_task.id();
         let new_stack_pointer = cpu.initialize_task(
             idle_task.stack_pointer(),
             idle_task.entry_point(),
@@ -32,7 +34,8 @@ impl MainThread {
         MainThread {
             cpu,
             task: main_task,
-            idle_task,
+            idle_task: Some(idle_task),
+            idle_task_pid,
             ready_tasks: SimpleScheduler::new(),
             blocked_tasks: Vec::with_capacity(5),
         }
@@ -56,26 +59,31 @@ impl Runnable for MainThread {
         self.cpu.enable_interrupts();
 
         loop {
-            if let Some(mut task) = self.ready_tasks.take_next() {
-                task.set_running();
-                let task_stack_pointer = task.stack_pointer();
+            let mut task_option = self.ready_tasks.take_next();
+            if task_option.is_none() {
+                task_option = self.idle_task.take();
+            }
+            let mut task = task_option.unwrap();
+            task.set_running();
+            let task_stack_pointer = task.stack_pointer();
 
-                unsafe {
-                    crate::kernel::CURRENT_TASK = Some(task);
-                }
+            unsafe {
+                crate::kernel::CURRENT_TASK = Some(task);
+            }
 
-                self.cpu.swap_context(self.task.stack_pointer_mut(), task_stack_pointer);
+            self.cpu.swap_context(self.task.stack_pointer_mut(), task_stack_pointer);
 
-                let mut task = unsafe {
-                    crate::kernel::CURRENT_TASK.take().expect("Task should be returned from yield")
-                };
+            let mut task = unsafe {
+                crate::kernel::CURRENT_TASK.take().expect("Task should be returned from yield")
+            };
 
-                if task.state() == Running {
-                    task.set_ready();
+            if task.state() == Running {
+                task.set_ready();
+                if task.id() != self.idle_task_pid {
                     let _ = self.ready_tasks.offer(task);
+                } else {
+                    self.idle_task = Some(task);
                 }
-            } else {
-                panic!("[MAIN_THREAD] Finito!");
             }
         }
     }
