@@ -73,7 +73,7 @@ mod tests {
         task.set_ready();
         let mut scheduler = SimpleScheduler::new();
 
-        let result = scheduler.offer(Box::new(task));
+        let result = scheduler.offer(task);
         assert!(result.is_ok());
 
         let next_task = scheduler.take_next().unwrap();
@@ -93,8 +93,8 @@ mod tests {
             task2_id = task2.id();
             task2.set_ready();
 
-            let _ = scheduler.offer(Box::new(task1));
-            let _ = scheduler.offer(Box::new(task2));
+            let _ = scheduler.offer(task1);
+            let _ = scheduler.offer(task2);
         }
 
         {
@@ -125,7 +125,7 @@ mod tests {
         {
             let mut task1 = FunctionTask::new("T1", dummy_job);
             task1.set_ready();
-            let _ = scheduler.offer(Box::new(task1));
+            let _ = scheduler.offer(task1);
         }
 
         {
@@ -145,7 +145,7 @@ mod tests {
         let mut scheduler = SimpleScheduler::new();
         let task1 = FunctionTask::new("T1", dummy_job);
         let task_state = task1.state();
-        let result = scheduler.offer(Box::new(task1));
+        let result = scheduler.offer(task1);
         assert_eq!(task_state, Created);
         assert_eq!(result.is_err(), true);
     }
@@ -156,7 +156,7 @@ mod tests {
         let mut task1 = FunctionTask::new("T1", dummy_job);
         task1.set_terminated();
         let task_state = task1.state();
-        let result = scheduler.offer(Box::new(task1));
+        let result = scheduler.offer(task1);
         assert_eq!(task_state, Terminated);
         assert_eq!(result.is_err(), true);
     }
@@ -164,6 +164,12 @@ mod tests {
     impl Debug for Task {
         fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
             f.write_str(self.name())
+        }
+    }
+
+    impl PartialEq for Task {
+        fn eq(&self, other: &Self) -> bool {
+            self.id() == other.id()
         }
     }
     
