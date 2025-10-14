@@ -8,6 +8,7 @@ mod debug_console;
 mod multi_debug;
 mod interrupts;
 
+use kernel::kprint;
 use core::arch::asm;
 use core::panic::PanicInfo;
 use buddy_system_allocator::LockedHeap;
@@ -98,57 +99,57 @@ fn idle_job() {
 
 fn dummy_job1() {
     let mut counter = 0;
-    println!("Job 1 Start");
-    for i in 0..100 {
+    print!("1");
+    for i in 0..10 {
         counter += 1;
-        delay(20000);
-        // println!("Job 1 tick {}", counter);
+        delay(20000500);
+        print!("1");
     }
-    println!("Job 1 Finish {}", counter);
+    print!("1");
 }
 
 fn dummy_job2() {
-    let mut counter = 100;
-    println!("Job 2 Start");
-    for i in 0..100 {
+    let mut counter = 10;
+    print!("2");
+    for i in 0..10 {
         counter -= 1;
-        delay(20000);
-        // println!("Job 2 tick {}", counter);
+        delay(20001000);
+        print!("2");
     }
-    println!("Job 2 Finish {}", counter);
+    print!("2");
 }
 
 fn dummy_job3() {
-    let mut counter = 1000 * 10;
-    println!("Job 3 Start");
-    for i in 0..1000 {
+    let mut counter = 10 * 10;
+    print!("3");
+    for i in 0..10 {
         counter -= 10;
-        delay(2000);
-        // println!("Job 3 tick {}", counter);
+        delay(20000300);
+        print!("3");
     }
-    println!("Job 3 Finish {}", counter);
+    print!("3");
 }
 
 fn dummy_job4() {
-    let mut counter = 1000 * 2;
-    println!("Job 4 Start");
-    for i in 0..1000 {
+    let mut counter = 10 * 2;
+    print!("4");
+    for i in 0..10 {
         counter -= 2;
-        delay(2000);
-        // println!("Job 3 tick {}", counter);
+        delay(20000700);
+        print!("4");
     }
-    println!("Job 4 Finish {}", counter);
+    print!("4");
 }
 
 fn dummy_job5() {
-    let mut counter = 1000 * 5;
-    println!("Job 5 Start");
-    for i in 0..1000 {
+    let mut counter = 10 * 5;
+    print!("5");
+    for i in 0..10 {
         counter -= 5;
-        delay(2000);
-        // println!("Job 5 tick {}", counter);
+        delay(20000000);
+        print!("5");
     }
-    println!("Job 5 Finish {}", counter);
+    print!("5");
 }
 
 fn delay(ticks: u32) {
