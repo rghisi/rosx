@@ -17,6 +17,5 @@ pub mod task_scheduler_round_robin;
 pub(crate) mod context_switcher;
 pub mod debug;
 pub(crate) mod state;
-pub(crate) mod wrappers;
 pub mod task_scheduler;
 pub mod kconfig;

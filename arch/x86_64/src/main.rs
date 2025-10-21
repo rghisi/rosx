@@ -32,8 +32,6 @@ use crate::vga_buffer::{Color, ColorCode, Writer, VGA_DEBUG};
 
 extern crate alloc;
 
-static CPU: X86_64 = X86_64{};
-
 #[global_allocator]
 static HEAP_ALLOCATOR: LockedHeap<32> = LockedHeap::<32>::new();
 
@@ -62,6 +60,7 @@ static DEBUG_OUTPUTS: &[&dyn kernel::debug::DebugOutput] = &[
 
 static MULTI_DEBUG: MultiDebugOutput = MultiDebugOutput::new(DEBUG_OUTPUTS);
 
+static CPU: X86_64 = X86_64{};
 
 static KCONFIG: KConfig = KConfig {
     cpu: &CPU,
@@ -69,13 +68,11 @@ static KCONFIG: KConfig = KConfig {
     idle_task: new_idle_task
 };
 fn get_scheduler() -> Box<dyn TaskScheduler> {
-    let idle_task = FunctionTask::new("Idle Task", idle_job);
-    let cpu: &'static dyn Cpu = &CPU;
-    Box::new(RoundRobin::new(cpu, idle_task))
+    Box::new(RoundRobin::new())
 }
 
 fn new_idle_task() -> Box<Task> {
-    FunctionTask::new("Idle Task", idle_job)
+    FunctionTask::new("[K] Idle", idle_job)
 }
 
 #[unsafe(no_mangle)]
@@ -86,7 +83,7 @@ pub extern "C" fn _start() -> ! {
     init_debug(&MULTI_DEBUG);
     CPU.setup();
 
-    let mut kernel = Kernel::new_kconfig(&KCONFIG);
+    let mut kernel = Kernel::new(&KCONFIG);
 
 
     println!("[KERNEL] Booting");

@@ -1,6 +1,5 @@
-use alloc::boxed::Box;
+use kernel::task_wrapper;
 use task::{Task, next_id, SharedTask};
-use wrappers::task_wrapper;
 
 #[derive(Copy, Clone, Debug)]
 pub struct FunctionTask {

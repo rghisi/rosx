@@ -6,14 +6,14 @@ pub trait Cpu {
     fn enable_interrupts(&self);
     fn disable_interrupts(&self);
     fn setup_sys_ticks(&self);
-    fn initialize_task(&self, stack_pointer: usize, entry_point: usize, entry_param: usize) -> usize;
+    fn initialize_stack(&self, stack_pointer: usize, entry_point: usize, entry_param: usize) -> usize;
     fn swap_context(&self, stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize);
     fn trigger_yield(&self);
 
-    fn initialize_task_hl(&self, task: &mut Task) {
+    fn initialize_task(&self, task: &mut Task) {
         let original_sp = task.stack_pointer();
 
-        let new_stack_pointer = self.initialize_task(
+        let new_stack_pointer = self.initialize_stack(
             original_sp,
             task.entry_point(),
             task.actual_entry_point()

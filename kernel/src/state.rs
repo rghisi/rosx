@@ -1,9 +1,30 @@
 use cpu::Cpu;
-use task_scheduler_round_robin::RoundRobin;
-use task::{SharedTask, Task};
-use task_scheduler::TaskScheduler;
+use task::{SharedTask};
 
-pub(crate) static mut MAIN_THREAD_PTR: Option<*mut dyn TaskScheduler> = None;
-pub(crate) static mut MAIN_THREAD_TASK: Option<SharedTask> = None;
-pub(crate) static mut CURRENT_TASK: Option<SharedTask> = None;
-pub(crate) static mut CPU_PTR: Option<&'static dyn Cpu> = None;
+pub struct ExecutionState {
+    pub(crate) scheduler_task: SharedTask,
+    pub(crate) current_task: Option<SharedTask>,
+    pub(crate) cpu: &'static dyn Cpu
+}
+
+impl ExecutionState {
+    #[inline(always)]
+    pub(crate) fn switch_to_task(&mut self, task: SharedTask) -> SharedTask {
+        let task_stack_pointer = task.stack_pointer();
+        self.current_task = Some(task);
+        let scheduler_stack_pointer_pointer = self.scheduler_task.as_mut().stack_pointer_mut();
+        self.cpu.swap_context(scheduler_stack_pointer_pointer, task_stack_pointer);
+
+        self.current_task.take().unwrap()
+    }
+
+    #[inline(always)]
+    pub(crate) fn switch_to_scheduler(&mut self) {
+        if let Some(mut task) = self.current_task.take() {
+            let task_stack_pointer_reference = task.stack_pointer_mut();
+            self.current_task = Some(task);
+            let scheduler_stack_pointer = self.scheduler_task.as_ref().stack_pointer();
+            self.cpu.swap_context(task_stack_pointer_reference, scheduler_stack_pointer)
+        }
+    }
+}

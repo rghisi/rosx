@@ -20,7 +20,7 @@ impl Cpu for X86_64 {
     fn setup_sys_ticks(&self) {
     }
 
-    fn initialize_task(&self, stack_pointer: usize, entry_point: usize, entry_param: usize) -> usize {
+    fn initialize_stack(&self, stack_pointer: usize, entry_point: usize, entry_param: usize) -> usize {
         unsafe {
             let mut sp = stack_pointer as *mut usize;
             sp = sp.sub(1);
