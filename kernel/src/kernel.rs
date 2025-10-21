@@ -4,7 +4,7 @@ use cpu::{Cpu};
 use kconfig::KConfig;
 use kprintln;
 use task_scheduler_round_robin::RoundRobin;
-use state::{CPU_PTR, CURRENT_TASK, MAIN_THREAD_PTR, MAIN_THREAD_TASK_PTR};
+use state::{CPU_PTR, CURRENT_TASK, MAIN_THREAD_PTR, MAIN_THREAD_TASK};
 use task::{SharedTask, Task};
 use task_scheduler::TaskScheduler;
 use wrappers::{scheduler_wrapper, task_wrapper};
@@ -12,7 +12,6 @@ use wrappers::{scheduler_wrapper, task_wrapper};
 pub struct Kernel {
     cpu: &'static dyn Cpu,
     scheduler: Box<dyn TaskScheduler>,
-    scheduler_task: SharedTask,
 }
 
 impl Kernel {
@@ -23,12 +22,6 @@ impl Kernel {
         Kernel {
             cpu: kconfig.cpu,
             scheduler: (kconfig.scheduler)(),
-            scheduler_task: Task::new(
-                0,
-                "Kernel Main Thread",
-                task_wrapper as usize,
-                scheduler_wrapper as usize
-            )
         }
     }
 
@@ -50,13 +43,21 @@ impl Kernel {
     }
 
     pub fn start(&mut self) {
-        self.cpu.initialize_task_hl(self.scheduler_task.as_mut());
+        let mut scheduler_task = Task::new(
+            0,
+            "Kernel Main Thread",
+            task_wrapper as usize,
+            scheduler_wrapper as usize
+        );
+        self.cpu.initialize_task_hl(scheduler_task.as_mut());
+        let scheduler_thread_stack_pointer = scheduler_task.as_ref().stack_pointer();
 
         unsafe {
-            MAIN_THREAD_TASK_PTR = Some(&mut *self.scheduler_task as *mut Task);
+            MAIN_THREAD_TASK = Some(scheduler_task);
         }
 
-        self.cpu.swap_context(null_mut(), self.scheduler_task.stack_pointer());
+
+        self.cpu.swap_context(null_mut(), scheduler_thread_stack_pointer);
     }
 }
 
@@ -64,10 +65,10 @@ pub fn task_yield() {
     unsafe {
         if let Some(cpu)= CPU_PTR {
             if let Some(mut task) = CURRENT_TASK.take() {
-                if let Some(main) = MAIN_THREAD_TASK_PTR {
+                if let Some(main) = &MAIN_THREAD_TASK {
                     let task_stack_pointer_reference = task.stack_pointer_mut();
                     CURRENT_TASK = Some(task);
-                    cpu.swap_context(task_stack_pointer_reference, main.as_mut().unwrap().stack_pointer())
+                    cpu.swap_context(task_stack_pointer_reference, main.stack_pointer())
                 }
             }
         }

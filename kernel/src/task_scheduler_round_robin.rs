@@ -5,13 +5,12 @@ use kprintln;
 use task_scheduler::TaskScheduler;
 use task_queue::TaskQueue;
 use task_fifo_queue::TaskFifoQueue;
-use state::{CURRENT_TASK, MAIN_THREAD_TASK_PTR};
+use state::{CURRENT_TASK, MAIN_THREAD_TASK};
 use task::{SharedTask, Task};
 use task::TaskState::{Blocked, Created, Ready, Running};
 
 pub struct RoundRobin {
     cpu: &'static dyn Cpu,
-    task: SharedTask,
     idle_task: Option<SharedTask>,
     idle_task_pid: u32,
     ready_tasks: TaskFifoQueue,
@@ -21,7 +20,6 @@ pub struct RoundRobin {
 impl RoundRobin {
 
     pub fn new(cpu: &'static (dyn Cpu + 'static), mut idle_task: SharedTask) -> Self {
-        let main_task = Task::new(0, "Main Thread", task_wrapper as usize, 0);
 
         let idle_task_pid = idle_task.id();
         let new_stack_pointer = cpu.initialize_task(
@@ -34,7 +32,6 @@ impl RoundRobin {
 
         RoundRobin {
             cpu,
-            task: main_task,
             idle_task: Some(idle_task),
             idle_task_pid,
             ready_tasks: TaskFifoQueue::new(),
@@ -45,10 +42,6 @@ impl RoundRobin {
 
 impl TaskScheduler for RoundRobin {
     fn run(&mut self) {
-        unsafe {
-            MAIN_THREAD_TASK_PTR = Some(&mut *self.task as *mut Task);
-        }
-
         self.cpu.enable_interrupts();
 
         loop {
@@ -63,9 +56,11 @@ impl TaskScheduler for RoundRobin {
 
             unsafe {
                 CURRENT_TASK = Some(task);
+                let mut mtr = MAIN_THREAD_TASK.take().expect("Main Thread not available");
+                let sp = mtr.stack_pointer_mut();
+                MAIN_THREAD_TASK = Some(mtr);
+                self.cpu.swap_context(sp, task_stack_pointer);
             }
-
-            self.cpu.swap_context(self.task.stack_pointer_mut(), task_stack_pointer);
 
             let mut task = unsafe {
                 CURRENT_TASK.take().expect("Task should be returned from yield")
