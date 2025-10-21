@@ -126,15 +126,15 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
 
 
     println!("[MEMORY] Heap initialized successfully!");
-
+    println!("[KERNEL] Initializing");
     let mut kernel = Kernel::new(&KCONFIG);
-
     kernel.setup();
     kernel.schedule(FunctionTask::new("1", dummy_job1));
     kernel.schedule(FunctionTask::new("2", dummy_job2));
     kernel.schedule(FunctionTask::new("3", dummy_job3));
     kernel.schedule(FunctionTask::new("4", dummy_job4));
     kernel.schedule(FunctionTask::new("5", dummy_job5));
+    println!("[KERNEL] Starting");
     kernel.start();
 
     println!("[KERNEL] Oops, should never reached here, crashing spectacularly.");
