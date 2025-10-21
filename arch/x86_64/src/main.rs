@@ -8,9 +8,11 @@ mod debug_console;
 mod multi_debug;
 mod interrupts;
 
+use alloc::boxed::Box;
 use kernel::kprint;
 use core::arch::asm;
 use core::panic::PanicInfo;
+use core::ptr::null;
 use buddy_system_allocator::LockedHeap;
 use lazy_static::lazy_static;
 use spin::Mutex;
@@ -19,6 +21,10 @@ use kernel::cpu::Cpu;
 use kernel::debug::init_debug;
 use kernel::kernel::Kernel;
 use kernel::function_task::FunctionTask;
+use kernel::kconfig::KConfig;
+use kernel::task_scheduler_round_robin::RoundRobin;
+use kernel::task_scheduler::TaskScheduler;
+use kernel::task::Task;
 use crate::cpu::X86_64;
 use crate::debug_console::QEMU_DEBUG;
 use crate::multi_debug::MultiDebugOutput;
@@ -57,16 +63,30 @@ static DEBUG_OUTPUTS: &[&dyn kernel::debug::DebugOutput] = &[
 static MULTI_DEBUG: MultiDebugOutput = MultiDebugOutput::new(DEBUG_OUTPUTS);
 
 
+static KCONFIG: KConfig = KConfig {
+    cpu: &CPU,
+    scheduler: get_scheduler,
+    idle_task: new_idle_task
+};
+fn get_scheduler() -> Box<dyn TaskScheduler> {
+    let idle_task = FunctionTask::new("Idle Task", idle_job);
+    let cpu: &'static dyn Cpu = &CPU;
+    Box::new(RoundRobin::new(cpu, idle_task))
+}
+
+fn new_idle_task() -> Box<Task> {
+    FunctionTask::new("Idle Task", idle_job)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
     unsafe {
         HEAP_ALLOCATOR.lock().init(&raw mut HEAP as usize, HEAP_SIZE);
     }
     init_debug(&MULTI_DEBUG);
+    CPU.setup();
 
-    let idle_task = FunctionTask::new("Idle Task", idle_job);
-    let cpu: &'static dyn Cpu = &CPU;
-    let mut kernel = Kernel::new(cpu, idle_task);
+    let mut kernel = Kernel::new_kconfig(&KCONFIG);
 
 
     println!("[KERNEL] Booting");

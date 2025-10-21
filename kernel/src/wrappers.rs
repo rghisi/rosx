@@ -1,4 +1,4 @@
-use runnable::Runnable;
+use task_scheduler::TaskScheduler;
 use state::{CURRENT_TASK, MAIN_THREAD_PTR};
 
 pub(crate) extern "C" fn task_wrapper(actual_entry: usize) {
@@ -15,7 +15,7 @@ pub(crate) extern "C" fn task_wrapper(actual_entry: usize) {
     crate::kernel::task_yield();
 }
 
-pub(crate) extern "C" fn main_thread_wrapper() -> ! {
+pub(crate) extern "C" fn scheduler_wrapper() -> ! {
     unsafe {
         if let Some(ptr) = MAIN_THREAD_PTR {
             let main_thread = &mut *ptr;

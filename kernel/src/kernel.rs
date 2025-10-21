@@ -1,84 +1,62 @@
+use alloc::boxed::Box;
 use core::ptr::null_mut;
 use cpu::{Cpu};
+use kconfig::KConfig;
 use kprintln;
-use main_thread::MainThread;
+use task_scheduler_round_robin::RoundRobin;
 use state::{CPU_PTR, CURRENT_TASK, MAIN_THREAD_PTR, MAIN_THREAD_TASK_PTR};
 use task::{SharedTask, Task};
-use wrappers::{main_thread_wrapper, task_wrapper};
+use task_scheduler::TaskScheduler;
+use wrappers::{scheduler_wrapper, task_wrapper};
 
 pub struct Kernel {
     cpu: &'static dyn Cpu,
-    main_thread: MainThread,
-    main_thread_task: SharedTask,
+    scheduler: Box<dyn TaskScheduler>,
+    scheduler_task: SharedTask,
 }
 
 impl Kernel {
-    pub fn new(
-        cpu: &'static (dyn Cpu + 'static),
-        idle_task: SharedTask,
-    ) -> Self {
-        let main_thread = MainThread::new(cpu, idle_task);
-        let main_thread_entrypoint = main_thread_wrapper as usize;
 
+    pub fn new_kconfig(
+        kconfig: &KConfig
+    ) -> Self {
         Kernel {
-            cpu,
-            main_thread,
-            main_thread_task: Task::new(
+            cpu: kconfig.cpu,
+            scheduler: (kconfig.scheduler)(),
+            scheduler_task: Task::new(
                 0,
                 "Kernel Main Thread",
                 task_wrapper as usize,
-                main_thread_entrypoint
+                scheduler_wrapper as usize
             )
         }
     }
 
     pub fn setup(&mut self) {
-        self.cpu.setup();
         unsafe {
-            MAIN_THREAD_PTR = Some(&mut self.main_thread as *mut MainThread);
+            MAIN_THREAD_PTR = Some(self.scheduler.as_mut());
             CPU_PTR = Some(self.cpu);
         }
 
     }
 
     pub fn schedule(&mut self, mut task: SharedTask) {
-        let new_stack_pointer = self.cpu.initialize_task(
-            task.stack_pointer(),
-            task.entry_point(),
-            task.actual_entry_point()
-        );
-        task.set_stack_pointer(new_stack_pointer);
-        task.set_ready();
-        let _ = self.main_thread.push_task(task);
+        self.initialize_task(task.as_mut());
+        let _ = self.scheduler.push_task(task);
     }
 
-   pub fn initialize_task(&mut self, mut task: SharedTask) {
-        let new_stack_pointer = self.cpu.initialize_task(
-            task.stack_pointer(),
-            task.entry_point(),
-            task.actual_entry_point()
-        );
-        task.set_stack_pointer(new_stack_pointer);
-        task.set_ready();
+   pub fn initialize_task(&mut self, task: &mut Task) {
+       self.cpu.initialize_task_hl(task);
     }
 
     pub fn start(&mut self) {
-        let original_sp = self.main_thread_task.stack_pointer();
-
-        let new_stack_pointer = self.cpu.initialize_task(
-            original_sp,
-            self.main_thread_task.entry_point(),
-            self.main_thread_task.actual_entry_point()
-        );
-
-        self.main_thread_task.set_stack_pointer(new_stack_pointer);
-        self.main_thread_task.set_ready();
+        self.cpu.initialize_task_hl(self.scheduler_task.as_mut());
 
         unsafe {
-            MAIN_THREAD_TASK_PTR = Some(&mut *self.main_thread_task as *mut Task);
+            MAIN_THREAD_TASK_PTR = Some(&mut *self.scheduler_task as *mut Task);
         }
 
-        self.cpu.swap_context(null_mut(), new_stack_pointer);
+        self.cpu.swap_context(null_mut(), self.scheduler_task.stack_pointer());
     }
 }
 

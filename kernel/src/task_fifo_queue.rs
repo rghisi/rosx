@@ -1,21 +1,21 @@
 use alloc::vec::Vec;
-use scheduler::{ScheduledTask, Scheduler, SchedulingError, StateCreatedNotAccepted};
+use task_queue::{EnqueuedTask, TaskQueue, TaskEnqueueingError, StateCreatedNotAccepted};
 use task::{SharedTask, Task};
 
-pub struct SimpleScheduler {
+pub struct TaskFifoQueue {
     tasks: Vec<SharedTask>,
 }
 
-impl SimpleScheduler {
+impl TaskFifoQueue {
     pub fn new() -> Self {
-        SimpleScheduler {
+        TaskFifoQueue {
             tasks: Vec::with_capacity(5),
         }
     }
 }
 
-impl Scheduler for SimpleScheduler {
-    fn offer(&mut self, task: SharedTask) -> Result<(), &dyn SchedulingError> {
+impl TaskFifoQueue {
+    pub fn offer(&mut self, task: SharedTask) -> Result<(), &dyn TaskEnqueueingError> {
         if !task.is_schedulable() {
             return Err(&StateCreatedNotAccepted);
         }
@@ -25,18 +25,18 @@ impl Scheduler for SimpleScheduler {
         Ok(())
     }
 
-    fn take_next(&mut self) -> Option<SharedTask> {
+    pub fn take_next(&mut self) -> Option<SharedTask> {
         if self.tasks.is_empty() {
             None
         } else {
             Some(self.tasks.remove(0))
         }
     }
-    fn list_tasks(&self) -> Vec<ScheduledTask> {
+    pub fn list_tasks(&self) -> Vec<EnqueuedTask> {
         self.tasks
             .as_slice()
             .iter()
-            .map(|task| ScheduledTask {
+            .map(|task| EnqueuedTask {
                 id: task.id(),
                 name: task.name(),
             })
@@ -49,8 +49,8 @@ mod tests {
     use alloc::boxed::Box;
     use std::fmt::{Debug, Formatter};
     use std::ptr::eq;
-    use super::SimpleScheduler;
-    use scheduler::Scheduler;
+    use super::TaskFifoQueue;
+    use task_queue::TaskQueue;
     use task::Task;
     use crate::function_task::FunctionTask;
     use task::TaskState::{Created, Ready, Running, Terminated};
@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn should_return_none_when_no_tasks_are_available() {
-        let mut scheduler: SimpleScheduler = SimpleScheduler::new();
+        let mut scheduler: TaskFifoQueue = TaskFifoQueue::new();
 
         let next_task = scheduler.take_next();
 
@@ -71,7 +71,7 @@ mod tests {
         let mut task = FunctionTask::new("Any task", dummy_job);
         let task_id = task.id();
         task.set_ready();
-        let mut scheduler = SimpleScheduler::new();
+        let mut scheduler = TaskFifoQueue::new();
 
         let result = scheduler.offer(task);
         assert!(result.is_ok());
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn should_round_robin_tasks_when_more_than_one_available() {
-        let mut scheduler = SimpleScheduler::new();
+        let mut scheduler = TaskFifoQueue::new();
         let mut task1_id: u32 = u32::MAX;
         let mut task2_id: u32 = u32::MAX;
         {
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn should_preserve_task_state_when_task_is_changed() {
-        let mut scheduler = SimpleScheduler::new();
+        let mut scheduler = TaskFifoQueue::new();
         {
             let mut task1 = FunctionTask::new("T1", dummy_job);
             task1.set_ready();
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn should_result_scheduling_error_when_task_state_is_created() {
-        let mut scheduler = SimpleScheduler::new();
+        let mut scheduler = TaskFifoQueue::new();
         let task1 = FunctionTask::new("T1", dummy_job);
         let task_state = task1.state();
         let result = scheduler.offer(task1);
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn should_result_scheduling_error_when_task_state_is_terminated() {
-        let mut scheduler = SimpleScheduler::new();
+        let mut scheduler = TaskFifoQueue::new();
         let mut task1 = FunctionTask::new("T1", dummy_job);
         task1.set_terminated();
         let task_state = task1.state();

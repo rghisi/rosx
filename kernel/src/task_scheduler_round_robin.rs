@@ -2,25 +2,25 @@ use alloc::vec::Vec;
 use cpu::Cpu;
 use wrappers::task_wrapper;
 use kprintln;
-use runnable::Runnable;
-use scheduler::Scheduler;
-use simple_scheduler::SimpleScheduler;
+use task_scheduler::TaskScheduler;
+use task_queue::TaskQueue;
+use task_fifo_queue::TaskFifoQueue;
 use state::{CURRENT_TASK, MAIN_THREAD_TASK_PTR};
 use task::{SharedTask, Task};
 use task::TaskState::{Blocked, Created, Ready, Running};
 
-pub(crate) struct MainThread {
+pub struct RoundRobin {
     cpu: &'static dyn Cpu,
     task: SharedTask,
     idle_task: Option<SharedTask>,
     idle_task_pid: u32,
-    ready_tasks: SimpleScheduler,
+    ready_tasks: TaskFifoQueue,
     blocked_tasks: Vec<SharedTask>,
 }
 
-impl MainThread {
+impl RoundRobin {
 
-    pub(crate) fn new(cpu: &'static (dyn Cpu + 'static), mut idle_task: SharedTask) -> Self {
+    pub fn new(cpu: &'static (dyn Cpu + 'static), mut idle_task: SharedTask) -> Self {
         let main_task = Task::new(0, "Main Thread", task_wrapper as usize, 0);
 
         let idle_task_pid = idle_task.id();
@@ -32,26 +32,18 @@ impl MainThread {
         idle_task.set_stack_pointer(new_stack_pointer);
         idle_task.set_ready();
 
-        MainThread {
+        RoundRobin {
             cpu,
             task: main_task,
             idle_task: Some(idle_task),
             idle_task_pid,
-            ready_tasks: SimpleScheduler::new(),
+            ready_tasks: TaskFifoQueue::new(),
             blocked_tasks: Vec::with_capacity(5),
         }
     }
-
-    pub(crate) fn push_task(&mut self, task: SharedTask) {
-        let _ = match task.state() {
-            Ready => self.ready_tasks.offer(task),
-            // Blocked => self.blocked_tasks.push(task),
-            _ => return
-        };
-    }
 }
 
-impl Runnable for MainThread {
+impl TaskScheduler for RoundRobin {
     fn run(&mut self) {
         unsafe {
             MAIN_THREAD_TASK_PTR = Some(&mut *self.task as *mut Task);
@@ -88,5 +80,13 @@ impl Runnable for MainThread {
                 }
             }
         }
+    }
+
+    fn push_task(&mut self, task: SharedTask) {
+        let _ = match task.state() {
+            Ready => self.ready_tasks.offer(task),
+            // Blocked => self.blocked_tasks.push(task),
+            _ => return
+        };
     }
 }
