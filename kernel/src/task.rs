@@ -27,7 +27,7 @@ pub struct Task {
     stack_pointer: usize,
     entry_point_wrapper: usize,
     actual_entry_point: usize,
-    stack: [usize; 256],
+    stack: [usize; 2048], //16KB on 64bit systems
 }
 
 impl Task {
@@ -39,7 +39,7 @@ impl Task {
             stack_pointer: 0,
             entry_point_wrapper: entry_wrapper,
             actual_entry_point: entry_point,
-            stack: [0; 256],
+            stack: [0; 2048],
         });
 
         unsafe {

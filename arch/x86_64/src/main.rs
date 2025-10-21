@@ -29,14 +29,12 @@ use crate::cpu::X86_64;
 use crate::debug_console::QEMU_DEBUG;
 use crate::multi_debug::MultiDebugOutput;
 use crate::vga_buffer::{Color, ColorCode, Writer, VGA_DEBUG};
+use bootloader::BootInfo;
 
 extern crate alloc;
 
 #[global_allocator]
-static HEAP_ALLOCATOR: LockedHeap<32> = LockedHeap::<32>::new();
-
-const HEAP_SIZE: usize = 81920;
-static mut HEAP: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
+static HEAP_ALLOCATOR: LockedHeap<27> = LockedHeap::<27>::new();
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -76,17 +74,60 @@ fn new_idle_task() -> Box<Task> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
-    unsafe {
-        HEAP_ALLOCATOR.lock().init(&raw mut HEAP as usize, HEAP_SIZE);
-    }
+pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     init_debug(&MULTI_DEBUG);
     CPU.setup();
 
-    let mut kernel = Kernel::new(&KCONFIG);
-
-
     println!("[KERNEL] Booting");
+
+    println!("[MEMORY] Physical memory offset: 0x{:x}", boot_info.physical_memory_offset);
+    println!("[MEMORY] Memory regions:");
+
+    let mut total_usable = 0u64;
+    let mut largest_region_size = 0u64;
+    let mut largest_region_start = 0u64;
+
+    for region in boot_info.memory_map.iter() {
+        println!("  {:?}: 0x{:x} - 0x{:x} ({} KB)",
+            region.region_type,
+            region.range.start_addr(),
+            region.range.end_addr(),
+            (region.range.end_addr() - region.range.start_addr()) / 1024
+        );
+
+        if let bootloader::bootinfo::MemoryRegionType::Usable = region.region_type {
+            let size = region.range.end_addr() - region.range.start_addr();
+            total_usable += size;
+
+            if size > largest_region_size {
+                largest_region_size = size;
+                largest_region_start = region.range.start_addr();
+            }
+        }
+    }
+
+    println!("[MEMORY] Total usable RAM: {} MB", total_usable / (1024 * 1024));
+    println!("[MEMORY] Largest region: {} MB at 0x{:x}",
+        largest_region_size / (1024 * 1024),
+        largest_region_start
+    );
+
+    for region in boot_info.memory_map.iter() {
+        if let bootloader::bootinfo::MemoryRegionType::Usable = region.region_type {
+            let size = (region.range.end_addr() - region.range.start_addr()) as usize;
+            let start = (region.range.start_addr() + boot_info.physical_memory_offset) as usize;
+            let end = start + size;
+            println!("[MEMORY] Allocating region: {}B at 0x{:x}-0x{:x}", size, start, end);
+            unsafe {
+                HEAP_ALLOCATOR.lock().init(start, size);
+            }
+        }
+    }
+
+
+    println!("[MEMORY] Heap initialized successfully!");
+
+    let mut kernel = Kernel::new(&KCONFIG);
 
     kernel.setup();
     kernel.schedule(FunctionTask::new("1", dummy_job1));
