@@ -2,6 +2,9 @@ use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 use pic8259::ChainedPics;
 use spin::Mutex;
 use lazy_static::lazy_static;
+use x86_64::instructions::port::Port;
+use kernel::messages::HardwareInterrupt;
+use kernel::kernel::enqueue_hardware_interrupt;
 use kernel::kprintln;
 
 /// PIC (Programmable Interrupt Controller) configuration
@@ -108,22 +111,17 @@ extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFr
     kernel::kernel::task_yield();
 }
 
-/// Keyboard interrupt handler (IRQ1)
+const KEYBOARD_PORT: u16 = 0x60;
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    use x86_64::instructions::port::Port;
-    let mut port: Port<u8> = Port::new(0x60);
+    let mut port: Port<u8> = Port::new(KEYBOARD_PORT);
     let scancode: u8 = unsafe { port.read() };
 
     unsafe {
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
-    }
-    if scancode == 57 {
-        kprintln!("Keyboard interrupt {}", scancode);
-        kernel::kernel::task_yield();
-    }
+    };
+
+    let keyboard_interrupt = HardwareInterrupt::Keyboard { scancode };
+    enqueue_hardware_interrupt(keyboard_interrupt);
 }
 
-// Yield interrupt handler is now implemented purely in assembly
-// See yield_interrupt_handler_asm in context_switching.S
-// It calls yield_handler_rust() in kernel.rs for scheduling logic

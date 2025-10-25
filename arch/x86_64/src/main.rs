@@ -22,14 +22,14 @@ use kernel::debug::init_debug;
 use kernel::kernel::Kernel;
 use kernel::function_task::FunctionTask;
 use kernel::kconfig::KConfig;
-use kernel::task_scheduler_round_robin::RoundRobin;
-use kernel::task_scheduler::TaskScheduler;
 use kernel::task::Task;
 use crate::cpu::X86_64;
 use crate::debug_console::QEMU_DEBUG;
 use crate::multi_debug::MultiDebugOutput;
 use crate::vga_buffer::{Color, ColorCode, Writer, VGA_DEBUG};
 use bootloader::BootInfo;
+use kernel::task_fifo_queue::TaskFifoQueue;
+use kernel::task_queue::TaskQueue;
 
 extern crate alloc;
 
@@ -62,11 +62,11 @@ static CPU: X86_64 = X86_64{};
 
 static KCONFIG: KConfig = KConfig {
     cpu: &CPU,
-    scheduler: get_scheduler,
+    user_thread_queue: get_user_thread_queue,
     idle_task: new_idle_task
 };
-fn get_scheduler() -> Box<dyn TaskScheduler> {
-    Box::new(RoundRobin::new())
+fn get_user_thread_queue() -> Box<dyn TaskQueue> {
+    Box::new(TaskFifoQueue::new())
 }
 
 fn new_idle_task() -> Box<Task> {

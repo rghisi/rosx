@@ -14,8 +14,8 @@ impl TaskFifoQueue {
     }
 }
 
-impl TaskFifoQueue {
-    pub fn offer(&mut self, task: SharedTask) -> Result<(), &dyn TaskEnqueueingError> {
+impl TaskQueue for TaskFifoQueue {
+    fn offer(&mut self, task: SharedTask) -> Result<(), &dyn TaskEnqueueingError> {
         if !task.is_schedulable() {
             return Err(&StateCreatedNotAccepted);
         }
@@ -25,14 +25,14 @@ impl TaskFifoQueue {
         Ok(())
     }
 
-    pub fn take_next(&mut self) -> Option<SharedTask> {
+    fn take_next(&mut self) -> Option<SharedTask> {
         if self.tasks.is_empty() {
             None
         } else {
             Some(self.tasks.remove(0))
         }
     }
-    pub fn list_tasks(&self) -> Vec<EnqueuedTask> {
+    fn list_tasks(&self) -> Vec<EnqueuedTask> {
         self.tasks
             .as_slice()
             .iter()
