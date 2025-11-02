@@ -1,7 +1,6 @@
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
 use kernel::task_wrapper;
-use runnable::Runnable;
 use task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 
 pub type SharedTask = Box<Task>;

@@ -1,11 +1,7 @@
-use alloc::boxed::Box;
 use alloc::vec::Vec;
 use alloc::collections::VecDeque;
 use kernel::{switch_to_task, TASK_MANAGER};
-use kprintln;
 use messages::HardwareInterrupt;
-use runnable::Runnable;
-use task_queue::TaskQueue;
 use task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use task_arena::TaskHandle;
 
