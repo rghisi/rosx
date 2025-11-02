@@ -4,11 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+system = { path = "../../system" }
 kernel = { path = "../../kernel" }
+usrlib = { path = "../../usrlib" }
+shell = { path = "../../apps/shell"}
+dummy = { path = "../../apps/dummy"}
+
 bootloader = { version = "0.9", features = ["map_physical_memory"] }
 volatile = "0.2.6"
 buddy_system_allocator = "0.11.0"
-spin = "0.5.2"
+spin = "0.10.0"
 x86_64 = "0.15"
 pic8259 = "0.11"
 

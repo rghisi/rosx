@@ -5,6 +5,10 @@
       <sourceFolder url="file://$MODULE_DIR$/kernel/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/arch/x86_64/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/apps/dummy/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/apps/shell/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/system/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/usrlib/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

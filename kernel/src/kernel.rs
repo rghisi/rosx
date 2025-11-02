@@ -1,21 +1,30 @@
-use core::ptr::{null, null_mut};
+use alloc::boxed::Box;
+use core::ptr::{null_mut};
 use cpu::Cpu;
 use kconfig::KConfig;
-use kprintln;
+use lazy_static::lazy_static;
+use spin::Mutex;
+use core::cell::{RefCell};
 use main_thread::MainThread;
 use state::ExecutionState;
 use task::{SharedTask, Task};
+use task::TaskState::Terminated;
+use task_arena::{TaskHandle};
+use task_manager::TaskManager;
 use crate::messages::HardwareInterrupt;
 
 static mut SELF: *mut Kernel = null_mut();
 
-//This will not work for SMP, need to remove
-static mut MAIN_THREAD_PTR: Option<*mut MainThread> = None;
+lazy_static! {
+    pub (crate) static ref TASK_MANAGER: Mutex<RefCell<TaskManager>> = {
+        Mutex::new(RefCell::new(TaskManager::new()))
+    };
+}
 
 pub struct Kernel {
     kconfig: &'static KConfig,
     cpu: &'static dyn Cpu,
-    main_thread: MainThread,
+    main_thread: Box<MainThread>,
     execution_state: ExecutionState,
 }
 
@@ -25,67 +34,150 @@ impl Kernel {
         kconfig: &'static KConfig
     ) -> Self {
         let cpu = kconfig.cpu;
-        let scheduler = (kconfig.user_thread_queue)();
 
-        let mut main_thread_task = Task::new(
+        let mut main_thread = Box::new(MainThread::new());
+        let ptr = main_thread.as_mut() as *const MainThread as usize;
+        let main_thread_task = Task::new(
             0,
             "[K] Main Thread",
-            task_wrapper as usize,
-            main_thread_wrapper as usize
+            main_thread_wrapper as usize,
+            ptr
         );
-        cpu.initialize_task(main_thread_task.as_mut());
-
-        let main_thread = MainThread::new(scheduler);
+        let main_thread_task_handle = TASK_MANAGER.lock().borrow_mut().add_task(main_thread_task).unwrap();
+        cpu.initialize_task(main_thread_task_handle, TASK_MANAGER.lock().borrow_mut().borrow_task_mut(main_thread_task_handle).unwrap());
 
         Kernel {
             kconfig,
             cpu,
             main_thread,
             execution_state: ExecutionState {
-                main_thread: main_thread_task,
+                main_thread: main_thread_task_handle,
                 current_task: None,
+                preemption_enabled: false,
                 cpu
-            }
+            },
         }
     }
 
     pub fn setup(&mut self) {
         unsafe {
             SELF = self;
-            MAIN_THREAD_PTR = Some(&mut self.main_thread);
         }
-        let mut idle_task = (self.kconfig.idle_task)();
-        self.cpu.initialize_task(idle_task.as_mut());
-        let _ = self.main_thread.set_idle_task(idle_task);
-        self.cpu.enable_interrupts();
+        let idle_task = (self.kconfig.idle_task)();
+        let task_handle = TASK_MANAGER.lock().borrow_mut().add_task(idle_task).unwrap();
+        self.cpu.initialize_task(task_handle, TASK_MANAGER.lock().borrow_mut().borrow_task_mut(task_handle).unwrap());
+        let _ = self.main_thread.set_idle_task(task_handle);
     }
 
     pub fn start(&mut self) {
-        let scheduler_thread_stack_pointer = self.execution_state.main_thread.as_ref().stack_pointer();
+        let main_thread_handle = self.execution_state.main_thread;
+        let scheduler_thread_stack_pointer = TASK_MANAGER.lock().borrow().get_task_stack_pointer(main_thread_handle);
+        self.cpu.enable_interrupts();
+        self.execution_state.preemption_enabled = true;
         self.cpu.swap_context(null_mut(), scheduler_thread_stack_pointer);
     }
 
+    pub fn exec(&mut self, entrypoint: usize) {
+        self.execution_state.preemption_enabled = false;
+        let result = TASK_MANAGER.lock().borrow_mut().new_task(entrypoint);
+        match result {
+            Ok(task_handle) => {
+                self.schedule2(task_handle);
+            }
+            Err(_) => { panic!("Not able to create new task"); }
+        }
+        self.execution_state.preemption_enabled = true;
+    }
+
+    pub fn schedule2(&mut self, task_handle: TaskHandle) {
+        {
+            let m = TASK_MANAGER.lock();
+            let mut mm = m.borrow_mut();
+            let result = mm.borrow_task_mut(task_handle);
+            match result {
+                Ok(task) => {
+                    self.cpu.initialize_task(task_handle, task);
+                }
+                Err(_) => { panic!("Not able to schedule task"); }
+            }
+        }
+        self.main_thread.push_task(task_handle);
+    }
+
     pub fn schedule(&mut self, mut task: SharedTask) {
-        self.cpu.initialize_task(task.as_mut());
-        let _ = self.main_thread.push_task(task);
+        self.execution_state.preemption_enabled = false;
+        let task_handle = TASK_MANAGER.lock().borrow_mut().add_task(task).unwrap();
+        self.cpu.initialize_task(task_handle, TASK_MANAGER.lock().borrow_mut().borrow_task_mut(task_handle).unwrap());
+        let _ = self.main_thread.push_task(task_handle);
+        self.execution_state.preemption_enabled = true;
     }
 
     pub fn enqueue(&mut self, hardware_interrupt: HardwareInterrupt) {
+        self.execution_state.preemption_enabled = false;
         self.main_thread.push_hardware_interrupt(hardware_interrupt);
+        self.execution_state.preemption_enabled = true;
+    }
+
+    pub fn wait(&mut self) {
+        self.execution_state.block_current_task();
+        self.execution_state.switch_to_scheduler();
+    }
+
+    pub fn task_yield(&mut self) {
+        self.execution_state.switch_to_scheduler();
+    }
+
+    pub fn preempt(&mut self) {
+        if self.execution_state.preemption_enabled {
+            self.execution_state.switch_to_scheduler();
+        }
+    }
+
+    pub fn switch_to_task(&mut self, task_handle: TaskHandle) -> TaskHandle {
+        self.execution_state.switch_to_task(task_handle)
+    }
+
+    pub(crate) fn terminate_current_task(&mut self) {
+        self.execution_state.preemption_enabled = false;
+        if let Some(task_handle) = self.execution_state.current_task.take() {
+            TASK_MANAGER.lock().borrow_mut().set_state(task_handle, Terminated);
+            TASK_MANAGER.lock().borrow_mut().remove_task(task_handle);
+            self.execution_state.current_task = Some(task_handle);
+        }
+        self.execution_state.preemption_enabled = true;
+    }
+}
+
+pub fn exec(entrypoint: usize) {
+    unsafe {
+        (*SELF).exec(entrypoint);
+    }
+}
+
+pub fn wait() {
+    unsafe {
+        (*SELF).wait();
     }
 }
 
 #[inline(always)]
 pub fn task_yield() {
     unsafe {
-        (*SELF).execution_state.switch_to_scheduler();
+        (*SELF).task_yield();
     }
 }
 
 #[inline(always)]
-pub fn switch_to_task(task: SharedTask) -> SharedTask {
+pub fn preempt() {
     unsafe {
-        (*SELF).execution_state.switch_to_task(task)
+        (*SELF).preempt();
+    }
+}
+
+#[inline(always)]
+pub fn switch_to_task(task_handle: TaskHandle) -> TaskHandle {
+    unsafe {
+        (*SELF).switch_to_task(task_handle)
     }
 }
 
@@ -96,8 +188,19 @@ pub fn enqueue_hardware_interrupt(hardware_interrupt: HardwareInterrupt) {
     }
 }
 
+#[inline(always)]
+pub(crate) fn terminate_current_task() {
+    unsafe {
+        (*SELF).terminate_current_task();
+    }
+}
 
-pub(crate) extern "C" fn task_wrapper(actual_entry: usize) {
+pub(crate) extern "C" fn task_wrapper(index: usize, generation: usize) {
+    let task_handle = TaskHandle {
+        index: index as u8,
+        generation: generation as u8
+    };
+    let actual_entry = TASK_MANAGER.lock().borrow_mut().borrow_task(task_handle).unwrap().actual_entry_point();
     let task_fn: fn() = unsafe { core::mem::transmute(actual_entry) };
     task_fn();
 
@@ -105,24 +208,20 @@ pub(crate) extern "C" fn task_wrapper(actual_entry: usize) {
     task_yield();
 }
 
+extern "C" fn main_thread_wrapper(index: usize, generation: usize) -> ! {
+    let task_handle = TaskHandle {
+        index: index as u8,
+        generation: generation as u8
+    };
+    let main_thread_ptr = TASK_MANAGER.lock().borrow_mut().borrow_task(task_handle).unwrap().actual_entry_point();
 
-#[inline(always)]
-pub(crate) fn terminate_current_task() {
-    unsafe {
-        if let Some(mut task) = (*SELF).execution_state.current_task.take() {
-            task.set_terminated();
-            (*SELF).execution_state.current_task = Some(task);
-        }
-    }
-}
+    let main_thread = unsafe {
+        let ptr_back = main_thread_ptr as *mut MainThread;
+        let mt = &mut *ptr_back;
+        mt
+    };
 
-extern "C" fn main_thread_wrapper() -> ! {
-    unsafe {
-        if let Some(ptr) = MAIN_THREAD_PTR {
-            let main_thread = &mut *ptr;
-            main_thread.run();
-        }
-    }
+    main_thread.run();
 
-    loop {}
+    panic!("Kernel main thread returned");
 }

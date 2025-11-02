@@ -1,6 +1,8 @@
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
-use task::TaskState::{Created, Ready, Running, Terminated};
+use kernel::task_wrapper;
+use runnable::Runnable;
+use task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 
 pub type SharedTask = Box<Task>;
 
@@ -31,7 +33,7 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(id: u32, name: &'static str, entry_wrapper: usize, entry_point: usize) -> SharedTask {
+    pub fn new<'a>(id: u32, name: &'static str, entry_wrapper: usize, entry_point: usize) -> SharedTask {
         let mut task = Box::new(Task {
             id,
             name,
@@ -67,6 +69,10 @@ impl Task {
     pub fn state(&self) -> TaskState {
         self.state
     }
+
+    pub fn set_state(&mut self, new_state: TaskState) {
+        self.state = new_state;
+    }
     pub fn set_ready(&mut self) {
         self.state = Ready;
     }
@@ -75,6 +81,10 @@ impl Task {
     }
     pub fn set_terminated(&mut self) {
         self.state = Terminated;
+    }
+
+    pub fn set_blocked(&mut self) {
+        self.state = Blocked;
     }
     pub fn is_schedulable(&self) -> bool {
         self.state() != Created && self.state() != Terminated
@@ -87,6 +97,22 @@ impl Task {
         self.actual_entry_point
     }
 }
+
+pub struct EntrypointTask {
+    entry_point: usize,
+}
+
+impl EntrypointTask {
+    pub fn new(entrypoint: usize) -> SharedTask {
+        Task::new(
+            next_id(),
+            "EPT",
+            task_wrapper as usize,
+            entrypoint,
+        )
+    }
+}
+
 static mut NEXT_ID: u32 = 100;
 pub fn next_id() -> u32 {
     unsafe  {

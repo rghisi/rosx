@@ -1,4 +1,4 @@
-use kernel::debug::DebugOutput;
+use kernel::default_output::KernelOutput;
 
 pub struct QemuDebugConsole;
 
@@ -17,7 +17,7 @@ impl QemuDebugConsole {
     }
 }
 
-impl DebugOutput for QemuDebugConsole {
+impl KernelOutput for QemuDebugConsole {
     fn write_str(&self, s: &str) {
         for byte in s.bytes() {
             self.write_byte(byte);

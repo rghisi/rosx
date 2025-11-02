@@ -4,6 +4,11 @@ name = "kernel"
 publish = false
 version = "0.1.0"
 
+[dependencies]
+system = { path = "../system" }
+lazy_static = "1.5.0"
+spin = "0.10.0"
+
 [profile.dev]
 panic = "abort"
 

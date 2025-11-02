@@ -108,7 +108,7 @@ extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFr
     // unsafe {
     //     core::arch::asm!("int 0x30");
     // }
-    kernel::kernel::task_yield();
+    kernel::kernel::preempt();
 }
 
 const KEYBOARD_PORT: u16 = 0x60;

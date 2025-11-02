@@ -1,0 +1,8 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "usrlib"
+publish = false
+version = "0.1.0"
+
+[dependencies]
+kernel = { path = "../kernel" }

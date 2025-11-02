@@ -1,0 +1,9 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "dummy"
+publish = false
+version = "0.1.0"
+
+[dependencies]
+system = { path = "../../system" }
+usrlib = { path = "../../usrlib" }
