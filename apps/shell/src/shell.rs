@@ -1,5 +1,4 @@
 use core::arch::asm;
-use usrlib::out::print;
 use usrlib::println;
 use usrlib::syscall::Syscall;
 

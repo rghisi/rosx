@@ -27,8 +27,7 @@ use crate::vga_buffer::{Color, ColorCode, Writer, VGA_DEBUG};
 use bootloader::BootInfo;
 use kernel::task_fifo_queue::TaskFifoQueue;
 use kernel::task_queue::TaskQueue;
-use system::file::File;
-use usrlib::{print, println};
+use usrlib::{ println};
 
 extern crate alloc;
 
