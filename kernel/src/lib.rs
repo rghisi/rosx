@@ -28,3 +28,5 @@ mod messaging;
 pub mod pipe;
 mod task_arena;
 pub(crate) mod task_manager;
+pub mod allocator;
+mod panic;

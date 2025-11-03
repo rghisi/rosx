@@ -20,9 +20,27 @@ impl Write for KernelWriter {
 pub trait KernelOutput: Send + Sync {
     fn write_str(&self, s: &str);
 }
-pub fn setup_default_output(output: &'static dyn KernelOutput) {
+pub(crate) fn setup_default_output(output: &'static dyn KernelOutput) {
     unsafe {
         DEFAULT_OUTPUT = Some(output);
+    }
+}
+
+pub struct MultiplexOutput {
+    outputs: &'static [&'static dyn KernelOutput],
+}
+
+impl MultiplexOutput {
+    pub const fn new(outputs: &'static [&'static dyn KernelOutput]) -> Self {
+        Self { outputs }
+    }
+}
+
+impl KernelOutput for MultiplexOutput {
+    fn write_str(&self, s: &str) {
+        for output in self.outputs {
+            output.write_str(s);
+        }
     }
 }
 

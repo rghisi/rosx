@@ -1,5 +1,4 @@
 use kernel::default_output::KernelOutput;
-
 pub struct QemuDebugConsole;
 
 impl QemuDebugConsole {
@@ -24,5 +23,3 @@ impl KernelOutput for QemuDebugConsole {
         }
     }
 }
-
-pub static QEMU_DEBUG: QemuDebugConsole = QemuDebugConsole;

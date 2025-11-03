@@ -4,7 +4,10 @@ use cpu::Cpu;
 use kconfig::KConfig;
 use lazy_static::lazy_static;
 use spin::Mutex;
+use allocator::MEMORY_ALLOCATOR;
+use core::alloc::GlobalAlloc;
 use core::cell::{RefCell};
+use default_output::{setup_default_output, KernelOutput};
 use main_thread::MainThread;
 use state::ExecutionState;
 use task::{SharedTask, Task};
@@ -63,7 +66,8 @@ impl Kernel {
         unsafe {
             SELF = self;
         }
-        let idle_task = (self.kconfig.idle_task)();
+        self.cpu.setup();
+        let idle_task = (self.kconfig.idle_task_factory)();
         let task_handle = TASK_MANAGER.lock().borrow_mut().add_task(idle_task).unwrap();
         self.cpu.initialize_task(task_handle, TASK_MANAGER.lock().borrow_mut().borrow_task_mut(task_handle).unwrap());
         let _ = self.main_thread.set_idle_task(task_handle);
@@ -146,6 +150,11 @@ impl Kernel {
         }
         self.execution_state.preemption_enabled = true;
     }
+}
+
+pub fn bootstrap(allocator: &'static (dyn GlobalAlloc + Sync), default_output: &'static dyn KernelOutput) {
+    unsafe { MEMORY_ALLOCATOR.init(allocator); };
+    setup_default_output(default_output);
 }
 
 pub fn exec(entrypoint: usize) {

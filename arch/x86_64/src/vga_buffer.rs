@@ -1,8 +1,13 @@
 use core::fmt;
 use core::fmt::Write;
+use lazy_static::lazy_static;
+use spin::Mutex;
 use volatile::Volatile;
 use kernel::default_output::KernelOutput;
-use crate::WRITER;
+
+lazy_static! {
+    static ref WRITER: Mutex<Writer> = Mutex::new(Writer::new(ColorCode::new(Color::Green, Color::Black)));
+}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,11 +51,11 @@ const BUFFER_HEIGHT: usize = 25;
 const BUFFER_WIDTH: usize = 80;
 
 #[repr(transparent)]
-pub struct Buffer {
+struct Buffer {
     chars: [[Volatile<ScreenChar>; BUFFER_WIDTH]; BUFFER_HEIGHT],
 }
 
-pub struct Writer {
+struct Writer {
     column_position: usize,
     color_code: ColorCode,
     buffer: &'static mut Buffer,
@@ -125,25 +130,10 @@ impl fmt::Write for Writer {
     }
 }
 
-pub struct VgaDebugOutput;
+pub struct VgaOutput;
 
-impl KernelOutput for VgaDebugOutput {
+impl KernelOutput for VgaOutput {
     fn write_str(&self, s: &str) {
         WRITER.lock().write_str(s).unwrap();
     }
 }
-
-// Static instance for kernel
-pub static VGA_DEBUG: VgaDebugOutput = VgaDebugOutput;
-
-// Update existing println! macro to use kprintln
-// #[macro_export]
-// macro_rules! println {
-//       () => (kprintln!());
-//       ($($arg:tt)*) => (kprintln!($($arg)*));
-//   }
-//
-// #[macro_export]
-// macro_rules! print {
-//       ($($arg:tt)*) => (kprint!($($arg)*));
-//   }

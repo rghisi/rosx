@@ -4,7 +4,14 @@ use kernel::kprintln;
 
 pub struct X86_64 {}
 
+impl X86_64 {
+    pub const fn new() -> Self {
+        X86_64 {}
+    }
+}
+
 impl Cpu for X86_64 {
+
     fn setup(&self) {
         crate::interrupts::init();
         crate::interrupts::enable_timer();
