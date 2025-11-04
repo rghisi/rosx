@@ -4,7 +4,7 @@ use core::sync::atomic::Ordering::Relaxed;
 use future::{Future, TimeFuture};
 use kernel::KERNEL;
 use messages::HardwareInterrupt;
-use system::message::{Message, MessageType};
+use system::message::{Exec, Message, MessageType};
 use task_arena::TaskHandle;
 
 #[inline(always)]
@@ -79,21 +79,6 @@ pub fn handle_syscall(message: &Message) -> usize {
         MessageType::FileClose => {4}
         MessageType::Exec => {
             handle_exec(message)
-        }
-    }
-}
-
-enum Exec {
-    Invalid = 0,
-    ThreadSleep = 1,
-}
-
-impl Exec {
-    fn from_u8(value: u8) -> Exec {
-        match value {
-            0 => { Exec::Invalid }
-            1 => { Exec::ThreadSleep }
-            _ => { Exec::Invalid }
         }
     }
 }

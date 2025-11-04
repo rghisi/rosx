@@ -39,19 +39,10 @@ pub fn main4() {
 }
 
 pub fn main_with_wait() {
-    print!("Task that will wait 2s: 0,");
-    let message = Message {
-        message_type: MessageType::Exec,
-        data: vec![1, 0, 0, 3, 232]
-    };
-    Syscall::syscall(&message);
-
-    print!("1,");
-    let message = Message {
-        message_type: MessageType::Exec,
-        data: vec![1, 0, 0, 3, 232]
-    };
-    Syscall::syscall(&message);
+    print!("Task that will wait 2s: 0, ");
+    Syscall::sleep(1000);
+    print!("1, ");
+    Syscall::sleep(1000);
     print!("2. Done");
 }
 
