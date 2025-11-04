@@ -51,7 +51,7 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     kernel.schedule(FunctionTask::new("2", dummy::app::main2));
     kernel.schedule(FunctionTask::new("3", dummy::app::main3));
     kernel.schedule(FunctionTask::new("4", dummy::app::main4));
-    kernel.schedule(FunctionTask::new("5", shell::shell::main));
+    // kernel.schedule(FunctionTask::new("5", shell::shell::main));
 
     let used = MEMORY_ALLOCATOR.used();
     println!("[KERNEL] Starting - {}", used);

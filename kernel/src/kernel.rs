@@ -8,6 +8,7 @@ use allocator::MEMORY_ALLOCATOR;
 use core::alloc::GlobalAlloc;
 use core::cell::{RefCell};
 use default_output::{setup_default_output, KernelOutput};
+use kprintln;
 use main_thread::MainThread;
 use state::ExecutionState;
 use task::{SharedTask, Task};
@@ -155,6 +156,7 @@ impl Kernel {
 pub fn bootstrap(allocator: &'static (dyn GlobalAlloc + Sync), default_output: &'static dyn KernelOutput) {
     unsafe { MEMORY_ALLOCATOR.init(allocator); };
     setup_default_output(default_output);
+    kprintln!("[KERNEL] Bootstrapped");
 }
 
 pub fn exec(entrypoint: usize) {

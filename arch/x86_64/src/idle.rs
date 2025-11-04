@@ -9,7 +9,7 @@ pub fn idle_task_factory() -> Box<Task> {
 }
 
 fn idle_job() {
-    println!("Idle Task Start");
+    println!("\nIdle Task Started");
     let mut counter = 0;
     loop {
         if counter % 100 == 0 {
