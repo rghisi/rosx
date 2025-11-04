@@ -36,4 +36,8 @@ impl ExecutionState {
             TASK_MANAGER.lock().borrow_mut().set_state(task_handle, Blocked);
         }
     }
+
+    pub(crate) fn current_task(&self) -> TaskHandle {
+        self.current_task.clone().unwrap()
+    }
 }

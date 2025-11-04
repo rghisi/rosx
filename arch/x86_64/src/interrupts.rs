@@ -1,23 +1,25 @@
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering::Relaxed;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 use pic8259::ChainedPics;
 use spin::Mutex;
 use lazy_static::lazy_static;
 use x86_64::instructions::port::Port;
 use kernel::messages::HardwareInterrupt;
-use kernel::kernel::enqueue_hardware_interrupt;
-use kernel::kprintln;
+use usrlib::{print, println};
+use crate::cpu::syscall_handler_entry;
 
-/// PIC (Programmable Interrupt Controller) configuration
-/// Offset PIC interrupts to 0x20-0x2F to avoid conflicts with CPU exceptions (0x00-0x1F)
 const PIC_1_OFFSET: u8 = 0x20;
 const PIC_2_OFFSET: u8 = 0x28;
+const SYSCALL_VECTOR: u8 = 0x80;
 
-/// Software interrupt vectors for context switching
-/// These are user-defined interrupts triggered by software (INT instruction)
-const YIELD_INTERRUPT_VECTOR: u8 = 0x30;           // Task yields back to kernel
-const SWITCH_TO_TASK_INTERRUPT_VECTOR: u8 = 0x31;  // Kernel switches to task
+const PIT_FREQUENCY: u32 = 1_193_182;
+const TICK_RATE_HZ: u32 = 100;
+const PIT_DIVISOR: u16 = (PIT_FREQUENCY / TICK_RATE_HZ) as u16;
+const MS_PER_TICK: u64 = 10;
 
-/// Hardware interrupt numbers (after remapping)
+pub(crate) static SYSTEM_TIME_MS: AtomicU64 = AtomicU64::new(0);
+
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 enum InterruptIndex {
@@ -31,16 +33,19 @@ impl InterruptIndex {
     }
 }
 
-/// Chained PICs (primary and secondary)
-static PICS: Mutex<ChainedPics> =
-    Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
+static PICS: Mutex<ChainedPics> = Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
 
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
-
         idt[InterruptIndex::Timer.as_u8()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIndex::Keyboard.as_u8()].set_handler_fn(keyboard_interrupt_handler);
+        idt[SYSCALL_VECTOR].set_handler_fn(syscall_handler);
+
+        unsafe {
+            idt[SYSCALL_VECTOR].set_handler_addr(core::mem::transmute(syscall_handler_entry as *const ()));
+        }
+
 
         idt
     };
@@ -51,9 +56,7 @@ pub fn init() {
 
     unsafe {
         PICS.lock().initialize();
-    }
 
-    unsafe {
         use x86_64::instructions::port::Port;
         let mut pic1_data: Port<u8> = Port::new(0x21);
         let mut pic2_data: Port<u8> = Port::new(0xA1);
@@ -63,7 +66,6 @@ pub fn init() {
     }
 }
 
-/// Enable hardware interrupts
 pub fn enable_interrupts() {
     use x86_64::instructions::port::Port;
     unsafe {
@@ -80,35 +82,35 @@ pub fn enable_interrupts() {
     }
 }
 
-/// Enable timer interrupt for preemptive scheduling
 pub fn enable_timer() {
     unsafe {
-        use x86_64::instructions::port::Port;
+        set_frequency_to_100hz();
         let mut pic1_data: Port<u8> = Port::new(0x21);
         let current_mask = pic1_data.read();
         pic1_data.write(current_mask & !0x01);
     }
 }
 
-// ============================================================================
-// Interrupt Handlers
-// ============================================================================
-
-/// Timer interrupt handler (IRQ0)
-/// This triggers preemptive multitasking by forcing a yield
-extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    // Send EOI (End of Interrupt) to PIC first to allow nested interrupts
+fn set_frequency_to_100hz() {
     unsafe {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+        let mut command: Port<u8> = Port::new(0x43);
+        let mut data: Port<u8> = Port::new(0x40);
+
+        command.write(0x36);
+
+        data.write((PIT_DIVISOR & 0xFF) as u8);
+        data.write((PIT_DIVISOR >> 8) as u8);
+    }
+}
+
+extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
+    SYSTEM_TIME_MS.fetch_add(MS_PER_TICK, Relaxed);
+
+    unsafe {
+        PICS.lock().notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
     }
 
-    // Trigger yield interrupt (INT 0x30) to perform preemptive context switch
-    // This will save the current task's context and switch back to main_thread
-    // unsafe {
-    //     core::arch::asm!("int 0x30");
-    // }
-    kernel::kernel::preempt();
+    kernel::syscall::preempt();
 }
 
 const KEYBOARD_PORT: u16 = 0x60;
@@ -117,11 +119,13 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
     let scancode: u8 = unsafe { port.read() };
 
     unsafe {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+        PICS.lock().notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
     };
 
     let keyboard_interrupt = HardwareInterrupt::Keyboard { scancode };
-    enqueue_hardware_interrupt(keyboard_interrupt);
+    kernel::syscall::enqueue_hardware_interrupt(keyboard_interrupt);
 }
 
+extern "x86-interrupt" fn syscall_handler(_stack_frame: InterruptStackFrame) {
+    println!("syscall handler called!");
+}

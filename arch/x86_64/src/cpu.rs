@@ -1,6 +1,8 @@
-use core::arch::naked_asm;
+use core::arch::{asm};
+use core::sync::atomic::Ordering::Relaxed;
 use kernel::cpu::{Cpu};
-use kernel::kprintln;
+use system::message::{Message};
+use crate::interrupts::SYSTEM_TIME_MS;
 
 pub struct X86_64 {}
 
@@ -22,9 +24,7 @@ impl Cpu for X86_64 {
     }
 
     fn disable_interrupts(&self) {
-    }
-
-    fn setup_sys_ticks(&self) {
+        // crate::interrupts::disable_interrupts();
     }
 
     fn initialize_stack(&self, stack_pointer: usize, entry_point: usize, param1: usize, param2: usize) -> usize {
@@ -67,29 +67,46 @@ impl Cpu for X86_64 {
         }
     }
 
+    #[inline(always)]
     fn swap_context(&self, stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize) {
         unsafe {
             swap_context(stack_pointer_to_store, stack_pointer_to_load);
         }
     }
 
-    fn trigger_yield(&self) {
+    fn syscall(&self, message: &Message) -> usize {
+        let result: usize;
+        let message_ptr: usize = message as *const Message as usize;
+        let param_b: usize = 0xFACADA;
+
         unsafe {
-            core::arch::asm!("int 0x30");
+           asm!(
+                "int 0x80",
+                out("rax") result,
+                in("rdi") message_ptr,
+                in("rsi") param_b,
+            );
         }
+
+        result
+    }
+
+    #[inline(always)]
+    fn get_system_time(&self) -> u64 {
+        SYSTEM_TIME_MS.load(Relaxed)
     }
 }
 
-// #[cfg(target_arch = "x86_64")]
-core::arch::global_asm!(include_str!("process_initialization.S"));
 core::arch::global_asm!(include_str!("context_switching.S"));
+core::arch::global_asm!(include_str!("syscall.S"));
 
 unsafe extern "C" {
-    /// Calls the assembly function defined in process_initialization.S
-    /// Initializes a task's stack for interrupt-driven context switching.
-    /// Creates a fake interrupt frame (15 GPRs + RIP + CS + RFLAGS).
-    /// Returns the initial RSP value pointing to the base of the interrupt frame.
-    pub fn initialize_task_stack(stack_top: usize, entry_point: usize, entry_param: usize) -> usize;
-
     pub fn swap_context(stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize);
+    pub fn syscall_handler_entry(param_a: usize, param_b: usize) -> usize;
+}
+
+#[unsafe(no_mangle)]
+unsafe extern  "C" fn syscall_handler(param_a: usize, param_b: usize) -> usize {
+    let message = &*(param_a as *const Message);
+    kernel::syscall::handle_syscall(message)
 }

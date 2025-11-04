@@ -1,5 +1,8 @@
+use alloc::vec;
 use core::arch::asm;
-use usrlib::print;
+use system::message::{Message, MessageType};
+use usrlib::{print, println};
+use usrlib::syscall::Syscall;
 
 pub fn main() {
     print!("1");
@@ -34,6 +37,24 @@ pub fn main4() {
     }
     print!("4");
 }
+
+pub fn main_with_wait() {
+    print!("Task that will wait 2s: 0,");
+    let message = Message {
+        message_type: MessageType::Exec,
+        data: vec![1, 0, 0, 3, 232]
+    };
+    Syscall::syscall(&message);
+
+    print!("1,");
+    let message = Message {
+        message_type: MessageType::Exec,
+        data: vec![1, 0, 0, 3, 232]
+    };
+    Syscall::syscall(&message);
+    print!("2. Done");
+}
+
 fn delay(ticks: u32) {
     for _ in 0..ticks {
         unsafe { asm!("nop"); }

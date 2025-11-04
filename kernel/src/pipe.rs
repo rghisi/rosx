@@ -1,4 +1,4 @@
-use kernel::wait;
+use syscall::wait;
 use system::file::File;
 
 pub struct Pipe {
@@ -14,7 +14,7 @@ impl Pipe {
 impl File for Pipe {
     fn read_char(&self) -> char {
         while (!self.c.is_none()) {
-            wait();
+            // wait();
         }
 
         self.c.unwrap()

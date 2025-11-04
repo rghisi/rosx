@@ -1,14 +1,17 @@
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use alloc::collections::VecDeque;
-use kernel::{switch_to_task, TASK_MANAGER};
+use future::Future;
+use kernel::{TASK_MANAGER};
 use messages::HardwareInterrupt;
+use syscall::switch_to_task;
 use task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use task_arena::TaskHandle;
 
 pub struct MainThread {
     idle_task: Option<TaskHandle>,
     user_tasks: VecDeque<TaskHandle>,
-    blocked_tasks: Vec<TaskHandle>,
+    blocked_tasks: VecDeque<TaskFuture>,
     hw_interrupt_queue: Vec<HardwareInterrupt>,
 }
 
@@ -18,7 +21,7 @@ impl MainThread {
         MainThread {
             idle_task: None,
             user_tasks: VecDeque::with_capacity(5),
-            blocked_tasks: Vec::with_capacity(5),
+            blocked_tasks: VecDeque::with_capacity(5),
             hw_interrupt_queue: Vec::with_capacity(5),
         }
     }
@@ -29,7 +32,7 @@ impl MainThread {
     pub(crate) fn run(&mut self) {
         loop {
             self.process_hardware_interrupts();
-            self.check_blocked_tasks();
+            self.pool_futures();
             self.run_user_process();
         }
     }
@@ -68,7 +71,6 @@ impl MainThread {
                 }
             }
             Blocked => {
-                self.blocked_tasks.push(returned_task_handle);
             }
             Terminated => {
 
@@ -88,6 +90,11 @@ impl MainThread {
         self.hw_interrupt_queue.push(hardware_interrupt);
     }
 
+    pub(crate) fn push_blocked(&mut self, task_handle: TaskHandle, future: Box<dyn Future>) {
+        let task_future = TaskFuture { task_handle, future };
+        self.blocked_tasks.push_back(task_future);
+    }
+
     pub(crate) fn set_idle_task(&mut self, idle_task_handle: TaskHandle) -> Result<(), ()> {
         if self.idle_task.is_none() {
             self.idle_task = Some(idle_task_handle);
@@ -97,13 +104,27 @@ impl MainThread {
         }
     }
 
-    fn check_blocked_tasks(&mut self) {
-        let blocked: Vec<TaskHandle> = self.blocked_tasks.drain(..).collect();
-        for task_handle in blocked.into_iter() {
-            match TASK_MANAGER.lock().borrow().get_state(task_handle) {
-                Ready => { let _ = self.user_tasks.push_back(task_handle); }
-                _ => self.blocked_tasks.push(task_handle)
+    fn pool_futures(&mut self) {
+        let futures: Vec<TaskFuture> = self.blocked_tasks.drain(..).collect();
+        for task_future in futures.into_iter() {
+            if task_future.is_completed() {
+                TASK_MANAGER.lock().borrow_mut().set_state(task_future.task_handle, Ready);
+                self.user_tasks.push_back(task_future.task_handle);
+            } else {
+                self.blocked_tasks.push_back(task_future)
             }
         }
+    }
+}
+
+struct TaskFuture {
+    task_handle: TaskHandle,
+    future: Box<dyn Future>,
+}
+
+impl TaskFuture {
+
+    fn is_completed(&self) -> bool {
+        self.future.is_completed()
     }
 }

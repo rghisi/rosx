@@ -1,4 +1,4 @@
-use alloc::boxed::Box;
+use system::message::Message;
 use task::Task;
 use task_arena::TaskHandle;
 
@@ -6,10 +6,11 @@ pub trait Cpu {
     fn setup(&self);
     fn enable_interrupts(&self);
     fn disable_interrupts(&self);
-    fn setup_sys_ticks(&self);
     fn initialize_stack(&self, stack_pointer: usize, entry_point: usize, param1: usize, param2: usize) -> usize;
     fn swap_context(&self, stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize);
-    fn trigger_yield(&self);
+    fn syscall(&self, message: &Message) -> usize;
+    fn get_system_time(&self) -> u64;
+
     fn initialize_task(&self, task_handle: TaskHandle, task: &mut Task) {
         let original_sp = task.stack_pointer();
 

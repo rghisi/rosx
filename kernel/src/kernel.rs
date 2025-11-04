@@ -8,16 +8,19 @@ use allocator::MEMORY_ALLOCATOR;
 use core::alloc::GlobalAlloc;
 use core::cell::{RefCell};
 use default_output::{setup_default_output, KernelOutput};
+use future::Future;
 use kprintln;
 use main_thread::MainThread;
 use state::ExecutionState;
+use syscall::{task_yield, terminate_current_task};
+use system::message::{Message, MessageType};
 use task::{SharedTask, Task};
 use task::TaskState::Terminated;
 use task_arena::{TaskHandle};
 use task_manager::TaskManager;
 use crate::messages::HardwareInterrupt;
 
-static mut SELF: *mut Kernel = null_mut();
+pub(crate) static mut KERNEL: *mut Kernel = null_mut();
 
 lazy_static! {
     pub (crate) static ref TASK_MANAGER: Mutex<RefCell<TaskManager>> = {
@@ -65,7 +68,7 @@ impl Kernel {
 
     pub fn setup(&mut self) {
         unsafe {
-            SELF = self;
+            KERNEL = self;
         }
         self.cpu.setup();
         let idle_task = (self.kconfig.idle_task_factory)();
@@ -123,8 +126,10 @@ impl Kernel {
         self.execution_state.preemption_enabled = true;
     }
 
-    pub fn wait(&mut self) {
+    pub fn wait(&mut self, future: Box<dyn Future>) {
         self.execution_state.block_current_task();
+        let task_handle = self.execution_state.current_task();
+        self.main_thread.push_blocked(task_handle, future);
         self.execution_state.switch_to_scheduler();
     }
 
@@ -151,59 +156,22 @@ impl Kernel {
         }
         self.execution_state.preemption_enabled = true;
     }
+
+    #[inline(always)]
+    pub fn syscall(&self, message: &Message) -> usize {
+        self.cpu.syscall(message)
+    }
+
+    #[inline(always)]
+    pub fn get_system_time(&self) -> u64 {
+        self.cpu.get_system_time()
+    }
 }
 
 pub fn bootstrap(allocator: &'static (dyn GlobalAlloc + Sync), default_output: &'static dyn KernelOutput) {
     unsafe { MEMORY_ALLOCATOR.init(allocator); };
     setup_default_output(default_output);
     kprintln!("[KERNEL] Bootstrapped");
-}
-
-pub fn exec(entrypoint: usize) {
-    unsafe {
-        (*SELF).exec(entrypoint);
-    }
-}
-
-pub fn wait() {
-    unsafe {
-        (*SELF).wait();
-    }
-}
-
-#[inline(always)]
-pub fn task_yield() {
-    unsafe {
-        (*SELF).task_yield();
-    }
-}
-
-#[inline(always)]
-pub fn preempt() {
-    unsafe {
-        (*SELF).preempt();
-    }
-}
-
-#[inline(always)]
-pub fn switch_to_task(task_handle: TaskHandle) -> TaskHandle {
-    unsafe {
-        (*SELF).switch_to_task(task_handle)
-    }
-}
-
-#[inline(always)]
-pub fn enqueue_hardware_interrupt(hardware_interrupt: HardwareInterrupt) {
-    unsafe {
-        (*SELF).enqueue(hardware_interrupt);
-    }
-}
-
-#[inline(always)]
-pub(crate) fn terminate_current_task() {
-    unsafe {
-        (*SELF).terminate_current_task();
-    }
 }
 
 pub(crate) extern "C" fn task_wrapper(index: usize, generation: usize) {

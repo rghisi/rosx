@@ -6,3 +6,4 @@ version = "0.1.0"
 
 [dependencies]
 kernel = { path = "../kernel" }
+system = { path = "../system" }

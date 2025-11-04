@@ -1,12 +1,15 @@
+use system::message::Message;
+
 pub struct Syscall {}
+
 impl Syscall {
 
     pub fn exec(entrypoint: usize) {
-        kernel::kernel::exec(entrypoint);
+        kernel::syscall::exec(entrypoint);
     }
 
-    pub fn wait() {
-
+    pub fn syscall(message: &Message) -> usize{
+        kernel::syscall::syscall(message)
     }
 
     pub fn task_yield() {
