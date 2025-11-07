@@ -19,6 +19,7 @@ use task::TaskState::Terminated;
 use task_arena::{TaskHandle};
 use task_manager::TaskManager;
 use crate::messages::HardwareInterrupt;
+use crate::file_manager::FileManager;
 
 pub(crate) static mut KERNEL: *mut Kernel = null_mut();
 
@@ -33,6 +34,7 @@ pub struct Kernel {
     cpu: &'static dyn Cpu,
     main_thread: Box<MainThread>,
     execution_state: ExecutionState,
+    pub file_manager: FileManager,
 }
 
 impl Kernel {
@@ -63,6 +65,7 @@ impl Kernel {
                 preemption_enabled: false,
                 cpu
             },
+            file_manager: FileManager::new(),
         }
     }
 
