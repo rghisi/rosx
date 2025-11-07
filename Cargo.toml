@@ -6,6 +6,7 @@ members = [
     "arch/x86_64",
     "apps/shell",
     "apps/dummy",
+    "apps/file_test",
 ]
 
 [profile.dev]

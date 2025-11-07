@@ -9,6 +9,7 @@ kernel = { path = "../../kernel" }
 usrlib = { path = "../../usrlib" }
 shell = { path = "../../apps/shell"}
 dummy = { path = "../../apps/dummy"}
+file_test = { path = "../../apps/file_test"}
 
 bootloader = { version = "0.9", features = ["map_physical_memory"] }
 volatile = "0.2.6"

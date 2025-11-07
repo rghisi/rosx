@@ -1,26 +1,31 @@
-use syscall::wait;
-use system::file::File;
+use system::file::{File, FileError};
+use alloc::collections::VecDeque;
 
 pub struct Pipe {
-    c: Option<char>
+    buffer: VecDeque<u8>,
 }
 
 impl Pipe {
     pub fn new() -> Pipe {
-        Pipe { c: None }
+        Pipe {
+            buffer: VecDeque::new(),
+        }
     }
 }
 
 impl File for Pipe {
-    fn read_char(&self) -> char {
-        while (!self.c.is_none()) {
-            // wait();
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, FileError> {
+        let bytes_to_read = core::cmp::min(buf.len(), self.buffer.len());
+        for i in 0..bytes_to_read {
+            buf[i] = self.buffer.pop_front().unwrap();
         }
-
-        self.c.unwrap()
+        Ok(bytes_to_read)
     }
 
-    fn write_char(&mut self, c: char) {
-        self.c = Some(c);
+    fn write(&mut self, buf: &[u8]) -> Result<usize, FileError> {
+        for byte in buf {
+            self.buffer.push_back(*byte);
+        }
+        Ok(buf.len())
     }
 }

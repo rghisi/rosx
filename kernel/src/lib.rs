@@ -32,3 +32,5 @@ pub mod allocator;
 mod panic;
 pub mod syscall;
 pub mod future;
+pub mod file_manager;
+pub mod file_arena;

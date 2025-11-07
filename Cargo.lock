@@ -44,6 +44,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "file_test"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
 name = "kernel"
 version = "0.1.0"
 dependencies = [
@@ -87,6 +95,7 @@ dependencies = [
  "bootloader",
  "buddy_system_allocator",
  "dummy",
+ "file_test",
  "kernel",
  "lazy_static",
  "pic8259",
