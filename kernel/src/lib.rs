@@ -27,6 +27,7 @@ mod growing_circular_queue;
 mod messaging;
 pub mod pipe;
 mod task_arena;
+pub mod generic_arena;
 pub(crate) mod task_manager;
 pub mod allocator;
 mod panic;
