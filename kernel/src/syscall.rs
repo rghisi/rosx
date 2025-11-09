@@ -4,7 +4,8 @@ use crate::messages::HardwareInterrupt;
 use crate::task::TaskHandle;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use system::message::{Exec, Message, MessageType};
+use system::message::{Exec, Message, MessageData, MessageType};
+use crate::default_output::print;
 
 #[inline(always)]
 pub fn get_system_time() -> u64 {
@@ -76,9 +77,18 @@ pub fn handle_syscall(message: &Message) -> usize {
 
 fn handle_exec(message: &Message) -> usize {
     let data = &message.data;
-    match Exec::from_u8(data[0]) {
-        Exec::Invalid => 0,
-        Exec::ThreadSleep => thread_sleep(data),
+    match data {
+        MessageData::Vec { vec } => {
+            match Exec::from_u8(vec[0]) {
+                Exec::Invalid => 0,
+                Exec::ThreadSleep => thread_sleep(vec),
+                Exec::Print => 0,
+            }
+        }
+        MessageData::FmtArgs { args } => {
+            print(*args);
+            0
+        }
     }
 }
 

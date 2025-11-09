@@ -1,8 +1,4 @@
-use core::fmt;
 
-pub fn print(args: fmt::Arguments) {
-    kernel::default_output::print(args);
-}
 #[macro_export]
 macro_rules! println {
       () => ($crate::print!("\n"));
@@ -11,5 +7,5 @@ macro_rules! println {
 
 #[macro_export]
 macro_rules! print {
-      ($($arg:tt)*) => ($crate::out::print(format_args!($($arg)*)));
+      ($($arg:tt)*) => ($crate::syscall::Syscall::print(format_args!($($arg)*)));
   }

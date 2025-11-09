@@ -49,7 +49,7 @@ static HEAP_ALLOCATOR: LockedHeap<27> = LockedHeap::<27>::new();
 pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     kernel::kernel::bootstrap(&HEAP_ALLOCATOR, &MULTIPLEXED_OUTPUT);
     initialize_heap(boot_info);
-    println!("[KERNEL] Initializing - {}", MEMORY_ALLOCATOR.used());
+    kprintln!("[KERNEL] Initializing - {}", MEMORY_ALLOCATOR.used());
     let mut kernel = Kernel::new(&KCONFIG);
     kernel.setup();
     kernel.schedule(FunctionTask::new("1", dummy::app::main));
@@ -60,24 +60,24 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
 
     let used = MEMORY_ALLOCATOR.used();
-    println!("[KERNEL] Starting - {}", used);
+    kprintln!("[KERNEL] Starting - {}", used);
     kernel.start();
     panic!("[KERNEL] Crashed spectacularly, should never reached here.");
 }
 
 fn initialize_heap(boot_info: &BootInfo) {
-    println!(
+    kprintln!(
         "[MEMORY] Physical memory offset: 0x{:x}",
         boot_info.physical_memory_offset
     );
-    println!("[MEMORY] Memory regions:");
+    kprintln!("[MEMORY] Memory regions:");
 
     let mut total_usable = 0u64;
     let mut largest_region_size = 0u64;
     let mut largest_region_start = 0u64;
 
     for region in boot_info.memory_map.iter() {
-        println!(
+        kprintln!(
             "  {:?}: 0x{:x} - 0x{:x} ({} KB)",
             region.region_type,
             region.range.start_addr(),
@@ -96,11 +96,11 @@ fn initialize_heap(boot_info: &BootInfo) {
         }
     }
 
-    println!(
+    kprintln!(
         "[MEMORY] Total usable RAM: {} MB",
         total_usable / (1024 * 1024)
     );
-    println!(
+    kprintln!(
         "[MEMORY] Largest region: {} MB at 0x{:x}",
         largest_region_size / (1024 * 1024),
         largest_region_start
@@ -111,7 +111,7 @@ fn initialize_heap(boot_info: &BootInfo) {
             let size = (region.range.end_addr() - region.range.start_addr()) as usize;
             let start = (region.range.start_addr() + boot_info.physical_memory_offset) as usize;
             let end = start + size;
-            println!(
+            kprintln!(
                 "[MEMORY] Allocating region: {}B at 0x{:x}-0x{:x}",
                 size, start, end
             );
@@ -120,5 +120,5 @@ fn initialize_heap(boot_info: &BootInfo) {
             }
         }
     }
-    println!("[MEMORY] Heap initialized successfully!");
+    kprintln!("[MEMORY] Heap initialized successfully!");
 }

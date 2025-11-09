@@ -1,4 +1,7 @@
+use alloc::string::String;
 use alloc::vec::Vec;
+use core::fmt;
+
 pub enum MessageType {
     FileRead,
     FileWrite,
@@ -6,14 +9,20 @@ pub enum MessageType {
     FileClose,
     Exec,
 }
-pub struct Message {
+pub struct Message<'a> {
     pub message_type: MessageType,
-    pub data: Vec<u8>,
+    pub data: MessageData<'a>,
+}
+
+pub enum MessageData<'a> {
+    Vec { vec: Vec<u8> },
+    FmtArgs { args: fmt::Arguments<'a> },
 }
 
 pub enum Exec {
     Invalid = 0,
     ThreadSleep = 1,
+    Print = 2,
 }
 
 impl Exec {
@@ -21,6 +30,7 @@ impl Exec {
         match value {
             0 => Exec::Invalid,
             1 => Exec::ThreadSleep,
+            2 => Exec::Print,
             _ => Exec::Invalid,
         }
     }

@@ -1,5 +1,6 @@
 use alloc::vec;
-use system::message::{Exec, Message, MessageType};
+use core::fmt;
+use system::message::{Exec, Message, MessageData, MessageType};
 
 pub struct Syscall {}
 
@@ -21,7 +22,15 @@ impl Syscall {
         let n3 = (ms >> 24) as u8;
         let message = Message {
             message_type: MessageType::Exec,
-            data: vec![Exec::ThreadSleep as u8, n3, n2, n1, n0],
+            data: MessageData::Vec { vec: vec![Exec::ThreadSleep as u8, n3, n2, n1, n0] },
+        };
+        Syscall::syscall(&message);
+    }
+
+    pub fn print(args: fmt::Arguments) {
+        let message = Message {
+            message_type: MessageType::Exec,
+            data: MessageData::FmtArgs { args },
         };
         Syscall::syscall(&message);
     }
