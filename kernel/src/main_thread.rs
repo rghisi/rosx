@@ -5,8 +5,8 @@ use future::Future;
 use kernel::{TASK_MANAGER};
 use messages::HardwareInterrupt;
 use syscall::switch_to_task;
+use task::TaskHandle;
 use task::TaskState::{Blocked, Created, Ready, Running, Terminated};
-use task_arena::TaskHandle;
 
 pub struct MainThread {
     idle_task: Option<TaskHandle>,

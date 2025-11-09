@@ -1,11 +1,10 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::sync::atomic::Ordering::Relaxed;
 use future::{Future, TimeFuture};
 use kernel::KERNEL;
 use messages::HardwareInterrupt;
 use system::message::{Exec, Message, MessageType};
-use task_arena::TaskHandle;
+use task::TaskHandle;
 
 #[inline(always)]
 pub fn get_system_time() -> u64 {

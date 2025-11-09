@@ -1,12 +1,14 @@
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
+use generational_arena::Handle;
 use kernel::task_wrapper;
 use task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 
+pub(crate) type TaskHandle = Handle<u8, u8>;
 pub type SharedTask = Box<Task>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum TaskState {
+pub(crate) enum TaskState {
     Created, Ready, Running, Blocked, Terminated,
 }
 

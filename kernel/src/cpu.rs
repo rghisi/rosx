@@ -1,6 +1,5 @@
 use system::message::Message;
-use task::Task;
-use task_arena::TaskHandle;
+use task::{Task, TaskHandle};
 
 pub trait Cpu {
     fn setup(&self);

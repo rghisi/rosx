@@ -1,6 +1,5 @@
 #![cfg_attr(not(test), no_std)]
 
-
 #[cfg(test)]
 extern crate std as core;
 
@@ -26,7 +25,7 @@ mod circular_queue;
 mod growing_circular_queue;
 mod messaging;
 pub mod pipe;
-mod task_arena;
+pub mod generational_arena;
 pub(crate) mod task_manager;
 pub mod allocator;
 mod panic;

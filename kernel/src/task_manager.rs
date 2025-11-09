@@ -1,10 +1,10 @@
 use core::ptr::null_mut;
-use task::{EntrypointTask, SharedTask, Task, TaskState};
+use generational_arena::GenArena;
+use task::{EntrypointTask, SharedTask, Task, TaskHandle, TaskState};
 use task::TaskState::Terminated;
-use task_arena::{GenArena, TaskHandle};
 
 pub(crate) struct TaskManager {
-    tasks: GenArena
+    tasks: GenArena<SharedTask, u8, u8>
 }
 
 #[derive(Debug)]
