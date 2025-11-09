@@ -1,12 +1,12 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 pub struct InputEvents {
-    subscribers: Vec<Box<dyn InputEventSubscriber>>
+    subscribers: Vec<Box<dyn InputEventSubscriber>>,
 }
 
 #[derive(Copy, Clone)]
 pub enum InputEvent {
-    Keyboard
+    Keyboard,
 }
 impl InputEvents {
     pub fn new() -> Self {
@@ -20,10 +20,7 @@ impl InputEvents {
         }
     }
 
-    pub fn subscribe(&mut self, subscriber: Box<dyn InputEventSubscriber>) {
-
-    }
-
+    pub fn subscribe(&mut self, subscriber: Box<dyn InputEventSubscriber>) {}
 }
 
 pub trait InputEventSubscriber {

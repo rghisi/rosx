@@ -1,6 +1,6 @@
+use crate::task::Task;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use crate::task::Task;
 
 pub trait TaskQueue {
     fn offer(&mut self, task: Box<Task>) -> Result<(), &dyn TaskEnqueueingError>;
@@ -9,20 +9,13 @@ pub trait TaskQueue {
     fn list_tasks(&self) -> Vec<EnqueuedTask>;
 }
 
-pub trait TaskEnqueueingError {
-
-}
+pub trait TaskEnqueueingError {}
 
 pub struct StateCreatedNotAccepted;
 
-impl TaskEnqueueingError for StateCreatedNotAccepted {
-
-}
+impl TaskEnqueueingError for StateCreatedNotAccepted {}
 
 pub struct EnqueuedTask {
     pub id: u32,
     pub name: &'static str,
 }
-
-
-

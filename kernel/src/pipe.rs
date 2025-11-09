@@ -2,7 +2,7 @@ use crate::syscall::wait;
 use system::file::File;
 
 pub struct Pipe {
-    c: Option<char>
+    c: Option<char>,
 }
 
 impl Pipe {

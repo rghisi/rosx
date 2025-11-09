@@ -42,9 +42,7 @@ impl<T, const N: usize> CircularQueue<T, N> {
             return None;
         }
 
-        let value = unsafe {
-            self.buffer[self.head].as_ptr().read()
-        };
+        let value = unsafe { self.buffer[self.head].as_ptr().read() };
 
         self.head += 1;
         if self.head >= N {
@@ -60,9 +58,7 @@ impl<T, const N: usize> CircularQueue<T, N> {
             return None;
         }
 
-        unsafe {
-            Some(&*self.buffer[self.head].as_ptr())
-        }
+        unsafe { Some(&*self.buffer[self.head].as_ptr()) }
     }
 
     pub fn peek_mut(&mut self) -> Option<&mut T> {
@@ -70,9 +66,7 @@ impl<T, const N: usize> CircularQueue<T, N> {
             return None;
         }
 
-        unsafe {
-            Some(&mut *self.buffer[self.head].as_mut_ptr())
-        }
+        unsafe { Some(&mut *self.buffer[self.head].as_mut_ptr()) }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -106,10 +100,10 @@ impl<T, const N: usize> Drop for CircularQueue<T, N> {
 mod tests {
     extern crate std as core;
 
+    use crate::circular_queue::CircularQueue;
     use alloc::string::{String, ToString};
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicUsize, Ordering};
-    use crate::circular_queue::CircularQueue;
 
     #[test]
     fn test_new() {
@@ -224,8 +218,8 @@ mod tests {
 
     #[test]
     fn test_drop_elements() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         #[derive(Debug)]
         struct DropCounter {
@@ -243,8 +237,16 @@ mod tests {
         {
             let mut queue: CircularQueue<DropCounter, 3> = CircularQueue::new();
 
-            queue.push(DropCounter { counter: drop_count.clone() }).unwrap();
-            queue.push(DropCounter { counter: drop_count.clone() }).unwrap();
+            queue
+                .push(DropCounter {
+                    counter: drop_count.clone(),
+                })
+                .unwrap();
+            queue
+                .push(DropCounter {
+                    counter: drop_count.clone(),
+                })
+                .unwrap();
 
             assert_eq!(drop_count.load(Ordering::SeqCst), 0);
 

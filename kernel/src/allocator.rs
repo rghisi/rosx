@@ -2,23 +2,20 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-
 #[cfg_attr(not(test), global_allocator)]
 pub static MEMORY_ALLOCATOR: MemoryAllocator = MemoryAllocator::new();
 
-trait Xpto {
-
-}
+trait Xpto {}
 pub struct MemoryAllocator {
-   root: MaybeUninit<&'static (dyn GlobalAlloc + Sync)>,
-   used: AtomicUsize
+    root: MaybeUninit<&'static (dyn GlobalAlloc + Sync)>,
+    used: AtomicUsize,
 }
 
 impl MemoryAllocator {
     const fn new() -> Self {
         MemoryAllocator {
             root: MaybeUninit::uninit(),
-            used: AtomicUsize::new(0)
+            used: AtomicUsize::new(0),
         }
     }
 
@@ -31,7 +28,6 @@ impl MemoryAllocator {
     pub fn used(&self) -> usize {
         self.used.load(Ordering::Relaxed)
     }
-
 }
 
 unsafe impl GlobalAlloc for MemoryAllocator {

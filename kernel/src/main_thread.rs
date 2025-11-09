@@ -1,12 +1,12 @@
-use alloc::boxed::Box;
-use alloc::vec::Vec;
-use alloc::collections::VecDeque;
 use crate::future::Future;
-use crate::kernel::{TASK_MANAGER};
+use crate::kernel::TASK_MANAGER;
 use crate::messages::HardwareInterrupt;
 use crate::syscall::switch_to_task;
 use crate::task::TaskHandle;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
+use alloc::boxed::Box;
+use alloc::collections::VecDeque;
+use alloc::vec::Vec;
 
 pub struct MainThread {
     idle_task: Option<TaskHandle>,
@@ -16,7 +16,6 @@ pub struct MainThread {
 }
 
 impl MainThread {
-
     pub fn new() -> Self {
         MainThread {
             idle_task: None,
@@ -28,7 +27,6 @@ impl MainThread {
 }
 
 impl MainThread {
-
     pub(crate) fn run(&mut self) {
         loop {
             self.process_hardware_interrupts();
@@ -41,7 +39,7 @@ impl MainThread {
         while !self.hw_interrupt_queue.is_empty() {
             let hardware_interrupt = self.hw_interrupt_queue.remove(0);
             let event = match hardware_interrupt {
-                HardwareInterrupt::Keyboard { scancode } => { (scancode & 0x7F) as char }
+                HardwareInterrupt::Keyboard { scancode } => (scancode & 0x7F) as char,
             };
         }
     }
@@ -49,11 +47,14 @@ impl MainThread {
     fn run_user_process(&mut self) {
         let mut next_task_option = self.user_tasks.pop_front();
         let next_task_handle = match next_task_option {
-            None => { self.idle_task.clone().unwrap() }
-            Some(next_task) => { next_task}
+            None => self.idle_task.clone().unwrap(),
+            Some(next_task) => next_task,
         };
 
-        TASK_MANAGER.lock().borrow_mut().set_state(next_task_handle, Running);
+        TASK_MANAGER
+            .lock()
+            .borrow_mut()
+            .set_state(next_task_handle, Running);
 
         let returned_task_handle = switch_to_task(next_task_handle);
 
@@ -63,18 +64,18 @@ impl MainThread {
             Created => {}
             Ready => {}
             Running => {
-                TASK_MANAGER.lock().borrow_mut().set_state(returned_task_handle, Ready);
+                TASK_MANAGER
+                    .lock()
+                    .borrow_mut()
+                    .set_state(returned_task_handle, Ready);
                 if returned_task_handle != self.idle_task.clone().unwrap() {
                     let _ = self.user_tasks.push_back(returned_task_handle);
                 } else {
                     self.idle_task = Some(returned_task_handle);
                 }
             }
-            Blocked => {
-            }
-            Terminated => {
-
-            }
+            Blocked => {}
+            Terminated => {}
         }
     }
 
@@ -82,7 +83,7 @@ impl MainThread {
         let _ = match TASK_MANAGER.lock().borrow().get_state(task_handle) {
             Ready => self.user_tasks.push_back(task_handle),
             // Blocked => self.blocked_tasks.push(task),
-            _ => return
+            _ => return,
         };
     }
 
@@ -91,7 +92,10 @@ impl MainThread {
     }
 
     pub(crate) fn push_blocked(&mut self, task_handle: TaskHandle, future: Box<dyn Future>) {
-        let task_future = TaskFuture { task_handle, future };
+        let task_future = TaskFuture {
+            task_handle,
+            future,
+        };
         self.blocked_tasks.push_back(task_future);
     }
 
@@ -108,7 +112,10 @@ impl MainThread {
         let futures: Vec<TaskFuture> = self.blocked_tasks.drain(..).collect();
         for task_future in futures.into_iter() {
             if task_future.is_completed() {
-                TASK_MANAGER.lock().borrow_mut().set_state(task_future.task_handle, Ready);
+                TASK_MANAGER
+                    .lock()
+                    .borrow_mut()
+                    .set_state(task_future.task_handle, Ready);
                 self.user_tasks.push_back(task_future.task_handle);
             } else {
                 self.blocked_tasks.push_back(task_future)
@@ -123,7 +130,6 @@ struct TaskFuture {
 }
 
 impl TaskFuture {
-
     fn is_completed(&self) -> bool {
         self.future.is_completed()
     }

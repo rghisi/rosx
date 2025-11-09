@@ -192,58 +192,199 @@ impl KeyboardEvent {
     pub fn from_key(key: Key) -> KeyboardEvent {
         match key {
             Key::Escape => KeyboardEvent { key, char: None },
-            Key::Key1 => KeyboardEvent { key, char: Some('1') },
-            Key::Key2 => KeyboardEvent { key, char: Some('2') },
-            Key::Key3 => KeyboardEvent { key, char: Some('3') },
-            Key::Key4 => KeyboardEvent { key, char: Some('4') },
-            Key::Key5 => KeyboardEvent { key, char: Some('5') },
-            Key::Key6 => KeyboardEvent { key, char: Some('6') },
-            Key::Key7 => KeyboardEvent { key, char: Some('7') },
-            Key::Key8 => KeyboardEvent { key, char: Some('8') },
-            Key::Key9 => KeyboardEvent { key, char: Some('9') },
-            Key::Key0 => KeyboardEvent { key, char: Some('0') },
-            Key::Minus => KeyboardEvent { key, char: Some('-') },
-            Key::Equals => KeyboardEvent { key, char: Some('=') },
+            Key::Key1 => KeyboardEvent {
+                key,
+                char: Some('1'),
+            },
+            Key::Key2 => KeyboardEvent {
+                key,
+                char: Some('2'),
+            },
+            Key::Key3 => KeyboardEvent {
+                key,
+                char: Some('3'),
+            },
+            Key::Key4 => KeyboardEvent {
+                key,
+                char: Some('4'),
+            },
+            Key::Key5 => KeyboardEvent {
+                key,
+                char: Some('5'),
+            },
+            Key::Key6 => KeyboardEvent {
+                key,
+                char: Some('6'),
+            },
+            Key::Key7 => KeyboardEvent {
+                key,
+                char: Some('7'),
+            },
+            Key::Key8 => KeyboardEvent {
+                key,
+                char: Some('8'),
+            },
+            Key::Key9 => KeyboardEvent {
+                key,
+                char: Some('9'),
+            },
+            Key::Key0 => KeyboardEvent {
+                key,
+                char: Some('0'),
+            },
+            Key::Minus => KeyboardEvent {
+                key,
+                char: Some('-'),
+            },
+            Key::Equals => KeyboardEvent {
+                key,
+                char: Some('='),
+            },
             Key::Backspace => KeyboardEvent { key, char: None },
-            Key::Tab => KeyboardEvent { key, char: Some('\t') },
-            Key::Q => KeyboardEvent { key, char: Some('q') },
-            Key::W => KeyboardEvent { key, char: Some('w') },
-            Key::E => KeyboardEvent { key, char: Some('e') },
-            Key::R => KeyboardEvent { key, char: Some('r') },
-            Key::T => KeyboardEvent { key, char: Some('t') },
-            Key::Y => KeyboardEvent { key, char: Some('y') },
-            Key::U => KeyboardEvent { key, char: Some('u') },
-            Key::I => KeyboardEvent { key, char: Some('i') },
-            Key::O => KeyboardEvent { key, char: Some('o') },
-            Key::P => KeyboardEvent { key, char: Some('p') },
-            Key::LeftBracket => KeyboardEvent { key, char: Some('[') },
-            Key::RightBracket => KeyboardEvent { key, char: Some(']') },
+            Key::Tab => KeyboardEvent {
+                key,
+                char: Some('\t'),
+            },
+            Key::Q => KeyboardEvent {
+                key,
+                char: Some('q'),
+            },
+            Key::W => KeyboardEvent {
+                key,
+                char: Some('w'),
+            },
+            Key::E => KeyboardEvent {
+                key,
+                char: Some('e'),
+            },
+            Key::R => KeyboardEvent {
+                key,
+                char: Some('r'),
+            },
+            Key::T => KeyboardEvent {
+                key,
+                char: Some('t'),
+            },
+            Key::Y => KeyboardEvent {
+                key,
+                char: Some('y'),
+            },
+            Key::U => KeyboardEvent {
+                key,
+                char: Some('u'),
+            },
+            Key::I => KeyboardEvent {
+                key,
+                char: Some('i'),
+            },
+            Key::O => KeyboardEvent {
+                key,
+                char: Some('o'),
+            },
+            Key::P => KeyboardEvent {
+                key,
+                char: Some('p'),
+            },
+            Key::LeftBracket => KeyboardEvent {
+                key,
+                char: Some('['),
+            },
+            Key::RightBracket => KeyboardEvent {
+                key,
+                char: Some(']'),
+            },
             Key::Enter => KeyboardEvent { key, char: None },
             Key::LeftControl => KeyboardEvent { key, char: None },
-            Key::A => KeyboardEvent { key, char: Some('a') },
-            Key::S => KeyboardEvent { key, char: Some('s') },
-            Key::D => KeyboardEvent { key, char: Some('d') },
-            Key::F => KeyboardEvent { key, char: Some('f') },
-            Key::G => KeyboardEvent { key, char: Some('g') },
-            Key::H => KeyboardEvent { key, char: Some('h') },
-            Key::J => KeyboardEvent { key, char: Some('j') },
-            Key::K => KeyboardEvent { key, char: Some('k') },
-            Key::L => KeyboardEvent { key, char: Some('l') },
-            Key::Semicolon => KeyboardEvent { key, char: Some(';') },
-            Key::Apostrophe => KeyboardEvent { key, char: Some('\'') },
+            Key::A => KeyboardEvent {
+                key,
+                char: Some('a'),
+            },
+            Key::S => KeyboardEvent {
+                key,
+                char: Some('s'),
+            },
+            Key::D => KeyboardEvent {
+                key,
+                char: Some('d'),
+            },
+            Key::F => KeyboardEvent {
+                key,
+                char: Some('f'),
+            },
+            Key::G => KeyboardEvent {
+                key,
+                char: Some('g'),
+            },
+            Key::H => KeyboardEvent {
+                key,
+                char: Some('h'),
+            },
+            Key::J => KeyboardEvent {
+                key,
+                char: Some('j'),
+            },
+            Key::K => KeyboardEvent {
+                key,
+                char: Some('k'),
+            },
+            Key::L => KeyboardEvent {
+                key,
+                char: Some('l'),
+            },
+            Key::Semicolon => KeyboardEvent {
+                key,
+                char: Some(';'),
+            },
+            Key::Apostrophe => KeyboardEvent {
+                key,
+                char: Some('\''),
+            },
             Key::Grave => KeyboardEvent { key, char: None },
             Key::LeftShift => KeyboardEvent { key, char: None },
-            Key::Backslash => KeyboardEvent { key, char: Some('\\') },
-            Key::Z => KeyboardEvent { key, char: Some('z') },
-            Key::X => KeyboardEvent { key, char: Some('x') },
-            Key::C => KeyboardEvent { key, char: Some('c') },
-            Key::V => KeyboardEvent { key, char: Some('v') },
-            Key::B => KeyboardEvent { key, char: Some('b') },
-            Key::N => KeyboardEvent { key, char: Some('n') },
-            Key::M => KeyboardEvent { key, char: Some('m') },
-            Key::Comma => KeyboardEvent { key, char: Some(',') },
-            Key::Period => KeyboardEvent { key, char: Some('.') },
-            Key::Slash => KeyboardEvent { key, char: Some('/') },
+            Key::Backslash => KeyboardEvent {
+                key,
+                char: Some('\\'),
+            },
+            Key::Z => KeyboardEvent {
+                key,
+                char: Some('z'),
+            },
+            Key::X => KeyboardEvent {
+                key,
+                char: Some('x'),
+            },
+            Key::C => KeyboardEvent {
+                key,
+                char: Some('c'),
+            },
+            Key::V => KeyboardEvent {
+                key,
+                char: Some('v'),
+            },
+            Key::B => KeyboardEvent {
+                key,
+                char: Some('b'),
+            },
+            Key::N => KeyboardEvent {
+                key,
+                char: Some('n'),
+            },
+            Key::M => KeyboardEvent {
+                key,
+                char: Some('m'),
+            },
+            Key::Comma => KeyboardEvent {
+                key,
+                char: Some(','),
+            },
+            Key::Period => KeyboardEvent {
+                key,
+                char: Some('.'),
+            },
+            Key::Slash => KeyboardEvent {
+                key,
+                char: Some('/'),
+            },
             Key::RightShift => KeyboardEvent { key, char: None },
             Key::KeypadAsterisk => KeyboardEvent { key, char: None },
             Key::LeftAlt => KeyboardEvent { key, char: None },

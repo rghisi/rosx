@@ -1,5 +1,5 @@
-use alloc::alloc::alloc;
 use alloc::alloc::Layout;
+use alloc::alloc::alloc;
 use alloc::boxed::Box;
 use core::cmp::min;
 use core::mem::MaybeUninit;
@@ -16,10 +16,16 @@ pub struct GrowingQueue<T> {
 
 impl<T> GrowingQueue<T> {
     pub fn new(initial_capacity: usize, max_capacity: Option<usize>) -> Self {
-        assert!(initial_capacity > 0, "GrowingQueue initial capacity must be greater than 0");
+        assert!(
+            initial_capacity > 0,
+            "GrowingQueue initial capacity must be greater than 0"
+        );
 
         if let Some(max) = max_capacity {
-            assert!(initial_capacity <= max, "GrowingQueue initial capacity must not exceed max capacity");
+            assert!(
+                initial_capacity <= max,
+                "GrowingQueue initial capacity must not exceed max capacity"
+            );
         }
 
         let max = if max_capacity.is_some() {
@@ -27,7 +33,6 @@ impl<T> GrowingQueue<T> {
         } else {
             usize::MAX
         };
-
 
         let buffer = Self::allocate_buffer(initial_capacity);
 
@@ -109,9 +114,7 @@ impl<T> GrowingQueue<T> {
             return None;
         }
 
-        let value = unsafe {
-            self.buffer[self.head].as_ptr().read()
-        };
+        let value = unsafe { self.buffer[self.head].as_ptr().read() };
 
         self.head += 1;
         if self.head >= self.buffer.len() {
@@ -127,9 +130,7 @@ impl<T> GrowingQueue<T> {
             return None;
         }
 
-        unsafe {
-            Some(&*self.buffer[self.head].as_ptr())
-        }
+        unsafe { Some(&*self.buffer[self.head].as_ptr()) }
     }
 
     pub fn peek_mut(&mut self) -> Option<&mut T> {
@@ -137,9 +138,7 @@ impl<T> GrowingQueue<T> {
             return None;
         }
 
-        unsafe {
-            Some(&mut *self.buffer[self.head].as_mut_ptr())
-        }
+        unsafe { Some(&mut *self.buffer[self.head].as_mut_ptr()) }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -177,10 +176,10 @@ impl<T> Drop for GrowingQueue<T> {
 mod tests {
     extern crate std as core;
 
+    use crate::growing_circular_queue::GrowingQueue;
     use alloc::string::{String, ToString};
     use core::sync::Arc;
     use core::sync::atomic::{AtomicUsize, Ordering};
-    use crate::growing_circular_queue::GrowingQueue;
 
     #[test]
     fn test_new() {
@@ -374,8 +373,16 @@ mod tests {
         {
             let mut queue: GrowingQueue<DropCounter> = GrowingQueue::new(2, None);
 
-            queue.push(DropCounter { counter: drop_count.clone() }).unwrap();
-            queue.push(DropCounter { counter: drop_count.clone() }).unwrap();
+            queue
+                .push(DropCounter {
+                    counter: drop_count.clone(),
+                })
+                .unwrap();
+            queue
+                .push(DropCounter {
+                    counter: drop_count.clone(),
+                })
+                .unwrap();
 
             assert_eq!(drop_count.load(Ordering::SeqCst), 0);
 

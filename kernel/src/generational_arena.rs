@@ -96,10 +96,7 @@ impl<T, I: IndexType, G: GenerationType> GenArena<T, I, G> {
             initial_capacity <= capacity,
             "Initial capacity cannot exceed the max value of the index type"
         );
-        assert!(
-            initial_capacity > 0,
-            "Initial capacity cannot be zero"
-        );
+        assert!(initial_capacity > 0, "Initial capacity cannot be zero");
 
         let mut items = Vec::with_capacity(initial_capacity);
         let mut generations = Vec::with_capacity(initial_capacity);
@@ -169,10 +166,10 @@ impl<T, I: IndexType, G: GenerationType> GenArena<T, I, G> {
 #[cfg(test)]
 mod tests {
     extern crate std;
+    use crate::generational_arena::{Error, GenArena, Handle};
     use std::string::String;
     use std::string::ToString;
     use std::vec;
-    use crate::generational_arena::{Error, GenArena, Handle};
 
     #[test]
     fn should_initialize_to_the_initial_capacity() {

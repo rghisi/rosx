@@ -1,16 +1,14 @@
-use alloc::boxed::Box;
-use alloc::vec::Vec;
 use crate::future::{Future, TimeFuture};
 use crate::kernel::KERNEL;
 use crate::messages::HardwareInterrupt;
-use system::message::{Exec, Message, MessageType};
 use crate::task::TaskHandle;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use system::message::{Exec, Message, MessageType};
 
 #[inline(always)]
 pub fn get_system_time() -> u64 {
-    unsafe {
-        (*KERNEL).get_system_time()
-    }
+    unsafe { (*KERNEL).get_system_time() }
 }
 
 #[inline(always)]
@@ -43,9 +41,7 @@ pub fn preempt() {
 
 #[inline(always)]
 pub fn switch_to_task(task_handle: TaskHandle) -> TaskHandle {
-    unsafe {
-        (*KERNEL).switch_to_task(task_handle)
-    }
+    unsafe { (*KERNEL).switch_to_task(task_handle) }
 }
 
 #[inline(always)]
@@ -64,29 +60,25 @@ pub(crate) fn terminate_current_task() {
 
 #[inline(always)]
 pub fn syscall(message: &Message) -> usize {
-    unsafe {
-        (*KERNEL).syscall(message)
-    }
+    unsafe { (*KERNEL).syscall(message) }
 }
 
 #[inline(always)]
 pub fn handle_syscall(message: &Message) -> usize {
     match message.message_type {
-        MessageType::FileRead => {1}
-        MessageType::FileWrite => {2}
-        MessageType::FileOpen => {3}
-        MessageType::FileClose => {4}
-        MessageType::Exec => {
-            handle_exec(message)
-        }
+        MessageType::FileRead => 1,
+        MessageType::FileWrite => 2,
+        MessageType::FileOpen => 3,
+        MessageType::FileClose => 4,
+        MessageType::Exec => handle_exec(message),
     }
 }
 
 fn handle_exec(message: &Message) -> usize {
     let data = &message.data;
     match Exec::from_u8(data[0]) {
-        Exec::Invalid => { 0 }
-        Exec::ThreadSleep => { thread_sleep(data) }
+        Exec::Invalid => 0,
+        Exec::ThreadSleep => thread_sleep(data),
     }
 }
 

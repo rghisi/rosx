@@ -1,9 +1,7 @@
 use crate::cpu::Cpu;
 
 struct ContextSwitcher {
-    cpu: dyn Cpu
+    cpu: dyn Cpu,
 }
 
-impl ContextSwitcher {
-
-}
+impl ContextSwitcher {}

@@ -1,25 +1,39 @@
-use alloc::boxed::Box;
-use core::fmt::{Display, Formatter};
 use crate::generational_arena::Handle;
 use crate::kernel::task_wrapper;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
+use alloc::boxed::Box;
+use core::fmt::{Display, Formatter};
 
 pub(crate) type TaskHandle = Handle<u8, u8>;
 pub type SharedTask = Box<Task>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum TaskState {
-    Created, Ready, Running, Blocked, Terminated,
+    Created,
+    Ready,
+    Running,
+    Blocked,
+    Terminated,
 }
 
 impl Display for TaskState {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
-            Created => {write!(f, "Created")}
-            Ready => {write!(f, "Ready")}
-            Running => {write!(f, "Running")}
-            TaskState::Blocked => {write!(f, "Blocked")}
-            Terminated => {write!(f, "Terminated")}
+            Created => {
+                write!(f, "Created")
+            }
+            Ready => {
+                write!(f, "Ready")
+            }
+            Running => {
+                write!(f, "Running")
+            }
+            TaskState::Blocked => {
+                write!(f, "Blocked")
+            }
+            Terminated => {
+                write!(f, "Terminated")
+            }
         }
     }
 }
@@ -34,7 +48,12 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new<'a>(id: u32, name: &'static str, entry_wrapper: usize, entry_point: usize) -> SharedTask {
+    pub fn new<'a>(
+        id: u32,
+        name: &'static str,
+        entry_wrapper: usize,
+        entry_point: usize,
+    ) -> SharedTask {
         let mut task = Box::new(Task {
             id,
             name,
@@ -105,18 +124,13 @@ pub struct EntrypointTask {
 
 impl EntrypointTask {
     pub fn new(entrypoint: usize) -> SharedTask {
-        Task::new(
-            next_id(),
-            "EPT",
-            task_wrapper as usize,
-            entrypoint,
-        )
+        Task::new(next_id(), "EPT", task_wrapper as usize, entrypoint)
     }
 }
 
 static mut NEXT_ID: u32 = 100;
 pub fn next_id() -> u32 {
-    unsafe  {
+    unsafe {
         NEXT_ID += 1;
         NEXT_ID
     }
