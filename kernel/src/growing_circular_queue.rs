@@ -86,10 +86,8 @@ impl<T> GrowingQueue<T> {
     }
 
     pub fn push(&mut self, value: T) -> Result<(), T> {
-        if self.is_full() {
-            if self.grow().is_err() {
-                return Err(value);
-            }
+        if self.is_full() && self.grow().is_err() {
+            return Err(value);
         }
 
         if self.is_full() {

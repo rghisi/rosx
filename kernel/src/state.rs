@@ -55,6 +55,6 @@ impl ExecutionState {
     }
 
     pub(crate) fn current_task(&self) -> TaskHandle {
-        self.current_task.clone().unwrap()
+        self.current_task.unwrap()
     }
 }

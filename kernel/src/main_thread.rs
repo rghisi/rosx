@@ -15,6 +15,12 @@ pub struct MainThread {
     hw_interrupt_queue: Vec<HardwareInterrupt>,
 }
 
+impl Default for MainThread {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MainThread {
     pub fn new() -> Self {
         MainThread {
@@ -45,9 +51,9 @@ impl MainThread {
     }
 
     fn run_user_process(&mut self) {
-        let mut next_task_option = self.user_tasks.pop_front();
+        let next_task_option = self.user_tasks.pop_front();
         let next_task_handle = match next_task_option {
-            None => self.idle_task.clone().unwrap(),
+            None => self.idle_task.unwrap(),
             Some(next_task) => next_task,
         };
 
@@ -68,8 +74,8 @@ impl MainThread {
                     .lock()
                     .borrow_mut()
                     .set_state(returned_task_handle, Ready);
-                if returned_task_handle != self.idle_task.clone().unwrap() {
-                    let _ = self.user_tasks.push_back(returned_task_handle);
+                if returned_task_handle != self.idle_task.unwrap() {
+                    self.user_tasks.push_back(returned_task_handle);
                 } else {
                     self.idle_task = Some(returned_task_handle);
                 }
@@ -80,11 +86,11 @@ impl MainThread {
     }
 
     pub(crate) fn push_task(&mut self, task_handle: TaskHandle) {
-        let _ = match TASK_MANAGER.lock().borrow().get_state(task_handle) {
+        match TASK_MANAGER.lock().borrow().get_state(task_handle) {
             Ready => self.user_tasks.push_back(task_handle),
             // Blocked => self.blocked_tasks.push(task),
-            _ => return,
-        };
+            _ => (),
+        }
     }
 
     pub(crate) fn push_hardware_interrupt(&mut self, hardware_interrupt: HardwareInterrupt) {

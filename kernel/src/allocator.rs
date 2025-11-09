@@ -19,11 +19,11 @@ impl MemoryAllocator {
         }
     }
 
-    pub unsafe fn init(&self, allocator: &'static (dyn GlobalAlloc + Sync)) {
+    pub unsafe fn init(&self, allocator: &'static (dyn GlobalAlloc + Sync)) { unsafe {
         core::ptr::addr_of!(self.root)
             .cast_mut()
             .write(MaybeUninit::new(allocator));
-    }
+    }}
 
     pub fn used(&self) -> usize {
         self.used.load(Ordering::Relaxed)
@@ -31,13 +31,13 @@ impl MemoryAllocator {
 }
 
 unsafe impl GlobalAlloc for MemoryAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 { unsafe {
         self.used.fetch_add(layout.size(), Ordering::Relaxed);
         self.root.assume_init().alloc(layout)
-    }
+    }}
 
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) { unsafe {
         self.used.fetch_sub(layout.size(), Ordering::Relaxed);
         self.root.assume_init().dealloc(ptr, layout);
-    }
+    }}
 }

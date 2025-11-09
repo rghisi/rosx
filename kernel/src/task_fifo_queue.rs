@@ -1,9 +1,15 @@
-use crate::task::{SharedTask, Task};
+use crate::task::SharedTask;
 use crate::task_queue::{EnqueuedTask, StateCreatedNotAccepted, TaskEnqueueingError, TaskQueue};
 use alloc::vec::Vec;
 
 pub struct TaskFifoQueue {
     tasks: Vec<SharedTask>,
+}
+
+impl Default for TaskFifoQueue {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TaskFifoQueue {

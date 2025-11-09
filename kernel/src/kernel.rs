@@ -18,13 +18,13 @@ use core::cell::RefCell;
 use core::ptr::null_mut;
 use lazy_static::lazy_static;
 use spin::Mutex;
-use system::message::{Message, MessageType};
+use system::message::Message;
 
 pub(crate) static mut KERNEL: *mut Kernel = null_mut();
 
 lazy_static! {
     pub(crate) static ref TASK_MANAGER: Mutex<RefCell<TaskManager>> =
-        { Mutex::new(RefCell::new(TaskManager::new())) };
+        Mutex::new(RefCell::new(TaskManager::new()));
 }
 
 pub struct Kernel {
@@ -133,7 +133,7 @@ impl Kernel {
         self.main_thread.push_task(task_handle);
     }
 
-    pub fn schedule(&mut self, mut task: SharedTask) {
+    pub fn schedule(&mut self, task: SharedTask) {
         self.execution_state.preemption_enabled = false;
         let task_handle = TASK_MANAGER.lock().borrow_mut().add_task(task).unwrap();
         self.cpu.initialize_task(
@@ -144,7 +144,7 @@ impl Kernel {
                 .borrow_task_mut(task_handle)
                 .unwrap(),
         );
-        let _ = self.main_thread.push_task(task_handle);
+        self.main_thread.push_task(task_handle);
         self.execution_state.preemption_enabled = true;
     }
 
@@ -243,8 +243,8 @@ extern "C" fn main_thread_wrapper(index: usize, generation: usize) -> ! {
 
     let main_thread = unsafe {
         let ptr_back = main_thread_ptr as *mut MainThread;
-        let mt = &mut *ptr_back;
-        mt
+        
+        &mut *ptr_back
     };
 
     main_thread.run();

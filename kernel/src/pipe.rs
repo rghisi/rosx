@@ -1,8 +1,13 @@
-use crate::syscall::wait;
 use system::file::File;
 
 pub struct Pipe {
     c: Option<char>,
+}
+
+impl Default for Pipe {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Pipe {
@@ -13,7 +18,7 @@ impl Pipe {
 
 impl File for Pipe {
     fn read_char(&self) -> char {
-        while (!self.c.is_none()) {
+        while self.c.is_some() {
             // wait();
         }
 

@@ -10,11 +10,6 @@ pub fn main() {
     unsafe { COUNT = COUNT + 1; };
     println!("shell {}", c);
     Syscall::exec(main as usize);
-    let message = Message {
-        message_type: MessageType::Exec,
-        data: vec![1, 0, 0, 19, 136]
-    };
-    println!("Syscall!!! {}", Syscall::syscall(&message));
     // delay(50000500);
     // Syscall::exec(main as usize);
     println!("closing shell {}", c);
