@@ -9,6 +9,7 @@ mod debug_console;
 mod interrupts;
 mod idle;
 
+use core::panic::PanicInfo;
 use buddy_system_allocator::LockedHeap;
 use kernel::kernel::Kernel;
 use kernel::function_task::FunctionTask;
@@ -19,6 +20,8 @@ use crate::vga_buffer::VgaOutput;
 use bootloader::BootInfo;
 use kernel::allocator::MEMORY_ALLOCATOR;
 use kernel::default_output::MultiplexOutput;
+use kernel::kprintln;
+use kernel::panic::handle_panic;
 use usrlib::println;
 use crate::idle::idle_task_factory;
 
@@ -37,6 +40,11 @@ static KCONFIG: KConfig = KConfig {
     cpu: &CPU,
     idle_task_factory
 };
+
+#[cfg_attr(not(test), panic_handler)]
+fn panic(info: &PanicInfo) -> ! {
+    handle_panic(info);
+}
 
 static HEAP_ALLOCATOR: LockedHeap<27> = LockedHeap::<27>::new();
 

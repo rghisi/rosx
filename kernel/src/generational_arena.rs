@@ -168,7 +168,11 @@ impl<T, I: IndexType, G: GenerationType> GenArena<T, I, G> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    extern crate std;
+    use std::string::String;
+    use std::string::ToString;
+    use std::vec;
+    use crate::generational_arena::{Error, GenArena, Handle};
 
     #[test]
     fn should_initialize_to_the_initial_capacity() {

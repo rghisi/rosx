@@ -1,8 +1,5 @@
 #![cfg_attr(not(test), no_std)]
 
-#[cfg(test)]
-extern crate std as core;
-
 extern crate alloc;
 extern crate system;
 extern crate lazy_static;
@@ -28,6 +25,6 @@ pub mod pipe;
 pub mod generational_arena;
 pub(crate) mod task_manager;
 pub mod allocator;
-mod panic;
+pub mod panic;
 pub mod syscall;
 pub mod future;

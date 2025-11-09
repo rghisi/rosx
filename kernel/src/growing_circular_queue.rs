@@ -175,10 +175,12 @@ impl<T> Drop for GrowingQueue<T> {
 
 #[cfg(test)]
 mod tests {
-    use core::cmp::Ordering;
+    extern crate std as core;
+
+    use alloc::string::{String, ToString};
     use core::sync::Arc;
-    use core::sync::atomic::AtomicUsize;
-    use super::*;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    use crate::growing_circular_queue::GrowingQueue;
 
     #[test]
     fn test_new() {
@@ -356,9 +358,6 @@ mod tests {
 
     #[test]
     fn test_drop_elements() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use std::sync::Arc;
-
         #[derive(Debug)]
         struct DropCounter {
             counter: Arc<AtomicUsize>,

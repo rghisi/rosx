@@ -104,10 +104,12 @@ impl<T, const N: usize> Drop for CircularQueue<T, N> {
 
 #[cfg(test)]
 mod tests {
-    use core::cmp::Ordering;
-    use core::sync::Arc;
-    use core::sync::atomic::AtomicUsize;
-    use super::*;
+    extern crate std as core;
+
+    use alloc::string::{String, ToString};
+    use alloc::sync::Arc;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    use crate::circular_queue::CircularQueue;
 
     #[test]
     fn test_new() {

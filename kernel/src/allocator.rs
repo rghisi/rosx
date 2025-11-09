@@ -2,7 +2,8 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-#[global_allocator]
+
+#[cfg_attr(not(test), global_allocator)]
 pub static MEMORY_ALLOCATOR: MemoryAllocator = MemoryAllocator::new();
 
 trait Xpto {
