@@ -1,23 +1,23 @@
 use alloc::boxed::Box;
 use core::ptr::{null_mut};
-use cpu::Cpu;
-use kconfig::KConfig;
+use crate::cpu::Cpu;
+use crate::kconfig::KConfig;
 use lazy_static::lazy_static;
 use spin::Mutex;
 #[cfg(not(test))]
-use allocator::MEMORY_ALLOCATOR;
+use crate::allocator::MEMORY_ALLOCATOR;
 use core::alloc::GlobalAlloc;
 use core::cell::{RefCell};
-use default_output::{setup_default_output, KernelOutput};
-use future::Future;
-use kprintln;
-use main_thread::MainThread;
-use state::ExecutionState;
-use syscall::{task_yield, terminate_current_task};
+use crate::default_output::{setup_default_output, KernelOutput};
+use crate::future::Future;
+use crate::kprintln;
+use crate::main_thread::MainThread;
+use crate::state::ExecutionState;
+use crate::syscall::{task_yield, terminate_current_task};
 use system::message::{Message, MessageType};
-use task::{SharedTask, Task, TaskHandle};
-use task::TaskState::Terminated;
-use task_manager::TaskManager;
+use crate::task::{SharedTask, Task, TaskHandle};
+use crate::task::TaskState::Terminated;
+use crate::task_manager::TaskManager;
 use crate::messages::HardwareInterrupt;
 
 pub(crate) static mut KERNEL: *mut Kernel = null_mut();

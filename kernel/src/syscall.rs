@@ -1,10 +1,10 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use future::{Future, TimeFuture};
-use kernel::KERNEL;
-use messages::HardwareInterrupt;
+use crate::future::{Future, TimeFuture};
+use crate::kernel::KERNEL;
+use crate::messages::HardwareInterrupt;
 use system::message::{Exec, Message, MessageType};
-use task::TaskHandle;
+use crate::task::TaskHandle;
 
 #[inline(always)]
 pub fn get_system_time() -> u64 {

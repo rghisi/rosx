@@ -1,8 +1,8 @@
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
-use generational_arena::Handle;
-use kernel::task_wrapper;
-use task::TaskState::{Blocked, Created, Ready, Running, Terminated};
+use crate::generational_arena::Handle;
+use crate::kernel::task_wrapper;
+use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 
 pub(crate) type TaskHandle = Handle<u8, u8>;
 pub type SharedTask = Box<Task>;

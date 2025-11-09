@@ -1,5 +1,5 @@
-use kernel::task_wrapper;
-use task::{Task, next_id, SharedTask};
+use crate::kernel::task_wrapper;
+use crate::task::{Task, next_id, SharedTask};
 
 #[derive(Copy, Clone, Debug)]
 pub struct FunctionTask {

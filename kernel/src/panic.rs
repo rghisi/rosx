@@ -1,5 +1,5 @@
 use core::panic::PanicInfo;
-use kprintln;
+use crate::kprintln;
 
 #[cfg(not(test))]
 #[panic_handler]

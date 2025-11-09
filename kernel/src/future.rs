@@ -1,4 +1,4 @@
-use syscall;
+use crate::syscall;
 
 pub trait Future {
     fn is_completed(&self) -> bool;

@@ -1,4 +1,4 @@
-use syscall::wait;
+use crate::syscall::wait;
 use system::file::File;
 
 pub struct Pipe {

@@ -1,6 +1,6 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use task::Task;
+use crate::task::Task;
 
 pub trait TaskQueue {
     fn offer(&mut self, task: Box<Task>) -> Result<(), &dyn TaskEnqueueingError>;

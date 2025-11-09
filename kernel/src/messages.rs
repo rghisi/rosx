@@ -1,5 +1,5 @@
 use alloc::fmt::Debug;
-use messages::KeyboardEvent::Touch;
+use crate::messages::KeyboardEvent::Touch;
 
 #[derive(Debug)]
 pub enum HardwareInterrupt {

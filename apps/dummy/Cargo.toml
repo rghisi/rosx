@@ -3,6 +3,7 @@ authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
 name = "dummy"
 publish = false
 version = "0.1.0"
+edition.workspace = true
 
 [dependencies]
 system = { path = "../../system" }

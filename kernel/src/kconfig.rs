@@ -1,5 +1,5 @@
-use cpu::Cpu;
-use task::{SharedTask};
+use crate::cpu::Cpu;
+use crate::task::{SharedTask};
 
 pub struct KConfig {
     pub cpu: &'static dyn Cpu,

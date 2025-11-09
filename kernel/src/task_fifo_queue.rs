@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
-use task_queue::{EnqueuedTask, TaskQueue, TaskEnqueueingError, StateCreatedNotAccepted};
-use task::{SharedTask, Task};
+use crate::task_queue::{EnqueuedTask, TaskQueue, TaskEnqueueingError, StateCreatedNotAccepted};
+use crate::task::{SharedTask, Task};
 
 pub struct TaskFifoQueue {
     tasks: Vec<SharedTask>,
@@ -50,10 +50,10 @@ mod tests {
     use std::fmt::{Debug, Formatter};
     use std::ptr::eq;
     use super::TaskFifoQueue;
-    use task_queue::TaskQueue;
-    use task::Task;
+    use crate::task_queue::TaskQueue;
+    use crate::task::Task;
     use crate::function_task::FunctionTask;
-    use task::TaskState::{Created, Ready, Running, Terminated};
+    use crate::task::TaskState::{Created, Ready, Running, Terminated};
 
     fn dummy_job() {}
 

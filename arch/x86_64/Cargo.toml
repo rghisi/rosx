@@ -1,7 +1,7 @@
 [package]
 name = "rosx"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 
 [dependencies]
 system = { path = "../../system" }
@@ -23,7 +23,6 @@ features = ["spin_no_std"]
 
 [[bin]]
 name = "rosx"
-test = false
 bench = false
 
 [package.metadata.bootimage]

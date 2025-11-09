@@ -1,12 +1,12 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use alloc::collections::VecDeque;
-use future::Future;
-use kernel::{TASK_MANAGER};
-use messages::HardwareInterrupt;
-use syscall::switch_to_task;
-use task::TaskHandle;
-use task::TaskState::{Blocked, Created, Ready, Running, Terminated};
+use crate::future::Future;
+use crate::kernel::{TASK_MANAGER};
+use crate::messages::HardwareInterrupt;
+use crate::syscall::switch_to_task;
+use crate::task::TaskHandle;
+use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 
 pub struct MainThread {
     idle_task: Option<TaskHandle>,
