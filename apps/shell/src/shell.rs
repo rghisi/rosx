@@ -1,13 +1,13 @@
-use alloc::vec;
 use core::arch::asm;
-use system::message::{Message, MessageType};
 use usrlib::println;
 use usrlib::syscall::Syscall;
 
 static mut COUNT: usize = 0;
 pub fn main() {
     let c = unsafe { COUNT };
-    unsafe { COUNT = COUNT + 1; };
+    unsafe {
+        COUNT += 1;
+    };
     println!("shell {}", c);
     Syscall::exec(main as usize);
     // delay(50000500);
@@ -15,9 +15,10 @@ pub fn main() {
     println!("closing shell {}", c);
 }
 
-
 fn delay(ticks: u32) {
     for _ in 0..ticks {
-        unsafe { asm!("nop"); }
+        unsafe {
+            asm!("nop");
+        }
     }
 }

@@ -1,13 +1,13 @@
+use crate::cpu::syscall_handler_entry;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering::Relaxed;
-use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
+use kernel::messages::HardwareInterrupt;
+use lazy_static::lazy_static;
 use pic8259::ChainedPics;
 use spin::Mutex;
-use lazy_static::lazy_static;
-use x86_64::instructions::port::Port;
-use kernel::messages::HardwareInterrupt;
 use usrlib::{print, println};
-use crate::cpu::syscall_handler_entry;
+use x86_64::instructions::port::Port;
+use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 
 const PIC_1_OFFSET: u8 = 0x20;
 const PIC_2_OFFSET: u8 = 0x28;
@@ -33,7 +33,8 @@ impl InterruptIndex {
     }
 }
 
-static PICS: Mutex<ChainedPics> = Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
+static PICS: Mutex<ChainedPics> =
+    Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
 
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
@@ -43,9 +44,9 @@ lazy_static! {
         idt[SYSCALL_VECTOR].set_handler_fn(syscall_handler);
 
         unsafe {
-            idt[SYSCALL_VECTOR].set_handler_addr(core::mem::transmute(syscall_handler_entry as *const ()));
+            idt[SYSCALL_VECTOR]
+                .set_handler_addr(core::mem::transmute(syscall_handler_entry as *const ()));
         }
-
 
         idt
     };
@@ -107,7 +108,8 @@ extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFr
     SYSTEM_TIME_MS.fetch_add(MS_PER_TICK, Relaxed);
 
     unsafe {
-        PICS.lock().notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+        PICS.lock()
+            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
     }
 
     kernel::syscall::preempt();
@@ -119,7 +121,8 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
     let scancode: u8 = unsafe { port.read() };
 
     unsafe {
-        PICS.lock().notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+        PICS.lock()
+            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
     };
 
     let keyboard_interrupt = HardwareInterrupt::Keyboard { scancode };

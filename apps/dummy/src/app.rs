@@ -1,7 +1,5 @@
-use alloc::vec;
 use core::arch::asm;
-use system::message::{Message, MessageType};
-use usrlib::{print, println};
+use usrlib::print;
 use usrlib::syscall::Syscall;
 
 pub fn main() {
@@ -48,6 +46,8 @@ pub fn main_with_wait() {
 
 fn delay(ticks: u32) {
     for _ in 0..ticks {
-        unsafe { asm!("nop"); }
+        unsafe {
+            asm!("nop");
+        }
     }
 }

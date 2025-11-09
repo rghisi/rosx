@@ -58,7 +58,9 @@ impl TaskManager {
     }
 
     pub(crate) fn set_state(&mut self, handle: TaskHandle, state: TaskState) {
-        if let Ok(task) = self.tasks.borrow_mut(handle) { task.set_state(state) }
+        if let Ok(task) = self.tasks.borrow_mut(handle) {
+            task.set_state(state)
+        }
     }
 
     pub(crate) fn get_task_stack_pointer(&self, handle: TaskHandle) -> usize {

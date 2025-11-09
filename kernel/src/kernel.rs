@@ -243,7 +243,7 @@ extern "C" fn main_thread_wrapper(index: usize, generation: usize) -> ! {
 
     let main_thread = unsafe {
         let ptr_back = main_thread_ptr as *mut MainThread;
-        
+
         &mut *ptr_back
     };
 

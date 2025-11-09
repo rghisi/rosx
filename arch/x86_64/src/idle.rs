@@ -17,6 +17,8 @@ fn idle_job() {
             // println!("Idling... {}", get_system_time());
         }
         counter += 1;
-        unsafe { asm!("hlt"); }
+        unsafe {
+            asm!("hlt");
+        }
     }
 }

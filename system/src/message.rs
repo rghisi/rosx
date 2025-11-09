@@ -4,7 +4,7 @@ pub enum MessageType {
     FileWrite,
     FileOpen,
     FileClose,
-    Exec
+    Exec,
 }
 pub struct Message {
     pub message_type: MessageType,
@@ -19,9 +19,9 @@ pub enum Exec {
 impl Exec {
     pub fn from_u8(value: u8) -> Exec {
         match value {
-            0 => { Exec::Invalid }
-            1 => { Exec::ThreadSleep }
-            _ => { Exec::Invalid }
+            0 => Exec::Invalid,
+            1 => Exec::ThreadSleep,
+            _ => Exec::Invalid,
         }
     }
 }

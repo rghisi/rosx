@@ -1,3 +1,1 @@
-struct TaskConfig {
-    
-}
+struct TaskConfig {}

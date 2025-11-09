@@ -3,34 +3,31 @@
 #![feature(abi_x86_interrupt)]
 
 extern crate alloc;
-mod vga_buffer;
 mod cpu;
 mod debug_console;
-mod interrupts;
 mod idle;
+mod interrupts;
+mod vga_buffer;
 
-use core::panic::PanicInfo;
-use buddy_system_allocator::LockedHeap;
-use kernel::kernel::Kernel;
-use kernel::function_task::FunctionTask;
-use kernel::kconfig::KConfig;
 use crate::cpu::X86_64;
 use crate::debug_console::QemuDebugConsole;
+use crate::idle::idle_task_factory;
 use crate::vga_buffer::VgaOutput;
 use bootloader::BootInfo;
+use buddy_system_allocator::LockedHeap;
+use core::panic::PanicInfo;
 use kernel::allocator::MEMORY_ALLOCATOR;
 use kernel::default_output::MultiplexOutput;
+use kernel::function_task::FunctionTask;
+use kernel::kconfig::KConfig;
+use kernel::kernel::Kernel;
 use kernel::kprintln;
 use kernel::panic::handle_panic;
 use usrlib::println;
-use crate::idle::idle_task_factory;
 
 static VGA_OUTPUT: VgaOutput = VgaOutput;
 pub static QEMU_OUTPUT: QemuDebugConsole = QemuDebugConsole;
-static OUTPUTS: &[&dyn kernel::default_output::KernelOutput] = &[
-    &VGA_OUTPUT,
-    &QEMU_OUTPUT,
-];
+static OUTPUTS: &[&dyn kernel::default_output::KernelOutput] = &[&VGA_OUTPUT, &QEMU_OUTPUT];
 
 static MULTIPLEXED_OUTPUT: MultiplexOutput = MultiplexOutput::new(OUTPUTS);
 
@@ -38,7 +35,7 @@ static CPU: X86_64 = X86_64::new();
 
 static KCONFIG: KConfig = KConfig {
     cpu: &CPU,
-    idle_task_factory
+    idle_task_factory,
 };
 
 #[cfg_attr(not(test), panic_handler)]
@@ -69,7 +66,10 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
 }
 
 fn initialize_heap(boot_info: &BootInfo) {
-    println!("[MEMORY] Physical memory offset: 0x{:x}", boot_info.physical_memory_offset);
+    println!(
+        "[MEMORY] Physical memory offset: 0x{:x}",
+        boot_info.physical_memory_offset
+    );
     println!("[MEMORY] Memory regions:");
 
     let mut total_usable = 0u64;
@@ -77,11 +77,12 @@ fn initialize_heap(boot_info: &BootInfo) {
     let mut largest_region_start = 0u64;
 
     for region in boot_info.memory_map.iter() {
-        println!("  {:?}: 0x{:x} - 0x{:x} ({} KB)",
-                 region.region_type,
-                 region.range.start_addr(),
-                 region.range.end_addr(),
-                 (region.range.end_addr() - region.range.start_addr()) / 1024
+        println!(
+            "  {:?}: 0x{:x} - 0x{:x} ({} KB)",
+            region.region_type,
+            region.range.start_addr(),
+            region.range.end_addr(),
+            (region.range.end_addr() - region.range.start_addr()) / 1024
         );
 
         if let bootloader::bootinfo::MemoryRegionType::Usable = region.region_type {
@@ -95,10 +96,14 @@ fn initialize_heap(boot_info: &BootInfo) {
         }
     }
 
-    println!("[MEMORY] Total usable RAM: {} MB", total_usable / (1024 * 1024));
-    println!("[MEMORY] Largest region: {} MB at 0x{:x}",
-             largest_region_size / (1024 * 1024),
-             largest_region_start
+    println!(
+        "[MEMORY] Total usable RAM: {} MB",
+        total_usable / (1024 * 1024)
+    );
+    println!(
+        "[MEMORY] Largest region: {} MB at 0x{:x}",
+        largest_region_size / (1024 * 1024),
+        largest_region_start
     );
 
     for region in boot_info.memory_map.iter() {
@@ -106,7 +111,10 @@ fn initialize_heap(boot_info: &BootInfo) {
             let size = (region.range.end_addr() - region.range.start_addr()) as usize;
             let start = (region.range.start_addr() + boot_info.physical_memory_offset) as usize;
             let end = start + size;
-            println!("[MEMORY] Allocating region: {}B at 0x{:x}-0x{:x}", size, start, end);
+            println!(
+                "[MEMORY] Allocating region: {}B at 0x{:x}-0x{:x}",
+                size, start, end
+            );
             unsafe {
                 HEAP_ALLOCATOR.lock().init(start, size);
             }
