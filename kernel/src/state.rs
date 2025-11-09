@@ -1,7 +1,7 @@
 use cpu::Cpu;
 use kernel::TASK_MANAGER;
+use task::TaskHandle;
 use task::TaskState::Blocked;
-use task_arena::TaskHandle;
 
 pub struct ExecutionState {
     pub(crate) main_thread: TaskHandle,

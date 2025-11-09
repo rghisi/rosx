@@ -4,6 +4,7 @@ use cpu::Cpu;
 use kconfig::KConfig;
 use lazy_static::lazy_static;
 use spin::Mutex;
+#[cfg(not(test))]
 use allocator::MEMORY_ALLOCATOR;
 use core::alloc::GlobalAlloc;
 use core::cell::{RefCell};
@@ -14,9 +15,8 @@ use main_thread::MainThread;
 use state::ExecutionState;
 use syscall::{task_yield, terminate_current_task};
 use system::message::{Message, MessageType};
-use task::{SharedTask, Task};
+use task::{SharedTask, Task, TaskHandle};
 use task::TaskState::Terminated;
-use task_arena::{TaskHandle};
 use task_manager::TaskManager;
 use crate::messages::HardwareInterrupt;
 
@@ -168,6 +168,7 @@ impl Kernel {
     }
 }
 
+#[cfg(not(test))]
 pub fn bootstrap(allocator: &'static (dyn GlobalAlloc + Sync), default_output: &'static dyn KernelOutput) {
     unsafe { MEMORY_ALLOCATOR.init(allocator); };
     setup_default_output(default_output);

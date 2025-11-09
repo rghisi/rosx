@@ -1,6 +1,7 @@
 use core::panic::PanicInfo;
 use kprintln;
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     kprintln!("\n!!! PANIC !!!");
