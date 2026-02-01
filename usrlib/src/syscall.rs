@@ -1,30 +1,21 @@
-use alloc::vec;
 use core::fmt;
-use system::message::{Exec, Message, MessageData, MessageType};
+use system::syscall_numbers::SyscallNum;
+use system::message::{Message, MessageData, MessageType};
+use crate::arch;
 
 pub struct Syscall {}
 
 impl Syscall {
     pub fn exec(entrypoint: usize) {
-        kernel::syscall::exec(entrypoint);
+        arch::raw_syscall(SyscallNum::Exec as u64, entrypoint as u64, 0, 0);
     }
 
-    pub fn syscall(message: &Message) -> usize {
-        kernel::syscall::syscall(message)
+    pub fn task_yield() {
+        arch::raw_syscall(SyscallNum::Yield as u64, 0, 0, 0);
     }
-
-    pub fn task_yield() {}
 
     pub fn sleep(ms: u64) {
-        let n0 = ms as u8;
-        let n1 = (ms >> 8) as u8;
-        let n2 = (ms >> 16) as u8;
-        let n3 = (ms >> 24) as u8;
-        let message = Message {
-            message_type: MessageType::Exec,
-            data: MessageData::Vec { vec: vec![Exec::ThreadSleep as u8, n3, n2, n1, n0] },
-        };
-        Syscall::syscall(&message);
+        arch::raw_syscall(SyscallNum::Sleep as u64, ms, 0, 0);
     }
 
     pub fn print(args: fmt::Arguments) {
@@ -32,6 +23,6 @@ impl Syscall {
             message_type: MessageType::Exec,
             data: MessageData::FmtArgs { args },
         };
-        Syscall::syscall(&message);
+        arch::raw_syscall(SyscallNum::Print as u64, &message as *const _ as u64, 0, 0);
     }
 }

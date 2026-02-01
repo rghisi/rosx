@@ -7,4 +7,3 @@ edition.workspace = true
 
 [dependencies]
 system = { path = "../system" }
-kernel = { path = "../kernel" }
