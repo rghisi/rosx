@@ -1,37 +1,41 @@
 .global syscall_handler_entry
 
-# Parameters: RDI = usize (param A), RSI = usize (param B)
-# Return: RAX = usize
+# Parameters from 'syscall' instruction:
+# RAX = Syscall Number
+# RDI, RSI, RDX = Arguments
+# RCX = Return RIP (saved by CPU)
+# R11 = Saved RFLAGS (saved by CPU)
+
 syscall_handler_entry:
+    # Save registers
     push r15
     push r14
     push r13
     push r12
-    push r11
-    push r10
-    push r9
-    push r8
-    push rdi
-    push rsi
+    push r11 # Saved RFLAGS
+    push rcx # Saved RIP
     push rbp
-    push rdx
-    push rcx
     push rbx
 
-    call syscall_handler #needs to put return in RAX
+    # Prepare arguments for Rust syscall_handler(num, arg1, arg2, arg3)
+    # RDI = num (RAX)
+    # RSI = arg1 (RDI)
+    # RDX = arg2 (RSI)
+    # RCX = arg3 (RDX)
+    mov rcx, rdx
+    mov rdx, rsi
+    mov rsi, rdi
+    mov rdi, rax
+
+    call syscall_handler # result in RAX
 
     pop rbx
-    pop rcx
-    pop rdx
     pop rbp
-    pop rsi
-    pop rdi
-    pop r8
-    pop r9
-    pop r10
+    pop rcx
     pop r11
     pop r12
     pop r13
     pop r14
     pop r15
-    iretq
+
+    sysretq
