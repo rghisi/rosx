@@ -8,16 +8,10 @@ pub fn main() {
     unsafe {
         COUNT += 1;
     };
-    println!("shell {}", c);
-    let mut c = 0;
-    loop {
-        println!("Count: {}", c);
-        c += 1;
-    }
-    // Syscall::exec(main as usize);
-    // delay(50000500);
-    // Syscall::exec(main as usize);
-    println!("closing shell {}", c);
+    println!("\nshell {} started", c);
+    Syscall::exec(main as usize);
+    Syscall::sleep(500);
+    println!("\nclosing shell {}", c);
 }
 
 fn delay(ticks: u32) {
