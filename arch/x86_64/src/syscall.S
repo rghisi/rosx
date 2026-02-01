@@ -38,4 +38,10 @@ syscall_handler_entry:
     pop r14
     pop r15
 
-    sysretq
+    # Return to Ring 0 (since we don't support Ring 3 yet)
+    # Restore RFLAGS from R11
+    push r11
+    popfq
+
+    # Jump to return address in RCX
+    jmp rcx
