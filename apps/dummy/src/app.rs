@@ -5,7 +5,7 @@ use usrlib::syscall::Syscall;
 pub fn main() {
     print!("1");
     for _ in 0..10 {
-        delay(20000500);
+        Syscall::sleep(10);
         print!("1");
     }
     print!("1");
@@ -14,7 +14,7 @@ pub fn main() {
 pub fn main2() {
     print!("2");
     for _ in 0..10 {
-        delay(20000500);
+        Syscall::sleep(20);
         print!("2");
     }
     print!("2");
@@ -22,7 +22,7 @@ pub fn main2() {
 pub fn main3() {
     print!("3");
     for _ in 0..10 {
-        delay(20000500);
+        Syscall::sleep(30);
         print!("3");
     }
     print!("3");
@@ -30,7 +30,7 @@ pub fn main3() {
 pub fn main4() {
     print!("4");
     for _ in 0..10 {
-        delay(20000500);
+        Syscall::sleep(40);
         print!("4");
     }
     print!("4");
@@ -44,10 +44,3 @@ pub fn main_with_wait() {
     print!("2. Done");
 }
 
-fn delay(ticks: u32) {
-    for _ in 0..ticks {
-        unsafe {
-            asm!("nop");
-        }
-    }
-}
