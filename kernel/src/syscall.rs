@@ -4,7 +4,10 @@ use crate::messages::HardwareInterrupt;
 use crate::task::TaskHandle;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use system::message::{Exec, Message, MessageType};
+use system::message::{Exec, Message, MessageData, MessageType};
+use crate::default_output::print;
+
+use system::syscall_numbers::SyscallNum;
 
 #[inline(always)]
 pub fn get_system_time() -> u64 {
@@ -63,22 +66,45 @@ pub fn syscall(message: &Message) -> usize {
     unsafe { (*KERNEL).syscall(message) }
 }
 
-#[inline(always)]
-pub fn handle_syscall(message: &Message) -> usize {
+pub fn handle_syscall(num: u64, arg1: u64, _arg2: u64, _arg3: u64) -> usize {
+    if num == SyscallNum::Print as u64 {
+        let message = unsafe { &*(arg1 as *const Message) };
+        return handle_message(message);
+    } else if num == SyscallNum::Sleep as u64 {
+        let future = Box::new(TimeFuture::new(arg1));
+        wait(future);
+    } else if num == SyscallNum::Exec as u64 {
+        exec(arg1 as usize);
+    } else if num == SyscallNum::Yield as u64 {
+        task_yield();
+    }
+    0
+}
+
+pub fn handle_message(message: &Message) -> usize {
     match message.message_type {
         MessageType::FileRead => 1,
         MessageType::FileWrite => 2,
         MessageType::FileOpen => 3,
         MessageType::FileClose => 4,
-        MessageType::Exec => handle_exec(message),
+        MessageType::Exec => handle_exec_message(message),
     }
 }
 
-fn handle_exec(message: &Message) -> usize {
+fn handle_exec_message(message: &Message) -> usize {
     let data = &message.data;
-    match Exec::from_u8(data[0]) {
-        Exec::Invalid => 0,
-        Exec::ThreadSleep => thread_sleep(data),
+    match data {
+        MessageData::Vec { vec } => {
+            match Exec::from_u8(vec[0]) {
+                Exec::Invalid => 0,
+                Exec::ThreadSleep => thread_sleep(vec),
+                Exec::Print => 0,
+            }
+        }
+        MessageData::FmtArgs { args } => {
+            print(*args);
+            0
+        }
     }
 }
 

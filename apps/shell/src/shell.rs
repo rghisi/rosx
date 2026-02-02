@@ -1,5 +1,5 @@
 use core::arch::asm;
-use usrlib::println;
+use usrlib::{print, println};
 use usrlib::syscall::Syscall;
 
 static mut COUNT: usize = 0;
@@ -8,11 +8,10 @@ pub fn main() {
     unsafe {
         COUNT += 1;
     };
-    println!("shell {}", c);
+    println!("\nshell {} started", c);
     Syscall::exec(main as usize);
-    // delay(50000500);
-    // Syscall::exec(main as usize);
-    println!("closing shell {}", c);
+    Syscall::sleep(500);
+    println!("\nclosing shell {}", c);
 }
 
 fn delay(ticks: u32) {
