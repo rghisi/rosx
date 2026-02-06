@@ -71,6 +71,14 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
         exec(arg1 as usize);
     } else if num == SyscallNum::Yield as u64 {
         task_yield();
+    } else if num == SyscallNum::ReadChar as u64 {
+        let future = Box::new(crate::keyboard::KeyboardFuture::new());
+        if !future.is_completed() {
+            wait(future);
+        }
+        if let Some(c) = crate::keyboard::pop_key() {
+            return c as usize;
+        }
     }
     0
 }

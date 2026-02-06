@@ -44,8 +44,18 @@ impl MainThread {
     fn process_hardware_interrupts(&mut self) {
         while !self.hw_interrupt_queue.is_empty() {
             let hardware_interrupt = self.hw_interrupt_queue.remove(0);
-            let event = match hardware_interrupt {
-                HardwareInterrupt::Keyboard { scancode } => (scancode & 0x7F) as char,
+            match hardware_interrupt {
+                HardwareInterrupt::Keyboard { scancode } => {
+                    // Ignore break codes (key release) in PS/2 Set 1
+                    if scancode & 0x80 == 0 {
+                        if let Ok(key) = crate::keyboard::Key::from_scancode_set1(scancode) {
+                            let event = crate::keyboard::KeyboardEvent::from_key(key);
+                            if let Some(c) = event.char {
+                                crate::keyboard::push_key(c);
+                            }
+                        }
+                    }
+                }
             };
         }
     }

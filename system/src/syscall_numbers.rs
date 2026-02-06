@@ -5,4 +5,5 @@ pub enum SyscallNum {
     Sleep = 1,
     Exec = 2,
     Yield = 3,
+    ReadChar = 4,
 }

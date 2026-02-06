@@ -21,4 +21,9 @@ impl Syscall {
         let s = alloc::fmt::format(args);
         arch::raw_syscall(SyscallNum::Print as u64, s.as_ptr() as u64, s.len() as u64, 0);
     }
+
+    pub fn read_char() -> char {
+        let c = arch::raw_syscall(SyscallNum::ReadChar as u64, 0, 0, 0);
+        core::char::from_u32(c as u32).unwrap_or('\0')
+    }
 }

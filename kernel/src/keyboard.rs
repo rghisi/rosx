@@ -1,4 +1,36 @@
 use alloc::fmt::{Display, Formatter};
+use alloc::collections::VecDeque;
+use spin::Mutex;
+use lazy_static::lazy_static;
+use crate::future::Future;
+
+lazy_static! {
+    static ref KEYBOARD_BUFFER: Mutex<VecDeque<char>> = Mutex::new(VecDeque::new());
+}
+
+pub fn push_key(c: char) {
+    KEYBOARD_BUFFER.lock().push_back(c);
+}
+
+pub fn pop_key() -> Option<char> {
+    KEYBOARD_BUFFER.lock().pop_front()
+}
+
+pub struct KeyboardFuture {}
+
+impl KeyboardFuture {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Future for KeyboardFuture {
+    fn is_completed(&self) -> bool {
+        !KEYBOARD_BUFFER.lock().is_empty()
+    }
+
+    fn complete(&mut self) {}
+}
 
 #[derive(Debug)]
 pub enum Key {
@@ -184,8 +216,8 @@ impl Key {
 }
 #[derive(Debug)]
 pub struct KeyboardEvent {
-    key: Key,
-    char: Option<char>,
+    pub key: Key,
+    pub char: Option<char>,
 }
 
 impl KeyboardEvent {
@@ -293,7 +325,10 @@ impl KeyboardEvent {
                 key,
                 char: Some(']'),
             },
-            Key::Enter => KeyboardEvent { key, char: None },
+            Key::Enter => KeyboardEvent {
+                key,
+                char: Some('\n'),
+            },
             Key::LeftControl => KeyboardEvent { key, char: None },
             Key::A => KeyboardEvent {
                 key,
