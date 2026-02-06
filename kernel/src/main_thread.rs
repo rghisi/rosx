@@ -81,7 +81,12 @@ impl MainThread {
                 }
             }
             Blocked => {}
-            Terminated => {}
+            Terminated => {
+                TASK_MANAGER
+                    .lock()
+                    .borrow_mut()
+                    .remove_task(returned_task_handle);
+            }
         }
     }
 
