@@ -1,5 +1,4 @@
 use crate::task::{Task, TaskHandle};
-use system::message::Message;
 
 pub trait Cpu {
     fn setup(&self);
@@ -13,7 +12,6 @@ pub trait Cpu {
         param2: usize,
     ) -> usize;
     fn swap_context(&self, stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize);
-    fn syscall(&self, message: &Message) -> usize;
     fn get_system_time(&self) -> u64;
 
     fn initialize_task(&self, task_handle: TaskHandle, task: &mut Task) {

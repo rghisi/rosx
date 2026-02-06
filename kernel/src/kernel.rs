@@ -18,7 +18,6 @@ use core::cell::RefCell;
 use core::ptr::null_mut;
 use lazy_static::lazy_static;
 use spin::Mutex;
-use system::message::Message;
 
 pub(crate) static mut KERNEL: *mut Kernel = null_mut();
 
@@ -185,11 +184,6 @@ impl Kernel {
             self.execution_state.current_task = Some(task_handle);
         }
         self.execution_state.preemption_enabled = true;
-    }
-
-    #[inline(always)]
-    pub fn syscall(&self, message: &Message) -> usize {
-        self.cpu.syscall(message)
     }
 
     #[inline(always)]

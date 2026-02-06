@@ -2,7 +2,6 @@ use crate::interrupts::SYSTEM_TIME_MS;
 use core::arch::asm;
 use core::sync::atomic::Ordering::Relaxed;
 use kernel::cpu::Cpu;
-use system::message::Message;
 use x86_64::registers::model_specific::{Efer, EferFlags, LStar, SFMask, Star};
 use x86_64::structures::gdt::SegmentSelector;
 use x86_64::VirtAddr;
@@ -111,12 +110,6 @@ impl Cpu for X86_64 {
         unsafe {
             swap_context(stack_pointer_to_store, stack_pointer_to_load);
         }
-    }
-
-    fn syscall(&self, _message: &Message) -> usize {
-        // This is the old int 0x80 syscall mechanism, which we are replacing.
-        // For now, it's unused as usrlib uses the 'syscall' instruction.
-        0
     }
 
     #[inline(always)]

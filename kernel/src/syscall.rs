@@ -3,8 +3,6 @@ use crate::kernel::KERNEL;
 use crate::messages::HardwareInterrupt;
 use crate::task::TaskHandle;
 use alloc::boxed::Box;
-use alloc::vec::Vec;
-use system::message::{Exec, Message, MessageData, MessageType};
 use crate::default_output::print;
 
 use system::syscall_numbers::SyscallNum;
@@ -61,15 +59,11 @@ pub(crate) fn terminate_current_task() {
     }
 }
 
-#[inline(always)]
-pub fn syscall(message: &Message) -> usize {
-    unsafe { (*KERNEL).syscall(message) }
-}
-
-pub fn handle_syscall(num: u64, arg1: u64, _arg2: u64, _arg3: u64) -> usize {
+pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
     if num == SyscallNum::Print as u64 {
-        let message = unsafe { &*(arg1 as *const Message) };
-        return handle_message(message);
+        let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(arg1 as *const u8, arg2 as usize)) };
+        print(format_args!("{}", s));
+        return 0;
     } else if num == SyscallNum::Sleep as u64 {
         let future = Box::new(TimeFuture::new(arg1));
         wait(future);
@@ -78,43 +72,5 @@ pub fn handle_syscall(num: u64, arg1: u64, _arg2: u64, _arg3: u64) -> usize {
     } else if num == SyscallNum::Yield as u64 {
         task_yield();
     }
-    0
-}
-
-pub fn handle_message(message: &Message) -> usize {
-    match message.message_type {
-        MessageType::FileRead => 1,
-        MessageType::FileWrite => 2,
-        MessageType::FileOpen => 3,
-        MessageType::FileClose => 4,
-        MessageType::Exec => handle_exec_message(message),
-    }
-}
-
-fn handle_exec_message(message: &Message) -> usize {
-    let data = &message.data;
-    match data {
-        MessageData::Vec { vec } => {
-            match Exec::from_u8(vec[0]) {
-                Exec::Invalid => 0,
-                Exec::ThreadSleep => thread_sleep(vec),
-                Exec::Print => 0,
-            }
-        }
-        MessageData::FmtArgs { args } => {
-            print(*args);
-            0
-        }
-    }
-}
-
-fn thread_sleep(data: &Vec<u8>) -> usize {
-    let n0 = data[1] as u64;
-    let n1 = data[2] as u64;
-    let n2 = data[3] as u64;
-    let n3 = data[4] as u64;
-    let ms = n0 << 24 | n1 << 16 | n2 << 8 | n3;
-    let future = Box::new(TimeFuture::new(ms));
-    wait(future);
     0
 }
