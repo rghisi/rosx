@@ -13,9 +13,10 @@
 - **Language:** Rust (with minimal assembly for architecture-specific code)
 - **Target Platforms:**
   - **x86_64** (current - chosen for readily available infrastructure)
-  - **ARM** (planned soon - high priority)
-  - **RISC-V** (planned soon - high priority)
-  - **m68k** (planned soon - high priority)
+  - **x86_32** (next - to run on older PCs)
+  - **ARM** (future)
+  - **RISC-V** (future)
+  - **m68k** (future)
   - Microcontrollers (future)
 - **Scope:** Full-featured OS with networking, task scheduling, interrupt handling
 - **Project Type:** Learning/hobby project with practical goals
@@ -38,9 +39,9 @@ rosx/
 │   │   │   └── main.rs                  # Architecture entry point
 │   │   ├── .cargo/config.toml          # Build config (custom target)
 │   │   └── Cargo.toml
-│   ├── arm/                # ARM port (planned soon - high priority)
-│   ├── riscv/              # RISC-V port (planned soon - high priority)
-│   └── m68k/               # m68k port (planned soon - high priority)
+│   ├── arm/                # ARM port (future)
+│   ├── riscv/              # RISC-V port (future)
+│   └── m68k/               # m68k port (future)
 │
 ├── kernel/                 # Platform-agnostic kernel code
 │   ├── src/
@@ -61,38 +62,6 @@ rosx/
 
 ---
 
-## Current State
-
-### What Works
-- Basic task switching using `ret`-based context switching
-- Idle task execution when no tasks are ready
-- Task queue management (ready queue)
-- Keyboard interrupt handling (triggers task switching)
-- PIC (8259) configuration and interrupt masking
-- Bootloader integration (bootimage)
-
-### Known Issues
-- **Task finalization handling problem:** Tasks that complete have issues with the finalization process (marking as terminated and yielding back to MainThread)
-
-### Active Work
-**PRIMARY FOCUS:** Get basic preemptive scheduler working
-
-**Major Refactoring in Progress:** Transitioning from `ret`-based to interrupt-driven context switching using `iretq`
-
-**Goal:** Enable true preemptive multitasking where:
-- All context switches go through interrupts
-- Voluntary yields use software interrupt (INT 0x30)
-- Hardware interrupts (timer, keyboard) can preempt tasks
-- Unified interrupt stack frame for all switches
-- **Timer-based preemption** for fair scheduling
-
-**Current Phase:** Planning complete, ready to begin implementation
-**Reference:** See `INTERRUPT_DRIVEN_CONTEXT_SWITCH_REFACTORING.md` for detailed 15-step plan
-
-**Priority:** Complete the interrupt-driven refactoring and get timer-based preemption working before adding other features
-
----
-
 ## Build & Run
 
 ### Build Command
@@ -108,101 +77,13 @@ cargo run  # Uses bootimage runner configured in .cargo/config.toml
 ```
 
 **Testing Workflow:**
-- **Current:** QEMU for testing (fast iteration)
-- **Future Goal:** Run on real x86_64 hardware
-- Bootloader supports both QEMU and real hardware deployment
+- **Manual:** QEMU run for manual testing (fast iteration)
+- **Automated:** Run unit tests in host arch
 
 ### Custom Target
 - Target spec: `arch/x86_64/rosx.json`
 - Bare metal (no_std)
 - Builds core, alloc, compiler_builtins from source
-
----
-
-## Architecture Details
-
-### x86_64 Specifics
-
-**Interrupt Setup:**
-- IDT (Interrupt Descriptor Table) configured
-- PICs remapped: PIC1 @ 0x20, PIC2 @ 0x28
-- Keyboard interrupt (IRQ1) enabled and triggers context switch
-- Timer interrupt (IRQ0) planned for future preemptive scheduling
-
-**Context Switching (Current):**
-- Uses `swap_context` assembly function
-- Saves/restores 15 general-purpose registers
-- Uses `ret` instruction to jump to tasks
-- Task initialization creates stack frame for `ret`-based entry
-
-**Context Switching (Target):**
-- Interrupt-driven using `iretq`
-- Software interrupt 0x30 for voluntary yields
-- Hardware interrupts for preemption
-- Unified interrupt stack frame (144 bytes)
-
-**Memory Layout:**
-- Stack grows downward
-- 16-byte stack alignment required
-- Task stacks initialized with proper alignment
-
----
-
-## Key Components
-
-### Task System
-
-**Task Structure** (`kernel/src/task.rs`)
-- Stack pointer
-- State (New, Ready, Running, Terminated)
-- Entry point and parameters
-- Task wrapper function for cleanup
-
-**Scheduler** (`kernel/src/simple_scheduler.rs`)
-- **Design Goal:** Pluggable during kernel configuration/bootstrapping
-- Current implementation: Round-robin scheduling
-- Ready queue (VecDeque)
-- Idle task when no ready tasks available
-- **Future:** Multiple scheduler implementations selectable at boot time
-
-**Main Thread** (`kernel/src/main_thread.rs`)
-- Core scheduling loop
-- Manages task queue
-- Re-queues yielded tasks, discards terminated tasks
-- Enables interrupts after initialization
-
-### Interrupt Handling
-
-**Current Handlers** (`arch/x86_64/src/interrupts.rs`)
-- Keyboard interrupt: Reads scancode, sends EOI, calls `task_yield()`
-- Uses `x86-interrupt` ABI from x86_64 crate
-
-**Planned Handlers:**
-- Software interrupt 0x30 for voluntary yields
-- Timer interrupt for preemptive scheduling
-- Additional hardware interrupts as needed
-
----
-
-## Dependencies
-
-### Key Crates
-- `x86_64 = "0.15"` - x86_64 structures and intrinsics
-- `pic8259 = "0.11"` - PIC (Programmable Interrupt Controller) driver
-- `bootimage = "0.11"` - Bootloader integration
-
-### Standard Library
-- `#![no_std]` - Bare metal, no standard library
-- `core` and `alloc` built from source
-- Custom panic handler required
-
-### Dependency Policy
-- **CRITICAL: The `kernel/` crate must NOT depend on ANY external crates**
-- Only base Rust crates allowed in `kernel/`: `core`, `alloc`, `compiler_builtins`
-- Architecture crates (`arch/*`) may use platform-specific crates (e.g., `x86_64`, `pic8259`)
-- Keep dependencies minimal across the entire project
-
----
 
 ## Development Guidelines
 
@@ -210,8 +91,6 @@ cargo run  # Uses bootimage runner configured in .cargo/config.toml
 
 1. **Check current state first:**
    - Read git status and recent commits
-   - Check DEVELOPMENT_LOG.md for recent changes
-   - Review INTERRUPT_DRIVEN_CONTEXT_SWITCH_REFACTORING.md if working on context switching
 
 2. **Understand the architecture layer:**
    - `kernel/` should remain platform-agnostic
@@ -224,16 +103,10 @@ cargo run  # Uses bootimage runner configured in .cargo/config.toml
    - Document register usage and calling conventions
 
 4. **Interrupt handling:**
-   - Always send EOI to PIC when handling hardware interrupts
-   - Be mindful of interrupt masking
+   - Always platform / arch specific best practices
    - Interrupts currently disabled during critical sections
 
-5. **Task management:**
-   - Tasks must properly mark themselves as terminated
-   - Stack management is manual - be careful with alignment
-   - Task wrapper ensures cleanup
-
-6. **Testing:**
+5. **Testing:**
    - **Write unit tests for all kernel modules** (see `kernel/src/simple_scheduler.rs` as example)
    - Unit tests should be comprehensive and test edge cases
    - Use `#[cfg(test)]` modules within each file
@@ -285,101 +158,10 @@ cargo run  # Uses bootimage runner configured in .cargo/config.toml
 
 ---
 
-## Common Tasks
-
-### Adding a New Interrupt Handler
-1. Define interrupt number in `arch/x86_64/src/interrupts.rs`
-2. Create handler function with `extern "x86-interrupt"` ABI
-3. Register in IDT during `init()`
-4. Unmask interrupt in PIC if hardware interrupt
-5. Test with appropriate trigger
-
-### Adding a New Task
-1. Implement `Runnable` trait or use `FunctionTask`
-2. Initialize task stack with `initialize_task_for_swap`
-3. Add to scheduler's ready queue
-4. Task should call `task_yield()` to cooperate
-
-### Debugging Context Switch Issues
-1. Check stack alignment (must be 16-byte aligned)
-2. Verify all registers are saved/restored
-3. Ensure stack pointer is valid after switch
-4. Check task state transitions
-5. Look for stack corruption
-
----
-
-## Future Roadmap
-
-### Near Term (Next Steps)
-1. Complete interrupt-driven context switching refactoring
-2. Fix task finalization handling issue
-3. Add timer interrupt for true preemptive multitasking
-4. Implement proper exception handlers (page fault, etc.)
-5. Expand unit test coverage for existing kernel modules
-
-### Medium Term
-- **Pluggable scheduler system** - Enable multiple scheduler implementations selectable at boot
-- **Pluggable memory management** - Replace pre-baked memory manager with configurable implementations
-  - Currently using pre-baked memory manager
-  - Goal: Multiple memory managers that can be selected during bootstrapping
-- Process isolation (user mode)
-- System calls interface
-- Basic device drivers (serial, disk)
-
-### Long Term (Multi-Platform Ports)
-- **ARM port** (high priority - planned soon)
-- **RISC-V port** (high priority - planned soon)
-- **m68k port** (high priority - planned soon)
-- Microcontroller support
-- Networking stack (TCP/IP)
-- File system
-- User-space applications (web server, etc.)
-
----
-
-## Quick Reference
-
-### Important Files to Check
-- `arch/x86_64/src/context_switching.S` - Core context switch assembly
-- `arch/x86_64/src/interrupts.rs` - All interrupt handlers
-- `kernel/src/kernel.rs` - Kernel initialization and task_yield API
-- `kernel/src/main_thread.rs` - Main scheduling loop
-- `DEVELOPMENT_LOG.md` - Recent development history
-- `INTERRUPT_DRIVEN_CONTEXT_SWITCH_REFACTORING.md` - Current refactoring plan
-
-### Git Branch Strategy
-- `working-with-claude` - Current working branch
-- No main branch set yet (to be configured)
-
 ### Build Issues?
 - Check that custom target exists: `arch/x86_64/rosx.json`
 - Verify rust-src component: `rustup component add rust-src`
 - Bootimage installed: `cargo install bootimage`
-
----
-
-## Questions to Ask When Starting Work
-
-1. **What's the current git status?** - Check for uncommitted changes
-2. **What was the last thing worked on?** - Read DEVELOPMENT_LOG.md
-3. **Are there any known blockers?** - Check "Current Issues" section in logs
-4. **Which phase of refactoring are we in?** - Check INTERRUPT_DRIVEN_CONTEXT_SWITCH_REFACTORING.md
-5. **Is the code buildable?** - Try `cargo build` before making changes
-
----
-
-## Emergency Recovery
-
-If the codebase is in an unknown state:
-
-1. **Check git log:** `git log --oneline -10`
-2. **Check working tree:** `git status`
-3. **Read development log:** `cat DEVELOPMENT_LOG.md` (focus on last session)
-4. **Try to build:** `cd arch/x86_64 && cargo build`
-5. **Check for uncommitted experiments:** `git diff`
-
-Last known good commit: `ac0c8f6` - "Back to working state, next is preemptive task scheduling"
 
 ---
 
@@ -401,6 +183,8 @@ This is the MOST CRITICAL guideline for working on RosX:
    - One small change at a time
    - One function, one file, one concept
    - Make it work, verify, then move to next step
+   - Before moving to the next step, ask for confirmation, create a commit message and confirm
+   - The commit message should not contain any prefix
 
 3. **Never batch multiple changes**
    - Don't implement several features at once
@@ -430,5 +214,4 @@ This is the MOST CRITICAL guideline for working on RosX:
 - The project is in active refactoring - check the refactoring doc before context switching work
 - Task finalization is currently broken - don't assume it works
 - Build and test after significant changes
-- Update DEVELOPMENT_LOG.md when completing major features or sessions
 - When adding subsystems (schedulers, memory managers, etc.), design them as pluggable trait implementations
