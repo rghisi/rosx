@@ -8,6 +8,7 @@ mod debug_console;
 mod idle;
 mod interrupts;
 mod vga_buffer;
+mod ansi_parser;
 
 use crate::cpu::X86_64;
 use crate::debug_console::QemuDebugConsole;
