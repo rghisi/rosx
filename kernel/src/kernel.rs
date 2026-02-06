@@ -182,7 +182,6 @@ impl Kernel {
                 .lock()
                 .borrow_mut()
                 .set_state(task_handle, Terminated);
-            TASK_MANAGER.lock().borrow_mut().remove_task(task_handle);
             self.execution_state.current_task = Some(task_handle);
         }
         self.execution_state.preemption_enabled = true;
