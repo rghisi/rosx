@@ -35,6 +35,11 @@ impl Cpu for X86_64 {
     ) -> usize {
         unsafe {
             let mut sp = stack_pointer as *mut usize;
+            
+            // Align stack pointer to 16 bytes for ABI compliance
+            let sp_val = sp as usize;
+            sp = (sp_val & !0xF) as *mut usize;
+
             sp = sp.sub(1);
             *sp = entry_point;
             sp = sp.sub(1);
