@@ -272,7 +272,10 @@ impl KeyboardEvent {
                 key,
                 char: Some('='),
             },
-            Key::Backspace => KeyboardEvent { key, char: None },
+            Key::Backspace => KeyboardEvent {
+                key,
+                char: Some('\x08'),
+            },
             Key::Tab => KeyboardEvent {
                 key,
                 char: Some('\t'),
