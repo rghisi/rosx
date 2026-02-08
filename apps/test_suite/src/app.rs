@@ -1,8 +1,6 @@
-use alloc::string::String;
-use alloc::format;
+use crate::{allocation_test, context_switching};
 use usrlib::println;
 use usrlib::syscall::Syscall;
-use crate::{allocation_test, context_switching};
 
 pub fn main() {
     println!("=== RosX Test Suite Started ===");

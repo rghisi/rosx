@@ -5,7 +5,7 @@ use kernel::messages::HardwareInterrupt;
 use lazy_static::lazy_static;
 use pic8259::ChainedPics;
 use spin::Mutex;
-use usrlib::{print, println};
+use usrlib::println;
 use x86_64::instructions::port::Port;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 
