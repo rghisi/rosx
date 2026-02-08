@@ -2,7 +2,7 @@
 use crate::allocator::MEMORY_ALLOCATOR;
 use crate::cpu::Cpu;
 use crate::default_output::{KernelOutput, setup_default_output};
-use crate::future::{Future, FutureRegistry, TaskCompletionFuture};
+use crate::future::{FutureRegistry, TaskCompletionFuture};
 use crate::kconfig::KConfig;
 use crate::kprintln;
 use crate::main_thread::MainThread;
@@ -159,17 +159,11 @@ impl Kernel {
         self.execution_state.preemption_enabled = true;
     }
 
-    pub fn wait(&mut self, future: Box<dyn Future>) {
+    pub fn wait_future(&mut self, handle: FutureHandle) {
         self.execution_state.block_current_task();
         let task_handle = self.execution_state.current_task();
-        self.main_thread.push_blocked(task_handle, future);
+        self.main_thread.push_blocked(task_handle, handle);
         self.execution_state.switch_to_scheduler();
-    }
-
-    pub fn wait_future(&mut self, handle: FutureHandle) {
-        use crate::future::RegistryFuture;
-        let future = Box::new(RegistryFuture::new(handle, &FUTURE_REGISTRY));
-        self.wait(future);
     }
 
     pub fn is_future_completed(&self, handle: FutureHandle) -> bool {

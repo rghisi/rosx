@@ -1,12 +1,11 @@
-use crate::future::Future;
 use crate::kernel::TASK_MANAGER;
 use crate::messages::HardwareInterrupt;
 use crate::syscall::switch_to_task;
 use crate::task::TaskHandle;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
-use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
+use system::future::FutureHandle;
 
 pub struct MainThread {
     idle_task: Option<TaskHandle>,
@@ -112,10 +111,10 @@ impl MainThread {
         self.hw_interrupt_queue.push(hardware_interrupt);
     }
 
-    pub(crate) fn push_blocked(&mut self, task_handle: TaskHandle, future: Box<dyn Future>) {
+    pub(crate) fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle) {
         let task_future = TaskFuture {
             task_handle,
-            future,
+            future_handle,
         };
         self.blocked_tasks.push_back(task_future);
     }
@@ -147,11 +146,11 @@ impl MainThread {
 
 struct TaskFuture {
     task_handle: TaskHandle,
-    future: Box<dyn Future>,
+    future_handle: FutureHandle,
 }
 
 impl TaskFuture {
     fn is_completed(&self) -> bool {
-        self.future.is_completed()
+        crate::kernel::FUTURE_REGISTRY.get(self.future_handle).unwrap_or(true)
     }
 }

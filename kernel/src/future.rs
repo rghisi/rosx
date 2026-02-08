@@ -6,7 +6,7 @@ use crate::generational_arena::GenArena;
 use crate::kernel::TASK_MANAGER;
 use crate::task::TaskHandle;
 
-pub trait Future {
+pub trait Future: Send + Sync {
     fn is_completed(&self) -> bool;
 }
 

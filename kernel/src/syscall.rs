@@ -1,4 +1,4 @@
-use crate::future::{Future, TimeFuture};
+use crate::future::TimeFuture;
 use crate::kernel::KERNEL;
 use crate::messages::HardwareInterrupt;
 use crate::task::TaskHandle;
@@ -18,13 +18,6 @@ pub fn get_system_time() -> u64 {
 pub fn exec(entrypoint: usize) -> Option<FutureHandle> {
     unsafe {
         (*KERNEL).exec(entrypoint).ok()
-    }
-}
-
-#[inline(always)]
-pub fn wait(future: Box<dyn Future>) {
-    unsafe {
-        (*KERNEL).wait(future);
     }
 }
 
@@ -82,7 +75,10 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
         return 0;
     } else if num == SyscallNum::Sleep as u64 {
         let future = Box::new(TimeFuture::new(arg1));
-        wait(future);
+        let handle = crate::kernel::FUTURE_REGISTRY
+            .register(future)
+            .expect("Failed to register sleep future");
+        wait_future(handle);
     } else if num == SyscallNum::Exec as u64 {
         if let Some(handle) = exec(arg1 as usize) {
             let packed = (handle.index as u64) << 32 | (handle.generation as u64);
@@ -93,10 +89,16 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
     } else if num == SyscallNum::Yield as u64 {
         task_yield();
     } else if num == SyscallNum::ReadChar as u64 {
-        let future = Box::new(crate::keyboard::KeyboardFuture::new());
-        if !future.is_completed() {
-            wait(future);
+        if let Some(c) = crate::keyboard::pop_key() {
+            return c as usize;
         }
+
+        let future = Box::new(crate::keyboard::KeyboardFuture::new());
+        let handle = crate::kernel::FUTURE_REGISTRY
+            .register(future)
+            .expect("Failed to register keyboard future");
+        wait_future(handle);
+
         if let Some(c) = crate::keyboard::pop_key() {
             return c as usize;
         }
