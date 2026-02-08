@@ -75,6 +75,11 @@ impl FutureRegistry {
             None
         }
     }
+
+    pub fn remove(&self, handle: FutureHandle) {
+        let mut arena = self.arena.lock();
+        let _ = arena.remove(handle);
+    }
 }
 
 pub struct RegistryFuture {

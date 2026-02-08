@@ -132,6 +132,7 @@ impl MainThread {
         let futures: Vec<TaskFuture> = self.blocked_tasks.drain(..).collect();
         for task_future in futures.into_iter() {
             if task_future.is_completed() {
+                crate::kernel::FUTURE_REGISTRY.remove(task_future.future_handle);
                 TASK_MANAGER
                     .lock()
                     .borrow_mut()
