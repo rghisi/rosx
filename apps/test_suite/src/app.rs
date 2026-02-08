@@ -97,17 +97,16 @@ pub fn worker_memory_stress() {
     let mut rng = SimpleRng::new(0x1337);
     let mut total_allocs_performed = 0;
     
-    const MAX_CONCURRENT_ALLOCS: usize = 1000;
-    const TOTAL_OPERATIONS: usize = 2000000;
+    const MAX_CONCURRENT_ALLOCS: usize = 5000;
+    const TOTAL_OPERATIONS: usize = 20000;
 
     for i in 0..TOTAL_OPERATIONS {
-        // Decide: Allocate or Deallocate?
         let should_allocate = if allocations.len() >= MAX_CONCURRENT_ALLOCS {
-            false // Forced deallocate if at "OOM" limit
+            false
         } else if allocations.is_empty() {
-            true  // Forced allocate if empty
+            true
         } else {
-            (rng.next() % 2) == 0
+            rng.next().is_multiple_of(2)
         };
 
         if should_allocate {
@@ -125,10 +124,6 @@ pub fn worker_memory_stress() {
             }
             
             allocations.push((block, magic));
-            
-            if total_allocs_performed % 100 == 0 {
-                print!("+"); // Progress indicator for allocation
-            }
         } else {
             // Deallocate a random block
             let index = (rng.next() as usize) % allocations.len();
@@ -139,19 +134,14 @@ pub fn worker_memory_stress() {
                 println!("\n[MemWorker] [FAIL] Integrity check failed during mixed test for block {} (size {})", block.id, block.data.len());
                 return;
             }
-            
-            if i % 100 == 0 {
-                print!("-"); // Progress indicator for deallocation
-            }
         }
 
-        // Periodically yield to let other tasks run
-        // if i % 10 == 0 {
-        //     Syscall::task_yield();
-        // }
+        if i > 0 && i % 1000 == 0 {
+            println!("[MemWorker] Progress: {}/{}", i, TOTAL_OPERATIONS);
+        }
     }
     
-    println!("\n[MemWorker] Finalizing: verifying remaining {} allocations...", allocations.len());
+    println!("[MemWorker] Finalizing: verifying remaining {} allocations...", allocations.len());
     for (block, magic) in allocations {
         if !block.verify(magic) {
             println!("[MemWorker] [FAIL] Final verification failed for block {}", block.id);
