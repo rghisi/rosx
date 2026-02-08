@@ -27,4 +27,4 @@ name = "rosx"
 bench = false
 
 [package.metadata.bootimage]
-run-args = ["-debugcon", "stdio"]
+run-args = ["-debugcon", "stdio", "-no-reboot"]

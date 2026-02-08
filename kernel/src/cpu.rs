@@ -4,6 +4,7 @@ pub trait Cpu {
     fn setup(&self);
     fn enable_interrupts(&self);
     fn disable_interrupts(&self);
+    fn are_interrupts_enabled(&self) -> bool;
     fn initialize_stack(
         &self,
         stack_pointer: usize,

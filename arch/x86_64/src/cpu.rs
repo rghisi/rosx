@@ -51,7 +51,11 @@ impl Cpu for X86_64 {
     }
 
     fn disable_interrupts(&self) {
-        // crate::interrupts::disable_interrupts();
+        x86_64::instructions::interrupts::disable();
+    }
+
+    fn are_interrupts_enabled(&self) -> bool {
+        x86_64::registers::rflags::read().contains(x86_64::registers::rflags::RFlags::INTERRUPT_FLAG)
     }
 
     fn initialize_stack(

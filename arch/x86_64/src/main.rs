@@ -48,7 +48,7 @@ static HEAP_ALLOCATOR: LockedHeap<27> = LockedHeap::<27>::new();
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
-    kernel::kernel::bootstrap(&HEAP_ALLOCATOR, &MULTIPLEXED_OUTPUT);
+    kernel::kernel::bootstrap(&HEAP_ALLOCATOR, &MULTIPLEXED_OUTPUT, &CPU);
     initialize_heap(boot_info);
     kprintln!("[KERNEL] Initializing - {}", MEMORY_ALLOCATOR.used());
     let mut kernel = Kernel::new(&KCONFIG);
@@ -60,11 +60,22 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     // kernel.schedule(FunctionTask::new("5", shell::shell::main));
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
     kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));
+    // kernel.schedule(FunctionTask::new("OOM Test", oom_test));
 
     let used = MEMORY_ALLOCATOR.used();
     kprintln!("[KERNEL] Starting - {}", used);
     kernel.start();
     panic!("[KERNEL] Crashed spectacularly, should never reached here.");
+}
+
+fn oom_test() {
+    kprintln!("[OOM Test] Starting deliberate OOM...");
+    let mut v = alloc::vec::Vec::new();
+    loop {
+        // Allocate 1MB at a time
+        v.push(alloc::boxed::Box::new([0u8; 1024 * 1024]));
+        kprintln!("[OOM Test] Allocated 1MB, total used: {}", MEMORY_ALLOCATOR.used());
+    }
 }
 
 fn initialize_heap(boot_info: &BootInfo) {

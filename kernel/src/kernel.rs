@@ -196,9 +196,10 @@ impl Kernel {
 pub fn bootstrap(
     allocator: &'static (dyn GlobalAlloc + Sync),
     default_output: &'static dyn KernelOutput,
+    cpu: &'static dyn Cpu,
 ) {
     unsafe {
-        MEMORY_ALLOCATOR.init(allocator);
+        MEMORY_ALLOCATOR.init(allocator, cpu);
     };
     setup_default_output(default_output);
     kprintln!("[KERNEL] Bootstrapped");
