@@ -93,6 +93,7 @@ dependencies = [
  "shell",
  "spin 0.10.0",
  "system",
+ "test_suite",
  "usrlib",
  "volatile 0.2.7",
  "x86_64",
@@ -139,6 +140,14 @@ dependencies = [
 [[package]]
 name = "system"
 version = "0.1.0"
+
+[[package]]
+name = "test_suite"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
 
 [[package]]
 name = "usrlib"

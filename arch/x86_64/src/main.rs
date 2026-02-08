@@ -53,12 +53,13 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     kprintln!("[KERNEL] Initializing - {}", MEMORY_ALLOCATOR.used());
     let mut kernel = Kernel::new(&KCONFIG);
     kernel.setup();
-    kernel.schedule(FunctionTask::new("1", dummy::app::main));
-    kernel.schedule(FunctionTask::new("2", dummy::app::main2));
-    kernel.schedule(FunctionTask::new("3", dummy::app::main3));
-    kernel.schedule(FunctionTask::new("4", dummy::app::main4));
-    kernel.schedule(FunctionTask::new("5", shell::shell::main));
-    kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
+    // kernel.schedule(FunctionTask::new("1", dummy::app::main));
+    // kernel.schedule(FunctionTask::new("2", dummy::app::main2));
+    // kernel.schedule(FunctionTask::new("3", dummy::app::main3));
+    // kernel.schedule(FunctionTask::new("4", dummy::app::main4));
+    // kernel.schedule(FunctionTask::new("5", shell::shell::main));
+    // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
+    kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));
 
     let used = MEMORY_ALLOCATOR.used();
     kprintln!("[KERNEL] Starting - {}", used);
