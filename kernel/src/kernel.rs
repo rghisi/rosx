@@ -192,14 +192,42 @@ impl Kernel {
     }
 }
 
+unsafe impl GlobalAlloc for Kernel {
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+        let interrupts_enabled = self.cpu.are_interrupts_enabled();
+        if interrupts_enabled {
+            self.cpu.disable_interrupts();
+        }
+
+        let ptr = MEMORY_ALLOCATOR.alloc(layout);
+
+        if interrupts_enabled {
+            self.cpu.enable_interrupts();
+        }
+        ptr
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+        let interrupts_enabled = self.cpu.are_interrupts_enabled();
+        if interrupts_enabled {
+            self.cpu.disable_interrupts();
+        }
+
+        MEMORY_ALLOCATOR.dealloc(ptr, layout);
+
+        if interrupts_enabled {
+            self.cpu.enable_interrupts();
+        }
+    }
+}
+
 #[cfg(not(test))]
 pub fn bootstrap(
     allocator: &'static (dyn GlobalAlloc + Sync),
     default_output: &'static dyn KernelOutput,
-    cpu: &'static dyn Cpu,
 ) {
     unsafe {
-        MEMORY_ALLOCATOR.init(allocator, cpu);
+        MEMORY_ALLOCATOR.init(allocator);
     };
     setup_default_output(default_output);
     kprintln!("[KERNEL] Bootstrapped");
