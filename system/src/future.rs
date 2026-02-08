@@ -1,2 +1,3 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FutureHandle(pub u64);
+use crate::generational_arena::Handle;
+
+pub type FutureHandle = Handle<u32, u32>;

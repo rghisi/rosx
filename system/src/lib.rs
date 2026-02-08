@@ -4,4 +4,5 @@ extern crate alloc;
 pub mod file;
 pub mod syscall_numbers;
 pub mod future;
+pub mod generational_arena;
 mod task_config;

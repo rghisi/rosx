@@ -8,7 +8,10 @@ pub struct Syscall {}
 impl Syscall {
     pub fn exec(entrypoint: usize) -> FutureHandle {
         let raw = arch::raw_syscall(SyscallNum::Exec as u64, entrypoint as u64, 0, 0);
-        FutureHandle(raw as u64)
+        FutureHandle {
+            index: (raw >> 32) as u32,
+            generation: raw as u32,
+        }
     }
 
     pub fn task_yield() {
@@ -20,11 +23,13 @@ impl Syscall {
     }
 
     pub fn wait_future(handle: FutureHandle) {
-        arch::raw_syscall(SyscallNum::WaitFuture as u64, handle.0, 0, 0);
+        let packed = (handle.index as u64) << 32 | (handle.generation as u64);
+        arch::raw_syscall(SyscallNum::WaitFuture as u64, packed, 0, 0);
     }
 
     pub fn is_future_completed(handle: FutureHandle) -> bool {
-        let result = arch::raw_syscall(SyscallNum::IsFutureCompleted as u64, handle.0, 0, 0);
+        let packed = (handle.index as u64) << 32 | (handle.generation as u64);
+        let result = arch::raw_syscall(SyscallNum::IsFutureCompleted as u64, packed, 0, 0);
         result != 0
     }
 

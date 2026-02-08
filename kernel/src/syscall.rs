@@ -85,7 +85,8 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
         wait(future);
     } else if num == SyscallNum::Exec as u64 {
         if let Some(handle) = exec(arg1 as usize) {
-            return handle.0 as usize;
+            let packed = (handle.index as u64) << 32 | (handle.generation as u64);
+            return packed as usize;
         } else {
             return u64::MAX as usize; // Error code?
         }
@@ -100,10 +101,16 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
             return c as usize;
         }
     } else if num == SyscallNum::WaitFuture as u64 {
-        let handle = FutureHandle(arg1);
+        let handle = FutureHandle {
+            index: (arg1 >> 32) as u32,
+            generation: arg1 as u32,
+        };
         wait_future(handle);
     } else if num == SyscallNum::IsFutureCompleted as u64 {
-        let handle = FutureHandle(arg1);
+        let handle = FutureHandle {
+            index: (arg1 >> 32) as u32,
+            generation: arg1 as u32,
+        };
         return if is_future_completed(handle) { 1 } else { 0 };
     }
     0
