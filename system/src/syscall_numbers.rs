@@ -6,4 +6,6 @@ pub enum SyscallNum {
     Exec = 2,
     Yield = 3,
     ReadChar = 4,
+    WaitFuture = 5,
+    IsFutureCompleted = 6,
 }

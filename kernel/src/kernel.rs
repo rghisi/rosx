@@ -2,7 +2,7 @@
 use crate::allocator::MEMORY_ALLOCATOR;
 use crate::cpu::Cpu;
 use crate::default_output::{KernelOutput, setup_default_output};
-use crate::future::Future;
+use crate::future::{Future, FutureRegistry, TaskCompletionFuture};
 use crate::kconfig::KConfig;
 use crate::kprintln;
 use crate::main_thread::MainThread;
@@ -18,12 +18,14 @@ use core::cell::RefCell;
 use core::ptr::null_mut;
 use lazy_static::lazy_static;
 use spin::Mutex;
+use system::future::FutureHandle;
 
 pub(crate) static mut KERNEL: *mut Kernel = null_mut();
 
 lazy_static! {
     pub(crate) static ref TASK_MANAGER: Mutex<RefCell<TaskManager>> =
         Mutex::new(RefCell::new(TaskManager::new()));
+    pub(crate) static ref FUTURE_REGISTRY: FutureRegistry = FutureRegistry::new();
 }
 
 pub struct Kernel {
@@ -101,18 +103,22 @@ impl Kernel {
             .swap_context(null_mut(), scheduler_thread_stack_pointer);
     }
 
-    pub fn exec(&mut self, entrypoint: usize) {
+    pub fn exec(&mut self, entrypoint: usize) -> Result<FutureHandle, ()> {
         self.execution_state.preemption_enabled = false;
         let result = TASK_MANAGER.lock().borrow_mut().new_task(entrypoint);
-        match result {
+        let future_handle = match result {
             Ok(task_handle) => {
+                let future = Box::new(TaskCompletionFuture::new(task_handle));
+                let future_handle = FUTURE_REGISTRY.register(future);
                 self.schedule2(task_handle);
+                future_handle
             }
             Err(_) => {
                 panic!("Not able to create new task");
             }
-        }
+        };
         self.execution_state.preemption_enabled = true;
+        future_handle.ok_or(())
     }
 
     pub fn schedule2(&mut self, task_handle: TaskHandle) {
@@ -160,6 +166,16 @@ impl Kernel {
         self.execution_state.switch_to_scheduler();
     }
 
+    pub fn wait_future(&mut self, handle: FutureHandle) {
+        use crate::future::RegistryFuture;
+        let future = Box::new(RegistryFuture::new(handle, &FUTURE_REGISTRY));
+        self.wait(future);
+    }
+
+    pub fn is_future_completed(&self, handle: FutureHandle) -> bool {
+        FUTURE_REGISTRY.get(handle).unwrap_or(true)
+    }
+
     pub fn task_yield(&mut self) {
         self.execution_state.switch_to_scheduler();
     }
@@ -199,7 +215,7 @@ unsafe impl GlobalAlloc for Kernel {
             self.cpu.disable_interrupts();
         }
 
-        let ptr = MEMORY_ALLOCATOR.alloc(layout);
+        let ptr = unsafe { MEMORY_ALLOCATOR.alloc(layout) };
 
         if interrupts_enabled {
             self.cpu.enable_interrupts();
@@ -213,7 +229,7 @@ unsafe impl GlobalAlloc for Kernel {
             self.cpu.disable_interrupts();
         }
 
-        MEMORY_ALLOCATOR.dealloc(ptr, layout);
+        unsafe { MEMORY_ALLOCATOR.dealloc(ptr, layout) };
 
         if interrupts_enabled {
             self.cpu.enable_interrupts();

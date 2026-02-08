@@ -28,8 +28,6 @@ impl Future for KeyboardFuture {
     fn is_completed(&self) -> bool {
         !KEYBOARD_BUFFER.lock().is_empty()
     }
-
-    fn complete(&mut self) {}
 }
 
 #[derive(Debug)]

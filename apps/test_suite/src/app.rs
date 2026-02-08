@@ -69,25 +69,13 @@ impl DataBlock {
 
 pub fn main() {
     println!("=== RosX Test Suite Started ===");
-    println!("Spawning worker tasks...");
 
-    // Spawn concurrent workers
-    Syscall::exec(worker_memory_stress as usize);
-    // Syscall::exec(worker_context_switch as usize);
-    // Syscall::exec(worker_mixed_load as usize);
-    //
-    // // Main thread also does some work to test multitasking
-    // println!("[Main] Performing main thread checks...");
-    // for i in 0..5 {
-    //     Syscall::sleep(500);
-    //     println!("[Main] iteration {}", i);
-    // }
-    
+    let handle = Syscall::exec(worker_memory_stress as usize);
+    Syscall::wait_future(handle);
+    Syscall::wait_future(Syscall::exec(worker_context_switch as usize));
+    Syscall::wait_future(Syscall::exec(worker_mixed_load as usize));
+
     println!("=== Main Thread Finished ===");
-    // In a real OS, we might wait for children here, but for now we just exit/loop
-    loop {
-        Syscall::sleep(1000);
-    }
 }
 
 pub fn worker_memory_stress() {

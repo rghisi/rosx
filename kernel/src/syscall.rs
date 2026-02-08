@@ -7,15 +7,17 @@ use crate::default_output::print;
 
 use system::syscall_numbers::SyscallNum;
 
+use system::future::FutureHandle;
+
 #[inline(always)]
 pub fn get_system_time() -> u64 {
     unsafe { (*KERNEL).get_system_time() }
 }
 
 #[inline(always)]
-pub fn exec(entrypoint: usize) {
+pub fn exec(entrypoint: usize) -> Option<FutureHandle> {
     unsafe {
-        (*KERNEL).exec(entrypoint);
+        (*KERNEL).exec(entrypoint).ok()
     }
 }
 
@@ -23,6 +25,20 @@ pub fn exec(entrypoint: usize) {
 pub fn wait(future: Box<dyn Future>) {
     unsafe {
         (*KERNEL).wait(future);
+    }
+}
+
+#[inline(always)]
+pub fn wait_future(handle: FutureHandle) {
+    unsafe {
+        (*KERNEL).wait_future(handle);
+    }
+}
+
+#[inline(always)]
+pub fn is_future_completed(handle: FutureHandle) -> bool {
+    unsafe {
+        (*KERNEL).is_future_completed(handle)
     }
 }
 
@@ -68,7 +84,11 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
         let future = Box::new(TimeFuture::new(arg1));
         wait(future);
     } else if num == SyscallNum::Exec as u64 {
-        exec(arg1 as usize);
+        if let Some(handle) = exec(arg1 as usize) {
+            return handle.0 as usize;
+        } else {
+            return u64::MAX as usize; // Error code?
+        }
     } else if num == SyscallNum::Yield as u64 {
         task_yield();
     } else if num == SyscallNum::ReadChar as u64 {
@@ -79,6 +99,12 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
         if let Some(c) = crate::keyboard::pop_key() {
             return c as usize;
         }
+    } else if num == SyscallNum::WaitFuture as u64 {
+        let handle = FutureHandle(arg1);
+        wait_future(handle);
+    } else if num == SyscallNum::IsFutureCompleted as u64 {
+        let handle = FutureHandle(arg1);
+        return if is_future_completed(handle) { 1 } else { 0 };
     }
     0
 }
