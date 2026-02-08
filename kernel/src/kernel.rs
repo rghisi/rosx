@@ -98,12 +98,13 @@ impl Kernel {
             .borrow()
             .get_task_stack_pointer(main_thread_handle);
         self.cpu.enable_interrupts();
-        self.execution_state.preemption_enabled = true;
+        self.execution_state.preemption_enabled = false;
         self.cpu
             .swap_context(null_mut(), scheduler_thread_stack_pointer);
     }
 
     pub fn exec(&mut self, entrypoint: usize) -> Result<FutureHandle, ()> {
+        let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
         let result = TASK_MANAGER.lock().borrow_mut().new_task(entrypoint);
         let future_handle = match result {
@@ -117,7 +118,7 @@ impl Kernel {
                 panic!("Not able to create new task");
             }
         };
-        self.execution_state.preemption_enabled = true;
+        self.execution_state.preemption_enabled = prev;
         future_handle.ok_or(())
     }
 
@@ -139,6 +140,7 @@ impl Kernel {
     }
 
     pub fn schedule(&mut self, task: SharedTask) {
+        let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
         let task_handle = TASK_MANAGER.lock().borrow_mut().add_task(task).unwrap();
         self.cpu.initialize_task(
@@ -150,13 +152,14 @@ impl Kernel {
                 .unwrap(),
         );
         self.main_thread.push_task(task_handle);
-        self.execution_state.preemption_enabled = true;
+        self.execution_state.preemption_enabled = prev;
     }
 
     pub fn enqueue(&mut self, hardware_interrupt: HardwareInterrupt) {
+        let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
         self.main_thread.push_hardware_interrupt(hardware_interrupt);
-        self.execution_state.preemption_enabled = true;
+        self.execution_state.preemption_enabled = prev;
     }
 
     pub fn wait_future(&mut self, handle: FutureHandle) {
@@ -185,6 +188,7 @@ impl Kernel {
     }
 
     pub(crate) fn terminate_current_task(&mut self) {
+        let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
         if let Some(task_handle) = self.execution_state.current_task.take() {
             TASK_MANAGER
@@ -193,7 +197,7 @@ impl Kernel {
                 .set_state(task_handle, Terminated);
             self.execution_state.current_task = Some(task_handle);
         }
-        self.execution_state.preemption_enabled = true;
+        self.execution_state.preemption_enabled = prev;
     }
 
     #[inline(always)]
@@ -213,6 +217,8 @@ unsafe impl GlobalAlloc for Kernel {
 
         if interrupts_enabled {
             self.cpu.enable_interrupts();
+            // Give a chance for any pending interrupt to fire
+            unsafe { core::arch::asm!("nop"); }
         }
         ptr
     }
@@ -227,6 +233,8 @@ unsafe impl GlobalAlloc for Kernel {
 
         if interrupts_enabled {
             self.cpu.enable_interrupts();
+            // Give a chance for any pending interrupt to fire
+            unsafe { core::arch::asm!("nop"); }
         }
     }
 }
@@ -255,6 +263,11 @@ pub(crate) extern "C" fn task_wrapper(index: usize, generation: usize) {
         .unwrap()
         .actual_entry_point();
     let task_fn: fn() = unsafe { core::mem::transmute(actual_entry) };
+
+    unsafe {
+        (*KERNEL).execution_state.preemption_enabled = true;
+    }
+
     task_fn();
 
     terminate_current_task();

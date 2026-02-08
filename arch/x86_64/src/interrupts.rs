@@ -68,15 +68,15 @@ pub fn init() {
 }
 
 pub fn enable_interrupts() {
+    x86_64::instructions::interrupts::enable();
+}
+
+pub fn enable_keyboard() {
     use x86_64::instructions::port::Port;
     unsafe {
         let mut port: Port<u8> = Port::new(0x60);
         let _: u8 = port.read();
-    }
 
-    x86_64::instructions::interrupts::enable();
-
-    unsafe {
         let mut pic1_data: Port<u8> = Port::new(0x21);
         let current_mask = pic1_data.read();
         pic1_data.write(current_mask & !0x02);

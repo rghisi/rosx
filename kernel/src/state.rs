@@ -22,8 +22,12 @@ impl ExecutionState {
             .lock()
             .borrow_mut()
             .get_task_stack_pointer_ref(self.main_thread);
+
+        // We are in the main thread, preemption_enabled is already false.
         self.cpu
             .swap_context(scheduler_stack_pointer_pointer, task_stack_pointer);
+        // When we return here, we are back in the main thread. 
+        // preemption_enabled must remain false.
 
         self.current_task.take().unwrap()
     }
@@ -35,13 +39,20 @@ impl ExecutionState {
                 .lock()
                 .borrow_mut()
                 .get_task_stack_pointer_ref(task_handle);
+            
+            // We are leaving the task, disable preemption
+            self.preemption_enabled = false;
             self.current_task = Some(task_handle);
             let scheduler_stack_pointer = TASK_MANAGER
                 .lock()
                 .borrow()
                 .get_task_stack_pointer(self.main_thread);
+
             self.cpu
-                .swap_context(task_stack_pointer_reference, scheduler_stack_pointer)
+                .swap_context(task_stack_pointer_reference, scheduler_stack_pointer);
+            
+            // When the task resumes here, re-enable preemption
+            self.preemption_enabled = true;
         }
     }
 

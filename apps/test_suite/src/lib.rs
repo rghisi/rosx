@@ -8,3 +8,6 @@ extern crate system;
 extern crate usrlib;
 
 pub mod app;
+mod random;
+mod allocation_test;
+mod context_switching;
