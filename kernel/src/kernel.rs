@@ -14,17 +14,15 @@ use crate::task::{SharedTask, Task, TaskHandle};
 use crate::task_manager::TaskManager;
 use alloc::boxed::Box;
 use core::alloc::GlobalAlloc;
-use core::cell::RefCell;
 use core::ptr::null_mut;
 use lazy_static::lazy_static;
-use spin::Mutex;
 use system::future::FutureHandle;
+use crate::kernel_cell::KernelCell;
 
 pub(crate) static mut KERNEL: *mut Kernel = null_mut();
 
 lazy_static! {
-    pub(crate) static ref TASK_MANAGER: Mutex<RefCell<TaskManager>> =
-        Mutex::new(RefCell::new(TaskManager::new()));
+    pub(crate) static ref TASK_MANAGER: KernelCell<TaskManager> = KernelCell::new(TaskManager::new());
     pub(crate) static ref FUTURE_REGISTRY: FutureRegistry = FutureRegistry::new();
 }
 
@@ -43,14 +41,12 @@ impl Kernel {
         let ptr = main_thread.as_mut() as *const MainThread as usize;
         let main_thread_task = Task::new(0, "[K] Main Thread", main_thread_wrapper as usize, ptr);
         let main_thread_task_handle = TASK_MANAGER
-            .lock()
             .borrow_mut()
             .add_task(main_thread_task)
             .unwrap();
         cpu.initialize_task(
             main_thread_task_handle,
             TASK_MANAGER
-                .lock()
                 .borrow_mut()
                 .borrow_task_mut(main_thread_task_handle)
                 .unwrap(),
@@ -76,14 +72,12 @@ impl Kernel {
         self.cpu.setup();
         let idle_task = (self.kconfig.idle_task_factory)();
         let task_handle = TASK_MANAGER
-            .lock()
             .borrow_mut()
             .add_task(idle_task)
             .unwrap();
         self.cpu.initialize_task(
             task_handle,
             TASK_MANAGER
-                .lock()
                 .borrow_mut()
                 .borrow_task_mut(task_handle)
                 .unwrap(),
@@ -94,7 +88,6 @@ impl Kernel {
     pub fn start(&mut self) {
         let main_thread_handle = self.execution_state.main_thread;
         let scheduler_thread_stack_pointer = TASK_MANAGER
-            .lock()
             .borrow()
             .get_task_stack_pointer(main_thread_handle);
         self.cpu.enable_interrupts();
@@ -106,7 +99,7 @@ impl Kernel {
     pub fn exec(&mut self, entrypoint: usize) -> Result<FutureHandle, ()> {
         let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
-        let result = TASK_MANAGER.lock().borrow_mut().new_task(entrypoint);
+        let result = TASK_MANAGER.borrow_mut().new_task(entrypoint);
         let future_handle = match result {
             Ok(task_handle) => {
                 let future = Box::new(TaskCompletionFuture::new(task_handle));
@@ -124,9 +117,7 @@ impl Kernel {
 
     pub fn schedule2(&mut self, task_handle: TaskHandle) {
         {
-            let m = TASK_MANAGER.lock();
-            let mut mm = m.borrow_mut();
-            let result = mm.borrow_task_mut(task_handle);
+            let result = TASK_MANAGER.borrow_mut().borrow_task_mut(task_handle);
             match result {
                 Ok(task) => {
                     self.cpu.initialize_task(task_handle, task);
@@ -142,11 +133,10 @@ impl Kernel {
     pub fn schedule(&mut self, task: SharedTask) {
         let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
-        let task_handle = TASK_MANAGER.lock().borrow_mut().add_task(task).unwrap();
+        let task_handle = TASK_MANAGER.borrow_mut().add_task(task).unwrap();
         self.cpu.initialize_task(
             task_handle,
             TASK_MANAGER
-                .lock()
                 .borrow_mut()
                 .borrow_task_mut(task_handle)
                 .unwrap(),
@@ -192,7 +182,6 @@ impl Kernel {
         self.execution_state.preemption_enabled = false;
         if let Some(task_handle) = self.execution_state.current_task.take() {
             TASK_MANAGER
-                .lock()
                 .borrow_mut()
                 .set_state(task_handle, Terminated);
             self.execution_state.current_task = Some(task_handle);
@@ -257,7 +246,6 @@ pub(crate) extern "C" fn task_wrapper(index: usize, generation: usize) {
         generation: generation as u8,
     };
     let actual_entry = TASK_MANAGER
-        .lock()
         .borrow_mut()
         .borrow_task(task_handle)
         .unwrap()
@@ -280,7 +268,6 @@ extern "C" fn main_thread_wrapper(index: usize, generation: usize) -> ! {
         generation: generation as u8,
     };
     let main_thread_ptr = TASK_MANAGER
-        .lock()
         .borrow_mut()
         .borrow_task(task_handle)
         .unwrap()

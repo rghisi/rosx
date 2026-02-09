@@ -39,9 +39,7 @@ impl TaskCompletionFuture {
 
 impl Future for TaskCompletionFuture {
     fn is_completed(&self) -> bool {
-        let m = TASK_MANAGER.lock();
-        let mm = m.borrow();
-        mm.get_state(self.task_handle) == crate::task::TaskState::Terminated
+        TASK_MANAGER.borrow().get_state(self.task_handle) == crate::task::TaskState::Terminated
     }
 }
 

@@ -65,20 +65,18 @@ impl MainThread {
         };
 
         TASK_MANAGER
-            .lock()
             .borrow_mut()
             .set_state(next_task_handle, Running);
 
         let returned_task_handle = switch_to_task(next_task_handle);
 
-        let task_state = TASK_MANAGER.lock().borrow().get_state(returned_task_handle);
+        let task_state = TASK_MANAGER.borrow().get_state(returned_task_handle);
 
         match task_state {
             Created => {}
             Ready => {}
             Running => {
                 TASK_MANAGER
-                    .lock()
                     .borrow_mut()
                     .set_state(returned_task_handle, Ready);
                 if returned_task_handle != self.idle_task.unwrap() {
@@ -90,7 +88,6 @@ impl MainThread {
             Blocked => {}
             Terminated => {
                 TASK_MANAGER
-                    .lock()
                     .borrow_mut()
                     .remove_task(returned_task_handle);
             }
@@ -98,7 +95,7 @@ impl MainThread {
     }
 
     pub(crate) fn push_task(&mut self, task_handle: TaskHandle) {
-        match TASK_MANAGER.lock().borrow().get_state(task_handle) {
+        match TASK_MANAGER.borrow().get_state(task_handle) {
             Ready => self.user_tasks.push_back(task_handle),
             // Blocked => self.blocked_tasks.push(task),
             _ => (),
@@ -132,7 +129,6 @@ impl MainThread {
                 if task_future.is_completed() {
                     crate::kernel::FUTURE_REGISTRY.remove(task_future.future_handle);
                     TASK_MANAGER
-                        .lock()
                         .borrow_mut()
                         .set_state(task_future.task_handle, Ready);
                     self.user_tasks.push_back(task_future.task_handle);

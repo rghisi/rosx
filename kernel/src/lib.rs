@@ -17,6 +17,7 @@ pub mod generational_arena;
 mod growing_circular_queue;
 pub mod kconfig;
 pub mod kernel;
+pub(crate) mod kernel_cell;
 mod keyboard;
 pub mod main_thread;
 pub mod messages;
