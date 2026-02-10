@@ -37,15 +37,13 @@ impl Kernel {
     pub fn new(kconfig: &'static KConfig) -> Self {
         let cpu = kconfig.cpu;
 
-        let mut main_thread = Box::new(MainThread::new());
-        let ptr = main_thread.as_mut() as *const MainThread as usize;
-        let main_thread_task = Task::new(0, "[K] Main Thread", main_thread_wrapper as usize, ptr);
+        let main_thread = Box::new(MainThread::new());
+        let main_thread_task = Task::new(0, "[K] Main Thread", main_thread_run as usize, 0);
         let main_thread_task_handle = TASK_MANAGER
             .borrow_mut()
             .add_task(main_thread_task)
             .unwrap();
         cpu.initialize_task(
-            main_thread_task_handle,
             TASK_MANAGER
                 .borrow_mut()
                 .borrow_task_mut(main_thread_task_handle)
@@ -76,7 +74,6 @@ impl Kernel {
             .add_task(idle_task)
             .unwrap();
         self.cpu.initialize_task(
-            task_handle,
             TASK_MANAGER
                 .borrow_mut()
                 .borrow_task_mut(task_handle)
@@ -120,7 +117,7 @@ impl Kernel {
             let result = TASK_MANAGER.borrow_mut().borrow_task_mut(task_handle);
             match result {
                 Ok(task) => {
-                    self.cpu.initialize_task(task_handle, task);
+                    self.cpu.initialize_task(task);
                 }
                 Err(_) => {
                     panic!("Not able to schedule task");
@@ -135,7 +132,6 @@ impl Kernel {
         self.execution_state.preemption_enabled = false;
         let task_handle = TASK_MANAGER.borrow_mut().add_task(task).unwrap();
         self.cpu.initialize_task(
-            task_handle,
             TASK_MANAGER
                 .borrow_mut()
                 .borrow_task_mut(task_handle)
@@ -240,17 +236,8 @@ pub fn bootstrap(
     kprintln!("[KERNEL] Bootstrapped");
 }
 
-pub(crate) extern "C" fn task_wrapper(index: usize, generation: usize) {
-    let task_handle = TaskHandle {
-        index: index as u8,
-        generation: generation as u8,
-    };
-    let actual_entry = TASK_MANAGER
-        .borrow_mut()
-        .borrow_task(task_handle)
-        .unwrap()
-        .actual_entry_point();
-    let task_fn: fn() = unsafe { core::mem::transmute(actual_entry) };
+pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
+    let task_fn: fn() = unsafe { core::mem::transmute(entry_point) };
 
     unsafe {
         (*KERNEL).execution_state.preemption_enabled = true;
@@ -262,24 +249,10 @@ pub(crate) extern "C" fn task_wrapper(index: usize, generation: usize) {
     task_yield();
 }
 
-extern "C" fn main_thread_wrapper(index: usize, generation: usize) -> ! {
-    let task_handle = TaskHandle {
-        index: index as u8,
-        generation: generation as u8,
-    };
-    let main_thread_ptr = TASK_MANAGER
-        .borrow_mut()
-        .borrow_task(task_handle)
-        .unwrap()
-        .actual_entry_point();
-
-    let main_thread = unsafe {
-        let ptr_back = main_thread_ptr as *mut MainThread;
-
-        &mut *ptr_back
-    };
-
-    main_thread.run();
+extern "C" fn main_thread_run() -> ! {
+    unsafe {
+        (*KERNEL).main_thread.run();
+    }
 
     panic!("Kernel main thread returned");
 }

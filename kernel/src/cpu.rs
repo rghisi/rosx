@@ -1,4 +1,4 @@
-use crate::task::{Task, TaskHandle};
+use crate::task::Task;
 
 pub trait Cpu {
     fn setup(&self);
@@ -15,14 +15,12 @@ pub trait Cpu {
     fn swap_context(&self, stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize);
     fn get_system_time(&self) -> u64;
 
-    fn initialize_task(&self, task_handle: TaskHandle, task: &mut Task) {
-        let original_sp = task.stack_pointer();
-
+    fn initialize_task(&self, task: &mut Task) {
         let new_stack_pointer = self.initialize_stack(
-            original_sp,
+            task.stack_pointer(),
             task.entry_point(),
-            task_handle.index as usize,
-            task_handle.generation as usize,
+            task.entry_param(),
+            0,
         );
 
         task.set_stack_pointer(new_stack_pointer);
