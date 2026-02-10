@@ -104,7 +104,7 @@ impl Kernel {
             Ok(task_handle) => {
                 let future = Box::new(TaskCompletionFuture::new(task_handle));
                 let future_handle = FUTURE_REGISTRY.borrow_mut().register(future);
-                self.schedule2(task_handle);
+                self.schedule_task(task_handle);
                 future_handle
             }
             Err(_) => {
@@ -115,7 +115,7 @@ impl Kernel {
         future_handle.ok_or(())
     }
 
-    pub fn schedule2(&mut self, task_handle: TaskHandle) {
+    fn schedule_task(&mut self, task_handle: TaskHandle) {
         {
             let result = TASK_MANAGER.borrow_mut().borrow_task_mut(task_handle);
             match result {
