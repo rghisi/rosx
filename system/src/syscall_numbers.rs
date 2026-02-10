@@ -8,4 +8,6 @@ pub enum SyscallNum {
     ReadChar = 4,
     WaitFuture = 5,
     IsFutureCompleted = 6,
+    Alloc = 7,
+    Dealloc = 8,
 }
