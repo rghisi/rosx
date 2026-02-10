@@ -7,6 +7,9 @@ members = [
     "apps/shell",
     "apps/dummy",
 ]
+exclude = [
+    "apps/hello_elf",
+]
 resolver = "3"
 
 [workspace.package]
