@@ -48,7 +48,6 @@ name = "kernel"
 version = "0.1.0"
 dependencies = [
  "lazy_static",
- "spin 0.10.0",
  "system",
 ]
 

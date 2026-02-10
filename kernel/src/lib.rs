@@ -3,7 +3,6 @@
 
 extern crate alloc;
 extern crate lazy_static;
-extern crate spin;
 extern crate system;
 
 pub mod allocator;

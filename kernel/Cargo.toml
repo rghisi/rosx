@@ -8,4 +8,3 @@ edition.workspace = true
 [dependencies]
 system = { path = "../system" }
 lazy_static = "1.5.0"
-spin = "0.10.0"
