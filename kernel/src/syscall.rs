@@ -1,3 +1,5 @@
+use core::alloc::{GlobalAlloc, Layout};
+
 use crate::future::TimeFuture;
 use crate::kernel::{FUTURE_REGISTRY, KERNEL};
 use crate::messages::HardwareInterrupt;
@@ -116,6 +118,20 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
             generation: arg1 as u32,
         };
         return if is_future_completed(handle) { 1 } else { 0 };
+    } else if num == SyscallNum::Alloc as u64 {
+        let size = arg1 as usize;
+        let align = arg2 as usize;
+        if let Ok(layout) = Layout::from_size_align(size, align) {
+            return unsafe { (*KERNEL).alloc(layout) } as usize;
+        }
+        return 0;
+    } else if num == SyscallNum::Dealloc as u64 {
+        let ptr = arg1 as *mut u8;
+        let size = arg2 as usize;
+        let align = _arg3 as usize;
+        if let Ok(layout) = Layout::from_size_align(size, align) {
+            unsafe { (*KERNEL).dealloc(ptr, layout) };
+        }
     }
     0
 }
