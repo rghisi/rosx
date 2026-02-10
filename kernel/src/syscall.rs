@@ -1,5 +1,5 @@
 use crate::future::TimeFuture;
-use crate::kernel::KERNEL;
+use crate::kernel::{FUTURE_REGISTRY, KERNEL};
 use crate::messages::HardwareInterrupt;
 use crate::task::TaskHandle;
 use alloc::boxed::Box;
@@ -75,7 +75,8 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
         return 0;
     } else if num == SyscallNum::Sleep as u64 {
         let future = Box::new(TimeFuture::new(arg1));
-        let handle = crate::kernel::FUTURE_REGISTRY
+        let handle = FUTURE_REGISTRY
+            .borrow_mut()
             .register(future)
             .expect("Failed to register sleep future");
         wait_future(handle);
@@ -94,7 +95,8 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
         }
 
         let future = Box::new(crate::keyboard::KeyboardFuture::new());
-        let handle = crate::kernel::FUTURE_REGISTRY
+        let handle = FUTURE_REGISTRY
+            .borrow_mut()
             .register(future)
             .expect("Failed to register keyboard future");
         wait_future(handle);

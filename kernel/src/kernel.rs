@@ -23,7 +23,7 @@ pub(crate) static mut KERNEL: *mut Kernel = null_mut();
 
 lazy_static! {
     pub(crate) static ref TASK_MANAGER: KernelCell<TaskManager> = KernelCell::new(TaskManager::new());
-    pub(crate) static ref FUTURE_REGISTRY: FutureRegistry = FutureRegistry::new();
+    pub(crate) static ref FUTURE_REGISTRY: KernelCell<FutureRegistry> = KernelCell::new(FutureRegistry::new());
 }
 
 pub struct Kernel {
@@ -103,7 +103,7 @@ impl Kernel {
         let future_handle = match result {
             Ok(task_handle) => {
                 let future = Box::new(TaskCompletionFuture::new(task_handle));
-                let future_handle = FUTURE_REGISTRY.register(future);
+                let future_handle = FUTURE_REGISTRY.borrow_mut().register(future);
                 self.schedule2(task_handle);
                 future_handle
             }
@@ -160,7 +160,7 @@ impl Kernel {
     }
 
     pub fn is_future_completed(&self, handle: FutureHandle) -> bool {
-        FUTURE_REGISTRY.get(handle).unwrap_or(true)
+        FUTURE_REGISTRY.borrow_mut().get(handle).unwrap_or(true)
     }
 
     pub fn task_yield(&mut self) {

@@ -1,4 +1,4 @@
-use crate::kernel::TASK_MANAGER;
+use crate::kernel::{FUTURE_REGISTRY, TASK_MANAGER};
 use crate::messages::HardwareInterrupt;
 use crate::syscall::switch_to_task;
 use crate::task::TaskHandle;
@@ -127,7 +127,7 @@ impl MainThread {
         for _ in 0..self.blocked_tasks.len() {
             if let Some(task_future) = self.blocked_tasks.pop_front() {
                 if task_future.is_completed() {
-                    crate::kernel::FUTURE_REGISTRY.remove(task_future.future_handle);
+                    FUTURE_REGISTRY.borrow_mut().remove(task_future.future_handle);
                     TASK_MANAGER
                         .borrow_mut()
                         .set_state(task_future.task_handle, Ready);
@@ -147,6 +147,6 @@ struct TaskFuture {
 
 impl TaskFuture {
     fn is_completed(&self) -> bool {
-        crate::kernel::FUTURE_REGISTRY.get(self.future_handle).unwrap_or(true)
+        FUTURE_REGISTRY.borrow_mut().get(self.future_handle).unwrap_or(true)
     }
 }
