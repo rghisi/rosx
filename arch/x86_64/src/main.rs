@@ -15,7 +15,6 @@ use crate::debug_console::QemuDebugConsole;
 use crate::idle::idle_task_factory;
 use crate::vga_buffer::VgaOutput;
 use bootloader::BootInfo;
-use buddy_system_allocator::LockedHeap;
 use core::panic::PanicInfo;
 use kernel::allocator::MEMORY_ALLOCATOR;
 use system::memory::MemoryRegion;
@@ -44,8 +43,6 @@ static KCONFIG: KConfig = KConfig {
 fn panic(info: &PanicInfo) -> ! {
     handle_panic(info);
 }
-
-static HEAP_ALLOCATOR: LockedHeap<27> = LockedHeap::<27>::new();
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
