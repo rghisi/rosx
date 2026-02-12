@@ -86,7 +86,6 @@ name = "rosx"
 version = "0.1.0"
 dependencies = [
  "bootloader",
- "buddy_system_allocator",
  "dummy",
  "kernel",
  "lazy_static",
