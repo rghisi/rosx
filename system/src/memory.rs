@@ -1,3 +1,4 @@
+#[derive(Copy, Clone)]
 pub struct MemoryRegion {
     pub start: usize,
     pub size: usize,
