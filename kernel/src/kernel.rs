@@ -1,5 +1,5 @@
 #[cfg(not(test))]
-use crate::allocator::{HEAP_ALLOCATOR, MEMORY_ALLOCATOR, initialize_heap};
+use crate::allocator::{HEAP_ALLOCATOR, KERNEL_ALLOCATOR, MEMORY_ALLOCATOR, USER_ALLOCATOR, initialize_heap};
 use crate::cpu::Cpu;
 use crate::default_output::{KernelOutput, setup_default_output};
 use crate::future::{FutureRegistry, TaskCompletionFuture};
@@ -215,7 +215,11 @@ unsafe impl GlobalAlloc for Kernel {
             self.cpu.disable_interrupts();
         }
 
-        let ptr = unsafe { MEMORY_ALLOCATOR.alloc(layout) };
+        let ptr = if self.execution_state.kernel_mode {
+            unsafe { KERNEL_ALLOCATOR.alloc(layout) }
+        } else {
+            unsafe { USER_ALLOCATOR.alloc(layout) }
+        };
 
         if interrupts_enabled {
             self.cpu.enable_interrupts();
@@ -231,7 +235,11 @@ unsafe impl GlobalAlloc for Kernel {
             self.cpu.disable_interrupts();
         }
 
-        unsafe { MEMORY_ALLOCATOR.dealloc(ptr, layout) };
+        if self.execution_state.kernel_mode {
+            unsafe { KERNEL_ALLOCATOR.dealloc(ptr, layout) };
+        } else {
+            unsafe { USER_ALLOCATOR.dealloc(ptr, layout) };
+        }
 
         if interrupts_enabled {
             self.cpu.enable_interrupts();
