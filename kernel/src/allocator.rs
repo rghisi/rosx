@@ -2,7 +2,13 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use buddy_system_allocator::LockedHeap;
+use system::memory::MemoryRegion;
+
 use crate::kernel::KERNEL;
+use crate::kprintln;
+
+pub static HEAP_ALLOCATOR: LockedHeap<27> = LockedHeap::<27>::new();
 
 #[cfg_attr(not(test), global_allocator)]
 pub static GLOBAL_ALLOCATOR: GlobalKernelAllocator = GlobalKernelAllocator;
@@ -81,4 +87,18 @@ unsafe impl GlobalAlloc for MemoryAllocator {
             self.root.assume_init().dealloc(ptr, layout);
         }
     }
+}
+
+pub fn initialize_heap(regions: &[MemoryRegion]) {
+    for region in regions {
+        let end = region.start + region.size;
+        kprintln!(
+            "[MEMORY] Allocating region: {}B at 0x{:x}-0x{:x}",
+            region.size, region.start, end
+        );
+        unsafe {
+            HEAP_ALLOCATOR.lock().init(region.start, region.size);
+        }
+    }
+    kprintln!("[MEMORY] Heap initialized successfully!");
 }

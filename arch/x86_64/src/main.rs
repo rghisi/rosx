@@ -49,9 +49,8 @@ static HEAP_ALLOCATOR: LockedHeap<27> = LockedHeap::<27>::new();
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
-    kernel::kernel::bootstrap(&HEAP_ALLOCATOR, &MULTIPLEXED_OUTPUT);
     let (regions, count) = discover_memory_regions(boot_info);
-    initialize_heap(&regions[..count]);
+    kernel::kernel::bootstrap(&regions[..count], &MULTIPLEXED_OUTPUT);
     kprintln!("[KERNEL] Initializing - {}", MEMORY_ALLOCATOR.used());
     let mut kernel = Kernel::new(&KCONFIG);
     kernel.setup();
@@ -121,16 +120,4 @@ fn discover_memory_regions(boot_info: &BootInfo) -> ([MemoryRegion; MAX_MEMORY_R
     (regions, count)
 }
 
-fn initialize_heap(regions: &[MemoryRegion]) {
-    for region in regions {
-        let end = region.start + region.size;
-        kprintln!(
-            "[MEMORY] Allocating region: {}B at 0x{:x}-0x{:x}",
-            region.size, region.start, end
-        );
-        unsafe {
-            HEAP_ALLOCATOR.lock().init(region.start, region.size);
-        }
-    }
-    kprintln!("[MEMORY] Heap initialized successfully!");
-}
+

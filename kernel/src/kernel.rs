@@ -1,5 +1,5 @@
 #[cfg(not(test))]
-use crate::allocator::MEMORY_ALLOCATOR;
+use crate::allocator::{HEAP_ALLOCATOR, MEMORY_ALLOCATOR, initialize_heap};
 use crate::cpu::Cpu;
 use crate::default_output::{KernelOutput, setup_default_output};
 use crate::future::{FutureRegistry, TaskCompletionFuture};
@@ -19,6 +19,7 @@ use core::ptr::null_mut;
 use lazy_static::lazy_static;
 use spin::Mutex;
 use system::future::FutureHandle;
+use system::memory::MemoryRegion;
 
 pub(crate) static mut KERNEL: *mut Kernel = null_mut();
 
@@ -241,13 +242,14 @@ unsafe impl GlobalAlloc for Kernel {
 
 #[cfg(not(test))]
 pub fn bootstrap(
-    allocator: &'static (dyn GlobalAlloc + Sync),
+    regions: &[MemoryRegion],
     default_output: &'static dyn KernelOutput,
 ) {
     unsafe {
-        MEMORY_ALLOCATOR.init(allocator);
+        MEMORY_ALLOCATOR.init(&HEAP_ALLOCATOR);
     };
     setup_default_output(default_output);
+    initialize_heap(regions);
     kprintln!("[KERNEL] Bootstrapped");
 }
 
