@@ -1,5 +1,6 @@
 use core::alloc::{GlobalAlloc, Layout};
 use core::mem::MaybeUninit;
+use core::ptr::{NonNull, null_mut};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use buddy_system_allocator::LockedHeap;
@@ -101,4 +102,52 @@ pub fn initialize_heap(regions: &[MemoryRegion]) {
         }
     }
     kprintln!("[MEMORY] Heap initialized successfully!");
+}
+
+const BLOCK_SIZE: usize = 64 * 1024;
+
+pub static KERNEL_ALLOCATOR: LayeredAllocator = LayeredAllocator::new();
+pub static USER_ALLOCATOR: LayeredAllocator = LayeredAllocator::new();
+
+pub struct LayeredAllocator {
+    heap: LockedHeap<27>,
+}
+
+impl LayeredAllocator {
+    const fn new() -> Self {
+        LayeredAllocator {
+            heap: LockedHeap::new(),
+        }
+    }
+
+    fn grow(&self) {
+        let layout = unsafe { Layout::from_size_align_unchecked(BLOCK_SIZE, BLOCK_SIZE) };
+        let ptr = unsafe { HEAP_ALLOCATOR.alloc(layout) };
+        if !ptr.is_null() {
+            unsafe {
+                self.heap.lock().add_to_heap(ptr as usize, ptr as usize + BLOCK_SIZE);
+            }
+        }
+    }
+}
+
+unsafe impl GlobalAlloc for LayeredAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        match self.heap.lock().alloc(layout) {
+            Ok(ptr) => ptr.as_ptr(),
+            Err(_) => {
+                self.grow();
+                self.heap
+                    .lock()
+                    .alloc(layout)
+                    .map_or(null_mut(), |p| p.as_ptr())
+            }
+        }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        if let Some(non_null) = NonNull::new(ptr) {
+            self.heap.lock().dealloc(non_null, layout);
+        }
+    }
 }
