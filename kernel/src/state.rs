@@ -7,6 +7,7 @@ pub struct ExecutionState {
     pub(crate) main_thread: TaskHandle,
     pub(crate) current_task: Option<TaskHandle>,
     pub(crate) preemption_enabled: bool,
+    pub(crate) kernel_mode: bool,
     pub(crate) cpu: &'static dyn Cpu,
 }
 
@@ -18,6 +19,7 @@ impl ExecutionState {
             .borrow()
             .get_task_stack_pointer(task_handle);
         self.current_task = Some(task_handle);
+        self.kernel_mode = false;
         let scheduler_stack_pointer_pointer = TASK_MANAGER
             .lock()
             .borrow_mut()
@@ -42,6 +44,7 @@ impl ExecutionState {
             
             // We are leaving the task, disable preemption
             self.preemption_enabled = false;
+            self.kernel_mode = true;
             self.current_task = Some(task_handle);
             let scheduler_stack_pointer = TASK_MANAGER
                 .lock()

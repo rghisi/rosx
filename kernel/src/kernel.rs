@@ -65,6 +65,7 @@ impl Kernel {
                 main_thread: main_thread_task_handle,
                 current_task: None,
                 preemption_enabled: false,
+                kernel_mode: true,
                 cpu,
             },
         }
