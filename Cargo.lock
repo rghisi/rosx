@@ -47,6 +47,7 @@ dependencies = [
 name = "kernel"
 version = "0.1.0"
 dependencies = [
+ "buddy_system_allocator",
  "lazy_static",
  "spin 0.10.0",
  "system",
