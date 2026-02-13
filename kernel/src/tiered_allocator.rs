@@ -1,3 +1,5 @@
+use core::alloc::{GlobalAlloc, Layout};
+use core::cell::UnsafeCell;
 use core::mem::size_of;
 use core::ptr::null_mut;
 
@@ -328,6 +330,30 @@ impl<'a> TieredAllocator<'a> {
             prev = current;
             current = unsafe { (*current).next };
         }
+    }
+}
+
+pub struct GlobalTieredAllocator<'a> {
+    inner: UnsafeCell<TieredAllocator<'a>>,
+}
+
+impl<'a> GlobalTieredAllocator<'a> {
+    pub fn new(provider: &'a dyn BlockProvider) -> Self {
+        GlobalTieredAllocator {
+            inner: UnsafeCell::new(TieredAllocator::new(provider)),
+        }
+    }
+}
+
+unsafe impl<'a> Sync for GlobalTieredAllocator<'a> {}
+
+unsafe impl<'a> GlobalAlloc for GlobalTieredAllocator<'a> {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        unsafe { (*self.inner.get()).alloc(layout.size(), layout.align()) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+        unsafe { (*self.inner.get()).dealloc(ptr) }
     }
 }
 
@@ -1117,5 +1143,87 @@ mod tests {
 
         let ptr3 = alloc.alloc(64, size_of::<usize>());
         assert!(!ptr3.is_null());
+    }
+
+    #[test]
+    fn global_alloc_should_allocate_via_layout() {
+        let provider = MockBlockProvider::new(4096, 4);
+        let alloc = GlobalTieredAllocator::new(&provider);
+
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { GlobalAlloc::alloc(&alloc, layout) };
+
+        assert!(!ptr.is_null());
+        assert_eq!(ptr as usize % 8, 0);
+    }
+
+    #[test]
+    fn global_alloc_should_deallocate_via_layout() {
+        let provider = MockBlockProvider::new(4096, 4);
+        let alloc = GlobalTieredAllocator::new(&provider);
+
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { GlobalAlloc::alloc(&alloc, layout) };
+        unsafe { GlobalAlloc::dealloc(&alloc, ptr, layout) };
+
+        let ptr2 = unsafe { GlobalAlloc::alloc(&alloc, layout) };
+        assert!(!ptr2.is_null());
+    }
+
+    #[test]
+    fn global_alloc_should_handle_aligned_layouts() {
+        let provider = MockBlockProvider::new(4096, 4);
+        let alloc = GlobalTieredAllocator::new(&provider);
+
+        let layout = Layout::from_size_align(64, 32).unwrap();
+        let ptr = unsafe { GlobalAlloc::alloc(&alloc, layout) };
+
+        assert!(!ptr.is_null());
+        assert_eq!(ptr as usize % 32, 0);
+
+        unsafe { GlobalAlloc::dealloc(&alloc, ptr, layout) };
+    }
+
+    #[test]
+    fn global_alloc_should_handle_various_sizes() {
+        let provider = MockBlockProvider::new(4096, 4);
+        let alloc = GlobalTieredAllocator::new(&provider);
+
+        let sizes = [1, 8, 16, 64, 128, 256, 512, 1024];
+        let mut ptrs = Vec::new();
+
+        for &size in &sizes {
+            let layout = Layout::from_size_align(size, 8).unwrap();
+            let ptr = unsafe { GlobalAlloc::alloc(&alloc, layout) };
+            assert!(!ptr.is_null());
+            unsafe { core::ptr::write_bytes(ptr, 0xAB, size) };
+            ptrs.push((ptr, layout));
+        }
+
+        for (ptr, layout) in ptrs {
+            unsafe { GlobalAlloc::dealloc(&alloc, ptr, layout) };
+        }
+    }
+
+    #[test]
+    fn global_alloc_should_handle_stress_test() {
+        let provider = MockBlockProvider::new(4096, 32);
+        let alloc = GlobalTieredAllocator::new(&provider);
+
+        let mut ptrs = Vec::new();
+        let layout = Layout::from_size_align(32, 8).unwrap();
+
+        for _ in 0..100 {
+            let ptr = unsafe { GlobalAlloc::alloc(&alloc, layout) };
+            assert!(!ptr.is_null());
+            ptrs.push(ptr);
+        }
+
+        for ptr in ptrs.iter().rev() {
+            unsafe { GlobalAlloc::dealloc(&alloc, *ptr, layout) };
+        }
+
+        let ptr = unsafe { GlobalAlloc::alloc(&alloc, layout) };
+        assert!(!ptr.is_null());
     }
 }
