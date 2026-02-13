@@ -304,6 +304,7 @@ mod tests {
         block_size: usize,
         memory: Vec<u8>,
         next_offset: RefCell<usize>,
+        allocate_count: RefCell<usize>,
         released: RefCell<Vec<(*mut u8, usize)>>,
     }
 
@@ -313,12 +314,17 @@ mod tests {
                 block_size,
                 memory: vec![0u8; block_size * total_blocks],
                 next_offset: RefCell::new(0),
+                allocate_count: RefCell::new(0),
                 released: RefCell::new(Vec::new()),
             }
         }
 
         fn released_count(&self) -> usize {
             self.released.borrow().len()
+        }
+
+        fn allocate_count(&self) -> usize {
+            *self.allocate_count.borrow()
         }
     }
 
@@ -335,6 +341,7 @@ mod tests {
             }
             let ptr = unsafe { self.memory.as_ptr().add(*offset) as *mut u8 };
             *offset += bytes_needed;
+            *self.allocate_count.borrow_mut() += 1;
             Some((ptr, min_blocks))
         }
 
@@ -942,5 +949,58 @@ mod tests {
         let ptr = alloc.alloc(4096, size_of::<usize>());
 
         assert!(ptr.is_null());
+    }
+
+    #[test]
+    fn tiered_alloc_should_create_second_region_when_first_is_full() {
+        let provider = MockBlockProvider::new(256, 4);
+        let mut alloc = TieredAllocator::new(&provider);
+
+        let ptr1 = alloc.alloc(128, size_of::<usize>());
+        assert_eq!(provider.allocate_count(), 1);
+
+        let ptr2 = alloc.alloc(128, size_of::<usize>());
+        assert_eq!(provider.allocate_count(), 2);
+
+        assert!(!ptr1.is_null());
+        assert!(!ptr2.is_null());
+        assert_ne!(ptr1, ptr2);
+    }
+
+    #[test]
+    fn tiered_alloc_should_dealloc_from_correct_region() {
+        let provider = MockBlockProvider::new(256, 4);
+        let mut alloc = TieredAllocator::new(&provider);
+
+        let ptr1 = alloc.alloc(64, size_of::<usize>());
+        let ptr2 = alloc.alloc(64, size_of::<usize>());
+
+        alloc.dealloc(ptr1);
+        alloc.dealloc(ptr2);
+
+        let ptr3 = alloc.alloc(64, size_of::<usize>());
+        assert!(!ptr3.is_null());
+    }
+
+    #[test]
+    fn tiered_alloc_should_handle_many_alloc_dealloc_cycles() {
+        let provider = MockBlockProvider::new(4096, 4);
+        let mut alloc = TieredAllocator::new(&provider);
+
+        for _ in 0..200 {
+            let ptr = alloc.alloc(32, size_of::<usize>());
+            assert!(!ptr.is_null());
+            alloc.dealloc(ptr);
+        }
+    }
+
+    #[test]
+    fn tiered_alloc_should_request_enough_blocks_for_large_alloc() {
+        let provider = MockBlockProvider::new(4096, 10);
+        let mut alloc = TieredAllocator::new(&provider);
+
+        let ptr = alloc.alloc(8000, size_of::<usize>());
+
+        assert!(!ptr.is_null());
     }
 }
