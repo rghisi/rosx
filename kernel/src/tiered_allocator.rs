@@ -156,6 +156,22 @@ unsafe fn region_alloc(region: *mut RegionHeader, size: usize) -> *mut u8 {
     }
 }
 
+unsafe fn region_dealloc(region: *mut RegionHeader, ptr: *mut u8) {
+    unsafe {
+        let chunk = ptr.sub(size_of::<usize>()) as *mut FreeChunk;
+        let chunk_size = (*chunk).size_and_flags & !1;
+
+        (*chunk).size_and_flags = chunk_size;
+
+        let footer = chunk_footer(chunk as *mut u8, chunk_size);
+        *footer = chunk_size;
+
+        link_free_chunk(region, chunk);
+
+        (*region).used_bytes -= chunk_size;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -461,5 +477,94 @@ mod tests {
             count += 1;
         }
         assert!(count > 10);
+    }
+
+    #[test]
+    fn region_dealloc_should_mark_chunk_as_free() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let ptr = unsafe { region_alloc(region, 64) };
+        unsafe { region_dealloc(region, ptr) };
+
+        unsafe {
+            let chunk = ptr.sub(size_of::<usize>()) as *mut ChunkHeader;
+            assert!(!(*chunk).is_allocated());
+        }
+    }
+
+    #[test]
+    fn region_dealloc_should_add_chunk_to_free_list() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let ptr = unsafe { region_alloc(region, 64) };
+        unsafe { region_dealloc(region, ptr) };
+
+        unsafe {
+            assert!(!(*region).free_list_head.is_null());
+            let freed = (*region).free_list_head;
+            assert_eq!(freed as usize, ptr as usize - size_of::<usize>());
+        }
+    }
+
+    #[test]
+    fn region_dealloc_should_decrement_used_bytes() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let ptr = unsafe { region_alloc(region, 64) };
+        let used_after_alloc = unsafe { (*region).used_bytes };
+        unsafe { region_dealloc(region, ptr) };
+
+        unsafe {
+            assert_eq!((*region).used_bytes, 0);
+            assert!(used_after_alloc > 0);
+        }
+    }
+
+    #[test]
+    fn region_dealloc_should_allow_reallocation() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let ptr1 = unsafe { region_alloc(region, 64) };
+        unsafe { region_dealloc(region, ptr1) };
+        let ptr2 = unsafe { region_alloc(region, 64) };
+
+        assert!(!ptr2.is_null());
+    }
+
+    #[test]
+    fn region_dealloc_should_handle_multiple_alloc_dealloc_cycles() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        for _ in 0..100 {
+            let ptr = unsafe { region_alloc(region, 32) };
+            assert!(!ptr.is_null());
+            unsafe { region_dealloc(region, ptr) };
+        }
+
+        unsafe {
+            assert_eq!((*region).used_bytes, 0);
+        }
+    }
+
+    #[test]
+    fn region_dealloc_should_write_footer_without_allocated_flag() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let ptr = unsafe { region_alloc(region, 64) };
+        unsafe { region_dealloc(region, ptr) };
+
+        unsafe {
+            let chunk = ptr.sub(size_of::<usize>()) as *mut ChunkHeader;
+            let chunk_size = (*chunk).size();
+            let footer = chunk_footer(chunk as *mut u8, chunk_size);
+            assert_eq!(*footer, chunk_size);
+            assert_eq!(*footer & 1, 0);
+        }
     }
 }
