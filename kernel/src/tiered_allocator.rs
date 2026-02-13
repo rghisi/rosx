@@ -74,6 +74,58 @@ unsafe fn init_region(base: *mut u8, total_size: usize, block_count: usize) -> *
     header
 }
 
+fn required_chunk_size(payload_size: usize) -> usize {
+    let total = size_of::<usize>() + payload_size + size_of::<usize>();
+    let aligned = align_up(total, ALIGNMENT);
+    if aligned < MIN_CHUNK_SIZE { MIN_CHUNK_SIZE } else { aligned }
+}
+
+unsafe fn unlink_free_chunk(region: *mut RegionHeader, chunk: *mut FreeChunk) {
+    unsafe {
+        let prev = (*chunk).prev;
+        let next = (*chunk).next;
+
+        if !prev.is_null() {
+            (*prev).next = next;
+        } else {
+            (*region).free_list_head = next;
+        }
+
+        if !next.is_null() {
+            (*next).prev = prev;
+        }
+    }
+}
+
+unsafe fn region_alloc(region: *mut RegionHeader, size: usize) -> *mut u8 {
+    let chunk_size = required_chunk_size(size);
+
+    unsafe {
+        let mut current = (*region).free_list_head;
+
+        while !current.is_null() {
+            let current_size = (*current).size_and_flags & !1;
+
+            if current_size >= chunk_size {
+                unlink_free_chunk(region, current);
+
+                (*current).size_and_flags = current_size | 1;
+
+                let footer = chunk_footer(current as *mut u8, current_size);
+                *footer = current_size;
+
+                (*region).used_bytes += current_size;
+
+                return (current as *mut u8).add(size_of::<usize>());
+            }
+
+            current = (*current).next;
+        }
+
+        null_mut()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -235,6 +287,77 @@ mod tests {
         unsafe {
             let chunk = (*region).free_list_head as *mut ChunkHeader;
             assert!(!(*chunk).is_allocated());
+        }
+    }
+
+    #[test]
+    fn region_alloc_should_return_valid_pointer() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let ptr = unsafe { region_alloc(region, 64) };
+
+        assert!(!ptr.is_null());
+        let region_base = region as usize;
+        assert!(ptr as usize > region_base);
+        assert!((ptr as usize) < region_base + 4096);
+    }
+
+    #[test]
+    fn region_alloc_should_mark_chunk_as_allocated() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let ptr = unsafe { region_alloc(region, 64) };
+
+        unsafe {
+            let chunk = ptr.sub(size_of::<usize>()) as *mut ChunkHeader;
+            assert!((*chunk).is_allocated());
+        }
+    }
+
+    #[test]
+    fn region_alloc_should_remove_chunk_from_free_list() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        unsafe { region_alloc(region, 64) };
+
+        unsafe {
+            assert!((*region).free_list_head.is_null());
+        }
+    }
+
+    #[test]
+    fn region_alloc_should_return_null_when_too_large() {
+        let provider = MockBlockProvider::new(256, 1);
+        let region = init_test_region(&provider, 1);
+
+        let ptr = unsafe { region_alloc(region, 4096) };
+
+        assert!(ptr.is_null());
+    }
+
+    #[test]
+    fn region_alloc_should_return_pointer_after_header() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let free_chunk_addr = unsafe { (*region).free_list_head as usize };
+        let ptr = unsafe { region_alloc(region, 64) };
+
+        assert_eq!(ptr as usize, free_chunk_addr + size_of::<usize>());
+    }
+
+    #[test]
+    fn region_alloc_should_track_used_bytes() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        unsafe { region_alloc(region, 64) };
+
+        unsafe {
+            assert!((*region).used_bytes > 0);
         }
     }
 }
