@@ -97,6 +97,19 @@ unsafe fn unlink_free_chunk(region: *mut RegionHeader, chunk: *mut FreeChunk) {
     }
 }
 
+unsafe fn link_free_chunk(region: *mut RegionHeader, chunk: *mut FreeChunk) {
+    unsafe {
+        (*chunk).prev = null_mut();
+        (*chunk).next = (*region).free_list_head;
+
+        if !(*region).free_list_head.is_null() {
+            (*(*region).free_list_head).prev = chunk;
+        }
+
+        (*region).free_list_head = chunk;
+    }
+}
+
 unsafe fn region_alloc(region: *mut RegionHeader, size: usize) -> *mut u8 {
     let chunk_size = required_chunk_size(size);
 
@@ -109,12 +122,29 @@ unsafe fn region_alloc(region: *mut RegionHeader, size: usize) -> *mut u8 {
             if current_size >= chunk_size {
                 unlink_free_chunk(region, current);
 
-                (*current).size_and_flags = current_size | 1;
+                let remainder = current_size - chunk_size;
+                let alloc_size = if remainder >= MIN_CHUNK_SIZE {
+                    let new_free = (current as *mut u8).add(chunk_size) as *mut FreeChunk;
+                    (*new_free).size_and_flags = remainder;
+                    (*new_free).next = null_mut();
+                    (*new_free).prev = null_mut();
 
-                let footer = chunk_footer(current as *mut u8, current_size);
-                *footer = current_size;
+                    let new_footer = chunk_footer(new_free as *mut u8, remainder);
+                    *new_footer = remainder;
 
-                (*region).used_bytes += current_size;
+                    link_free_chunk(region, new_free);
+
+                    chunk_size
+                } else {
+                    current_size
+                };
+
+                (*current).size_and_flags = alloc_size | 1;
+
+                let footer = chunk_footer(current as *mut u8, alloc_size);
+                *footer = alloc_size;
+
+                (*region).used_bytes += alloc_size;
 
                 return (current as *mut u8).add(size_of::<usize>());
             }
@@ -317,18 +347,6 @@ mod tests {
     }
 
     #[test]
-    fn region_alloc_should_remove_chunk_from_free_list() {
-        let provider = MockBlockProvider::new(4096, 1);
-        let region = init_test_region(&provider, 1);
-
-        unsafe { region_alloc(region, 64) };
-
-        unsafe {
-            assert!((*region).free_list_head.is_null());
-        }
-    }
-
-    #[test]
     fn region_alloc_should_return_null_when_too_large() {
         let provider = MockBlockProvider::new(256, 1);
         let region = init_test_region(&provider, 1);
@@ -359,5 +377,89 @@ mod tests {
         unsafe {
             assert!((*region).used_bytes > 0);
         }
+    }
+
+    #[test]
+    fn region_alloc_should_split_large_chunk() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let ptr = unsafe { region_alloc(region, 64) };
+
+        assert!(!ptr.is_null());
+        unsafe {
+            assert!(!(*region).free_list_head.is_null());
+            let remaining = (*region).free_list_head;
+            let remaining_size = (*remaining).size_and_flags & !1;
+            assert!(remaining_size > 0);
+        }
+    }
+
+    #[test]
+    fn region_alloc_should_allow_multiple_allocations_after_splitting() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let ptr1 = unsafe { region_alloc(region, 64) };
+        let ptr2 = unsafe { region_alloc(region, 64) };
+
+        assert!(!ptr1.is_null());
+        assert!(!ptr2.is_null());
+        assert_ne!(ptr1, ptr2);
+    }
+
+    #[test]
+    fn region_alloc_split_chunks_should_have_correct_footers() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let ptr = unsafe { region_alloc(region, 64) };
+
+        unsafe {
+            let alloc_chunk = ptr.sub(size_of::<usize>()) as *mut ChunkHeader;
+            let alloc_size = (*alloc_chunk).size();
+            let alloc_footer = chunk_footer(alloc_chunk as *mut u8, alloc_size);
+            assert_eq!(*alloc_footer, alloc_size);
+
+            let free_chunk = (*region).free_list_head;
+            let free_size = (*free_chunk).size_and_flags & !1;
+            let free_footer = chunk_footer(free_chunk as *mut u8, free_size);
+            assert_eq!(*free_footer, free_size);
+        }
+    }
+
+    #[test]
+    fn region_alloc_split_should_only_track_allocated_portion() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        unsafe {
+            let original_chunk = (*region).free_list_head;
+            let original_size = (*original_chunk).size_and_flags & !1;
+
+            let ptr = region_alloc(region, 64);
+
+            let alloc_chunk = ptr.sub(size_of::<usize>()) as *mut ChunkHeader;
+            let alloc_size = (*alloc_chunk).size();
+
+            assert!(alloc_size < original_size);
+            assert_eq!((*region).used_bytes, alloc_size);
+        }
+    }
+
+    #[test]
+    fn region_alloc_should_fill_region_with_many_small_allocations() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let mut count = 0;
+        loop {
+            let ptr = unsafe { region_alloc(region, 32) };
+            if ptr.is_null() {
+                break;
+            }
+            count += 1;
+        }
+        assert!(count > 10);
     }
 }
