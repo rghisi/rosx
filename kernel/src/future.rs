@@ -2,7 +2,7 @@ use crate::syscall;
 use alloc::boxed::Box;
 use spin::Mutex;
 use system::future::FutureHandle;
-use crate::generational_arena::GenArena;
+use collections::generational_arena::GenArena;
 use crate::kernel::TASK_MANAGER;
 use crate::task::TaskHandle;
 

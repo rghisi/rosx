@@ -13,7 +13,6 @@ pub mod cpu;
 pub mod default_output;
 pub mod function_task;
 pub mod future;
-pub mod generational_arena;
 pub mod kconfig;
 pub mod kernel;
 mod keyboard;
