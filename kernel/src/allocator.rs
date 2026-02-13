@@ -1,14 +1,21 @@
+#[cfg(not(test))]
 use core::alloc::{GlobalAlloc, Layout};
+#[cfg(not(test))]
 use core::mem::MaybeUninit;
+#[cfg(not(test))]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(not(test))]
 use crate::kernel::KERNEL;
 
-#[cfg_attr(not(test), global_allocator)]
+#[cfg(not(test))]
+#[global_allocator]
 pub static GLOBAL_ALLOCATOR: GlobalKernelAllocator = GlobalKernelAllocator;
 
+#[cfg(not(test))]
 pub struct GlobalKernelAllocator;
 
+#[cfg(not(test))]
 unsafe impl GlobalAlloc for GlobalKernelAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         unsafe {
@@ -31,14 +38,16 @@ unsafe impl GlobalAlloc for GlobalKernelAllocator {
     }
 }
 
+#[cfg(not(test))]
 pub static MEMORY_ALLOCATOR: MemoryAllocator = MemoryAllocator::new();
 
-trait Xpto {}
+#[cfg(not(test))]
 pub struct MemoryAllocator {
     root: MaybeUninit<&'static (dyn GlobalAlloc + Sync)>,
     used: AtomicUsize,
 }
 
+#[cfg(not(test))]
 impl MemoryAllocator {
     const fn new() -> Self {
         MemoryAllocator {
@@ -60,13 +69,16 @@ impl MemoryAllocator {
     }
 }
 
+#[cfg(not(test))]
 unsafe impl Sync for MemoryAllocator {}
 
-#[cfg_attr(not(test), alloc_error_handler)]
+#[cfg(not(test))]
+#[alloc_error_handler]
 pub fn alloc_error_handler(layout: Layout) -> ! {
     panic!("allocation error: {:?}", layout)
 }
 
+#[cfg(not(test))]
 unsafe impl GlobalAlloc for MemoryAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         unsafe {

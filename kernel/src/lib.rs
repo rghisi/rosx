@@ -29,3 +29,4 @@ pub mod task;
 pub mod task_fifo_queue;
 pub(crate) mod task_manager;
 pub mod task_queue;
+pub mod tiered_allocator;
