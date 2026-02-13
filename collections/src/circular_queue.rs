@@ -102,8 +102,6 @@ mod tests {
 
     use crate::circular_queue::CircularQueue;
     use alloc::string::{String, ToString};
-    use alloc::sync::Arc;
-    use core::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn test_new() {

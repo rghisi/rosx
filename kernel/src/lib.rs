@@ -7,7 +7,6 @@ extern crate spin;
 extern crate system;
 
 pub mod allocator;
-mod circular_queue;
 pub(crate) mod context_switcher;
 pub mod cpu;
 pub mod default_output;
