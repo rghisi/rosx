@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "collections",
     "system",
     "kernel",
     "usrlib",
