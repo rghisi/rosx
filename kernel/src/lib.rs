@@ -2,6 +2,7 @@
 #![feature(alloc_error_handler)]
 
 extern crate alloc;
+extern crate collections;
 extern crate lazy_static;
 extern crate spin;
 extern crate system;
