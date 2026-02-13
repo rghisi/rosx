@@ -234,6 +234,63 @@ unsafe fn region_dealloc(region: *mut RegionHeader, ptr: *mut u8) {
     }
 }
 
+fn region_contains(region: *mut RegionHeader, ptr: *mut u8) -> bool {
+    let base = region as usize;
+    let end = unsafe { base + (*region).total_size };
+    let addr = ptr as usize;
+    addr >= base && addr < end
+}
+
+pub struct TieredAllocator<'a> {
+    provider: &'a dyn BlockProvider,
+    regions: *mut RegionHeader,
+}
+
+impl<'a> TieredAllocator<'a> {
+    pub fn new(provider: &'a dyn BlockProvider) -> Self {
+        TieredAllocator {
+            provider,
+            regions: null_mut(),
+        }
+    }
+
+    pub fn alloc(&mut self, size: usize, align: usize) -> *mut u8 {
+        let mut region = self.regions;
+        while !region.is_null() {
+            let ptr = unsafe { region_alloc(region, size, align) };
+            if !ptr.is_null() {
+                return ptr;
+            }
+            region = unsafe { (*region).next };
+        }
+
+        let block_size = self.provider.block_size();
+        let overhead = align_up(size_of::<RegionHeader>(), ALIGNMENT) + MIN_CHUNK_SIZE;
+        let total_needed = overhead + required_chunk_size(size + align);
+        let min_blocks = (total_needed + block_size - 1) / block_size;
+
+        if let Some((base, count)) = self.provider.allocate_blocks(min_blocks) {
+            let new_region = unsafe { init_region(base, count * block_size, count) };
+            unsafe { (*new_region).next = self.regions };
+            self.regions = new_region;
+            unsafe { region_alloc(new_region, size, align) }
+        } else {
+            null_mut()
+        }
+    }
+
+    pub fn dealloc(&mut self, ptr: *mut u8) {
+        let mut region = self.regions;
+        while !region.is_null() {
+            if region_contains(region, ptr) {
+                unsafe { region_dealloc(region, ptr) };
+                return;
+            }
+            region = unsafe { (*region).next };
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -808,5 +865,82 @@ mod tests {
             region_dealloc(region, ptr3);
             assert_eq!((*region).used_bytes, 0);
         }
+    }
+
+    #[test]
+    fn tiered_alloc_should_request_blocks_on_first_alloc() {
+        let provider = MockBlockProvider::new(4096, 4);
+        let mut alloc = TieredAllocator::new(&provider);
+
+        let ptr = alloc.alloc(64, size_of::<usize>());
+
+        assert!(!ptr.is_null());
+        assert!(!alloc.regions.is_null());
+    }
+
+    #[test]
+    fn tiered_alloc_should_return_valid_pointer() {
+        let provider = MockBlockProvider::new(4096, 4);
+        let mut alloc = TieredAllocator::new(&provider);
+
+        let ptr = alloc.alloc(64, size_of::<usize>());
+
+        assert!(!ptr.is_null());
+        unsafe {
+            core::ptr::write_bytes(ptr, 0xAB, 64);
+            assert_eq!(*ptr, 0xAB);
+        }
+    }
+
+    #[test]
+    fn tiered_dealloc_should_free_allocated_memory() {
+        let provider = MockBlockProvider::new(4096, 4);
+        let mut alloc = TieredAllocator::new(&provider);
+
+        let ptr = alloc.alloc(64, size_of::<usize>());
+        alloc.dealloc(ptr);
+
+        unsafe {
+            assert_eq!((*alloc.regions).used_bytes, 0);
+        }
+    }
+
+    #[test]
+    fn tiered_alloc_should_support_multiple_allocations() {
+        let provider = MockBlockProvider::new(4096, 4);
+        let mut alloc = TieredAllocator::new(&provider);
+
+        let ptr1 = alloc.alloc(64, size_of::<usize>());
+        let ptr2 = alloc.alloc(128, size_of::<usize>());
+        let ptr3 = alloc.alloc(32, size_of::<usize>());
+
+        assert!(!ptr1.is_null());
+        assert!(!ptr2.is_null());
+        assert!(!ptr3.is_null());
+        assert_ne!(ptr1, ptr2);
+        assert_ne!(ptr2, ptr3);
+    }
+
+    #[test]
+    fn tiered_alloc_should_reuse_freed_memory() {
+        let provider = MockBlockProvider::new(4096, 4);
+        let mut alloc = TieredAllocator::new(&provider);
+
+        let ptr1 = alloc.alloc(64, size_of::<usize>());
+        alloc.dealloc(ptr1);
+        let ptr2 = alloc.alloc(64, size_of::<usize>());
+
+        assert!(!ptr2.is_null());
+    }
+
+    #[test]
+    fn tiered_alloc_should_return_null_when_provider_exhausted() {
+        let provider = MockBlockProvider::new(256, 1);
+        let mut alloc = TieredAllocator::new(&provider);
+
+        alloc.alloc(128, size_of::<usize>());
+        let ptr = alloc.alloc(4096, size_of::<usize>());
+
+        assert!(ptr.is_null());
     }
 }
