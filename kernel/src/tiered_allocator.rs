@@ -156,19 +156,50 @@ unsafe fn region_alloc(region: *mut RegionHeader, size: usize) -> *mut u8 {
     }
 }
 
+fn region_usable_start(region: *mut RegionHeader) -> usize {
+    align_up(region as usize + size_of::<RegionHeader>(), ALIGNMENT)
+}
+
+fn region_end(region: *mut RegionHeader) -> usize {
+    unsafe { region as usize + (*region).total_size }
+}
+
 unsafe fn region_dealloc(region: *mut RegionHeader, ptr: *mut u8) {
     unsafe {
-        let chunk = ptr.sub(size_of::<usize>()) as *mut FreeChunk;
-        let chunk_size = (*chunk).size_and_flags & !1;
+        let mut chunk = ptr.sub(size_of::<usize>()) as *mut FreeChunk;
+        let mut chunk_size = (*chunk).size_and_flags & !1;
+
+        (*region).used_bytes -= chunk_size;
+
+        let usable_start = region_usable_start(region);
+        let usable_end = region_end(region);
+
+        let next_addr = chunk as usize + chunk_size;
+        if next_addr < usable_end {
+            let next_chunk = next_addr as *mut ChunkHeader;
+            if !(*next_chunk).is_allocated() {
+                let next_size = (*next_chunk).size();
+                unlink_free_chunk(region, next_addr as *mut FreeChunk);
+                chunk_size += next_size;
+            }
+        }
+
+        if chunk as usize > usable_start {
+            let prev_footer = (chunk as *mut u8).sub(size_of::<usize>()) as *mut usize;
+            let prev_size = *prev_footer & !1;
+            let prev_chunk = (chunk as usize - prev_size) as *mut ChunkHeader;
+            if !(*prev_chunk).is_allocated() {
+                unlink_free_chunk(region, prev_chunk as *mut FreeChunk);
+                chunk_size += prev_size;
+                chunk = prev_chunk as *mut FreeChunk;
+            }
+        }
 
         (*chunk).size_and_flags = chunk_size;
-
         let footer = chunk_footer(chunk as *mut u8, chunk_size);
         *footer = chunk_size;
 
         link_free_chunk(region, chunk);
-
-        (*region).used_bytes -= chunk_size;
     }
 }
 
@@ -565,6 +596,117 @@ mod tests {
             let footer = chunk_footer(chunk as *mut u8, chunk_size);
             assert_eq!(*footer, chunk_size);
             assert_eq!(*footer & 1, 0);
+        }
+    }
+
+    #[test]
+    fn region_dealloc_should_coalesce_with_next_free_chunk() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let ptr1 = unsafe { region_alloc(region, 64) };
+        let ptr2 = unsafe { region_alloc(region, 64) };
+
+        unsafe {
+            let chunk1_size = (*(ptr1.sub(size_of::<usize>()) as *mut ChunkHeader)).size();
+            let chunk2_size = (*(ptr2.sub(size_of::<usize>()) as *mut ChunkHeader)).size();
+
+            region_dealloc(region, ptr2);
+            region_dealloc(region, ptr1);
+
+            let merged = (*region).free_list_head;
+            let merged_size = (*merged).size_and_flags & !1;
+            assert!(merged_size >= chunk1_size + chunk2_size);
+        }
+    }
+
+    #[test]
+    fn region_dealloc_should_coalesce_with_prev_free_chunk() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let ptr1 = unsafe { region_alloc(region, 64) };
+        let ptr2 = unsafe { region_alloc(region, 64) };
+
+        unsafe {
+            let chunk1_size = (*(ptr1.sub(size_of::<usize>()) as *mut ChunkHeader)).size();
+            let chunk2_size = (*(ptr2.sub(size_of::<usize>()) as *mut ChunkHeader)).size();
+
+            region_dealloc(region, ptr1);
+            region_dealloc(region, ptr2);
+
+            let head = (*region).free_list_head;
+            let head_size = (*head).size_and_flags & !1;
+            assert!(head_size >= chunk1_size + chunk2_size);
+        }
+    }
+
+    #[test]
+    fn region_dealloc_should_coalesce_both_neighbors() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let ptr1 = unsafe { region_alloc(region, 64) };
+        let ptr2 = unsafe { region_alloc(region, 64) };
+        let ptr3 = unsafe { region_alloc(region, 64) };
+
+        unsafe {
+            region_dealloc(region, ptr1);
+            region_dealloc(region, ptr3);
+            region_dealloc(region, ptr2);
+
+            let head = (*region).free_list_head;
+            let head_size = (*head).size_and_flags & !1;
+
+            let chunk1_addr = ptr1.sub(size_of::<usize>()) as usize;
+            let chunk3 = ptr3.sub(size_of::<usize>()) as *mut ChunkHeader;
+            let chunk3_end = ptr3.sub(size_of::<usize>()) as usize + head_size;
+
+            assert_eq!(head as usize, chunk1_addr);
+        }
+    }
+
+    #[test]
+    fn region_dealloc_should_restore_full_region_after_freeing_all() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        unsafe {
+            let original_chunk = (*region).free_list_head;
+            let original_size = (*original_chunk).size_and_flags & !1;
+
+            let ptr1 = region_alloc(region, 64);
+            let ptr2 = region_alloc(region, 64);
+            let ptr3 = region_alloc(region, 64);
+
+            region_dealloc(region, ptr2);
+            region_dealloc(region, ptr1);
+            region_dealloc(region, ptr3);
+
+            let head = (*region).free_list_head;
+            let head_size = (*head).size_and_flags & !1;
+            assert_eq!(head_size, original_size);
+            assert!((*head).next.is_null());
+            assert_eq!((*region).used_bytes, 0);
+        }
+    }
+
+    #[test]
+    fn region_dealloc_should_not_coalesce_with_allocated_neighbors() {
+        let provider = MockBlockProvider::new(4096, 1);
+        let region = init_test_region(&provider, 1);
+
+        let ptr1 = unsafe { region_alloc(region, 64) };
+        let ptr2 = unsafe { region_alloc(region, 64) };
+        let ptr3 = unsafe { region_alloc(region, 64) };
+
+        unsafe {
+            let chunk2_size = (*(ptr2.sub(size_of::<usize>()) as *mut ChunkHeader)).size();
+            region_dealloc(region, ptr2);
+
+            let freed = (*region).free_list_head;
+            let freed_size = (*freed).size_and_flags & !1;
+            assert_eq!(freed_size, chunk2_size);
         }
     }
 }
