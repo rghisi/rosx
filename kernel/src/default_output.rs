@@ -1,18 +1,18 @@
 use core::fmt::{self, Write};
 
-static mut DEFAULT_OUTPUT: Option<&'static dyn KernelOutput> = None;
+use crate::once::Once;
+
+static DEFAULT_OUTPUT: Once<&'static dyn KernelOutput> = Once::new();
 
 struct KernelWriter;
 
 impl Write for KernelWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        unsafe {
-            if let Some(output) = DEFAULT_OUTPUT {
-                output.write_str(s);
-                Ok(())
-            } else {
-                Err(fmt::Error)
-            }
+        if let Some(output) = DEFAULT_OUTPUT.get() {
+            output.write_str(s);
+            Ok(())
+        } else {
+            Err(fmt::Error)
         }
     }
 }
@@ -20,10 +20,9 @@ impl Write for KernelWriter {
 pub trait KernelOutput: Send + Sync {
     fn write_str(&self, s: &str);
 }
+
 pub(crate) fn setup_default_output(output: &'static dyn KernelOutput) {
-    unsafe {
-        DEFAULT_OUTPUT = Some(output);
-    }
+    DEFAULT_OUTPUT.call_once(|| output);
 }
 
 pub struct MultiplexOutput {
