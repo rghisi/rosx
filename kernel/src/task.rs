@@ -3,6 +3,7 @@ use crate::kernel::task_wrapper;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 pub(crate) type TaskHandle = Handle<u8, u8>;
 pub type SharedTask = Box<Task>;
@@ -122,10 +123,7 @@ pub fn new_entrypoint_task(entrypoint: usize) -> SharedTask {
     Task::new(next_id(), "EPT", task_wrapper as usize, entrypoint)
 }
 
-static mut NEXT_ID: u32 = 100;
+static NEXT_ID: AtomicU32 = AtomicU32::new(100);
 pub fn next_id() -> u32 {
-    unsafe {
-        NEXT_ID += 1;
-        NEXT_ID
-    }
+    NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
