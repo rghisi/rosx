@@ -81,38 +81,14 @@ const MAX_MEMORY_REGIONS: usize = 32;
 fn discover_memory_regions(boot_info: &BootInfo) -> ([MemoryRegion; MAX_MEMORY_REGIONS], usize) {
     let mut regions = [MemoryRegion::new(0, 0); MAX_MEMORY_REGIONS];
     let mut count = 0;
-
-    kprintln!(
-        "[MEMORY] Physical memory offset: 0x{:x}",
-        boot_info.physical_memory_offset
-    );
-    kprintln!("[MEMORY] Memory regions:");
-
-    let mut total_usable = 0u64;
-
     for region in boot_info.memory_map.iter() {
         let size = region.range.end_addr() - region.range.start_addr();
-        kprintln!(
-            "  {:?}: 0x{:x} - 0x{:x} ({} KB)",
-            region.region_type,
-            region.range.start_addr(),
-            region.range.end_addr(),
-            size / 1024
-        );
-
         if let bootloader::bootinfo::MemoryRegionType::Usable = region.region_type {
-            total_usable += size;
             let start = (region.range.start_addr() + boot_info.physical_memory_offset) as usize;
             regions[count] = MemoryRegion::new(start, size as usize);
             count += 1;
         }
     }
-
-    kprintln!(
-        "[MEMORY] Total usable RAM: {} MB ({} regions)",
-        total_usable / (1024 * 1024),
-        count
-    );
 
     (regions, count)
 }

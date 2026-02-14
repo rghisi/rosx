@@ -120,12 +120,14 @@ impl LayeredAllocator {
         }
     }
 
-    fn grow(&self) {
-        let layout = unsafe { Layout::from_size_align_unchecked(BLOCK_SIZE, BLOCK_SIZE) };
+    fn grow(&self, layout: Layout) {
+        let number_of_blocks = layout.size().div_ceil(BLOCK_SIZE);
+        let size = BLOCK_SIZE * number_of_blocks;
+        let layout = unsafe { Layout::from_size_align_unchecked(size, BLOCK_SIZE) };
         let ptr = unsafe { HEAP_ALLOCATOR.alloc(layout) };
         if !ptr.is_null() {
             unsafe {
-                self.heap.lock().add_to_heap(ptr as usize, ptr as usize + BLOCK_SIZE);
+                self.heap.lock().add_to_heap(ptr as usize, ptr as usize + size);
             }
         }
     }
@@ -133,10 +135,11 @@ impl LayeredAllocator {
 
 unsafe impl GlobalAlloc for LayeredAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        match self.heap.lock().alloc(layout) {
+        let allocation = self.heap.lock().alloc(layout);
+        match allocation {
             Ok(ptr) => ptr.as_ptr(),
             Err(_) => {
-                self.grow();
+                self.grow(layout);
                 self.heap
                     .lock()
                     .alloc(layout)
