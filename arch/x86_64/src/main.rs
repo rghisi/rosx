@@ -60,6 +60,10 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));
     // kernel.schedule(FunctionTask::new("OOM Test", oom_test));
 
+    static HELLO_ELF: &[u8] = include_bytes!("../../../apps/hello_elf/target/rosx-user/release/hello_elf");
+    let elf_task = kernel::elf::load_elf(HELLO_ELF).expect("Failed to load ELF");
+    kernel.schedule(elf_task);
+
     let used = MEMORY_ALLOCATOR.used();
     kprintln!("[KERNEL] Starting - {}", used);
     kernel.start();

@@ -42,8 +42,8 @@ pub struct Task {
     name: &'static str,
     state: TaskState,
     stack_pointer: usize,
-    entry_point_wrapper: usize,
-    actual_entry_point: usize,
+    entry_point: usize,
+    entry_param: usize,
     stack: [usize; 2048], //16KB on 64bit systems
 }
 
@@ -51,16 +51,16 @@ impl Task {
     pub fn new<'a>(
         id: u32,
         name: &'static str,
-        entry_wrapper: usize,
         entry_point: usize,
+        entry_param: usize,
     ) -> SharedTask {
         let mut task = Box::new(Task {
             id,
             name,
             state: Created,
             stack_pointer: 0,
-            entry_point_wrapper: entry_wrapper,
-            actual_entry_point: entry_point,
+            entry_point,
+            entry_param,
             stack: [0; 2048],
         });
 
@@ -111,21 +111,15 @@ impl Task {
     }
 
     pub fn entry_point(&self) -> usize {
-        self.entry_point_wrapper
+        self.entry_point
     }
-    pub fn actual_entry_point(&self) -> usize {
-        self.actual_entry_point
+    pub fn entry_param(&self) -> usize {
+        self.entry_param
     }
 }
 
-pub struct EntrypointTask {
-    entry_point: usize,
-}
-
-impl EntrypointTask {
-    pub fn new(entrypoint: usize) -> SharedTask {
-        Task::new(next_id(), "EPT", task_wrapper as usize, entrypoint)
-    }
+pub fn new_entrypoint_task(entrypoint: usize) -> SharedTask {
+    Task::new(next_id(), "EPT", task_wrapper as usize, entrypoint)
 }
 
 static mut NEXT_ID: u32 = 100;

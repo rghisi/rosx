@@ -42,5 +42,13 @@ impl Syscall {
         let c = arch::raw_syscall(SyscallNum::ReadChar as u64, 0, 0, 0);
         core::char::from_u32(c as u32).unwrap_or('\0')
     }
+
+    pub fn alloc(size: usize, align: usize) -> *mut u8 {
+        arch::raw_syscall(SyscallNum::Alloc as u64, size as u64, align as u64, 0) as *mut u8
+    }
+
+    pub fn dealloc(ptr: *mut u8, size: usize, align: usize) {
+        arch::raw_syscall(SyscallNum::Dealloc as u64, ptr as u64, size as u64, align as u64);
+    }
 }
 

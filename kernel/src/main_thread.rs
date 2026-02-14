@@ -1,17 +1,16 @@
-use crate::kernel::TASK_MANAGER;
+use crate::kernel::{FUTURE_REGISTRY, TASK_MANAGER};
 use crate::messages::HardwareInterrupt;
 use crate::syscall::switch_to_task;
 use crate::task::TaskHandle;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::collections::VecDeque;
-use alloc::vec::Vec;
 use system::future::FutureHandle;
 
 pub struct MainThread {
     idle_task: Option<TaskHandle>,
     user_tasks: VecDeque<TaskHandle>,
     blocked_tasks: VecDeque<TaskFuture>,
-    hw_interrupt_queue: Vec<HardwareInterrupt>,
+    hw_interrupt_queue: VecDeque<HardwareInterrupt>,
 }
 
 impl Default for MainThread {
@@ -26,7 +25,7 @@ impl MainThread {
             idle_task: None,
             user_tasks: VecDeque::with_capacity(5),
             blocked_tasks: VecDeque::with_capacity(5),
-            hw_interrupt_queue: Vec::with_capacity(5),
+            hw_interrupt_queue: VecDeque::with_capacity(5),
         }
     }
 }
@@ -41,8 +40,7 @@ impl MainThread {
     }
 
     fn process_hardware_interrupts(&mut self) {
-        while !self.hw_interrupt_queue.is_empty() {
-            let hardware_interrupt = self.hw_interrupt_queue.remove(0);
+        while let Some(hardware_interrupt) = self.hw_interrupt_queue.pop_front() {
             match hardware_interrupt {
                 HardwareInterrupt::Keyboard { scancode } => {
                     // Ignore break codes (key release) in PS/2 Set 1
@@ -67,20 +65,18 @@ impl MainThread {
         };
 
         TASK_MANAGER
-            .lock()
             .borrow_mut()
             .set_state(next_task_handle, Running);
 
         let returned_task_handle = switch_to_task(next_task_handle);
 
-        let task_state = TASK_MANAGER.lock().borrow().get_state(returned_task_handle);
+        let task_state = TASK_MANAGER.borrow().get_state(returned_task_handle);
 
         match task_state {
             Created => {}
             Ready => {}
             Running => {
                 TASK_MANAGER
-                    .lock()
                     .borrow_mut()
                     .set_state(returned_task_handle, Ready);
                 if returned_task_handle != self.idle_task.unwrap() {
@@ -92,7 +88,6 @@ impl MainThread {
             Blocked => {}
             Terminated => {
                 TASK_MANAGER
-                    .lock()
                     .borrow_mut()
                     .remove_task(returned_task_handle);
             }
@@ -100,7 +95,7 @@ impl MainThread {
     }
 
     pub(crate) fn push_task(&mut self, task_handle: TaskHandle) {
-        match TASK_MANAGER.lock().borrow().get_state(task_handle) {
+        match TASK_MANAGER.borrow().get_state(task_handle) {
             Ready => self.user_tasks.push_back(task_handle),
             // Blocked => self.blocked_tasks.push(task),
             _ => (),
@@ -108,7 +103,7 @@ impl MainThread {
     }
 
     pub(crate) fn push_hardware_interrupt(&mut self, hardware_interrupt: HardwareInterrupt) {
-        self.hw_interrupt_queue.push(hardware_interrupt);
+        self.hw_interrupt_queue.push_back(hardware_interrupt);
     }
 
     pub(crate) fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle) {
@@ -129,17 +124,17 @@ impl MainThread {
     }
 
     fn pool_futures(&mut self) {
-        let futures: Vec<TaskFuture> = self.blocked_tasks.drain(..).collect();
-        for task_future in futures.into_iter() {
-            if task_future.is_completed() {
-                crate::kernel::FUTURE_REGISTRY.remove(task_future.future_handle);
-                TASK_MANAGER
-                    .lock()
-                    .borrow_mut()
-                    .set_state(task_future.task_handle, Ready);
-                self.user_tasks.push_back(task_future.task_handle);
-            } else {
-                self.blocked_tasks.push_back(task_future)
+        for _ in 0..self.blocked_tasks.len() {
+            if let Some(task_future) = self.blocked_tasks.pop_front() {
+                if task_future.is_completed() {
+                    FUTURE_REGISTRY.borrow_mut().remove(task_future.future_handle);
+                    TASK_MANAGER
+                        .borrow_mut()
+                        .set_state(task_future.task_handle, Ready);
+                    self.user_tasks.push_back(task_future.task_handle);
+                } else {
+                    self.blocked_tasks.push_back(task_future);
+                }
             }
         }
     }
@@ -152,6 +147,6 @@ struct TaskFuture {
 
 impl TaskFuture {
     fn is_completed(&self) -> bool {
-        crate::kernel::FUTURE_REGISTRY.get(self.future_handle).unwrap_or(true)
+        FUTURE_REGISTRY.borrow_mut().get(self.future_handle).unwrap_or(true)
     }
 }
