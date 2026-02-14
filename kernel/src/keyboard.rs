@@ -1,19 +1,19 @@
 use alloc::fmt::{Display, Formatter};
 use alloc::collections::VecDeque;
-use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::future::Future;
+use crate::kernel_cell::KernelCell;
 
 lazy_static! {
-    static ref KEYBOARD_BUFFER: Mutex<VecDeque<char>> = Mutex::new(VecDeque::new());
+    static ref KEYBOARD_BUFFER: KernelCell<VecDeque<char>> = KernelCell::new(VecDeque::new());
 }
 
 pub fn push_key(c: char) {
-    KEYBOARD_BUFFER.lock().push_back(c);
+    KEYBOARD_BUFFER.borrow_mut().push_back(c);
 }
 
 pub fn pop_key() -> Option<char> {
-    KEYBOARD_BUFFER.lock().pop_front()
+    KEYBOARD_BUFFER.borrow_mut().pop_front()
 }
 
 pub struct KeyboardFuture {}
@@ -26,7 +26,7 @@ impl KeyboardFuture {
 
 impl Future for KeyboardFuture {
     fn is_completed(&self) -> bool {
-        !KEYBOARD_BUFFER.lock().is_empty()
+        !KEYBOARD_BUFFER.borrow_mut().is_empty()
     }
 }
 

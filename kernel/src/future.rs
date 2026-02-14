@@ -1,6 +1,5 @@
 use crate::syscall;
 use alloc::boxed::Box;
-use spin::Mutex;
 use system::future::FutureHandle;
 use collections::generational_arena::GenArena;
 use crate::kernel::TASK_MANAGER;
@@ -39,14 +38,12 @@ impl TaskCompletionFuture {
 
 impl Future for TaskCompletionFuture {
     fn is_completed(&self) -> bool {
-        let m = TASK_MANAGER.lock();
-        let mm = m.borrow();
-        mm.get_state(self.task_handle) == crate::task::TaskState::Terminated
+        TASK_MANAGER.borrow().get_state(self.task_handle) == crate::task::TaskState::Terminated
     }
 }
 
 pub struct FutureRegistry {
-    arena: Mutex<GenArena<Box<dyn Future + Send + Sync>, u32, u32>>,
+    arena: GenArena<Box<dyn Future + Send + Sync>, u32, u32>,
 }
 
 impl Default for FutureRegistry {
@@ -58,44 +55,25 @@ impl Default for FutureRegistry {
 impl FutureRegistry {
     pub fn new() -> Self {
         Self {
-            arena: Mutex::new(GenArena::new(10)),
+            arena: GenArena::new(10),
         }
     }
 
-    pub fn register(&self, future: Box<dyn Future + Send + Sync>) -> Option<FutureHandle> {
-        let mut arena = self.arena.lock();
-        arena.add(future).ok()
+    pub fn register(&mut self, future: Box<dyn Future + Send + Sync>) -> Option<FutureHandle> {
+        self.arena.add(future).ok()
     }
 
-    pub fn get(&self, handle: FutureHandle) -> Option<bool> {
-        let mut arena = self.arena.lock();
-        if let Ok(future) = arena.borrow_mut(handle) {
-             Some(future.is_completed())
+    pub fn get(&mut self, handle: FutureHandle) -> Option<bool> {
+        if let Ok(future) = self.arena.borrow_mut(handle) {
+            Some(future.is_completed())
         } else {
             None
         }
     }
 
-    pub fn remove(&self, handle: FutureHandle) {
-        let mut arena = self.arena.lock();
-        let _ = arena.remove(handle);
+    pub fn remove(&mut self, handle: FutureHandle) {
+        let _ = self.arena.remove(handle);
     }
 }
 
-pub struct RegistryFuture {
-    handle: FutureHandle,
-    registry: &'static FutureRegistry,
-}
-
-impl RegistryFuture {
-    pub fn new(handle: FutureHandle, registry: &'static FutureRegistry) -> Self {
-        Self { handle, registry }
-    }
-}
-
-impl Future for RegistryFuture {
-    fn is_completed(&self) -> bool {
-        self.registry.get(self.handle).unwrap_or(true) 
-    }
-}
 

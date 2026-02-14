@@ -14,12 +14,10 @@ impl ExecutionState {
     #[inline(always)]
     pub(crate) fn switch_to_task(&mut self, task_handle: TaskHandle) -> TaskHandle {
         let task_stack_pointer = TASK_MANAGER
-            .lock()
             .borrow()
             .get_task_stack_pointer(task_handle);
         self.current_task = Some(task_handle);
         let scheduler_stack_pointer_pointer = TASK_MANAGER
-            .lock()
             .borrow_mut()
             .get_task_stack_pointer_ref(self.main_thread);
 
@@ -36,15 +34,13 @@ impl ExecutionState {
     pub(crate) fn switch_to_scheduler(&mut self) {
         if let Some(task_handle) = self.current_task.take() {
             let task_stack_pointer_reference = TASK_MANAGER
-                .lock()
                 .borrow_mut()
                 .get_task_stack_pointer_ref(task_handle);
-            
+
             // We are leaving the task, disable preemption
             self.preemption_enabled = false;
             self.current_task = Some(task_handle);
             let scheduler_stack_pointer = TASK_MANAGER
-                .lock()
                 .borrow()
                 .get_task_stack_pointer(self.main_thread);
 
@@ -59,7 +55,6 @@ impl ExecutionState {
     pub(crate) fn block_current_task(&mut self) {
         if let Some(task_handle) = self.current_task {
             TASK_MANAGER
-                .lock()
                 .borrow_mut()
                 .set_state(task_handle, Blocked);
         }

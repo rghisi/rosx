@@ -1,5 +1,7 @@
+use core::alloc::{GlobalAlloc, Layout};
+
 use crate::future::TimeFuture;
-use crate::kernel::KERNEL;
+use crate::kernel::{FUTURE_REGISTRY, KERNEL};
 use crate::messages::HardwareInterrupt;
 use crate::task::TaskHandle;
 use alloc::boxed::Box;
@@ -75,7 +77,8 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
         return 0;
     } else if num == SyscallNum::Sleep as u64 {
         let future = Box::new(TimeFuture::new(arg1));
-        let handle = crate::kernel::FUTURE_REGISTRY
+        let handle = FUTURE_REGISTRY
+            .borrow_mut()
             .register(future)
             .expect("Failed to register sleep future");
         wait_future(handle);
@@ -94,7 +97,8 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
         }
 
         let future = Box::new(crate::keyboard::KeyboardFuture::new());
-        let handle = crate::kernel::FUTURE_REGISTRY
+        let handle = FUTURE_REGISTRY
+            .borrow_mut()
             .register(future)
             .expect("Failed to register keyboard future");
         wait_future(handle);
@@ -114,6 +118,20 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
             generation: arg1 as u32,
         };
         return if is_future_completed(handle) { 1 } else { 0 };
+    } else if num == SyscallNum::Alloc as u64 {
+        let size = arg1 as usize;
+        let align = arg2 as usize;
+        if let Ok(layout) = Layout::from_size_align(size, align) {
+            return unsafe { (*KERNEL).alloc(layout) } as usize;
+        }
+        return 0;
+    } else if num == SyscallNum::Dealloc as u64 {
+        let ptr = arg1 as *mut u8;
+        let size = arg2 as usize;
+        let align = _arg3 as usize;
+        if let Ok(layout) = Layout::from_size_align(size, align) {
+            unsafe { (*KERNEL).dealloc(ptr, layout) };
+        }
     }
     0
 }

@@ -3,6 +3,7 @@ use crate::kernel::task_wrapper;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 pub(crate) type TaskHandle = Handle<u8, u8>;
 pub type SharedTask = Box<Task>;
@@ -42,8 +43,8 @@ pub struct Task {
     name: &'static str,
     state: TaskState,
     stack_pointer: usize,
-    entry_point_wrapper: usize,
-    actual_entry_point: usize,
+    entry_point: usize,
+    entry_param: usize,
     stack: [usize; 2048], //16KB on 64bit systems
 }
 
@@ -51,16 +52,16 @@ impl Task {
     pub fn new<'a>(
         id: u32,
         name: &'static str,
-        entry_wrapper: usize,
         entry_point: usize,
+        entry_param: usize,
     ) -> SharedTask {
         let mut task = Box::new(Task {
             id,
             name,
             state: Created,
             stack_pointer: 0,
-            entry_point_wrapper: entry_wrapper,
-            actual_entry_point: entry_point,
+            entry_point,
+            entry_param,
             stack: [0; 2048],
         });
 
@@ -111,27 +112,18 @@ impl Task {
     }
 
     pub fn entry_point(&self) -> usize {
-        self.entry_point_wrapper
+        self.entry_point
     }
-    pub fn actual_entry_point(&self) -> usize {
-        self.actual_entry_point
-    }
-}
-
-pub struct EntrypointTask {
-    entry_point: usize,
-}
-
-impl EntrypointTask {
-    pub fn new(entrypoint: usize) -> SharedTask {
-        Task::new(next_id(), "EPT", task_wrapper as usize, entrypoint)
+    pub fn entry_param(&self) -> usize {
+        self.entry_param
     }
 }
 
-static mut NEXT_ID: u32 = 100;
+pub fn new_entrypoint_task(entrypoint: usize) -> SharedTask {
+    Task::new(next_id(), "EPT", task_wrapper as usize, entrypoint)
+}
+
+static NEXT_ID: AtomicU32 = AtomicU32::new(100);
 pub fn next_id() -> u32 {
-    unsafe {
-        NEXT_ID += 1;
-        NEXT_ID
-    }
+    NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }

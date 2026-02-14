@@ -4,17 +4,18 @@
 extern crate alloc;
 extern crate collections;
 extern crate lazy_static;
-extern crate spin;
 extern crate system;
 
 pub mod allocator;
 pub(crate) mod context_switcher;
 pub mod cpu;
 pub mod default_output;
+pub mod elf;
 pub mod function_task;
 pub mod future;
 pub mod kconfig;
 pub mod kernel;
+pub(crate) mod kernel_cell;
 mod keyboard;
 pub mod main_thread;
 pub mod messages;

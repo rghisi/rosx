@@ -1,6 +1,6 @@
 use collections::generational_arena::GenArena;
 use crate::task::TaskState::Terminated;
-use crate::task::{EntrypointTask, SharedTask, Task, TaskHandle, TaskState};
+use crate::task::{SharedTask, Task, TaskHandle, TaskState, new_entrypoint_task};
 use core::ptr::null_mut;
 
 pub(crate) struct TaskManager {
@@ -21,7 +21,7 @@ impl TaskManager {
     }
 
     pub(crate) fn new_task(&mut self, entrypoint: usize) -> Result<TaskHandle, Error> {
-        let new_task = EntrypointTask::new(entrypoint);
+        let new_task = new_entrypoint_task(entrypoint);
         self.add_task(new_task)
     }
 
