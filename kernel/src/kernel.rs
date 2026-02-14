@@ -229,9 +229,7 @@ pub fn bootstrap(
     allocator: &'static (dyn GlobalAlloc + Sync),
     default_output: &'static dyn KernelOutput,
 ) {
-    unsafe {
-        MEMORY_ALLOCATOR.init(allocator);
-    };
+    MEMORY_ALLOCATOR.init(allocator);
     setup_default_output(default_output);
     kprintln!("[KERNEL] Bootstrapped");
 }

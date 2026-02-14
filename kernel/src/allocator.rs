@@ -1,8 +1,8 @@
 use core::alloc::{GlobalAlloc, Layout};
-use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::kernel::KERNEL;
+use crate::once::Once;
 
 #[cfg_attr(not(test), global_allocator)]
 pub static GLOBAL_ALLOCATOR: GlobalKernelAllocator = GlobalKernelAllocator;
@@ -33,34 +33,27 @@ unsafe impl GlobalAlloc for GlobalKernelAllocator {
 
 pub static MEMORY_ALLOCATOR: MemoryAllocator = MemoryAllocator::new();
 
-trait Xpto {}
 pub struct MemoryAllocator {
-    root: MaybeUninit<&'static (dyn GlobalAlloc + Sync)>,
+    root: Once<&'static (dyn GlobalAlloc + Sync)>,
     used: AtomicUsize,
 }
 
 impl MemoryAllocator {
     const fn new() -> Self {
         MemoryAllocator {
-            root: MaybeUninit::uninit(),
+            root: Once::new(),
             used: AtomicUsize::new(0),
         }
     }
 
-    pub unsafe fn init(&self, allocator: &'static (dyn GlobalAlloc + Sync)) {
-        unsafe {
-            core::ptr::addr_of!(self.root)
-                .cast_mut()
-                .write(MaybeUninit::new(allocator));
-        }
+    pub fn init(&self, allocator: &'static (dyn GlobalAlloc + Sync)) {
+        self.root.call_once(|| allocator);
     }
 
     pub fn used(&self) -> usize {
         self.used.load(Ordering::Relaxed)
     }
 }
-
-unsafe impl Sync for MemoryAllocator {}
 
 #[cfg_attr(not(test), alloc_error_handler)]
 pub fn alloc_error_handler(layout: Layout) -> ! {
@@ -71,14 +64,14 @@ unsafe impl GlobalAlloc for MemoryAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         unsafe {
             self.used.fetch_add(layout.size(), Ordering::Relaxed);
-            self.root.assume_init().alloc(layout)
+            self.root.get().unwrap().alloc(layout)
         }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe {
             self.used.fetch_sub(layout.size(), Ordering::Relaxed);
-            self.root.assume_init().dealloc(ptr, layout);
+            self.root.get().unwrap().dealloc(ptr, layout);
         }
     }
 }
