@@ -19,6 +19,7 @@ pub(crate) mod kernel_cell;
 mod keyboard;
 pub mod main_thread;
 pub mod messages;
+pub mod once;
 mod messaging;
 pub mod panic;
 pub mod pipe;
