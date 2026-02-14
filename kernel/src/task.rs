@@ -1,4 +1,4 @@
-use crate::generational_arena::Handle;
+use collections::generational_arena::Handle;
 use crate::kernel::task_wrapper;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::boxed::Box;

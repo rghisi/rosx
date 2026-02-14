@@ -1,4 +1,4 @@
-use crate::generational_arena::GenArena;
+use collections::generational_arena::GenArena;
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, TaskState, new_entrypoint_task};
 use core::ptr::null_mut;

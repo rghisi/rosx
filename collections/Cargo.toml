@@ -1,9 +1,6 @@
 [package]
 authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
-name = "system"
+name = "collections"
 publish = false
 version = "0.1.0"
 edition.workspace = true
-
-[dependencies]
-collections = { path = "../collections" }

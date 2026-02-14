@@ -36,6 +36,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "collections"
+version = "0.1.0"
+
+[[package]]
 name = "dummy"
 version = "0.1.0"
 dependencies = [
@@ -47,6 +51,7 @@ dependencies = [
 name = "kernel"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "lazy_static",
  "system",
 ]
@@ -139,6 +144,9 @@ dependencies = [
 [[package]]
 name = "system"
 version = "0.1.0"
+dependencies = [
+ "collections",
+]
 
 [[package]]
 name = "test_suite"
