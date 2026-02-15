@@ -1,8 +1,21 @@
 use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use buddy_system_allocator::LockedHeap;
+
 use crate::kernel::KERNEL;
-use crate::once::Once;
+
+pub const MAX_MEMORY_BLOCKS: usize = 32;
+
+pub struct MemoryBlock {
+    pub start: usize,
+    pub size: usize,
+}
+
+pub struct MemoryBlocks {
+    pub blocks: [MemoryBlock; MAX_MEMORY_BLOCKS],
+    pub count: usize,
+}
 
 #[cfg_attr(not(test), global_allocator)]
 pub static GLOBAL_ALLOCATOR: GlobalKernelAllocator = GlobalKernelAllocator;
@@ -34,20 +47,25 @@ unsafe impl GlobalAlloc for GlobalKernelAllocator {
 pub static MEMORY_ALLOCATOR: MemoryAllocator = MemoryAllocator::new();
 
 pub struct MemoryAllocator {
-    root: Once<&'static (dyn GlobalAlloc + Sync)>,
+    heap: LockedHeap<27>,
     used: AtomicUsize,
 }
 
 impl MemoryAllocator {
     const fn new() -> Self {
         MemoryAllocator {
-            root: Once::new(),
+            heap: LockedHeap::<27>::new(),
             used: AtomicUsize::new(0),
         }
     }
 
-    pub fn init(&self, allocator: &'static (dyn GlobalAlloc + Sync)) {
-        self.root.call_once(|| allocator);
+    pub fn init(&self, memory_blocks: &MemoryBlocks) {
+        for i in 0..memory_blocks.count {
+            let block = &memory_blocks.blocks[i];
+            unsafe {
+                self.heap.lock().init(block.start, block.size);
+            }
+        }
     }
 
     pub fn used(&self) -> usize {
@@ -62,16 +80,12 @@ pub fn alloc_error_handler(layout: Layout) -> ! {
 
 unsafe impl GlobalAlloc for MemoryAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        unsafe {
-            self.used.fetch_add(layout.size(), Ordering::Relaxed);
-            self.root.get().unwrap().alloc(layout)
-        }
+        self.used.fetch_add(layout.size(), Ordering::Relaxed);
+        unsafe { self.heap.alloc(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe {
-            self.used.fetch_sub(layout.size(), Ordering::Relaxed);
-            self.root.get().unwrap().dealloc(ptr, layout);
-        }
+        self.used.fetch_sub(layout.size(), Ordering::Relaxed);
+        unsafe { self.heap.dealloc(ptr, layout) };
     }
 }

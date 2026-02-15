@@ -51,6 +51,7 @@ dependencies = [
 name = "kernel"
 version = "0.1.0"
 dependencies = [
+ "buddy_system_allocator",
  "collections",
  "lazy_static",
  "system",
@@ -89,7 +90,6 @@ name = "rosx"
 version = "0.1.0"
 dependencies = [
  "bootloader",
- "buddy_system_allocator",
  "dummy",
  "kernel",
  "lazy_static",

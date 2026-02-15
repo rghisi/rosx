@@ -16,6 +16,8 @@ use alloc::boxed::Box;
 use core::alloc::GlobalAlloc;
 use core::ptr::null_mut;
 use system::future::FutureHandle;
+#[cfg(not(test))]
+use crate::allocator::MemoryBlocks;
 
 pub(crate) static mut KERNEL: *mut Kernel = null_mut();
 
@@ -226,10 +228,10 @@ unsafe impl GlobalAlloc for Kernel {
 
 #[cfg(not(test))]
 pub fn bootstrap(
-    allocator: &'static (dyn GlobalAlloc + Sync),
+    memory_blocks: &MemoryBlocks,
     default_output: &'static dyn KernelOutput,
 ) {
-    MEMORY_ALLOCATOR.init(allocator);
+    MEMORY_ALLOCATOR.init(memory_blocks);
     setup_default_output(default_output);
     kprintln!("[KERNEL] Bootstrapped");
 }
