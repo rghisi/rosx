@@ -16,6 +16,7 @@ pub mod future;
 pub mod kconfig;
 pub mod kernel;
 pub(crate) mod kernel_cell;
+pub(crate) mod kernel_services;
 mod keyboard;
 pub mod main_thread;
 pub mod messages;

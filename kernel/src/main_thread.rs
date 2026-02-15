@@ -1,4 +1,4 @@
-use crate::kernel::{FUTURE_REGISTRY, TASK_MANAGER};
+use crate::kernel_services::services;
 use crate::messages::HardwareInterrupt;
 use crate::syscall::switch_to_task;
 use crate::task::TaskHandle;
@@ -64,19 +64,19 @@ impl MainThread {
             Some(next_task) => next_task,
         };
 
-        TASK_MANAGER
+        services().task_manager
             .borrow_mut()
             .set_state(next_task_handle, Running);
 
         let returned_task_handle = switch_to_task(next_task_handle);
 
-        let task_state = TASK_MANAGER.borrow().get_state(returned_task_handle);
+        let task_state = services().task_manager.borrow().get_state(returned_task_handle);
 
         match task_state {
             Created => {}
             Ready => {}
             Running => {
-                TASK_MANAGER
+                services().task_manager
                     .borrow_mut()
                     .set_state(returned_task_handle, Ready);
                 if returned_task_handle != self.idle_task.unwrap() {
@@ -87,7 +87,7 @@ impl MainThread {
             }
             Blocked => {}
             Terminated => {
-                TASK_MANAGER
+                services().task_manager
                     .borrow_mut()
                     .remove_task(returned_task_handle);
             }
@@ -95,7 +95,7 @@ impl MainThread {
     }
 
     pub(crate) fn push_task(&mut self, task_handle: TaskHandle) {
-        match TASK_MANAGER.borrow().get_state(task_handle) {
+        match services().task_manager.borrow().get_state(task_handle) {
             Ready => self.user_tasks.push_back(task_handle),
             // Blocked => self.blocked_tasks.push(task),
             _ => (),
@@ -127,8 +127,8 @@ impl MainThread {
         for _ in 0..self.blocked_tasks.len() {
             if let Some(task_future) = self.blocked_tasks.pop_front() {
                 if task_future.is_completed() {
-                    FUTURE_REGISTRY.borrow_mut().remove(task_future.future_handle);
-                    TASK_MANAGER
+                    services().future_registry.borrow_mut().remove(task_future.future_handle);
+                    services().task_manager
                         .borrow_mut()
                         .set_state(task_future.task_handle, Ready);
                     self.user_tasks.push_back(task_future.task_handle);
@@ -147,6 +147,6 @@ struct TaskFuture {
 
 impl TaskFuture {
     fn is_completed(&self) -> bool {
-        FUTURE_REGISTRY.borrow_mut().get(self.future_handle).unwrap_or(true)
+        services().future_registry.borrow_mut().get(self.future_handle).unwrap_or(true)
     }
 }

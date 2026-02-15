@@ -2,8 +2,9 @@
 use crate::allocator::MEMORY_ALLOCATOR;
 use crate::cpu::Cpu;
 use crate::default_output::{KernelOutput, setup_default_output};
-use crate::future::{FutureRegistry, TaskCompletionFuture};
+use crate::future::TaskCompletionFuture;
 use crate::kconfig::KConfig;
+use crate::kernel_services::services;
 use crate::kprintln;
 use crate::main_thread::MainThread;
 use crate::messages::HardwareInterrupt;
@@ -11,20 +12,12 @@ use crate::state::ExecutionState;
 use crate::syscall::{task_yield, terminate_current_task};
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle};
-use crate::task_manager::TaskManager;
 use alloc::boxed::Box;
 use core::alloc::GlobalAlloc;
 use core::ptr::null_mut;
-use lazy_static::lazy_static;
 use system::future::FutureHandle;
-use crate::kernel_cell::KernelCell;
 
 pub(crate) static mut KERNEL: *mut Kernel = null_mut();
-
-lazy_static! {
-    pub(crate) static ref TASK_MANAGER: KernelCell<TaskManager> = KernelCell::new(TaskManager::new());
-    pub(crate) static ref FUTURE_REGISTRY: KernelCell<FutureRegistry> = KernelCell::new(FutureRegistry::new());
-}
 
 pub struct Kernel {
     kconfig: &'static KConfig,
@@ -36,15 +29,17 @@ pub struct Kernel {
 impl Kernel {
     pub fn new(kconfig: &'static KConfig) -> Self {
         let cpu = kconfig.cpu;
-
+        crate::kernel_services::init();
         let main_thread = Box::new(MainThread::new());
         let main_thread_task = Task::new(0, "[K] Main Thread", main_thread_run as usize, 0);
-        let main_thread_task_handle = TASK_MANAGER
+        let main_thread_task_handle = services()
+            .task_manager
             .borrow_mut()
             .add_task(main_thread_task)
             .unwrap();
         cpu.initialize_task(
-            TASK_MANAGER
+            services()
+                .task_manager
                 .borrow_mut()
                 .borrow_task_mut(main_thread_task_handle)
                 .unwrap(),
@@ -69,12 +64,14 @@ impl Kernel {
         }
         self.cpu.setup();
         let idle_task = (self.kconfig.idle_task_factory)();
-        let task_handle = TASK_MANAGER
+        let task_handle = services()
+            .task_manager
             .borrow_mut()
             .add_task(idle_task)
             .unwrap();
         self.cpu.initialize_task(
-            TASK_MANAGER
+            services()
+                .task_manager
                 .borrow_mut()
                 .borrow_task_mut(task_handle)
                 .unwrap(),
@@ -84,7 +81,8 @@ impl Kernel {
 
     pub fn start(&mut self) {
         let main_thread_handle = self.execution_state.main_thread;
-        let scheduler_thread_stack_pointer = TASK_MANAGER
+        let scheduler_thread_stack_pointer = services()
+            .task_manager
             .borrow()
             .get_task_stack_pointer(main_thread_handle);
         self.cpu.enable_interrupts();
@@ -96,11 +94,11 @@ impl Kernel {
     pub fn exec(&mut self, entrypoint: usize) -> Result<FutureHandle, ()> {
         let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
-        let result = TASK_MANAGER.borrow_mut().new_task(entrypoint);
+        let result = services().task_manager.borrow_mut().new_task(entrypoint);
         let future_handle = match result {
             Ok(task_handle) => {
                 let future = Box::new(TaskCompletionFuture::new(task_handle));
-                let future_handle = FUTURE_REGISTRY.borrow_mut().register(future);
+                let future_handle = services().future_registry.borrow_mut().register(future);
                 self.schedule_task(task_handle);
                 future_handle
             }
@@ -114,7 +112,7 @@ impl Kernel {
 
     fn schedule_task(&mut self, task_handle: TaskHandle) {
         {
-            let result = TASK_MANAGER.borrow_mut().borrow_task_mut(task_handle);
+            let result = services().task_manager.borrow_mut().borrow_task_mut(task_handle);
             match result {
                 Ok(task) => {
                     self.cpu.initialize_task(task);
@@ -130,9 +128,10 @@ impl Kernel {
     pub fn schedule(&mut self, task: SharedTask) {
         let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
-        let task_handle = TASK_MANAGER.borrow_mut().add_task(task).unwrap();
+        let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
         self.cpu.initialize_task(
-            TASK_MANAGER
+            services()
+                .task_manager
                 .borrow_mut()
                 .borrow_task_mut(task_handle)
                 .unwrap(),
@@ -156,7 +155,7 @@ impl Kernel {
     }
 
     pub fn is_future_completed(&self, handle: FutureHandle) -> bool {
-        FUTURE_REGISTRY.borrow_mut().get(handle).unwrap_or(true)
+        services().future_registry.borrow_mut().get(handle).unwrap_or(true)
     }
 
     pub fn task_yield(&mut self) {
@@ -177,7 +176,8 @@ impl Kernel {
         let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
         if let Some(task_handle) = self.execution_state.current_task.take() {
-            TASK_MANAGER
+            services()
+                .task_manager
                 .borrow_mut()
                 .set_state(task_handle, Terminated);
             self.execution_state.current_task = Some(task_handle);

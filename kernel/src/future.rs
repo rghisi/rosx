@@ -2,7 +2,7 @@ use crate::syscall;
 use alloc::boxed::Box;
 use system::future::FutureHandle;
 use collections::generational_arena::GenArena;
-use crate::kernel::TASK_MANAGER;
+use crate::kernel_services::services;
 use crate::task::TaskHandle;
 
 pub trait Future: Send + Sync {
@@ -38,7 +38,7 @@ impl TaskCompletionFuture {
 
 impl Future for TaskCompletionFuture {
     fn is_completed(&self) -> bool {
-        TASK_MANAGER.borrow().get_state(self.task_handle) == crate::task::TaskState::Terminated
+        services().task_manager.borrow().get_state(self.task_handle) == crate::task::TaskState::Terminated
     }
 }
 

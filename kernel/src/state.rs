@@ -1,5 +1,5 @@
 use crate::cpu::Cpu;
-use crate::kernel::TASK_MANAGER;
+use crate::kernel_services::services;
 use crate::task::TaskHandle;
 use crate::task::TaskState::Blocked;
 
@@ -13,11 +13,11 @@ pub struct ExecutionState {
 impl ExecutionState {
     #[inline(always)]
     pub(crate) fn switch_to_task(&mut self, task_handle: TaskHandle) -> TaskHandle {
-        let task_stack_pointer = TASK_MANAGER
+        let task_stack_pointer = services().task_manager
             .borrow()
             .get_task_stack_pointer(task_handle);
         self.current_task = Some(task_handle);
-        let scheduler_stack_pointer_pointer = TASK_MANAGER
+        let scheduler_stack_pointer_pointer = services().task_manager
             .borrow_mut()
             .get_task_stack_pointer_ref(self.main_thread);
 
@@ -33,14 +33,14 @@ impl ExecutionState {
     #[inline(always)]
     pub(crate) fn switch_to_scheduler(&mut self) {
         if let Some(task_handle) = self.current_task.take() {
-            let task_stack_pointer_reference = TASK_MANAGER
+            let task_stack_pointer_reference = services().task_manager
                 .borrow_mut()
                 .get_task_stack_pointer_ref(task_handle);
 
             // We are leaving the task, disable preemption
             self.preemption_enabled = false;
             self.current_task = Some(task_handle);
-            let scheduler_stack_pointer = TASK_MANAGER
+            let scheduler_stack_pointer = services().task_manager
                 .borrow()
                 .get_task_stack_pointer(self.main_thread);
 
@@ -54,7 +54,7 @@ impl ExecutionState {
 
     pub(crate) fn block_current_task(&mut self) {
         if let Some(task_handle) = self.current_task {
-            TASK_MANAGER
+            services().task_manager
                 .borrow_mut()
                 .set_state(task_handle, Blocked);
         }
