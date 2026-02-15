@@ -68,6 +68,22 @@ impl MemoryAllocator {
         }
     }
 
+    pub fn print_config(memory_blocks: &MemoryBlocks) {
+        let mut total_size: usize = 0;
+        for i in 0..memory_blocks.count {
+            let block = &memory_blocks.blocks[i];
+            let end = block.start + block.size;
+            crate::kprintln!(
+                "[MEMORY] Region: 0x{:x}-0x{:x} ({} KB)",
+                block.start,
+                end,
+                block.size / 1024
+            );
+            total_size += block.size;
+        }
+        crate::kprintln!("[MEMORY] Total: {} MB", total_size / (1024 * 1024));
+    }
+
     pub fn used(&self) -> usize {
         self.used.load(Ordering::Relaxed)
     }

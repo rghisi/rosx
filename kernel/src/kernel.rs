@@ -17,7 +17,7 @@ use core::alloc::GlobalAlloc;
 use core::ptr::null_mut;
 use system::future::FutureHandle;
 #[cfg(not(test))]
-use crate::allocator::MemoryBlocks;
+use crate::allocator::{MemoryAllocator, MemoryBlocks};
 
 pub(crate) static mut KERNEL: *mut Kernel = null_mut();
 
@@ -231,8 +231,9 @@ pub fn bootstrap(
     memory_blocks: &MemoryBlocks,
     default_output: &'static dyn KernelOutput,
 ) {
-    MEMORY_ALLOCATOR.init(memory_blocks);
     setup_default_output(default_output);
+    MemoryAllocator::print_config(memory_blocks);
+    MEMORY_ALLOCATOR.init(memory_blocks);
     kprintln!("[KERNEL] Bootstrapped");
 }
 
