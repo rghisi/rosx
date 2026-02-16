@@ -29,10 +29,12 @@ impl ExecutionState {
             .get_task_stack_pointer_ref(self.main_thread);
 
         // We are in the main thread, preemption_enabled is already false.
+        self.execution_context = ExecutionContext::UserTask;
         self.cpu
             .swap_context(scheduler_stack_pointer_pointer, task_stack_pointer);
-        // When we return here, we are back in the main thread. 
+        // When we return here, we are back in the main thread.
         // preemption_enabled must remain false.
+        self.execution_context = ExecutionContext::Kernel;
 
         self.current_task.take().unwrap()
     }
@@ -46,6 +48,7 @@ impl ExecutionState {
 
             // We are leaving the task, disable preemption
             self.preemption_enabled = false;
+            self.execution_context = ExecutionContext::Kernel;
             self.current_task = Some(task_handle);
             let scheduler_stack_pointer = services().task_manager
                 .borrow()
@@ -56,6 +59,7 @@ impl ExecutionState {
             
             // When the task resumes here, re-enable preemption
             self.preemption_enabled = true;
+            self.execution_context = ExecutionContext::UserTask;
         }
     }
 
