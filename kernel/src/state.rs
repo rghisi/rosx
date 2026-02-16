@@ -3,10 +3,17 @@ use crate::kernel_services::services;
 use crate::task::TaskHandle;
 use crate::task::TaskState::Blocked;
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ExecutionContext {
+    Kernel,
+    UserTask,
+}
+
 pub struct ExecutionState {
     pub(crate) main_thread: TaskHandle,
     pub(crate) current_task: Option<TaskHandle>,
     pub(crate) preemption_enabled: bool,
+    pub(crate) execution_context: ExecutionContext,
     pub(crate) cpu: &'static dyn Cpu,
 }
 
@@ -62,5 +69,9 @@ impl ExecutionState {
 
     pub(crate) fn current_task(&self) -> TaskHandle {
         self.current_task.unwrap()
+    }
+
+    pub fn execution_context(&self) -> ExecutionContext {
+        self.execution_context
     }
 }
