@@ -138,4 +138,27 @@ mod tests {
         let ptr = allocator.allocate(layout);
         assert!(!ptr.is_null());
     }
+
+    #[test]
+    fn two_allocations_do_not_overlap() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let first = allocator.allocate(layout);
+        let second = allocator.allocate(layout);
+
+        assert!(!first.is_null());
+        assert!(!second.is_null());
+        assert_ne!(first, second);
+
+        let distance = (second as usize).abs_diff(first as usize);
+        assert!(distance >= 64);
+    }
 }
