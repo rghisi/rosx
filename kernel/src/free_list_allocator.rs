@@ -73,6 +73,22 @@ impl FreeListAllocator {
         core::ptr::null_mut()
     }
 
+    pub fn deallocate(&mut self, ptr: *mut u8, layout: Layout) {
+        if ptr.is_null() || layout.size() == 0 {
+            return;
+        }
+        let size = effective_size(layout);
+        // Safety: ptr was previously returned by allocate(), so it points to
+        // a region of at least `size` bytes (>= FREE_BLOCK_SIZE) that is no
+        // longer in use. We write a FreeBlock header into it.
+        unsafe {
+            let block = ptr as *mut FreeBlock;
+            (*block).size = size;
+            (*block).next = self.free_list;
+            self.free_list = block;
+        }
+    }
+
     fn find_and_remove(&mut self, size: usize) -> Option<*mut u8> {
         let mut prev: *mut FreeBlock = core::ptr::null_mut();
         let mut current = self.free_list;
@@ -176,5 +192,70 @@ mod tests {
         let layout = Layout::from_size_align(0, 1).unwrap();
         let ptr = allocator.allocate(layout);
         assert!(ptr.is_null());
+    }
+
+    #[test]
+    fn allocation_pointer_within_chunk_bounds() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let end = base + memory.len();
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = allocator.allocate(layout) as usize;
+        assert!(ptr >= base);
+        assert!(ptr + 64 <= end);
+    }
+
+    #[test]
+    fn exhausting_chunk_triggers_second_chunk_request() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let alloc_size = CHUNK_SIZE / 2;
+        let layout = Layout::from_size_align(alloc_size, 8).unwrap();
+
+        let first = allocator.allocate(layout);
+        let second = allocator.allocate(layout);
+        let third = allocator.allocate(layout);
+
+        assert!(!first.is_null());
+        assert!(!second.is_null());
+        assert!(!third.is_null());
+
+        let all_different = first != second && second != third && first != third;
+        assert!(all_different);
+    }
+
+    #[test]
+    fn deallocate_reuses_freed_memory() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let layout = Layout::from_size_align(128, 8).unwrap();
+        let first = allocator.allocate(layout);
+        let _second = allocator.allocate(layout);
+
+        allocator.deallocate(first, layout);
+
+        let third = allocator.allocate(layout);
+        assert_eq!(third, first);
     }
 }
