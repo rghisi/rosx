@@ -1,4 +1,5 @@
 pub const CHUNK_SIZE: usize = 64 * 1024;
+const BITS_PER_WORD: usize = usize::BITS as usize;
 const MAX_BITMAP_WORDS: usize = 2048;
 const MAX_REGIONS: usize = 32;
 
@@ -11,7 +12,7 @@ struct Region {
 pub struct BitmapChunkAllocator {
     regions: [Region; MAX_REGIONS],
     region_count: usize,
-    bitmap: [u64; MAX_BITMAP_WORDS],
+    bitmap: [usize; MAX_BITMAP_WORDS],
     total_chunks: usize,
 }
 
@@ -106,19 +107,19 @@ impl BitmapChunkAllocator {
     }
 
     fn is_bit_set(&self, bit_index: usize) -> bool {
-        let word = bit_index / 64;
-        let bit = bit_index % 64;
-        self.bitmap[word] & (1u64 << bit) != 0
+        let word = bit_index / BITS_PER_WORD;
+        let bit = bit_index % BITS_PER_WORD;
+        self.bitmap[word] & (1usize << bit) != 0
     }
 
     fn mark_bits(&mut self, start: usize, count: usize, used: bool) {
         for i in start..start + count {
-            let word = i / 64;
-            let bit = i % 64;
+            let word = i / BITS_PER_WORD;
+            let bit = i % BITS_PER_WORD;
             if used {
-                self.bitmap[word] |= 1u64 << bit;
+                self.bitmap[word] |= 1usize << bit;
             } else {
-                self.bitmap[word] &= !(1u64 << bit);
+                self.bitmap[word] &= !(1usize << bit);
             }
         }
     }
@@ -379,6 +380,11 @@ mod tests {
         allocator.deallocate(ptr, 2);
         assert_eq!(allocator.used_chunks(), 1);
         assert_eq!(allocator.free_chunks(), 3);
+    }
+
+    #[test]
+    fn bits_per_word_matches_native_word_size() {
+        assert_eq!(BITS_PER_WORD, usize::BITS as usize);
     }
 
     #[test]
