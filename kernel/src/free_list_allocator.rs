@@ -488,6 +488,158 @@ mod tests {
     }
 
     #[test]
+    fn coalesce_two_adjacent_blocks() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let quarter = Layout::from_size_align(CHUNK_SIZE / 4, 8).unwrap();
+        let mut all = Vec::new();
+        loop {
+            let ptr = allocator.allocate(quarter);
+            if ptr.is_null() {
+                break;
+            }
+            all.push(ptr);
+        }
+        assert!(all.len() >= 4);
+
+        let a = all[0];
+        let b = all[1];
+        assert_eq!(b as usize - a as usize, CHUNK_SIZE / 4);
+
+        allocator.deallocate(a, quarter);
+        allocator.deallocate(b, quarter);
+
+        let half = Layout::from_size_align(CHUNK_SIZE / 2, 8).unwrap();
+        let ptr = allocator.allocate(half);
+        assert!(
+            !ptr.is_null(),
+            "coalescing two adjacent blocks should yield a block large enough for combined size"
+        );
+    }
+
+    #[test]
+    fn coalesce_three_adjacent_blocks() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let quarter = Layout::from_size_align(CHUNK_SIZE / 4, 8).unwrap();
+        let mut all = Vec::new();
+        loop {
+            let ptr = allocator.allocate(quarter);
+            if ptr.is_null() {
+                break;
+            }
+            all.push(ptr);
+        }
+        assert!(all.len() >= 4);
+
+        let a = all[0];
+        let b = all[1];
+        let c = all[2];
+        assert_eq!(b as usize - a as usize, CHUNK_SIZE / 4);
+        assert_eq!(c as usize - b as usize, CHUNK_SIZE / 4);
+
+        allocator.deallocate(a, quarter);
+        allocator.deallocate(c, quarter);
+        allocator.deallocate(b, quarter);
+
+        let three_quarters = Layout::from_size_align(3 * CHUNK_SIZE / 4, 8).unwrap();
+        let ptr = allocator.allocate(three_quarters);
+        assert!(
+            !ptr.is_null(),
+            "coalescing three adjacent blocks should yield a block large enough for combined size"
+        );
+    }
+
+    #[test]
+    fn no_coalesce_when_gap_exists() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let quarter = Layout::from_size_align(CHUNK_SIZE / 4, 8).unwrap();
+        let mut all = Vec::new();
+        loop {
+            let ptr = allocator.allocate(quarter);
+            if ptr.is_null() {
+                break;
+            }
+            all.push(ptr);
+        }
+        assert!(all.len() >= 4);
+
+        allocator.deallocate(all[0], quarter);
+        allocator.deallocate(all[2], quarter);
+
+        let half = Layout::from_size_align(CHUNK_SIZE / 2, 8).unwrap();
+        let ptr = allocator.allocate(half);
+        assert!(
+            ptr.is_null(),
+            "non-adjacent freed blocks should not be coalesced"
+        );
+    }
+
+    #[test]
+    fn coalesce_preserves_alignment() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let quarter = Layout::from_size_align(CHUNK_SIZE / 4, 8).unwrap();
+        let mut all = Vec::new();
+        loop {
+            let ptr = allocator.allocate(quarter);
+            if ptr.is_null() {
+                break;
+            }
+            all.push(ptr);
+        }
+        assert!(all.len() >= 4);
+
+        let a = all[0];
+        let b = all[1];
+        assert_eq!(b as usize - a as usize, CHUNK_SIZE / 4);
+
+        allocator.deallocate(a, quarter);
+        allocator.deallocate(b, quarter);
+
+        let aligned_half = Layout::from_size_align(CHUNK_SIZE / 2, CHUNK_SIZE / 2).unwrap();
+        let ptr = allocator.allocate(aligned_half);
+        assert!(
+            !ptr.is_null(),
+            "coalesced block should satisfy alignment requirements"
+        );
+        assert_eq!(
+            (ptr as usize) % (CHUNK_SIZE / 2),
+            0,
+            "pointer should be aligned to requested alignment"
+        );
+    }
+
+    #[test]
     fn interleaved_different_sizes_reuses_fitting_gap() {
         let mut memory = vec![0u8; 10 * CHUNK_SIZE];
         let base = memory.as_mut_ptr() as usize;
