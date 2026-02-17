@@ -1,3 +1,5 @@
+use core::alloc::Layout;
+
 pub const DEFAULT_CHUNK_SIZE: usize = 64 * 1024;
 const BITS_PER_WORD: usize = usize::BITS as usize;
 const METADATA_ALIGNMENT: usize = 16;
@@ -101,10 +103,15 @@ impl BitmapChunkAllocator {
         }
     }
 
-    pub fn allocate(&mut self, bytes: usize) -> Option<Allocation> {
+    pub fn allocate(&mut self, layout: Layout) -> Option<Allocation> {
+        let bytes = layout.size();
         if bytes == 0 {
             return None;
         }
+        assert!(
+            self.chunk_size >= layout.align(),
+            "chunk_size must be >= layout alignment"
+        );
         let chunk_count = (bytes + self.chunk_size - 1) / self.chunk_size;
         for r in 0..self.region_count {
             let region = self.region(r);
@@ -216,6 +223,7 @@ impl BitmapChunkAllocator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::alloc::Layout;
 
     fn metadata_overhead(region_count: usize, raw_total_chunks: usize) -> usize {
         let bitmap_words = (raw_total_chunks + BITS_PER_WORD - 1) / BITS_PER_WORD;
@@ -285,7 +293,8 @@ mod tests {
 
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
-        let alloc = allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
+        let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let alloc = allocator.allocate(layout).unwrap();
 
         assert_eq!(alloc.ptr, usable as *mut u8);
     }
@@ -298,7 +307,8 @@ mod tests {
 
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
-        let alloc = allocator.allocate(3 * DEFAULT_CHUNK_SIZE).unwrap();
+        let layout = Layout::from_size_align(3 * DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let alloc = allocator.allocate(layout).unwrap();
 
         assert_eq!(alloc.ptr, usable as *mut u8);
     }
@@ -311,8 +321,10 @@ mod tests {
 
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
-        let first = allocator.allocate(2 * DEFAULT_CHUNK_SIZE).unwrap();
-        let second = allocator.allocate(3 * DEFAULT_CHUNK_SIZE).unwrap();
+        let layout1 = Layout::from_size_align(2 * DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let layout2 = Layout::from_size_align(3 * DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let first = allocator.allocate(layout1).unwrap();
+        let second = allocator.allocate(layout2).unwrap();
 
         assert_eq!(first.ptr, usable as *mut u8);
         assert_eq!(second.ptr, (usable + 2 * DEFAULT_CHUNK_SIZE) as *mut u8);
@@ -327,7 +339,8 @@ mod tests {
 
         let overhead = metadata_overhead(1, 3);
         let available = (3 * DEFAULT_CHUNK_SIZE - overhead) / DEFAULT_CHUNK_SIZE;
-        let result = allocator.allocate((available + 1) * DEFAULT_CHUNK_SIZE);
+        let layout = Layout::from_size_align((available + 1) * DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let result = allocator.allocate(layout);
 
         assert!(result.is_none());
     }
@@ -339,7 +352,8 @@ mod tests {
 
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
-        assert!(allocator.allocate(0).is_none());
+        let layout = Layout::from_size_align(0, 1).unwrap();
+        assert!(allocator.allocate(layout).is_none());
     }
 
     #[test]
@@ -352,10 +366,11 @@ mod tests {
         let overhead = metadata_overhead(1, 3);
         let available = (3 * DEFAULT_CHUNK_SIZE - overhead) / DEFAULT_CHUNK_SIZE;
 
+        let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
         for _ in 0..available {
-            assert!(allocator.allocate(DEFAULT_CHUNK_SIZE).is_some());
+            assert!(allocator.allocate(layout).is_some());
         }
-        assert!(allocator.allocate(DEFAULT_CHUNK_SIZE).is_none());
+        assert!(allocator.allocate(layout).is_none());
     }
 
     #[test]
@@ -373,11 +388,13 @@ mod tests {
         let overhead = metadata_overhead(2, 6);
         let first_region_chunks = (2 * DEFAULT_CHUNK_SIZE - overhead) / DEFAULT_CHUNK_SIZE;
 
+        let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
         for _ in 0..first_region_chunks {
-            allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
+            allocator.allocate(layout).unwrap();
         }
 
-        let from_second = allocator.allocate(2 * DEFAULT_CHUNK_SIZE).unwrap();
+        let layout2 = Layout::from_size_align(2 * DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let from_second = allocator.allocate(layout2).unwrap();
         assert_eq!(from_second.ptr, base2 as *mut u8);
     }
 
@@ -392,12 +409,14 @@ mod tests {
         let overhead = metadata_overhead(1, 3);
         let available = (3 * DEFAULT_CHUNK_SIZE - overhead) / DEFAULT_CHUNK_SIZE;
 
-        let alloc = allocator.allocate(available * DEFAULT_CHUNK_SIZE).unwrap();
-        assert!(allocator.allocate(DEFAULT_CHUNK_SIZE).is_none());
+        let layout_all = Layout::from_size_align(available * DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let layout_one = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let alloc = allocator.allocate(layout_all).unwrap();
+        assert!(allocator.allocate(layout_one).is_none());
 
         allocator.deallocate(alloc.ptr, available);
 
-        let alloc2 = allocator.allocate(available * DEFAULT_CHUNK_SIZE).unwrap();
+        let alloc2 = allocator.allocate(layout_all).unwrap();
         assert_eq!(alloc2.ptr, usable as *mut u8);
     }
 
@@ -409,13 +428,14 @@ mod tests {
 
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
-        let a = allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
-        let _b = allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
-        let _c = allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
-        allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
+        let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let a = allocator.allocate(layout).unwrap();
+        let _b = allocator.allocate(layout).unwrap();
+        let _c = allocator.allocate(layout).unwrap();
+        allocator.allocate(layout).unwrap();
 
         allocator.deallocate(a.ptr, 1);
-        let reused = allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
+        let reused = allocator.allocate(layout).unwrap();
         assert_eq!(reused.ptr, usable as *mut u8);
     }
 
@@ -427,13 +447,15 @@ mod tests {
 
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
-        allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
-        let b = allocator.allocate(2 * DEFAULT_CHUNK_SIZE).unwrap();
-        allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
+        let layout_one = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let layout_two = Layout::from_size_align(2 * DEFAULT_CHUNK_SIZE, 1).unwrap();
+        allocator.allocate(layout_one).unwrap();
+        let b = allocator.allocate(layout_two).unwrap();
+        allocator.allocate(layout_one).unwrap();
 
         allocator.deallocate(b.ptr, 2);
 
-        let reused = allocator.allocate(2 * DEFAULT_CHUNK_SIZE).unwrap();
+        let reused = allocator.allocate(layout_two).unwrap();
         assert_eq!(reused.ptr, (usable + DEFAULT_CHUNK_SIZE) as *mut u8);
     }
 
@@ -459,11 +481,13 @@ mod tests {
 
         let total = allocator.free_chunks();
 
-        allocator.allocate(DEFAULT_CHUNK_SIZE);
+        let layout_one = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let layout_two = Layout::from_size_align(2 * DEFAULT_CHUNK_SIZE, 1).unwrap();
+        allocator.allocate(layout_one);
         assert_eq!(allocator.used_chunks(), 1);
         assert_eq!(allocator.free_chunks(), total - 1);
 
-        allocator.allocate(2 * DEFAULT_CHUNK_SIZE);
+        allocator.allocate(layout_two);
         assert_eq!(allocator.used_chunks(), 3);
         assert_eq!(allocator.free_chunks(), total - 3);
     }
@@ -477,7 +501,8 @@ mod tests {
 
         let total = allocator.free_chunks();
 
-        let alloc = allocator.allocate(3 * DEFAULT_CHUNK_SIZE).unwrap();
+        let layout = Layout::from_size_align(3 * DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let alloc = allocator.allocate(layout).unwrap();
         assert_eq!(allocator.used_chunks(), 3);
 
         allocator.deallocate(alloc.ptr, 2);
@@ -498,8 +523,10 @@ mod tests {
         ]);
 
         let total = allocator.free_chunks();
-        allocator.allocate(DEFAULT_CHUNK_SIZE);
-        allocator.allocate(2 * DEFAULT_CHUNK_SIZE);
+        let layout_one = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let layout_two = Layout::from_size_align(2 * DEFAULT_CHUNK_SIZE, 1).unwrap();
+        allocator.allocate(layout_one);
+        allocator.allocate(layout_two);
         assert_eq!(allocator.used_chunks(), 3);
         assert_eq!(allocator.free_chunks(), total - 3);
     }
@@ -530,7 +557,8 @@ mod tests {
             &[(base, memory.len())],
         );
 
-        let alloc = allocator.allocate(chunk_size + 1).unwrap();
+        let layout = Layout::from_size_align(chunk_size + 1, 1).unwrap();
+        let alloc = allocator.allocate(layout).unwrap();
 
         assert_eq!(alloc.chunk_count, 2);
         assert_eq!(alloc.chunk_size, chunk_size);
@@ -548,10 +576,12 @@ mod tests {
             &[(base, memory.len())],
         );
 
-        let alloc = allocator.allocate(chunk_size).unwrap();
+        let layout_one = Layout::from_size_align(chunk_size, 1).unwrap();
+        let alloc = allocator.allocate(layout_one).unwrap();
         assert_eq!(alloc.chunk_count, 1);
 
-        let alloc2 = allocator.allocate(2 * chunk_size).unwrap();
+        let layout_two = Layout::from_size_align(2 * chunk_size, 1).unwrap();
+        let alloc2 = allocator.allocate(layout_two).unwrap();
         assert_eq!(alloc2.chunk_count, 2);
     }
 
@@ -566,7 +596,8 @@ mod tests {
             &[(base, memory.len())],
         );
 
-        assert!(allocator.allocate(0).is_none());
+        let layout = Layout::from_size_align(0, 1).unwrap();
+        assert!(allocator.allocate(layout).is_none());
     }
 
     #[test]
@@ -583,5 +614,37 @@ mod tests {
         assert_eq!(allocator.chunk_size, custom_size);
         assert!(allocator.free_chunks() > 0);
         assert!(allocator.free_chunks() < 8);
+    }
+
+    #[test]
+    fn allocate_with_alignment_within_chunk_size() {
+        let chunk_size: usize = 4096;
+        let mut memory = vec![0u8; 10 * chunk_size];
+        let base = memory.as_mut_ptr() as usize;
+
+        let mut allocator = BitmapChunkAllocator::with_chunk_size(
+            chunk_size,
+            &[(base, memory.len())],
+        );
+
+        let layout = Layout::from_size_align(chunk_size, chunk_size).unwrap();
+        let alloc = allocator.allocate(layout).unwrap();
+        assert!(!alloc.ptr.is_null());
+    }
+
+    #[test]
+    #[should_panic(expected = "chunk_size must be >= layout alignment")]
+    fn allocate_panics_when_alignment_exceeds_chunk_size() {
+        let chunk_size: usize = 4096;
+        let mut memory = vec![0u8; 10 * chunk_size];
+        let base = memory.as_mut_ptr() as usize;
+
+        let mut allocator = BitmapChunkAllocator::with_chunk_size(
+            chunk_size,
+            &[(base, memory.len())],
+        );
+
+        let layout = Layout::from_size_align(chunk_size, chunk_size * 2).unwrap();
+        allocator.allocate(layout);
     }
 }
