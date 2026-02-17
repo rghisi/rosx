@@ -700,4 +700,114 @@ mod tests {
         let c = allocator.allocate(small_layout);
         assert_eq!(c, a);
     }
+
+    #[test]
+    fn deallocate_full_chunk_returns_to_bitmap() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let layout = Layout::from_size_align(CHUNK_SIZE, 8).unwrap();
+        let ptr = allocator.allocate(layout);
+        assert!(!ptr.is_null());
+        assert_eq!(allocator.chunk_allocator.used_chunks(), 1);
+
+        allocator.deallocate(ptr, layout);
+        assert_eq!(
+            allocator.chunk_allocator.used_chunks(),
+            0,
+            "freeing a full chunk should return it to the bitmap allocator"
+        );
+    }
+
+    #[test]
+    fn deallocate_coalesced_chunk_returns_to_bitmap() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let half = Layout::from_size_align(CHUNK_SIZE / 2, 8).unwrap();
+        let a = allocator.allocate(half);
+        let b = allocator.allocate(half);
+        assert!(!a.is_null());
+        assert!(!b.is_null());
+        assert_eq!(allocator.chunk_allocator.used_chunks(), 1);
+
+        allocator.deallocate(a, half);
+        assert_eq!(
+            allocator.chunk_allocator.used_chunks(),
+            1,
+            "partial free should not return chunk to bitmap"
+        );
+
+        allocator.deallocate(b, half);
+        assert_eq!(
+            allocator.chunk_allocator.used_chunks(),
+            0,
+            "coalesced full chunk should be returned to bitmap allocator"
+        );
+    }
+
+    #[test]
+    fn deallocate_partial_chunk_not_returned_to_bitmap() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let quarter = Layout::from_size_align(CHUNK_SIZE / 4, 8).unwrap();
+        let a = allocator.allocate(quarter);
+        let _b = allocator.allocate(quarter);
+        let c = allocator.allocate(quarter);
+        let _d = allocator.allocate(quarter);
+        assert!(!a.is_null());
+        assert!(!c.is_null());
+        assert_eq!(allocator.chunk_allocator.used_chunks(), 1);
+
+        allocator.deallocate(a, quarter);
+        allocator.deallocate(c, quarter);
+        assert_eq!(
+            allocator.chunk_allocator.used_chunks(),
+            1,
+            "partially freed chunk must not be returned to bitmap"
+        );
+    }
+
+    #[test]
+    fn deallocate_multi_chunk_allocation_returns_to_bitmap() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let two_chunks = Layout::from_size_align(2 * CHUNK_SIZE, 8).unwrap();
+        let ptr = allocator.allocate(two_chunks);
+        assert!(!ptr.is_null());
+        assert_eq!(allocator.chunk_allocator.used_chunks(), 2);
+
+        allocator.deallocate(ptr, two_chunks);
+        assert_eq!(
+            allocator.chunk_allocator.used_chunks(),
+            0,
+            "freeing a multi-chunk allocation should return all chunks to bitmap"
+        );
+    }
 }
