@@ -10,6 +10,36 @@ struct FreeBlock {
     next: *mut FreeBlock,
 }
 
+struct ChunkRecord {
+    size: usize,
+    next: *mut ChunkRecord,
+    prev: *mut ChunkRecord,
+}
+
+struct ChunkRecordList {
+    head: *mut ChunkRecord,
+}
+
+impl ChunkRecordList {
+    fn new() -> Self {
+        ChunkRecordList {
+            head: core::ptr::null_mut(),
+        }
+    }
+
+    fn insert(&mut self, _ptr: *mut u8, _size: usize) {
+        unimplemented!()
+    }
+
+    fn find(&self, _address: usize, _size: usize) -> *mut ChunkRecord {
+        unimplemented!()
+    }
+
+    fn remove(&mut self, _record: *mut ChunkRecord) {
+        unimplemented!()
+    }
+}
+
 pub struct FreeListAllocator {
     chunk_allocator: BitmapChunkAllocator,
     free_list: *mut FreeBlock,
@@ -809,5 +839,166 @@ mod tests {
             0,
             "freeing a multi-chunk allocation should return all chunks to bitmap"
         );
+    }
+
+    #[test]
+    fn chunk_record_list_starts_empty() {
+        let list = ChunkRecordList::new();
+        assert!(list.head.is_null());
+    }
+
+    #[test]
+    fn insert_single_chunk_record() {
+        let mut buffer = vec![0usize; 512];
+        let ptr = buffer.as_mut_ptr() as *mut u8;
+
+        let mut list = ChunkRecordList::new();
+        list.insert(ptr, 4096);
+
+        assert!(!list.head.is_null());
+        unsafe {
+            assert_eq!((*list.head).size, 4096);
+            assert!((*list.head).next.is_null());
+            assert!((*list.head).prev.is_null());
+        }
+    }
+
+    #[test]
+    fn insert_two_chunk_records() {
+        let mut buffer1 = vec![0usize; 512];
+        let mut buffer2 = vec![0usize; 512];
+        let ptr1 = buffer1.as_mut_ptr() as *mut u8;
+        let ptr2 = buffer2.as_mut_ptr() as *mut u8;
+
+        let mut list = ChunkRecordList::new();
+        list.insert(ptr1, 4096);
+        list.insert(ptr2, 4096);
+
+        unsafe {
+            assert_eq!(list.head, ptr2 as *mut ChunkRecord);
+            assert_eq!((*list.head).next, ptr1 as *mut ChunkRecord);
+            assert!((*list.head).prev.is_null());
+
+            let second = (*list.head).next;
+            assert_eq!((*second).prev, list.head);
+            assert!((*second).next.is_null());
+        }
+    }
+
+    #[test]
+    fn find_chunk_record_by_address_and_size() {
+        let mut buffer = vec![0usize; 512];
+        let ptr = buffer.as_mut_ptr() as *mut u8;
+
+        let mut list = ChunkRecordList::new();
+        list.insert(ptr, 4096);
+
+        let found = list.find(ptr as usize, 4096);
+        assert!(!found.is_null());
+        assert_eq!(found, ptr as *mut ChunkRecord);
+    }
+
+    #[test]
+    fn find_returns_null_when_address_not_found() {
+        let mut buffer = vec![0usize; 512];
+        let ptr = buffer.as_mut_ptr() as *mut u8;
+
+        let mut list = ChunkRecordList::new();
+        list.insert(ptr, 4096);
+
+        let found = list.find(0xDEAD_BEEF, 4096);
+        assert!(found.is_null());
+    }
+
+    #[test]
+    fn find_returns_null_when_size_does_not_match() {
+        let mut buffer = vec![0usize; 512];
+        let ptr = buffer.as_mut_ptr() as *mut u8;
+
+        let mut list = ChunkRecordList::new();
+        list.insert(ptr, 4096);
+
+        let found = list.find(ptr as usize, 8192);
+        assert!(found.is_null());
+    }
+
+    #[test]
+    fn remove_head_record() {
+        let mut buf1 = vec![0usize; 512];
+        let mut buf2 = vec![0usize; 512];
+        let ptr1 = buf1.as_mut_ptr() as *mut u8;
+        let ptr2 = buf2.as_mut_ptr() as *mut u8;
+
+        let mut list = ChunkRecordList::new();
+        list.insert(ptr1, 4096);
+        list.insert(ptr2, 4096);
+
+        let head = list.head;
+        list.remove(head);
+
+        assert_eq!(list.head, ptr1 as *mut ChunkRecord);
+        unsafe {
+            assert!((*list.head).prev.is_null());
+            assert!((*list.head).next.is_null());
+        }
+    }
+
+    #[test]
+    fn remove_tail_record() {
+        let mut buf1 = vec![0usize; 512];
+        let mut buf2 = vec![0usize; 512];
+        let ptr1 = buf1.as_mut_ptr() as *mut u8;
+        let ptr2 = buf2.as_mut_ptr() as *mut u8;
+
+        let mut list = ChunkRecordList::new();
+        list.insert(ptr1, 4096);
+        list.insert(ptr2, 4096);
+
+        let tail = ptr1 as *mut ChunkRecord;
+        list.remove(tail);
+
+        assert_eq!(list.head, ptr2 as *mut ChunkRecord);
+        unsafe {
+            assert!((*list.head).next.is_null());
+        }
+    }
+
+    #[test]
+    fn remove_middle_record() {
+        let mut buf1 = vec![0usize; 512];
+        let mut buf2 = vec![0usize; 512];
+        let mut buf3 = vec![0usize; 512];
+        let ptr1 = buf1.as_mut_ptr() as *mut u8;
+        let ptr2 = buf2.as_mut_ptr() as *mut u8;
+        let ptr3 = buf3.as_mut_ptr() as *mut u8;
+
+        let mut list = ChunkRecordList::new();
+        list.insert(ptr1, 4096);
+        list.insert(ptr2, 4096);
+        list.insert(ptr3, 4096);
+
+        let middle = ptr2 as *mut ChunkRecord;
+        list.remove(middle);
+
+        unsafe {
+            assert_eq!(list.head, ptr3 as *mut ChunkRecord);
+            assert_eq!((*list.head).next, ptr1 as *mut ChunkRecord);
+
+            let tail = (*list.head).next;
+            assert_eq!((*tail).prev, list.head);
+            assert!((*tail).next.is_null());
+        }
+    }
+
+    #[test]
+    fn remove_only_record_leaves_empty_list() {
+        let mut buffer = vec![0usize; 512];
+        let ptr = buffer.as_mut_ptr() as *mut u8;
+
+        let mut list = ChunkRecordList::new();
+        list.insert(ptr, 4096);
+        list.remove(list.head);
+
+        assert!(list.head.is_null());
     }
 }
