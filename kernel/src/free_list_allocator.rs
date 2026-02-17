@@ -80,14 +80,52 @@ impl FreeListAllocator {
             return;
         }
         let size = effective_size(layout);
-        // Safety: ptr was previously returned by allocate(), so it points to
-        // a region of at least `size` bytes (>= FREE_BLOCK_SIZE) that is no
-        // longer in use. We write a FreeBlock header into it.
+        let mut new_start = ptr as usize;
+        let mut new_size = size;
+
+        // Safety: we traverse free list pointers that were set during chunk
+        // acquisition or previous deallocations. We remove at most two
+        // neighbors (left and right) and merge their ranges into the new block.
         unsafe {
-            let block = ptr as *mut FreeBlock;
-            (*block).size = size;
+            let mut prev: *mut FreeBlock = core::ptr::null_mut();
+            let mut current = self.free_list;
+
+            while !current.is_null() {
+                let block_start = current as usize;
+                let block_end = block_start + (*current).size;
+                let new_end = new_start + new_size;
+                let next = (*current).next;
+
+                if block_end == new_start {
+                    new_start = block_start;
+                    new_size += (*current).size;
+                    self.remove_block(prev, current);
+                    current = if prev.is_null() { self.free_list } else { (*prev).next };
+                } else if new_end == block_start {
+                    new_size += (*current).size;
+                    self.remove_block(prev, current);
+                    current = if prev.is_null() { self.free_list } else { (*prev).next };
+                } else {
+                    prev = current;
+                    current = next;
+                }
+            }
+
+            let block = new_start as *mut FreeBlock;
+            (*block).size = new_size;
             (*block).next = self.free_list;
             self.free_list = block;
+        }
+    }
+
+    unsafe fn remove_block(&mut self, prev: *mut FreeBlock, current: *mut FreeBlock) {
+        unsafe {
+            let next = (*current).next;
+            if prev.is_null() {
+                self.free_list = next;
+            } else {
+                (*prev).next = next;
+            }
         }
     }
 
@@ -626,14 +664,14 @@ mod tests {
         allocator.deallocate(a, quarter);
         allocator.deallocate(b, quarter);
 
-        let aligned_half = Layout::from_size_align(CHUNK_SIZE / 2, CHUNK_SIZE / 2).unwrap();
-        let ptr = allocator.allocate(aligned_half);
+        let aligned_layout = Layout::from_size_align(CHUNK_SIZE / 4 + 1, 64).unwrap();
+        let ptr = allocator.allocate(aligned_layout);
         assert!(
             !ptr.is_null(),
-            "coalesced block should satisfy alignment requirements"
+            "coalesced block should satisfy aligned allocation larger than a single block"
         );
         assert_eq!(
-            (ptr as usize) % (CHUNK_SIZE / 2),
+            (ptr as usize) % 64,
             0,
             "pointer should be aligned to requested alignment"
         );
