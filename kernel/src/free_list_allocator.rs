@@ -27,16 +27,51 @@ impl ChunkRecordList {
         }
     }
 
-    fn insert(&mut self, _ptr: *mut u8, _size: usize) {
-        unimplemented!()
+    fn insert(&mut self, ptr: *mut u8, size: usize) {
+        // Safety: ptr points to a writable memory region of at least
+        // size_of::<ChunkRecord>() bytes, provided by the chunk allocator.
+        unsafe {
+            let record = ptr as *mut ChunkRecord;
+            (*record).size = size;
+            (*record).prev = core::ptr::null_mut();
+            (*record).next = self.head;
+            if !self.head.is_null() {
+                (*self.head).prev = record;
+            }
+            self.head = record;
+        }
     }
 
-    fn find(&self, _address: usize, _size: usize) -> *mut ChunkRecord {
-        unimplemented!()
+    fn find(&self, address: usize, size: usize) -> *mut ChunkRecord {
+        // Safety: we only follow pointers set by insert(), which writes
+        // valid ChunkRecords into chunk memory.
+        unsafe {
+            let mut current = self.head;
+            while !current.is_null() {
+                if current as usize == address && (*current).size == size {
+                    return current;
+                }
+                current = (*current).next;
+            }
+        }
+        core::ptr::null_mut()
     }
 
-    fn remove(&mut self, _record: *mut ChunkRecord) {
-        unimplemented!()
+    fn remove(&mut self, record: *mut ChunkRecord) {
+        // Safety: record is a valid pointer previously returned by insert()
+        // or find(). We unlink it by patching its neighbors' pointers.
+        unsafe {
+            let prev = (*record).prev;
+            let next = (*record).next;
+            if !prev.is_null() {
+                (*prev).next = next;
+            } else {
+                self.head = next;
+            }
+            if !next.is_null() {
+                (*next).prev = prev;
+            }
+        }
     }
 }
 
