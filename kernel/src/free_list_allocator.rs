@@ -161,4 +161,20 @@ mod tests {
         let distance = (second as usize).abs_diff(first as usize);
         assert!(distance >= 64);
     }
+
+    #[test]
+    fn allocate_zero_bytes_returns_null() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let layout = Layout::from_size_align(0, 1).unwrap();
+        let ptr = allocator.allocate(layout);
+        assert!(ptr.is_null());
+    }
 }
