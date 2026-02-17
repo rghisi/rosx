@@ -258,4 +258,89 @@ mod tests {
         let third = allocator.allocate(layout);
         assert_eq!(third, first);
     }
+
+    #[test]
+    fn deallocate_null_is_noop() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        allocator.deallocate(core::ptr::null_mut(), layout);
+
+        let ptr = allocator.allocate(layout);
+        assert!(!ptr.is_null());
+    }
+
+    #[test]
+    fn multiple_deallocate_reallocate_cycles() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let layout = Layout::from_size_align(256, 8).unwrap();
+
+        for _ in 0..100 {
+            let ptr = allocator.allocate(layout);
+            assert!(!ptr.is_null());
+            allocator.deallocate(ptr, layout);
+        }
+    }
+
+    #[test]
+    fn allocate_returns_null_when_exhausted() {
+        let mut memory = vec![0u8; 2 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let layout = Layout::from_size_align(CHUNK_SIZE, 8).unwrap();
+        let mut count = 0;
+        loop {
+            let ptr = allocator.allocate(layout);
+            if ptr.is_null() {
+                break;
+            }
+            count += 1;
+            assert!(count <= 2);
+        }
+        assert!(count > 0);
+    }
+
+    #[test]
+    fn allocated_memory_is_writable() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let layout = Layout::from_size_align(256, 8).unwrap();
+        let ptr = allocator.allocate(layout);
+        assert!(!ptr.is_null());
+
+        // Safety: ptr points to a valid 256-byte allocation from our test memory.
+        unsafe {
+            core::ptr::write_bytes(ptr, 0xAB, 256);
+            let slice = core::slice::from_raw_parts(ptr, 256);
+            assert!(slice.iter().all(|&b| b == 0xAB));
+        }
+    }
 }
