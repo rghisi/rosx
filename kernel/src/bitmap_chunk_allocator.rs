@@ -1,7 +1,6 @@
 pub const CHUNK_SIZE: usize = 64 * 1024;
 const BITS_PER_WORD: usize = usize::BITS as usize;
 const METADATA_ALIGNMENT: usize = 16;
-const MAX_REGIONS: usize = 32;
 
 struct Region {
     base: usize,
@@ -25,7 +24,7 @@ fn align_up(value: usize, alignment: usize) -> usize {
 impl BitmapChunkAllocator {
     pub fn new(ranges: &[(usize, usize)]) -> Self {
         assert!(!ranges.is_empty(), "at least one range required");
-        let region_count = ranges.len().min(MAX_REGIONS);
+        let region_count = ranges.len();
 
         let raw_total_chunks: usize = ranges.iter()
             .take(region_count)
@@ -488,5 +487,20 @@ mod tests {
         allocator.allocate(2);
         assert_eq!(allocator.used_chunks(), 3);
         assert_eq!(allocator.free_chunks(), total - 3);
+    }
+
+    #[test]
+    fn new_accepts_more_than_32_ranges() {
+        let range_count = 40;
+        let mems: Vec<Vec<u8>> = (0..range_count)
+            .map(|_| vec![0u8; 2 * CHUNK_SIZE])
+            .collect();
+        let ranges: Vec<(usize, usize)> = mems.iter()
+            .map(|m| (m.as_ptr() as usize, m.len()))
+            .collect();
+
+        let allocator = BitmapChunkAllocator::new(&ranges);
+
+        assert_eq!(allocator.region_count, range_count);
     }
 }
