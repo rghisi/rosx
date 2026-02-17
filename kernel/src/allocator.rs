@@ -22,6 +22,7 @@ pub static GLOBAL_ALLOCATOR: GlobalKernelAllocator = GlobalKernelAllocator;
 
 pub struct GlobalKernelAllocator;
 
+#[cfg(not(test))]
 unsafe impl GlobalAlloc for GlobalKernelAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         unsafe {

@@ -71,6 +71,7 @@ pub(crate) fn terminate_current_task() {
     }
 }
 
+#[cfg(not(test))]
 pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
     if num == SyscallNum::Print as u64 {
         let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(arg1 as *const u8, arg2 as usize)) };

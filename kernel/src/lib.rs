@@ -1,5 +1,5 @@
 #![cfg_attr(not(test), no_std)]
-#![feature(alloc_error_handler)]
+#![cfg_attr(not(test), feature(alloc_error_handler))]
 
 extern crate alloc;
 extern crate collections;
@@ -7,6 +7,7 @@ extern crate lazy_static;
 extern crate system;
 
 pub mod allocator;
+pub mod bitmap_chunk_allocator;
 pub(crate) mod context_switcher;
 pub mod cpu;
 pub mod default_output;
