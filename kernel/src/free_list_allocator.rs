@@ -48,11 +48,13 @@ impl FreeListAllocator {
 
         let size = effective_size(layout);
 
-        if let Some(ptr) = self.find_and_remove(size) {
+        let align = layout.align();
+
+        if let Some(ptr) = self.find_and_remove(size, align) {
             return ptr;
         }
 
-        let chunk_layout = Layout::from_size_align(size, layout.align())
+        let chunk_layout = Layout::from_size_align(size, align)
             .expect("invalid layout");
         if let Some(allocation) = self.chunk_allocator.allocate(chunk_layout) {
             let total = allocation.chunk_count * allocation.chunk_size;
@@ -65,7 +67,7 @@ impl FreeListAllocator {
                 self.free_list = block;
             }
 
-            if let Some(ptr) = self.find_and_remove(size) {
+            if let Some(ptr) = self.find_and_remove(size, align) {
                 return ptr;
             }
         }
@@ -89,7 +91,7 @@ impl FreeListAllocator {
         }
     }
 
-    fn find_and_remove(&mut self, size: usize) -> Option<*mut u8> {
+    fn find_and_remove(&mut self, size: usize, align: usize) -> Option<*mut u8> {
         let mut prev: *mut FreeBlock = core::ptr::null_mut();
         let mut current = self.free_list;
 
@@ -98,28 +100,52 @@ impl FreeListAllocator {
         // terminates when current is null.
         unsafe {
             while !current.is_null() {
-                if (*current).size >= size {
-                    let remainder = (*current).size - size;
+                let block_addr = current as usize;
+                let aligned_addr = align_up(block_addr, align);
+                let front_padding = aligned_addr - block_addr;
 
-                    if remainder >= FREE_BLOCK_SIZE {
-                        let new_block = (current as *mut u8).add(size) as *mut FreeBlock;
-                        (*new_block).size = remainder;
-                        (*new_block).next = (*current).next;
+                if front_padding > 0 && front_padding < FREE_BLOCK_SIZE {
+                    prev = current;
+                    current = (*current).next;
+                    continue;
+                }
 
-                        if prev.is_null() {
-                            self.free_list = new_block;
+                let needed = front_padding + size;
+
+                if (*current).size >= needed {
+                    let tail_remainder = (*current).size - needed;
+                    let next = (*current).next;
+
+                    if front_padding >= FREE_BLOCK_SIZE {
+                        (*current).size = front_padding;
+                        if tail_remainder >= FREE_BLOCK_SIZE {
+                            let tail = (aligned_addr + size) as *mut FreeBlock;
+                            (*tail).size = tail_remainder;
+                            (*tail).next = next;
+                            (*current).next = tail;
                         } else {
-                            (*prev).next = new_block;
+                            (*current).next = next;
                         }
                     } else {
-                        if prev.is_null() {
-                            self.free_list = (*current).next;
+                        if tail_remainder >= FREE_BLOCK_SIZE {
+                            let tail = (aligned_addr + size) as *mut FreeBlock;
+                            (*tail).size = tail_remainder;
+                            (*tail).next = next;
+                            if prev.is_null() {
+                                self.free_list = tail;
+                            } else {
+                                (*prev).next = tail;
+                            }
                         } else {
-                            (*prev).next = (*current).next;
+                            if prev.is_null() {
+                                self.free_list = next;
+                            } else {
+                                (*prev).next = next;
+                            }
                         }
                     }
 
-                    return Some(current as *mut u8);
+                    return Some(aligned_addr as *mut u8);
                 }
 
                 prev = current;
@@ -342,5 +368,146 @@ mod tests {
             let slice = core::slice::from_raw_parts(ptr, 256);
             assert!(slice.iter().all(|&b| b == 0xAB));
         }
+    }
+
+    #[test]
+    fn allocate_tiny_size_rounds_up_to_free_block_size() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let layout = Layout::from_size_align(1, 1).unwrap();
+        let first = allocator.allocate(layout);
+        let second = allocator.allocate(layout);
+
+        assert!(!first.is_null());
+        assert!(!second.is_null());
+
+        let distance = (second as usize).abs_diff(first as usize);
+        assert!(distance >= FREE_BLOCK_SIZE);
+    }
+
+    #[test]
+    fn allocate_exactly_free_block_size() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let layout = Layout::from_size_align(FREE_BLOCK_SIZE, FREE_BLOCK_ALIGN).unwrap();
+        let ptr = allocator.allocate(layout);
+        assert!(!ptr.is_null());
+
+        allocator.deallocate(ptr, layout);
+        let reused = allocator.allocate(layout);
+        assert_eq!(reused, ptr);
+    }
+
+    #[test]
+    fn allocate_larger_than_one_chunk() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let big_size = 3 * CHUNK_SIZE;
+        let layout = Layout::from_size_align(big_size, 8).unwrap();
+        let ptr = allocator.allocate(layout);
+        assert!(!ptr.is_null());
+
+        // Safety: ptr points to a valid region of big_size bytes.
+        unsafe {
+            core::ptr::write_bytes(ptr, 0xCD, big_size);
+            let slice = core::slice::from_raw_parts(ptr, big_size);
+            assert!(slice.iter().all(|&b| b == 0xCD));
+        }
+    }
+
+    #[test]
+    fn returned_pointer_respects_alignment() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        for align_shift in 0..=8 {
+            let align = 1usize << align_shift;
+            let layout = Layout::from_size_align(64, align).unwrap();
+            let ptr = allocator.allocate(layout);
+            assert!(!ptr.is_null());
+            assert_eq!(
+                (ptr as usize) % align,
+                0,
+                "pointer {:#x} not aligned to {}",
+                ptr as usize,
+                align
+            );
+        }
+    }
+
+    #[test]
+    fn interleaved_alloc_dealloc_fills_gap() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let layout = Layout::from_size_align(128, 8).unwrap();
+        let a = allocator.allocate(layout);
+        let b = allocator.allocate(layout);
+        let c = allocator.allocate(layout);
+        assert!(!a.is_null());
+        assert!(!b.is_null());
+        assert!(!c.is_null());
+
+        allocator.deallocate(b, layout);
+
+        let d = allocator.allocate(layout);
+        assert_eq!(d, b);
+    }
+
+    #[test]
+    fn interleaved_different_sizes_reuses_fitting_gap() {
+        let mut memory = vec![0u8; 10 * CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let chunk_allocator = BitmapChunkAllocator::with_chunk_size(
+            CHUNK_SIZE,
+            &[(base, memory.len())],
+        );
+
+        let mut allocator = FreeListAllocator::new(chunk_allocator);
+
+        let big_layout = Layout::from_size_align(512, 8).unwrap();
+        let small_layout = Layout::from_size_align(64, 8).unwrap();
+
+        let a = allocator.allocate(big_layout);
+        let _b = allocator.allocate(small_layout);
+        assert!(!a.is_null());
+
+        allocator.deallocate(a, big_layout);
+
+        let c = allocator.allocate(small_layout);
+        assert_eq!(c, a);
     }
 }
