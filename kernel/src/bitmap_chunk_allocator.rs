@@ -51,6 +51,22 @@ impl BitmapChunkAllocator {
         None
     }
 
+    pub fn deallocate(&mut self, ptr: *mut u8, chunk_count: usize) {
+        let addr = ptr as usize;
+        for r in 0..self.region_count {
+            let base = self.regions[r].base;
+            let region_chunks = self.regions[r].chunk_count;
+            let bitmap_offset = self.regions[r].bitmap_offset;
+            let region_end = base + region_chunks * CHUNK_SIZE;
+            if addr >= base && addr < region_end {
+                let chunk_in_region = (addr - base) / CHUNK_SIZE;
+                let bit_start = bitmap_offset + chunk_in_region;
+                self.mark_bits(bit_start, chunk_count, false);
+                return;
+            }
+        }
+    }
+
     fn find_free_run(&self, bitmap_offset: usize, region_chunks: usize, needed: usize) -> Option<usize> {
         let mut run_start = bitmap_offset;
         let region_end = bitmap_offset + region_chunks;
@@ -254,5 +270,52 @@ mod tests {
 
         assert_eq!(first, 0x10_0000 as *mut u8);
         assert_eq!(second, 0x80_0000 as *mut u8);
+    }
+
+    #[test]
+    fn deallocate_then_reallocate_same_space() {
+        let mut allocator = BitmapChunkAllocator::new();
+        let base = 0x10_0000;
+        allocator.add_region(base, 2 * CHUNK_SIZE);
+
+        allocator.allocate(2).unwrap();
+        assert_eq!(allocator.allocate(1), None);
+
+        allocator.deallocate(base as *mut u8, 2);
+
+        let ptr = allocator.allocate(2);
+        assert_eq!(ptr, Some(base as *mut u8));
+    }
+
+    #[test]
+    fn deallocate_creates_gap_for_new_contiguous_allocation() {
+        let mut allocator = BitmapChunkAllocator::new();
+        let base = 0x10_0000;
+        allocator.add_region(base, 4 * CHUNK_SIZE);
+
+        let a = allocator.allocate(1).unwrap();
+        let _b = allocator.allocate(1).unwrap();
+        let _c = allocator.allocate(1).unwrap();
+        allocator.allocate(1).unwrap();
+
+        allocator.deallocate(a, 1);
+        let reused = allocator.allocate(1).unwrap();
+        assert_eq!(reused, base as *mut u8);
+    }
+
+    #[test]
+    fn deallocate_middle_chunks_allows_reuse() {
+        let mut allocator = BitmapChunkAllocator::new();
+        let base = 0x10_0000;
+        allocator.add_region(base, 4 * CHUNK_SIZE);
+
+        allocator.allocate(1).unwrap();
+        let b = allocator.allocate(2).unwrap();
+        allocator.allocate(1).unwrap();
+
+        allocator.deallocate(b, 2);
+
+        let reused = allocator.allocate(2).unwrap();
+        assert_eq!(reused, (base + CHUNK_SIZE) as *mut u8);
     }
 }
