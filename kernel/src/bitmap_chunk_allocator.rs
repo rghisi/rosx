@@ -2,6 +2,12 @@ pub const DEFAULT_CHUNK_SIZE: usize = 64 * 1024;
 const BITS_PER_WORD: usize = usize::BITS as usize;
 const METADATA_ALIGNMENT: usize = 16;
 
+pub struct Allocation {
+    pub ptr: *mut u8,
+    pub chunk_count: usize,
+    pub chunk_size: usize,
+}
+
 struct Region {
     base: usize,
     chunk_count: usize,
@@ -95,10 +101,11 @@ impl BitmapChunkAllocator {
         }
     }
 
-    pub fn allocate(&mut self, chunk_count: usize) -> Option<*mut u8> {
-        if chunk_count == 0 {
+    pub fn allocate(&mut self, bytes: usize) -> Option<Allocation> {
+        if bytes == 0 {
             return None;
         }
+        let chunk_count = (bytes + self.chunk_size - 1) / self.chunk_size;
         for r in 0..self.region_count {
             let region = self.region(r);
             let base = region.base;
@@ -111,7 +118,11 @@ impl BitmapChunkAllocator {
                 self.mark_bits(start, chunk_count, true);
                 let chunk_in_region = start - bitmap_offset;
                 let addr = base + chunk_in_region * self.chunk_size;
-                return Some(addr as *mut u8);
+                return Some(Allocation {
+                    ptr: addr as *mut u8,
+                    chunk_count,
+                    chunk_size: self.chunk_size,
+                });
             }
         }
         None
@@ -274,9 +285,9 @@ mod tests {
 
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
-        let ptr = allocator.allocate(1);
+        let alloc = allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
 
-        assert_eq!(ptr, Some(usable as *mut u8));
+        assert_eq!(alloc.ptr, usable as *mut u8);
     }
 
     #[test]
@@ -287,9 +298,9 @@ mod tests {
 
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
-        let ptr = allocator.allocate(3);
+        let alloc = allocator.allocate(3 * DEFAULT_CHUNK_SIZE).unwrap();
 
-        assert_eq!(ptr, Some(usable as *mut u8));
+        assert_eq!(alloc.ptr, usable as *mut u8);
     }
 
     #[test]
@@ -300,11 +311,11 @@ mod tests {
 
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
-        let first = allocator.allocate(2).unwrap();
-        let second = allocator.allocate(3).unwrap();
+        let first = allocator.allocate(2 * DEFAULT_CHUNK_SIZE).unwrap();
+        let second = allocator.allocate(3 * DEFAULT_CHUNK_SIZE).unwrap();
 
-        assert_eq!(first, usable as *mut u8);
-        assert_eq!(second, (usable + 2 * DEFAULT_CHUNK_SIZE) as *mut u8);
+        assert_eq!(first.ptr, usable as *mut u8);
+        assert_eq!(second.ptr, (usable + 2 * DEFAULT_CHUNK_SIZE) as *mut u8);
     }
 
     #[test]
@@ -316,21 +327,19 @@ mod tests {
 
         let overhead = metadata_overhead(1, 3);
         let available = (3 * DEFAULT_CHUNK_SIZE - overhead) / DEFAULT_CHUNK_SIZE;
-        let ptr = allocator.allocate(available + 1);
+        let result = allocator.allocate((available + 1) * DEFAULT_CHUNK_SIZE);
 
-        assert_eq!(ptr, None);
+        assert!(result.is_none());
     }
 
     #[test]
-    fn allocate_zero_chunks_returns_none() {
+    fn allocate_zero_bytes_returns_none_default_chunk() {
         let mut memory = vec![0u8; 4 * DEFAULT_CHUNK_SIZE];
         let base = memory.as_mut_ptr() as usize;
 
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
-        let ptr = allocator.allocate(0);
-
-        assert_eq!(ptr, None);
+        assert!(allocator.allocate(0).is_none());
     }
 
     #[test]
@@ -344,9 +353,9 @@ mod tests {
         let available = (3 * DEFAULT_CHUNK_SIZE - overhead) / DEFAULT_CHUNK_SIZE;
 
         for _ in 0..available {
-            assert!(allocator.allocate(1).is_some());
+            assert!(allocator.allocate(DEFAULT_CHUNK_SIZE).is_some());
         }
-        assert_eq!(allocator.allocate(1), None);
+        assert!(allocator.allocate(DEFAULT_CHUNK_SIZE).is_none());
     }
 
     #[test]
@@ -365,11 +374,11 @@ mod tests {
         let first_region_chunks = (2 * DEFAULT_CHUNK_SIZE - overhead) / DEFAULT_CHUNK_SIZE;
 
         for _ in 0..first_region_chunks {
-            allocator.allocate(1).unwrap();
+            allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
         }
 
-        let from_second = allocator.allocate(2).unwrap();
-        assert_eq!(from_second, base2 as *mut u8);
+        let from_second = allocator.allocate(2 * DEFAULT_CHUNK_SIZE).unwrap();
+        assert_eq!(from_second.ptr, base2 as *mut u8);
     }
 
     #[test]
@@ -383,13 +392,13 @@ mod tests {
         let overhead = metadata_overhead(1, 3);
         let available = (3 * DEFAULT_CHUNK_SIZE - overhead) / DEFAULT_CHUNK_SIZE;
 
-        allocator.allocate(available).unwrap();
-        assert_eq!(allocator.allocate(1), None);
+        let alloc = allocator.allocate(available * DEFAULT_CHUNK_SIZE).unwrap();
+        assert!(allocator.allocate(DEFAULT_CHUNK_SIZE).is_none());
 
-        allocator.deallocate(usable as *mut u8, available);
+        allocator.deallocate(alloc.ptr, available);
 
-        let ptr = allocator.allocate(available);
-        assert_eq!(ptr, Some(usable as *mut u8));
+        let alloc2 = allocator.allocate(available * DEFAULT_CHUNK_SIZE).unwrap();
+        assert_eq!(alloc2.ptr, usable as *mut u8);
     }
 
     #[test]
@@ -400,14 +409,14 @@ mod tests {
 
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
-        let a = allocator.allocate(1).unwrap();
-        let _b = allocator.allocate(1).unwrap();
-        let _c = allocator.allocate(1).unwrap();
-        allocator.allocate(1).unwrap();
+        let a = allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
+        let _b = allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
+        let _c = allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
+        allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
 
-        allocator.deallocate(a, 1);
-        let reused = allocator.allocate(1).unwrap();
-        assert_eq!(reused, usable as *mut u8);
+        allocator.deallocate(a.ptr, 1);
+        let reused = allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
+        assert_eq!(reused.ptr, usable as *mut u8);
     }
 
     #[test]
@@ -418,14 +427,14 @@ mod tests {
 
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
-        allocator.allocate(1).unwrap();
-        let b = allocator.allocate(2).unwrap();
-        allocator.allocate(1).unwrap();
+        allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
+        let b = allocator.allocate(2 * DEFAULT_CHUNK_SIZE).unwrap();
+        allocator.allocate(DEFAULT_CHUNK_SIZE).unwrap();
 
-        allocator.deallocate(b, 2);
+        allocator.deallocate(b.ptr, 2);
 
-        let reused = allocator.allocate(2).unwrap();
-        assert_eq!(reused, (usable + DEFAULT_CHUNK_SIZE) as *mut u8);
+        let reused = allocator.allocate(2 * DEFAULT_CHUNK_SIZE).unwrap();
+        assert_eq!(reused.ptr, (usable + DEFAULT_CHUNK_SIZE) as *mut u8);
     }
 
     #[test]
@@ -450,11 +459,11 @@ mod tests {
 
         let total = allocator.free_chunks();
 
-        allocator.allocate(1);
+        allocator.allocate(DEFAULT_CHUNK_SIZE);
         assert_eq!(allocator.used_chunks(), 1);
         assert_eq!(allocator.free_chunks(), total - 1);
 
-        allocator.allocate(2);
+        allocator.allocate(2 * DEFAULT_CHUNK_SIZE);
         assert_eq!(allocator.used_chunks(), 3);
         assert_eq!(allocator.free_chunks(), total - 3);
     }
@@ -468,10 +477,10 @@ mod tests {
 
         let total = allocator.free_chunks();
 
-        let ptr = allocator.allocate(3).unwrap();
+        let alloc = allocator.allocate(3 * DEFAULT_CHUNK_SIZE).unwrap();
         assert_eq!(allocator.used_chunks(), 3);
 
-        allocator.deallocate(ptr, 2);
+        allocator.deallocate(alloc.ptr, 2);
         assert_eq!(allocator.used_chunks(), 1);
         assert_eq!(allocator.free_chunks(), total - 1);
     }
@@ -489,8 +498,8 @@ mod tests {
         ]);
 
         let total = allocator.free_chunks();
-        allocator.allocate(1);
-        allocator.allocate(2);
+        allocator.allocate(DEFAULT_CHUNK_SIZE);
+        allocator.allocate(2 * DEFAULT_CHUNK_SIZE);
         assert_eq!(allocator.used_chunks(), 3);
         assert_eq!(allocator.free_chunks(), total - 3);
     }
@@ -508,6 +517,56 @@ mod tests {
         let allocator = BitmapChunkAllocator::new(&ranges);
 
         assert_eq!(allocator.region_count, range_count);
+    }
+
+    #[test]
+    fn allocate_bytes_returns_allocation_struct() {
+        let chunk_size: usize = 4096;
+        let mut memory = vec![0u8; 10 * chunk_size];
+        let base = memory.as_mut_ptr() as usize;
+
+        let mut allocator = BitmapChunkAllocator::with_chunk_size(
+            chunk_size,
+            &[(base, memory.len())],
+        );
+
+        let alloc = allocator.allocate(chunk_size + 1).unwrap();
+
+        assert_eq!(alloc.chunk_count, 2);
+        assert_eq!(alloc.chunk_size, chunk_size);
+        assert!(!alloc.ptr.is_null());
+    }
+
+    #[test]
+    fn allocate_exact_chunk_boundary() {
+        let chunk_size: usize = 4096;
+        let mut memory = vec![0u8; 10 * chunk_size];
+        let base = memory.as_mut_ptr() as usize;
+
+        let mut allocator = BitmapChunkAllocator::with_chunk_size(
+            chunk_size,
+            &[(base, memory.len())],
+        );
+
+        let alloc = allocator.allocate(chunk_size).unwrap();
+        assert_eq!(alloc.chunk_count, 1);
+
+        let alloc2 = allocator.allocate(2 * chunk_size).unwrap();
+        assert_eq!(alloc2.chunk_count, 2);
+    }
+
+    #[test]
+    fn allocate_zero_bytes_returns_none() {
+        let chunk_size: usize = 4096;
+        let mut memory = vec![0u8; 10 * chunk_size];
+        let base = memory.as_mut_ptr() as usize;
+
+        let mut allocator = BitmapChunkAllocator::with_chunk_size(
+            chunk_size,
+            &[(base, memory.len())],
+        );
+
+        assert!(allocator.allocate(0).is_none());
     }
 
     #[test]
