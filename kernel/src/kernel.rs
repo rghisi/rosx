@@ -193,6 +193,7 @@ impl Kernel {
     }
 }
 
+#[cfg(not(test))]
 unsafe impl GlobalAlloc for Kernel {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
         let interrupts_enabled = self.cpu.are_interrupts_enabled();
