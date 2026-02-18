@@ -39,10 +39,36 @@ impl ChunkTracker {
         &mut self,
         start: usize,
         size: usize,
-        _on_chunk_reclaimed: impl FnMut(usize),
+        mut on_chunk_reclaimed: impl FnMut(usize),
         mut on_leftover: impl FnMut(usize, usize),
     ) {
-        on_leftover(start, size);
+        let chunk_size = self.chunk_size();
+
+        if size < chunk_size {
+            on_leftover(start, size);
+            return;
+        }
+
+        let aligned_start = (start + chunk_size - 1) & !(chunk_size - 1);
+        let head = aligned_start - start;
+
+        if head > 0 {
+            on_leftover(start, head);
+        }
+
+        let remaining = size - head;
+        let chunk_count = remaining / chunk_size;
+        let tail = remaining % chunk_size;
+
+        for i in 0..chunk_count {
+            let addr = aligned_start + i * chunk_size;
+            self.register(addr);
+            on_chunk_reclaimed(addr);
+        }
+
+        if tail > 0 {
+            on_leftover(aligned_start + chunk_count * chunk_size, tail);
+        }
     }
 }
 
