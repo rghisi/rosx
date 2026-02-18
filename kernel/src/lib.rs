@@ -8,6 +8,9 @@ extern crate system;
 
 pub mod allocator;
 pub mod bitmap_chunk_allocator;
+pub mod chunk_allocator;
+pub mod chunk_tracker;
+pub mod free_list_allocator;
 pub(crate) mod context_switcher;
 pub mod cpu;
 pub mod default_output;
