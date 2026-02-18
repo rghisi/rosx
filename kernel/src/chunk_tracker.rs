@@ -17,9 +17,9 @@ impl ChunkTracker {
 
     pub fn init(&mut self) {
         let allocator = unsafe { &mut *self.allocator };
-        self.chunk_size = allocator.chunk_size();
-        let ptr = allocator.allocate_chunks(1).expect("ChunkTracker needs at least one chunk");
-        self.storage = ptr as *mut usize;
+        let allocation = allocator.allocate_chunks(1).expect("ChunkTracker needs at least one chunk");
+        self.chunk_size = allocation.chunk_size;
+        self.storage = allocation.ptr as *mut usize;
         unsafe { *self.storage = 0 };
     }
 
@@ -51,7 +51,7 @@ impl ChunkTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chunk_allocator::ChunkAllocator;
+    use crate::chunk_allocator::{Allocation, ChunkAllocator};
 
     const CHUNK_SIZE: usize = 4096;
 
@@ -69,18 +69,14 @@ mod tests {
     }
 
     impl ChunkAllocator for FakeChunkAllocator {
-        fn chunk_size(&self) -> usize {
-            self.chunk_size
-        }
-
-        fn allocate_chunks(&mut self, count: usize) -> Option<*mut u8> {
+        fn allocate_chunks(&mut self, count: usize) -> Option<Allocation> {
             let needed = count * self.chunk_size;
             if self.allocated + needed > self.size {
                 return None;
             }
             let ptr = unsafe { self.base.add(self.allocated) };
             self.allocated += needed;
-            Some(ptr)
+            Some(Allocation { ptr, chunk_count: count, chunk_size: self.chunk_size })
         }
 
         fn deallocate_chunks(&mut self, _ptr: *mut u8, _count: usize) {}
