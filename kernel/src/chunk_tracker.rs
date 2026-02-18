@@ -1,14 +1,27 @@
+use crate::chunk_allocator::ChunkAllocator;
+
 pub struct ChunkTracker {
+    allocator: *mut dyn ChunkAllocator,
     chunk_size: usize,
     count: usize,
 }
 
 impl ChunkTracker {
-    pub fn new(chunk_size: usize) -> Self {
+    pub fn new(allocator: *mut dyn ChunkAllocator) -> Self {
         ChunkTracker {
-            chunk_size,
+            allocator,
+            chunk_size: 0,
             count: 0,
         }
+    }
+
+    pub fn init(&mut self) {
+        let allocator = unsafe { &mut *self.allocator };
+        self.chunk_size = allocator.chunk_size();
+    }
+
+    pub fn chunk_size(&self) -> usize {
+        self.chunk_size
     }
 
     pub fn owned_count(&self) -> usize {
@@ -33,33 +46,96 @@ impl ChunkTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chunk_allocator::ChunkAllocator;
 
     const CHUNK_SIZE: usize = 4096;
 
+    struct FakeChunkAllocator {
+        base: *mut u8,
+        size: usize,
+        chunk_size: usize,
+        allocated: usize,
+    }
+
+    impl FakeChunkAllocator {
+        fn new(base: *mut u8, size: usize, chunk_size: usize) -> Self {
+            FakeChunkAllocator { base, size, chunk_size, allocated: 0 }
+        }
+    }
+
+    impl ChunkAllocator for FakeChunkAllocator {
+        fn chunk_size(&self) -> usize {
+            self.chunk_size
+        }
+
+        fn allocate_chunks(&mut self, count: usize) -> Option<*mut u8> {
+            let needed = count * self.chunk_size;
+            if self.allocated + needed > self.size {
+                return None;
+            }
+            let ptr = unsafe { self.base.add(self.allocated) };
+            self.allocated += needed;
+            Some(ptr)
+        }
+
+        fn deallocate_chunks(&mut self, _ptr: *mut u8, _count: usize) {}
+    }
+
+    fn create_tracker(allocator: &mut FakeChunkAllocator) -> ChunkTracker {
+        let mut tracker = ChunkTracker::new(allocator as *mut dyn ChunkAllocator);
+        tracker.init();
+        tracker
+    }
+
+    #[test]
+    fn init_learns_chunk_size_from_allocator() {
+        let mut memory = vec![0u8; 4 * CHUNK_SIZE];
+        let mut allocator = FakeChunkAllocator::new(memory.as_mut_ptr(), memory.len(), CHUNK_SIZE);
+
+        let tracker = create_tracker(&mut allocator);
+
+        assert_eq!(tracker.chunk_size(), CHUNK_SIZE);
+    }
+
     #[test]
     fn new_tracker_has_zero_owned_chunks() {
-        let tracker = ChunkTracker::new(CHUNK_SIZE);
+        let mut memory = vec![0u8; 4 * CHUNK_SIZE];
+        let mut allocator = FakeChunkAllocator::new(memory.as_mut_ptr(), memory.len(), CHUNK_SIZE);
+
+        let tracker = create_tracker(&mut allocator);
+
         assert_eq!(tracker.owned_count(), 0);
     }
 
     #[test]
     fn register_one_chunk_increments_count() {
-        let mut tracker = ChunkTracker::new(CHUNK_SIZE);
+        let mut memory = vec![0u8; 4 * CHUNK_SIZE];
+        let mut allocator = FakeChunkAllocator::new(memory.as_mut_ptr(), memory.len(), CHUNK_SIZE);
+
+        let mut tracker = create_tracker(&mut allocator);
         tracker.register(0x1000);
+
         assert_eq!(tracker.owned_count(), 1);
     }
 
     #[test]
     fn register_two_chunks_increments_count() {
-        let mut tracker = ChunkTracker::new(CHUNK_SIZE);
+        let mut memory = vec![0u8; 4 * CHUNK_SIZE];
+        let mut allocator = FakeChunkAllocator::new(memory.as_mut_ptr(), memory.len(), CHUNK_SIZE);
+
+        let mut tracker = create_tracker(&mut allocator);
         tracker.register(0x1000);
         tracker.register(0x2000);
+
         assert_eq!(tracker.owned_count(), 2);
     }
 
     #[test]
     fn reclaim_block_smaller_than_chunk_returns_it_as_leftover() {
-        let mut tracker = ChunkTracker::new(CHUNK_SIZE);
+        let mut memory = vec![0u8; 4 * CHUNK_SIZE];
+        let mut allocator = FakeChunkAllocator::new(memory.as_mut_ptr(), memory.len(), CHUNK_SIZE);
+
+        let mut tracker = create_tracker(&mut allocator);
         tracker.register(0x1000);
 
         let mut reclaimed = Vec::new();
