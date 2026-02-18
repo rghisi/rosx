@@ -206,4 +206,25 @@ mod tests {
         assert_eq!(leftovers, vec![(0x5000, 512)]);
         assert_eq!(tracker.owned_count(), 1);
     }
+
+    #[test]
+    fn reclaim_aligned_block_exactly_one_chunk_registers_it() {
+        let mut memory = vec![0u8; 4 * CHUNK_SIZE];
+        let mut allocator = FakeChunkAllocator::new(memory.as_mut_ptr(), memory.len(), CHUNK_SIZE);
+
+        let mut tracker = create_tracker(&mut allocator);
+
+        let mut reclaimed = Vec::new();
+        let mut leftovers = Vec::new();
+
+        tracker.reclaim(
+            0x4000, CHUNK_SIZE,
+            |addr| reclaimed.push(addr),
+            |start, size| leftovers.push((start, size)),
+        );
+
+        assert_eq!(reclaimed, vec![0x4000]);
+        assert!(leftovers.is_empty());
+        assert_eq!(tracker.owned_count(), 1);
+    }
 }
