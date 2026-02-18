@@ -24,6 +24,7 @@ features = ["spin_no_std"]
 [[bin]]
 name = "rosx"
 bench = false
+test = false
 
 [package.metadata.bootimage]
 run-args = ["-debugcon", "stdio", "-no-reboot"]
