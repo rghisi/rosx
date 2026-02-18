@@ -1,14 +1,9 @@
 use core::alloc::Layout;
+use crate::chunk_allocator::Allocation;
 
 pub const DEFAULT_CHUNK_SIZE: usize = 64 * 1024;
 const BITS_PER_WORD: usize = usize::BITS as usize;
 const METADATA_ALIGNMENT: usize = 16;
-
-pub struct Allocation {
-    pub ptr: *mut u8,
-    pub chunk_count: usize,
-    pub chunk_size: usize,
-}
 
 struct Region {
     base: usize,
