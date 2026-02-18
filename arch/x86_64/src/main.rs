@@ -16,7 +16,7 @@ use crate::idle::idle_task_factory;
 use crate::vga_buffer::VgaOutput;
 use bootloader::BootInfo;
 use core::panic::PanicInfo;
-use kernel::allocator::{MEMORY_ALLOCATOR, MemoryBlock, MemoryBlocks, MAX_MEMORY_BLOCKS};
+use kernel::memory::allocator::{MEMORY_ALLOCATOR, MemoryBlock, MemoryBlocks, MAX_MEMORY_BLOCKS};
 use kernel::default_output::MultiplexOutput;
 use kernel::function_task::FunctionTask;
 use kernel::kconfig::KConfig;

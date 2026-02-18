@@ -1,5 +1,5 @@
 #[cfg(not(test))]
-use crate::allocator::MEMORY_ALLOCATOR;
+use crate::memory::allocator::MEMORY_ALLOCATOR;
 use crate::cpu::Cpu;
 use crate::default_output::{KernelOutput, setup_default_output};
 use crate::future::TaskCompletionFuture;
@@ -17,7 +17,7 @@ use core::alloc::GlobalAlloc;
 use core::ptr::null_mut;
 use system::future::FutureHandle;
 #[cfg(not(test))]
-use crate::allocator::{MemoryAllocator, MemoryBlocks};
+use crate::memory::allocator::{MemoryAllocator, MemoryBlocks};
 
 pub(crate) static mut KERNEL: *mut Kernel = null_mut();
 
