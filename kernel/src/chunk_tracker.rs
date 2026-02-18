@@ -4,7 +4,6 @@ pub struct ChunkTracker {
     allocator: *mut dyn ChunkAllocator,
     storage: *mut usize,
     chunk_size: usize,
-    count: usize,
 }
 
 impl ChunkTracker {
@@ -13,7 +12,6 @@ impl ChunkTracker {
             allocator,
             storage: core::ptr::null_mut(),
             chunk_size: 0,
-            count: 0,
         }
     }
 
@@ -22,6 +20,7 @@ impl ChunkTracker {
         self.chunk_size = allocator.chunk_size();
         let ptr = allocator.allocate_chunks(1).expect("ChunkTracker needs at least one chunk");
         self.storage = ptr as *mut usize;
+        unsafe { *self.storage = 0 };
     }
 
     pub fn chunk_size(&self) -> usize {
@@ -29,12 +28,13 @@ impl ChunkTracker {
     }
 
     pub fn owned_count(&self) -> usize {
-        self.count
+        unsafe { *self.storage }
     }
 
     pub fn register(&mut self, address: usize) {
-        unsafe { *self.storage.add(self.count) = address };
-        self.count += 1;
+        let count = unsafe { *self.storage };
+        unsafe { *self.storage.add(count + 1) = address };
+        unsafe { *self.storage = count + 1 };
     }
 
     pub fn reclaim(
@@ -123,7 +123,26 @@ mod tests {
     }
 
     #[test]
-    fn register_stores_address_in_storage() {
+    fn count_is_stored_at_slot_zero() {
+        let mut memory = vec![0u8; 4 * CHUNK_SIZE];
+        let mut allocator = FakeChunkAllocator::new(memory.as_mut_ptr(), memory.len(), CHUNK_SIZE);
+
+        let mut tracker = create_tracker(&mut allocator);
+
+        let stored_count = unsafe { *tracker.storage };
+        assert_eq!(stored_count, 0);
+
+        tracker.register(0xA000);
+        let stored_count = unsafe { *tracker.storage };
+        assert_eq!(stored_count, 1);
+
+        tracker.register(0xB000);
+        let stored_count = unsafe { *tracker.storage };
+        assert_eq!(stored_count, 2);
+    }
+
+    #[test]
+    fn register_stores_addresses_starting_at_slot_one() {
         let mut memory = vec![0u8; 4 * CHUNK_SIZE];
         let mut allocator = FakeChunkAllocator::new(memory.as_mut_ptr(), memory.len(), CHUNK_SIZE);
 
@@ -132,8 +151,8 @@ mod tests {
         tracker.register(0xB000);
 
         let storage = tracker.storage;
-        let first = unsafe { *storage };
-        let second = unsafe { *storage.add(1) };
+        let first = unsafe { *storage.add(1) };
+        let second = unsafe { *storage.add(2) };
         assert_eq!(first, 0xA000);
         assert_eq!(second, 0xB000);
     }
