@@ -3,7 +3,6 @@ use crate::chunk_allocator::ChunkAllocator;
 pub struct ChunkTracker {
     allocator: *mut dyn ChunkAllocator,
     storage: *mut usize,
-    chunk_size: usize,
 }
 
 impl ChunkTracker {
@@ -11,20 +10,19 @@ impl ChunkTracker {
         ChunkTracker {
             allocator,
             storage: core::ptr::null_mut(),
-            chunk_size: 0,
         }
     }
 
     pub fn init(&mut self) {
         let allocator = unsafe { &mut *self.allocator };
         let allocation = allocator.allocate_chunks(1).expect("ChunkTracker needs at least one chunk");
-        self.chunk_size = allocation.chunk_size;
         self.storage = allocation.ptr as *mut usize;
         unsafe { *self.storage = 0 };
+        unsafe { *self.storage.add(1) = allocation.chunk_size };
     }
 
     pub fn chunk_size(&self) -> usize {
-        self.chunk_size
+        unsafe { *self.storage.add(1) }
     }
 
     pub fn owned_count(&self) -> usize {
@@ -33,7 +31,7 @@ impl ChunkTracker {
 
     pub fn register(&mut self, address: usize) {
         let count = unsafe { *self.storage };
-        unsafe { *self.storage.add(count + 1) = address };
+        unsafe { *self.storage.add(count + 2) = address };
         unsafe { *self.storage = count + 1 };
     }
 
@@ -138,7 +136,18 @@ mod tests {
     }
 
     #[test]
-    fn register_stores_addresses_starting_at_slot_one() {
+    fn chunk_size_is_stored_at_slot_one() {
+        let mut memory = vec![0u8; 4 * CHUNK_SIZE];
+        let mut allocator = FakeChunkAllocator::new(memory.as_mut_ptr(), memory.len(), CHUNK_SIZE);
+
+        let tracker = create_tracker(&mut allocator);
+
+        let stored_chunk_size = unsafe { *tracker.storage.add(1) };
+        assert_eq!(stored_chunk_size, CHUNK_SIZE);
+    }
+
+    #[test]
+    fn register_stores_addresses_starting_at_slot_two() {
         let mut memory = vec![0u8; 4 * CHUNK_SIZE];
         let mut allocator = FakeChunkAllocator::new(memory.as_mut_ptr(), memory.len(), CHUNK_SIZE);
 
@@ -147,8 +156,8 @@ mod tests {
         tracker.register(0xB000);
 
         let storage = tracker.storage;
-        let first = unsafe { *storage.add(1) };
-        let second = unsafe { *storage.add(2) };
+        let first = unsafe { *storage.add(2) };
+        let second = unsafe { *storage.add(3) };
         assert_eq!(first, 0xA000);
         assert_eq!(second, 0xB000);
     }
