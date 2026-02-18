@@ -2,6 +2,7 @@ use crate::chunk_allocator::ChunkAllocator;
 
 pub struct ChunkTracker {
     allocator: *mut dyn ChunkAllocator,
+    storage: *mut usize,
     chunk_size: usize,
     count: usize,
 }
@@ -10,6 +11,7 @@ impl ChunkTracker {
     pub fn new(allocator: *mut dyn ChunkAllocator) -> Self {
         ChunkTracker {
             allocator,
+            storage: core::ptr::null_mut(),
             chunk_size: 0,
             count: 0,
         }
@@ -18,6 +20,8 @@ impl ChunkTracker {
     pub fn init(&mut self) {
         let allocator = unsafe { &mut *self.allocator };
         self.chunk_size = allocator.chunk_size();
+        let ptr = allocator.allocate_chunks(1).expect("ChunkTracker needs at least one chunk");
+        self.storage = ptr as *mut usize;
     }
 
     pub fn chunk_size(&self) -> usize {
@@ -85,6 +89,16 @@ mod tests {
         let mut tracker = ChunkTracker::new(allocator as *mut dyn ChunkAllocator);
         tracker.init();
         tracker
+    }
+
+    #[test]
+    fn init_allocates_one_chunk_for_storage() {
+        let mut memory = vec![0u8; 4 * CHUNK_SIZE];
+        let mut allocator = FakeChunkAllocator::new(memory.as_mut_ptr(), memory.len(), CHUNK_SIZE);
+
+        create_tracker(&mut allocator);
+
+        assert_eq!(allocator.allocated, CHUNK_SIZE);
     }
 
     #[test]
