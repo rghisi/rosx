@@ -32,7 +32,8 @@ impl ChunkTracker {
         self.count
     }
 
-    pub fn register(&mut self, _address: usize) {
+    pub fn register(&mut self, address: usize) {
+        unsafe { *self.storage.add(self.count) = address };
         self.count += 1;
     }
 
@@ -119,6 +120,22 @@ mod tests {
         let tracker = create_tracker(&mut allocator);
 
         assert_eq!(tracker.owned_count(), 0);
+    }
+
+    #[test]
+    fn register_stores_address_in_storage() {
+        let mut memory = vec![0u8; 4 * CHUNK_SIZE];
+        let mut allocator = FakeChunkAllocator::new(memory.as_mut_ptr(), memory.len(), CHUNK_SIZE);
+
+        let mut tracker = create_tracker(&mut allocator);
+        tracker.register(0xA000);
+        tracker.register(0xB000);
+
+        let storage = tracker.storage;
+        let first = unsafe { *storage };
+        let second = unsafe { *storage.add(1) };
+        assert_eq!(first, 0xA000);
+        assert_eq!(second, 0xB000);
     }
 
     #[test]
