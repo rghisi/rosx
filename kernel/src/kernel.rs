@@ -8,7 +8,7 @@ use crate::kernel_services::services;
 use crate::kprintln;
 use crate::main_thread::MainThread;
 use crate::messages::HardwareInterrupt;
-use crate::state::ExecutionState;
+use crate::state::{ExecutionContext, ExecutionState};
 use crate::syscall::{task_yield, terminate_current_task};
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle};
@@ -55,6 +55,7 @@ impl Kernel {
                 main_thread: main_thread_task_handle,
                 current_task: None,
                 preemption_enabled: false,
+                execution_context: ExecutionContext::Kernel,
                 cpu,
             },
         }
