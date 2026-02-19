@@ -28,9 +28,7 @@ impl MainThread {
             hw_interrupt_queue: VecDeque::with_capacity(5),
         }
     }
-}
-
-impl MainThread {
+    
     pub(crate) fn run(&mut self) {
         loop {
             self.process_hardware_interrupts();
