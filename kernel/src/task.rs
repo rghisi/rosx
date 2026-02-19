@@ -9,6 +9,12 @@ pub(crate) type TaskHandle = Handle<u8, u8>;
 pub type SharedTask = Box<Task>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum YieldReason {
+    Voluntary,
+    Preempted,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum TaskState {
     Created,
     Ready,
@@ -42,6 +48,7 @@ pub struct Task {
     id: u32,
     name: &'static str,
     state: TaskState,
+    yield_reason: Option<YieldReason>,
     stack_pointer: usize,
     entry_point: usize,
     entry_param: usize,
@@ -59,6 +66,7 @@ impl Task {
             id,
             name,
             state: Created,
+            yield_reason: None,
             stack_pointer: 0,
             entry_point,
             entry_param,
@@ -106,6 +114,12 @@ impl Task {
 
     pub fn set_blocked(&mut self) {
         self.state = Blocked;
+    }
+    pub fn yield_reason(&self) -> Option<YieldReason> {
+        self.yield_reason
+    }
+    pub fn set_yield_reason(&mut self, reason: YieldReason) {
+        self.yield_reason = Some(reason);
     }
     pub fn is_schedulable(&self) -> bool {
         self.state() != Created && self.state() != Terminated
