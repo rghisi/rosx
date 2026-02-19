@@ -1,4 +1,5 @@
 use collections::generational_arena::Handle;
+use crate::cpu::Cpu;
 use crate::kernel::task_wrapper;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::boxed::Box;
@@ -139,6 +140,18 @@ pub struct FunctionTask {}
 impl FunctionTask {
     pub fn new(name: &'static str, job: fn()) -> SharedTask {
         Task::new(next_id(), name, task_wrapper as usize, job as usize)
+    }
+}
+
+pub fn idle_task_factory(cpu: &'static dyn Cpu) -> Box<Task> {
+    let cpu_ptr = Box::into_raw(Box::new(cpu)) as usize;
+    Task::new(next_id(), "[K] Idle", idle_entry as usize, cpu_ptr)
+}
+
+extern "C" fn idle_entry(cpu_ptr: usize) {
+    let cpu: &'static dyn Cpu = unsafe { *(cpu_ptr as *const &'static dyn Cpu) };
+    loop {
+        cpu.halt();
     }
 }
 

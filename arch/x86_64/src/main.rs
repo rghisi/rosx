@@ -5,14 +5,12 @@
 extern crate alloc;
 mod cpu;
 mod debug_console;
-mod idle;
 mod interrupts;
 mod vga_buffer;
 mod ansi_parser;
 
 use crate::cpu::X86_64;
 use crate::debug_console::QemuDebugConsole;
-use crate::idle::idle_task_factory;
 use crate::vga_buffer::VgaOutput;
 use bootloader::BootInfo;
 use core::panic::PanicInfo;
@@ -35,7 +33,6 @@ static CPU: X86_64 = X86_64::new();
 
 static KCONFIG: KConfig = KConfig {
     cpu: &CPU,
-    idle_task_factory,
     scheduler_factory: scheduler::mfq_scheduler,
 };
 

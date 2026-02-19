@@ -68,7 +68,7 @@ impl Kernel {
         #[cfg(not(test))]
         services().memory_manager.setup(self.cpu);
         self.cpu.setup();
-        let idle_task = (self.kconfig.idle_task_factory)();
+        let idle_task = crate::task::idle_task_factory(self.cpu);
         let task_handle = services()
             .task_manager
             .borrow_mut()
