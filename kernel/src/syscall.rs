@@ -1,7 +1,7 @@
 use core::alloc::{GlobalAlloc, Layout};
 
 use crate::future::TimeFuture;
-use crate::kernel::KERNEL;
+use crate::kernel::kernel;
 use crate::kernel_services::services;
 use crate::messages::HardwareInterrupt;
 use crate::task::TaskHandle;
@@ -14,61 +14,47 @@ use system::future::FutureHandle;
 
 #[inline(always)]
 pub fn get_system_time() -> u64 {
-    unsafe { (*KERNEL).get_system_time() }
+    kernel().get_system_time()
 }
 
 #[inline(always)]
 pub fn exec(entrypoint: usize) -> Option<FutureHandle> {
-    unsafe {
-        (*KERNEL).exec(entrypoint).ok()
-    }
+    kernel().exec(entrypoint).ok()
 }
 
 #[inline(always)]
 pub fn wait_future(handle: FutureHandle) {
-    unsafe {
-        (*KERNEL).wait_future(handle);
-    }
+    kernel().wait_future(handle);
 }
 
 #[inline(always)]
 pub fn is_future_completed(handle: FutureHandle) -> bool {
-    unsafe {
-        (*KERNEL).is_future_completed(handle)
-    }
+    kernel().is_future_completed(handle)
 }
 
 #[inline(always)]
 pub fn task_yield() {
-    unsafe {
-        (*KERNEL).task_yield();
-    }
+    kernel().task_yield();
 }
 
 #[inline(always)]
 pub fn preempt() {
-    unsafe {
-        (*KERNEL).preempt();
-    }
+    kernel().preempt();
 }
 
 #[inline(always)]
 pub fn switch_to_task(task_handle: TaskHandle) -> TaskHandle {
-    unsafe { (*KERNEL).switch_to_task(task_handle) }
+    kernel().switch_to_task(task_handle)
 }
 
 #[inline(always)]
 pub fn enqueue_hardware_interrupt(hardware_interrupt: HardwareInterrupt) {
-    unsafe {
-        (*KERNEL).enqueue(hardware_interrupt);
-    }
+    kernel().enqueue(hardware_interrupt);
 }
 
 #[inline(always)]
 pub(crate) fn terminate_current_task() {
-    unsafe {
-        (*KERNEL).terminate_current_task();
-    }
+    kernel().terminate_current_task();
 }
 
 #[cfg(not(test))]

@@ -15,8 +15,13 @@ use core::ptr::null_mut;
 use system::future::FutureHandle;
 #[cfg(not(test))]
 use crate::memory::memory_manager::{MEMORY_MANAGER, MemoryBlocks};
+use crate::kernel_cell::KernelCell;
 
-pub(crate) static mut KERNEL: *mut Kernel = null_mut();
+static KERNEL_PTR: KernelCell<*mut Kernel> = KernelCell::new(null_mut());
+
+pub(crate) fn kernel() -> &'static mut Kernel {
+    unsafe { &mut **KERNEL_PTR.borrow() }
+}
 
 pub struct Kernel {
     kconfig: &'static KConfig,
@@ -59,9 +64,7 @@ impl Kernel {
     }
 
     pub fn setup(&mut self) {
-        unsafe {
-            KERNEL = self;
-        }
+        *KERNEL_PTR.borrow_mut() = self;
         #[cfg(not(test))]
         services().memory_manager.setup(self.cpu);
         self.cpu.setup();
@@ -207,9 +210,7 @@ pub fn bootstrap(
 pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
     let task_fn: fn() = unsafe { core::mem::transmute(entry_point) };
 
-    unsafe {
-        (*KERNEL).execution_state.preemption_enabled = true;
-    }
+    kernel().execution_state.preemption_enabled = true;
 
     task_fn();
 
@@ -218,9 +219,7 @@ pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
 }
 
 extern "C" fn main_thread_run() -> ! {
-    unsafe {
-        (*KERNEL).main_thread.run();
-    }
+    kernel().main_thread.run();
 
     panic!("Kernel main thread returned");
 }
