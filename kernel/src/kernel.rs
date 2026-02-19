@@ -171,15 +171,11 @@ impl Kernel {
     }
 
     pub fn preempt(&mut self) {
-        if self.execution_state.preemption_enabled {
-            self.execution_state.remaining_quantum =
-                self.execution_state.remaining_quantum.saturating_sub(1);
-            if self.execution_state.remaining_quantum == 0 {
-                if let Some(task_handle) = self.execution_state.current_task {
-                    services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
-                }
-                self.execution_state.switch_to_scheduler();
+        if self.execution_state.preemption_enabled && self.execution_state.decrement_remaining_quantum() == 0 {
+            if let Some(task_handle) = self.execution_state.current_task {
+                services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
             }
+            self.execution_state.switch_to_scheduler();
         }
     }
 

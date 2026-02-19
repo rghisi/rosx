@@ -79,4 +79,9 @@ impl ExecutionState {
     pub fn execution_context(&self) -> ExecutionContext {
         self.execution_context
     }
+
+    pub fn decrement_remaining_quantum(&mut self) -> u32 {
+        self.remaining_quantum = self.remaining_quantum.saturating_sub(1);
+        self.remaining_quantum
+    }
 }
