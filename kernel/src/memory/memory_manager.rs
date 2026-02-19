@@ -1,5 +1,5 @@
 use core::alloc::{GlobalAlloc, Layout};
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use buddy_system_allocator::LockedHeap;
 
@@ -28,6 +28,7 @@ pub fn alloc_error_handler(layout: Layout) -> ! {
 pub struct MemoryManager {
     heap: LockedHeap<27>,
     used: AtomicUsize,
+    is_setup: AtomicBool,
     cpu: KernelCell<Option<&'static dyn Cpu>>,
 }
 
@@ -36,11 +37,12 @@ impl MemoryManager {
         MemoryManager {
             heap: LockedHeap::new(),
             used: AtomicUsize::new(0),
+            is_setup: AtomicBool::new(false),
             cpu: KernelCell::new(None),
         }
     }
 
-    pub fn init(&self, memory_blocks: &MemoryBlocks) {
+    pub fn bootstrap(&self, memory_blocks: &MemoryBlocks) {
         for i in 0..memory_blocks.count {
             let block = &memory_blocks.blocks[i];
             unsafe {
@@ -49,8 +51,9 @@ impl MemoryManager {
         }
     }
 
-    pub fn set_cpu(&self, cpu: &'static dyn Cpu) {
+    pub fn setup(&self, cpu: &'static dyn Cpu) {
         *self.cpu.borrow_mut() = Some(cpu);
+        self.is_setup.store(true, Ordering::SeqCst);
     }
 
     pub fn used(&self) -> usize {
@@ -76,29 +79,29 @@ impl MemoryManager {
 
 unsafe impl GlobalAlloc for MemoryManager {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let cpu = *self.cpu.borrow();
-        let interrupts_enabled = cpu.map_or(false, |c| c.are_interrupts_enabled());
+        let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
+            && self.cpu.borrow().unwrap().are_interrupts_enabled();
         if interrupts_enabled {
-            cpu.unwrap().disable_interrupts();
+            self.cpu.borrow().unwrap().disable_interrupts();
         }
         self.used.fetch_add(layout.size(), Ordering::Relaxed);
         let ptr = unsafe { self.heap.alloc(layout) };
         if interrupts_enabled {
-            cpu.unwrap().enable_interrupts();
+            self.cpu.borrow().unwrap().enable_interrupts();
         }
         ptr
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        let cpu = *self.cpu.borrow();
-        let interrupts_enabled = cpu.map_or(false, |c| c.are_interrupts_enabled());
+        let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
+            && self.cpu.borrow().unwrap().are_interrupts_enabled();
         if interrupts_enabled {
-            cpu.unwrap().disable_interrupts();
+            self.cpu.borrow().unwrap().disable_interrupts();
         }
         unsafe { self.heap.dealloc(ptr, layout) };
         self.used.fetch_sub(layout.size(), Ordering::Relaxed);
         if interrupts_enabled {
-            cpu.unwrap().enable_interrupts();
+            self.cpu.borrow().unwrap().enable_interrupts();
         }
     }
 }
@@ -135,7 +138,7 @@ mod tests {
             }),
             count: 1,
         };
-        manager.init(&blocks);
+        manager.bootstrap(&blocks);
         manager
     }
 
@@ -177,10 +180,10 @@ mod tests {
     }
 
     #[test]
-    fn alloc_with_cpu_set_returns_non_null() {
+    fn alloc_with_cpu_setup_returns_non_null() {
         let mut memory = vec![0u8; 1024 * 1024];
         let manager = make_manager(&mut memory);
-        manager.set_cpu(&MOCK_CPU);
+        manager.setup(&MOCK_CPU);
         let layout = Layout::from_size_align(64, 8).unwrap();
         let ptr = unsafe { manager.alloc(layout) };
         assert!(!ptr.is_null());

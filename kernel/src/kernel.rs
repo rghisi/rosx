@@ -63,7 +63,7 @@ impl Kernel {
             KERNEL = self;
         }
         #[cfg(not(test))]
-        services().memory_manager.set_cpu(self.cpu);
+        services().memory_manager.setup(self.cpu);
         self.cpu.setup();
         let idle_task = (self.kconfig.idle_task_factory)();
         let task_handle = services()
@@ -200,7 +200,7 @@ pub fn bootstrap(
 ) {
     setup_default_output(default_output);
     MEMORY_MANAGER.print_config(memory_blocks);
-    MEMORY_MANAGER.init(memory_blocks);
+    MEMORY_MANAGER.bootstrap(memory_blocks);
     kprintln!("[KERNEL] Bootstrapped");
 }
 
