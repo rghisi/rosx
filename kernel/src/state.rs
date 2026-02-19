@@ -13,6 +13,7 @@ pub struct ExecutionState {
     pub(crate) main_thread: TaskHandle,
     pub(crate) current_task: Option<TaskHandle>,
     pub(crate) preemption_enabled: bool,
+    pub(crate) remaining_quantum: u32,
     pub(crate) execution_context: ExecutionContext,
     pub(crate) cpu: &'static dyn Cpu,
 }

@@ -8,7 +8,7 @@ use crate::main_thread::MainThread;
 use crate::messages::HardwareInterrupt;
 use crate::state::{ExecutionContext, ExecutionState};
 use crate::task::TaskState::Terminated;
-use crate::task::{SharedTask, Task, TaskHandle};
+use crate::task::{SharedTask, Task, TaskHandle, YieldReason};
 use alloc::boxed::Box;
 use core::ptr::null_mut;
 use system::future::FutureHandle;
@@ -26,7 +26,7 @@ pub struct Kernel {
     kconfig: &'static KConfig,
     cpu: &'static dyn Cpu,
     main_thread: Box<MainThread>,
-    execution_state: ExecutionState,
+    pub(crate) execution_state: ExecutionState,
 }
 
 impl Kernel {
@@ -56,6 +56,7 @@ impl Kernel {
                 main_thread: main_thread_task_handle,
                 current_task: None,
                 preemption_enabled: false,
+                remaining_quantum: 0,
                 execution_context: ExecutionContext::Kernel,
                 cpu,
             },
@@ -163,12 +164,22 @@ impl Kernel {
     }
 
     pub fn task_yield(&mut self) {
+        if let Some(task_handle) = self.execution_state.current_task {
+            services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Voluntary);
+        }
         self.execution_state.switch_to_scheduler();
     }
 
     pub fn preempt(&mut self) {
         if self.execution_state.preemption_enabled {
-            self.execution_state.switch_to_scheduler();
+            self.execution_state.remaining_quantum =
+                self.execution_state.remaining_quantum.saturating_sub(1);
+            if self.execution_state.remaining_quantum == 0 {
+                if let Some(task_handle) = self.execution_state.current_task {
+                    services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
+                }
+                self.execution_state.switch_to_scheduler();
+            }
         }
     }
 

@@ -1,6 +1,6 @@
 use collections::generational_arena::GenArena;
 use crate::task::TaskState::Terminated;
-use crate::task::{SharedTask, Task, TaskHandle, TaskState, new_entrypoint_task};
+use crate::task::{SharedTask, Task, TaskHandle, TaskState, YieldReason, new_entrypoint_task};
 use core::ptr::null_mut;
 
 pub(crate) struct TaskManager {
@@ -60,6 +60,19 @@ impl TaskManager {
     pub(crate) fn set_state(&mut self, handle: TaskHandle, state: TaskState) {
         if let Ok(task) = self.tasks.borrow_mut(handle) {
             task.set_state(state)
+        }
+    }
+
+    pub(crate) fn set_yield_reason(&mut self, handle: TaskHandle, reason: YieldReason) {
+        if let Ok(task) = self.tasks.borrow_mut(handle) {
+            task.set_yield_reason(reason)
+        }
+    }
+
+    pub(crate) fn get_yield_reason(&self, handle: TaskHandle) -> Option<YieldReason> {
+        match self.tasks.borrow(handle) {
+            Ok(task) => task.yield_reason(),
+            Err(_) => None,
         }
     }
 
