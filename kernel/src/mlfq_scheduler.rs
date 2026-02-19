@@ -8,6 +8,7 @@ use crate::task::YieldReason;
 use system::future::FutureHandle;
 
 const NUM_QUEUES: usize = 3;
+const QUANTA: [u32; NUM_QUEUES] = [2, 5, 10];
 
 pub struct MlfqScheduler {
     queues: [VecDeque<TaskHandle>; NUM_QUEUES],
@@ -103,6 +104,7 @@ impl MlfqScheduler {
         };
 
         services().task_manager.borrow_mut().set_state(next_handle, Running);
+        unsafe { (*crate::kernel::KERNEL).execution_state.remaining_quantum = QUANTA[priority]; }
         let returned_handle = switch_to_task(next_handle);
 
         let task_state = services().task_manager.borrow().get_state(returned_handle);

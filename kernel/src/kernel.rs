@@ -25,7 +25,7 @@ pub struct Kernel {
     kconfig: &'static KConfig,
     cpu: &'static dyn Cpu,
     main_thread: Box<MainThread>,
-    execution_state: ExecutionState,
+    pub(crate) execution_state: ExecutionState,
 }
 
 impl Kernel {
