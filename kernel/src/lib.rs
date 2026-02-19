@@ -27,6 +27,4 @@ pub mod scheduler;
 pub(crate) mod state;
 pub mod syscall;
 pub mod task;
-pub mod task_fifo_queue;
 pub(crate) mod task_manager;
-pub mod task_queue;
