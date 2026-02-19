@@ -11,10 +11,22 @@ pub(crate) struct KernelServices {
 static KERNEL_SERVICES: Once<KernelServices> = Once::new();
 
 pub(crate) fn init() {
+    #[cfg(not(test))]
     KERNEL_SERVICES.call_once(|| KernelServices {
         task_manager: KernelCell::new(TaskManager::new()),
         future_registry: KernelCell::new(FutureRegistry::new()),
     });
+
+    #[cfg(test)]
+    {
+        static TEST_INIT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        TEST_INIT.get_or_init(|| {
+            KERNEL_SERVICES.call_once(|| KernelServices {
+                task_manager: KernelCell::new(TaskManager::new()),
+                future_registry: KernelCell::new(FutureRegistry::new()),
+            });
+        });
+    }
 }
 
 pub(crate) fn services() -> &'static KernelServices {

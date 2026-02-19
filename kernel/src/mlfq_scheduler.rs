@@ -1,199 +1,334 @@
-use crate::task::{SharedTask, YieldReason};
-use crate::task_queue::{EnqueuedTask, StateCreatedNotAccepted, TaskEnqueueingError, TaskQueue};
 use alloc::collections::VecDeque;
-use alloc::vec::Vec;
+use crate::kernel_services::services;
+use crate::messages::HardwareInterrupt;
+use crate::syscall::switch_to_task;
+use crate::task::TaskHandle;
+use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
+use crate::task::YieldReason;
+use system::future::FutureHandle;
 
 const NUM_QUEUES: usize = 3;
 
 pub struct MlfqScheduler {
-    queues: [VecDeque<SharedTask>; NUM_QUEUES],
+    queues: [VecDeque<TaskHandle>; NUM_QUEUES],
+    current_task_priority: usize,
+    blocked_tasks: VecDeque<TaskFuture>,
+    hw_interrupt_queue: VecDeque<HardwareInterrupt>,
+    idle_task: Option<TaskHandle>,
+}
+
+struct TaskFuture {
+    task_handle: TaskHandle,
+    future_handle: FutureHandle,
+}
+
+impl TaskFuture {
+    fn is_completed(&self) -> bool {
+        services()
+            .future_registry
+            .borrow_mut()
+            .get(self.future_handle)
+            .unwrap_or(true)
+    }
 }
 
 impl MlfqScheduler {
     pub fn new() -> Self {
         MlfqScheduler {
             queues: [VecDeque::new(), VecDeque::new(), VecDeque::new()],
+            current_task_priority: 0,
+            blocked_tasks: VecDeque::new(),
+            hw_interrupt_queue: VecDeque::new(),
+            idle_task: None,
         }
     }
-}
 
-impl TaskQueue for MlfqScheduler {
-    fn offer(&mut self, mut task: SharedTask) -> Result<(), &dyn TaskEnqueueingError> {
-        if !task.is_schedulable() {
-            return Err(&StateCreatedNotAccepted);
+    pub(crate) fn run(&mut self) {
+        loop {
+            self.process_hardware_interrupts();
+            self.poll_futures();
+            self.run_next_task();
         }
-        let queue_index = match task.yield_reason() {
+    }
+
+    pub(crate) fn push_task(&mut self, handle: TaskHandle) {
+        match services().task_manager.borrow().get_state(handle) {
+            Ready => self.queues[0].push_back(handle),
+            _ => (),
+        }
+    }
+
+    pub(crate) fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle) {
+        self.blocked_tasks.push_back(TaskFuture { task_handle, future_handle });
+    }
+
+    pub(crate) fn push_hardware_interrupt(&mut self, interrupt: HardwareInterrupt) {
+        self.hw_interrupt_queue.push_back(interrupt);
+    }
+
+    pub(crate) fn set_idle_task(&mut self, handle: TaskHandle) -> Result<(), ()> {
+        if self.idle_task.is_none() {
+            self.idle_task = Some(handle);
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    fn next_priority(current: usize, yield_reason: Option<YieldReason>) -> usize {
+        match yield_reason {
             None => 0,
-            Some(YieldReason::Voluntary) => task.priority(),
-            Some(YieldReason::Preempted) => (task.priority() + 1).min(NUM_QUEUES - 1),
-        };
-        task.set_priority(queue_index);
-        self.queues[queue_index].push_back(task);
-        Ok(())
+            Some(YieldReason::Voluntary) => current,
+            Some(YieldReason::Preempted) => (current + 1).min(NUM_QUEUES - 1),
+        }
     }
 
-    fn take_next(&mut self) -> Option<SharedTask> {
-        for queue in &mut self.queues {
-            if let Some(task) = queue.pop_front() {
-                return Some(task);
+    pub(crate) fn take_next_handle(&mut self) -> Option<(TaskHandle, usize)> {
+        for (priority, queue) in self.queues.iter_mut().enumerate() {
+            if let Some(handle) = queue.pop_front() {
+                return Some((handle, priority));
             }
         }
         None
     }
 
-    fn list_tasks(&self) -> Vec<EnqueuedTask> {
-        self.queues
-            .iter()
-            .flat_map(|q| q.iter().map(|task| EnqueuedTask { id: task.id(), name: task.name() }))
-            .collect()
+    pub(crate) fn requeue_after_run(&mut self, handle: TaskHandle, priority: usize) {
+        let yield_reason = services().task_manager.borrow().get_yield_reason(handle);
+        let new_priority = Self::next_priority(priority, yield_reason);
+        self.queues[new_priority].push_back(handle);
+    }
+
+    fn run_next_task(&mut self) {
+        let (next_handle, priority) = match self.take_next_handle() {
+            Some((handle, priority)) => (handle, priority),
+            None => (self.idle_task.unwrap(), 0),
+        };
+
+        services().task_manager.borrow_mut().set_state(next_handle, Running);
+        let returned_handle = switch_to_task(next_handle);
+
+        let task_state = services().task_manager.borrow().get_state(returned_handle);
+        match task_state {
+            Created | Ready => {}
+            Running => {
+                services().task_manager.borrow_mut().set_state(returned_handle, Ready);
+                if Some(returned_handle) != self.idle_task {
+                    self.requeue_after_run(returned_handle, priority);
+                }
+            }
+            Blocked => {}
+            Terminated => {
+                services().task_manager.borrow_mut().remove_task(returned_handle);
+            }
+        }
+    }
+
+    fn process_hardware_interrupts(&mut self) {
+        while let Some(interrupt) = self.hw_interrupt_queue.pop_front() {
+            match interrupt {
+                HardwareInterrupt::Keyboard { scancode } => {
+                    if scancode & 0x80 == 0 {
+                        if let Ok(key) = crate::keyboard::Key::from_scancode_set1(scancode) {
+                            let event = crate::keyboard::KeyboardEvent::from_key(key);
+                            if let Some(c) = event.char {
+                                crate::keyboard::push_key(c);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn poll_futures(&mut self) {
+        for _ in 0..self.blocked_tasks.len() {
+            if let Some(task_future) = self.blocked_tasks.pop_front() {
+                if task_future.is_completed() {
+                    services()
+                        .future_registry
+                        .borrow_mut()
+                        .remove(task_future.future_handle);
+                    services()
+                        .task_manager
+                        .borrow_mut()
+                        .set_state(task_future.task_handle, Ready);
+                    self.queues[0].push_back(task_future.task_handle);
+                } else {
+                    self.blocked_tasks.push_back(task_future);
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queue_len(&self, priority: usize) -> usize {
+        self.queues[priority].len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn poll_futures_for_test(&mut self) {
+        self.poll_futures();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::MlfqScheduler;
-    use crate::function_task::FunctionTask;
-    use crate::task::YieldReason;
-    use crate::task_queue::TaskQueue;
+    use super::*;
+    use crate::future::TaskCompletionFuture;
+    use crate::kernel_services::{init, services};
+    use crate::task::{Task, TaskState, next_id};
+    use alloc::boxed::Box;
+    use std::sync::Once;
 
-    fn dummy_job() {}
+    static INIT: Once = Once::new();
 
-    #[test]
-    fn new_task_is_placed_in_highest_priority_queue() {
-        let mut scheduler = MlfqScheduler::new();
+    fn setup() {
+        INIT.call_once(|| init());
+    }
 
-        let mut low_task = FunctionTask::new("Low", dummy_job);
-        low_task.set_ready();
-        low_task.set_yield_reason(YieldReason::Preempted);
-        low_task.set_priority(1);
-        let _ = scheduler.offer(low_task);
-
-        let mut new_task = FunctionTask::new("New", dummy_job);
-        new_task.set_ready();
-        let _ = scheduler.offer(new_task);
-
-        let next = scheduler.take_next().unwrap();
-        assert_eq!(next.priority(), 0);
+    fn create_ready_task(name: &'static str) -> TaskHandle {
+        let task = Task::new(next_id(), name, 0x1000, 0);
+        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+        services().task_manager.borrow_mut().set_state(handle, TaskState::Ready);
+        handle
     }
 
     #[test]
-    fn preempted_task_is_demoted_one_level() {
-        let mut scheduler = MlfqScheduler::new();
-
-        let mut task = FunctionTask::new("T", dummy_job);
-        task.set_ready();
-        let _ = scheduler.offer(task);
-
-        let mut task = scheduler.take_next().unwrap();
-        task.set_yield_reason(YieldReason::Preempted);
-        let _ = scheduler.offer(task);
-
-        let task = scheduler.take_next().unwrap();
-        assert_eq!(task.priority(), 1);
+    fn next_priority_with_no_yield_reason_returns_queue_0() {
+        assert_eq!(MlfqScheduler::next_priority(1, None), 0);
+        assert_eq!(MlfqScheduler::next_priority(2, None), 0);
     }
 
     #[test]
-    fn preempted_task_at_lowest_priority_stays_at_lowest() {
-        let mut scheduler = MlfqScheduler::new();
-
-        let mut task = FunctionTask::new("T", dummy_job);
-        task.set_ready();
-        let _ = scheduler.offer(task);
-
-        let mut task = scheduler.take_next().unwrap();
-        task.set_yield_reason(YieldReason::Preempted);
-        let _ = scheduler.offer(task);
-
-        let mut task = scheduler.take_next().unwrap();
-        task.set_yield_reason(YieldReason::Preempted);
-        let _ = scheduler.offer(task);
-
-        let mut task = scheduler.take_next().unwrap();
-        task.set_yield_reason(YieldReason::Preempted);
-        let _ = scheduler.offer(task);
-
-        let task = scheduler.take_next().unwrap();
-        assert_eq!(task.priority(), 2);
+    fn next_priority_with_voluntary_keeps_current_priority() {
+        assert_eq!(MlfqScheduler::next_priority(0, Some(YieldReason::Voluntary)), 0);
+        assert_eq!(MlfqScheduler::next_priority(1, Some(YieldReason::Voluntary)), 1);
+        assert_eq!(MlfqScheduler::next_priority(2, Some(YieldReason::Voluntary)), 2);
     }
 
     #[test]
-    fn voluntary_yield_keeps_task_at_same_priority() {
-        let mut scheduler = MlfqScheduler::new();
-
-        let mut task = FunctionTask::new("T", dummy_job);
-        task.set_ready();
-        let _ = scheduler.offer(task);
-
-        let mut task = scheduler.take_next().unwrap();
-        assert_eq!(task.priority(), 0);
-        task.set_yield_reason(YieldReason::Voluntary);
-        let _ = scheduler.offer(task);
-
-        let task = scheduler.take_next().unwrap();
-        assert_eq!(task.priority(), 0);
+    fn next_priority_with_preempted_demotes_one_level() {
+        assert_eq!(MlfqScheduler::next_priority(0, Some(YieldReason::Preempted)), 1);
+        assert_eq!(MlfqScheduler::next_priority(1, Some(YieldReason::Preempted)), 2);
     }
 
     #[test]
-    fn higher_priority_task_runs_before_lower_priority() {
-        let mut scheduler = MlfqScheduler::new();
-
-        let mut task1 = FunctionTask::new("T1", dummy_job);
-        task1.set_ready();
-        let task1_id = task1.id();
-        let _ = scheduler.offer(task1);
-
-        let mut task1 = scheduler.take_next().unwrap();
-        task1.set_yield_reason(YieldReason::Preempted);
-        let _ = scheduler.offer(task1);
-
-        let mut task2 = FunctionTask::new("T2", dummy_job);
-        task2.set_ready();
-        let task2_id = task2.id();
-        let _ = scheduler.offer(task2);
-
-        let next = scheduler.take_next().unwrap();
-        assert_eq!(next.id(), task2_id);
-
-        let next = scheduler.take_next().unwrap();
-        assert_eq!(next.id(), task1_id);
+    fn next_priority_with_preempted_at_lowest_stays_at_lowest() {
+        assert_eq!(MlfqScheduler::next_priority(2, Some(YieldReason::Preempted)), 2);
     }
 
     #[test]
-    fn task_with_cleared_yield_reason_is_boosted_to_highest_priority() {
+    fn push_task_places_task_in_queue_0() {
+        setup();
         let mut scheduler = MlfqScheduler::new();
+        let h = create_ready_task("T");
 
-        let mut task = FunctionTask::new("T", dummy_job);
-        task.set_ready();
-        let _ = scheduler.offer(task);
+        scheduler.push_task(h);
 
-        let mut task = scheduler.take_next().unwrap();
-        task.set_yield_reason(YieldReason::Preempted);
-        let _ = scheduler.offer(task);
-
-        let mut task = scheduler.take_next().unwrap();
-        assert_eq!(task.priority(), 1);
-        task.clear_yield_reason();
-        let _ = scheduler.offer(task);
-
-        let task = scheduler.take_next().unwrap();
-        assert_eq!(task.priority(), 0);
+        assert_eq!(scheduler.queue_len(0), 1);
+        assert_eq!(scheduler.queue_len(1), 0);
+        assert_eq!(scheduler.queue_len(2), 0);
     }
 
     #[test]
-    fn returns_none_when_all_queues_are_empty() {
+    fn take_next_handle_returns_from_highest_non_empty_queue() {
+        setup();
         let mut scheduler = MlfqScheduler::new();
-        assert!(scheduler.take_next().is_none());
+        let h_high = create_ready_task("High");
+        let h_low = create_ready_task("Low");
+
+        scheduler.push_task(h_high);
+        let (taken, priority) = scheduler.take_next_handle().unwrap();
+        services().task_manager.borrow_mut().set_yield_reason(taken, YieldReason::Preempted);
+        scheduler.requeue_after_run(taken, priority);
+
+        scheduler.push_task(h_low);
+
+        let (next, next_priority) = scheduler.take_next_handle().unwrap();
+        assert_eq!(next, h_low);
+        assert_eq!(next_priority, 0);
     }
 
     #[test]
-    fn created_or_terminated_task_is_rejected() {
+    fn requeue_after_voluntary_yield_keeps_same_priority() {
+        setup();
+        let mut scheduler = MlfqScheduler::new();
+        let h = create_ready_task("T");
+        scheduler.push_task(h);
+
+        let (taken, priority) = scheduler.take_next_handle().unwrap();
+        services().task_manager.borrow_mut().set_yield_reason(taken, YieldReason::Voluntary);
+        scheduler.requeue_after_run(taken, priority);
+
+        assert_eq!(scheduler.queue_len(0), 1);
+        assert_eq!(scheduler.queue_len(1), 0);
+    }
+
+    #[test]
+    fn requeue_after_preemption_demotes_to_next_level() {
+        setup();
+        let mut scheduler = MlfqScheduler::new();
+        let h = create_ready_task("T");
+        scheduler.push_task(h);
+
+        let (taken, priority) = scheduler.take_next_handle().unwrap();
+        services().task_manager.borrow_mut().set_yield_reason(taken, YieldReason::Preempted);
+        scheduler.requeue_after_run(taken, priority);
+
+        assert_eq!(scheduler.queue_len(0), 0);
+        assert_eq!(scheduler.queue_len(1), 1);
+        assert_eq!(scheduler.queue_len(2), 0);
+    }
+
+    #[test]
+    fn requeue_at_lowest_priority_stays_at_lowest_when_preempted() {
+        setup();
+        let mut scheduler = MlfqScheduler::new();
+        let h = create_ready_task("T");
+        scheduler.push_task(h);
+
+        let (taken, p) = scheduler.take_next_handle().unwrap();
+        services().task_manager.borrow_mut().set_yield_reason(taken, YieldReason::Preempted);
+        scheduler.requeue_after_run(taken, p);
+
+        let (taken, p) = scheduler.take_next_handle().unwrap();
+        services().task_manager.borrow_mut().set_yield_reason(taken, YieldReason::Preempted);
+        scheduler.requeue_after_run(taken, p);
+
+        let (taken, p) = scheduler.take_next_handle().unwrap();
+        assert_eq!(p, 2);
+        services().task_manager.borrow_mut().set_yield_reason(taken, YieldReason::Preempted);
+        scheduler.requeue_after_run(taken, p);
+
+        assert_eq!(scheduler.queue_len(2), 1);
+        assert_eq!(scheduler.queue_len(0), 0);
+        assert_eq!(scheduler.queue_len(1), 0);
+    }
+
+    #[test]
+    fn poll_futures_places_unblocked_task_in_queue_0() {
+        setup();
         let mut scheduler = MlfqScheduler::new();
 
-        let created_task = FunctionTask::new("Created", dummy_job);
-        assert!(scheduler.offer(created_task).is_err());
+        let waited_on = create_ready_task("WaitedOn");
+        let future = Box::new(TaskCompletionFuture::new(waited_on));
+        let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
 
-        let mut terminated_task = FunctionTask::new("Terminated", dummy_job);
-        terminated_task.set_terminated();
-        assert!(scheduler.offer(terminated_task).is_err());
+        let waiting_task = create_ready_task("Waiting");
+        scheduler.push_blocked(waiting_task, future_handle);
+
+        services().task_manager.borrow_mut().set_state(waited_on, TaskState::Terminated);
+
+        scheduler.poll_futures_for_test();
+
+        assert_eq!(scheduler.queue_len(0), 1);
+        assert_eq!(scheduler.queue_len(1), 0);
+        assert_eq!(scheduler.queue_len(2), 0);
+    }
+
+    #[test]
+    fn take_next_returns_none_when_all_queues_empty() {
+        let mut scheduler = MlfqScheduler::new();
+        assert!(scheduler.take_next_handle().is_none());
     }
 }

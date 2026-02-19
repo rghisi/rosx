@@ -49,7 +49,6 @@ pub struct Task {
     name: &'static str,
     state: TaskState,
     yield_reason: Option<YieldReason>,
-    priority: usize,
     stack_pointer: usize,
     entry_point: usize,
     entry_param: usize,
@@ -68,7 +67,6 @@ impl Task {
             name,
             state: Created,
             yield_reason: None,
-            priority: 0,
             stack_pointer: 0,
             entry_point,
             entry_param,
@@ -122,15 +120,6 @@ impl Task {
     }
     pub fn set_yield_reason(&mut self, reason: YieldReason) {
         self.yield_reason = Some(reason);
-    }
-    pub fn clear_yield_reason(&mut self) {
-        self.yield_reason = None;
-    }
-    pub fn priority(&self) -> usize {
-        self.priority
-    }
-    pub fn set_priority(&mut self, priority: usize) {
-        self.priority = priority;
     }
     pub fn is_schedulable(&self) -> bool {
         self.state() != Created && self.state() != Terminated

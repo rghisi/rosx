@@ -69,6 +69,13 @@ impl TaskManager {
         }
     }
 
+    pub(crate) fn get_yield_reason(&self, handle: TaskHandle) -> Option<YieldReason> {
+        match self.tasks.borrow(handle) {
+            Ok(task) => task.yield_reason(),
+            Err(_) => None,
+        }
+    }
+
     pub(crate) fn get_task_stack_pointer(&self, handle: TaskHandle) -> usize {
         match self.tasks.borrow(handle) {
             Ok(task) => task.stack_pointer(),
