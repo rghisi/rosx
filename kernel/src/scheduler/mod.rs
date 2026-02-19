@@ -1,9 +1,9 @@
-pub mod main_thread;
+pub mod fifo_scheduler;
 pub mod mlfq_scheduler;
 use alloc::boxed::Box;
 use system::future::FutureHandle;
 use crate::messages::HardwareInterrupt;
-use crate::scheduler::main_thread::MainThread;
+use crate::scheduler::fifo_scheduler::FifoScheduler;
 use crate::scheduler::mlfq_scheduler::MlfqScheduler;
 use crate::task::TaskHandle;
 
@@ -22,5 +22,5 @@ pub fn mfq_scheduler() -> Box<dyn Scheduler> {
 }
 
 pub fn fifo_scheduler() -> Box<dyn Scheduler> {
-    Box::new(MainThread::new())
+    Box::new(FifoScheduler::new())
 }

@@ -8,22 +8,22 @@ use system::future::FutureHandle;
 use crate::future::TaskFuture;
 use crate::kernel::kernel;
 
-pub struct MainThread {
+pub struct FifoScheduler {
     idle_task: Option<TaskHandle>,
     user_tasks: VecDeque<TaskHandle>,
     blocked_tasks: VecDeque<TaskFuture>,
     hw_interrupt_queue: VecDeque<HardwareInterrupt>,
 }
 
-impl Default for MainThread {
+impl Default for FifoScheduler {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl MainThread {
+impl FifoScheduler {
     pub fn new() -> Self {
-        MainThread {
+        FifoScheduler {
             idle_task: None,
             user_tasks: VecDeque::with_capacity(5),
             blocked_tasks: VecDeque::with_capacity(5),
@@ -138,24 +138,24 @@ impl MainThread {
     }
 }
 
-impl Scheduler for MainThread {
+impl Scheduler for FifoScheduler {
     fn run(&mut self) {
-        MainThread::run(self);
+        FifoScheduler::run(self);
     }
 
     fn push_task(&mut self, handle: TaskHandle) {
-        MainThread::push_task(self, handle);
+        FifoScheduler::push_task(self, handle);
     }
 
     fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle) {
-        MainThread::push_blocked(self, task_handle, future_handle);
+        FifoScheduler::push_blocked(self, task_handle, future_handle);
     }
 
     fn push_hardware_interrupt(&mut self, interrupt: HardwareInterrupt) {
-        MainThread::push_hardware_interrupt(self, interrupt);
+        FifoScheduler::push_hardware_interrupt(self, interrupt);
     }
 
     fn set_idle_task(&mut self, handle: TaskHandle) -> Result<(), ()> {
-        MainThread::set_idle_task(self, handle)
+        FifoScheduler::set_idle_task(self, handle)
     }
 }
