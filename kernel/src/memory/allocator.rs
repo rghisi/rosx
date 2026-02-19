@@ -6,6 +6,8 @@ use buddy_system_allocator::LockedHeap;
 use crate::cpu::Cpu;
 use crate::kernel_cell::KernelCell;
 
+#[cfg_attr(not(test), global_allocator)]
+pub static MEMORY_MANAGER: MemoryManager = MemoryManager::new();
 pub const MAX_MEMORY_BLOCKS: usize = 32;
 
 pub struct MemoryBlock {
@@ -71,9 +73,6 @@ impl MemoryManager {
         crate::kprintln!("[MEMORY] Total: {} MB", total_size / (1024 * 1024));
     }
 }
-
-#[cfg_attr(not(test), global_allocator)]
-pub static MEMORY_MANAGER: MemoryManager = MemoryManager::new();
 
 unsafe impl GlobalAlloc for MemoryManager {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
