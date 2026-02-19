@@ -11,7 +11,7 @@ use crate::messages::HardwareInterrupt;
 use crate::state::{ExecutionContext, ExecutionState};
 use crate::syscall::{task_yield, terminate_current_task};
 use crate::task::TaskState::Terminated;
-use crate::task::{SharedTask, Task, TaskHandle};
+use crate::task::{SharedTask, Task, TaskHandle, YieldReason};
 use alloc::boxed::Box;
 use core::alloc::GlobalAlloc;
 use core::ptr::null_mut;
@@ -162,11 +162,17 @@ impl Kernel {
     }
 
     pub fn task_yield(&mut self) {
+        if let Some(task_handle) = self.execution_state.current_task {
+            services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Voluntary);
+        }
         self.execution_state.switch_to_scheduler();
     }
 
     pub fn preempt(&mut self) {
         if self.execution_state.preemption_enabled {
+            if let Some(task_handle) = self.execution_state.current_task {
+                services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
+            }
             self.execution_state.switch_to_scheduler();
         }
     }
