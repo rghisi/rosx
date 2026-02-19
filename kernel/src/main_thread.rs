@@ -1,10 +1,11 @@
 use crate::kernel_services::services;
 use crate::messages::HardwareInterrupt;
-use crate::syscall::switch_to_task;
 use crate::task::TaskHandle;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::collections::VecDeque;
 use system::future::FutureHandle;
+use crate::future::TaskFuture;
+use crate::kernel::kernel;
 
 pub struct MainThread {
     idle_task: Option<TaskHandle>,
@@ -28,69 +29,12 @@ impl MainThread {
             hw_interrupt_queue: VecDeque::with_capacity(5),
         }
     }
-}
 
-impl MainThread {
     pub(crate) fn run(&mut self) {
         loop {
             self.process_hardware_interrupts();
             self.pool_futures();
             self.run_user_process();
-        }
-    }
-
-    fn process_hardware_interrupts(&mut self) {
-        while let Some(hardware_interrupt) = self.hw_interrupt_queue.pop_front() {
-            match hardware_interrupt {
-                HardwareInterrupt::Keyboard { scancode } => {
-                    // Ignore break codes (key release) in PS/2 Set 1
-                    if scancode & 0x80 == 0 {
-                        if let Ok(key) = crate::keyboard::Key::from_scancode_set1(scancode) {
-                            let event = crate::keyboard::KeyboardEvent::from_key(key);
-                            if let Some(c) = event.char {
-                                crate::keyboard::push_key(c);
-                            }
-                        }
-                    }
-                }
-            };
-        }
-    }
-
-    fn run_user_process(&mut self) {
-        let next_task_option = self.user_tasks.pop_front();
-        let next_task_handle = match next_task_option {
-            None => self.idle_task.unwrap(),
-            Some(next_task) => next_task,
-        };
-
-        services().task_manager
-            .borrow_mut()
-            .set_state(next_task_handle, Running);
-
-        let returned_task_handle = switch_to_task(next_task_handle);
-
-        let task_state = services().task_manager.borrow().get_state(returned_task_handle);
-
-        match task_state {
-            Created => {}
-            Ready => {}
-            Running => {
-                services().task_manager
-                    .borrow_mut()
-                    .set_state(returned_task_handle, Ready);
-                if returned_task_handle != self.idle_task.unwrap() {
-                    self.user_tasks.push_back(returned_task_handle);
-                } else {
-                    self.idle_task = Some(returned_task_handle);
-                }
-            }
-            Blocked => {}
-            Terminated => {
-                services().task_manager
-                    .borrow_mut()
-                    .remove_task(returned_task_handle);
-            }
         }
     }
 
@@ -123,6 +67,61 @@ impl MainThread {
         }
     }
 
+    fn process_hardware_interrupts(&mut self) {
+        while let Some(hardware_interrupt) = self.hw_interrupt_queue.pop_front() {
+            match hardware_interrupt {
+                HardwareInterrupt::Keyboard { scancode } => {
+                    // Ignore break codes (key release) in PS/2 Set 1
+                    if scancode & 0x80 == 0 {
+                        if let Ok(key) = crate::keyboard::Key::from_scancode_set1(scancode) {
+                            let event = crate::keyboard::KeyboardEvent::from_key(key);
+                            if let Some(c) = event.char {
+                                crate::keyboard::push_key(c);
+                            }
+                        }
+                    }
+                }
+            };
+        }
+    }
+
+    fn run_user_process(&mut self) {
+        let next_task_option = self.user_tasks.pop_front();
+        let next_task_handle = match next_task_option {
+            None => self.idle_task.unwrap(),
+            Some(next_task) => next_task,
+        };
+
+        services().task_manager
+            .borrow_mut()
+            .set_state(next_task_handle, Running);
+
+        let returned_task_handle = kernel().switch_to_task(next_task_handle);
+
+        let task_state = services().task_manager.borrow().get_state(returned_task_handle);
+
+        match task_state {
+            Created => {}
+            Ready => {}
+            Running => {
+                services().task_manager
+                    .borrow_mut()
+                    .set_state(returned_task_handle, Ready);
+                if returned_task_handle != self.idle_task.unwrap() {
+                    self.user_tasks.push_back(returned_task_handle);
+                } else {
+                    self.idle_task = Some(returned_task_handle);
+                }
+            }
+            Blocked => {}
+            Terminated => {
+                services().task_manager
+                    .borrow_mut()
+                    .remove_task(returned_task_handle);
+            }
+        }
+    }
+
     fn pool_futures(&mut self) {
         for _ in 0..self.blocked_tasks.len() {
             if let Some(task_future) = self.blocked_tasks.pop_front() {
@@ -140,13 +139,3 @@ impl MainThread {
     }
 }
 
-struct TaskFuture {
-    task_handle: TaskHandle,
-    future_handle: FutureHandle,
-}
-
-impl TaskFuture {
-    fn is_completed(&self) -> bool {
-        services().future_registry.borrow_mut().get(self.future_handle).unwrap_or(true)
-    }
-}

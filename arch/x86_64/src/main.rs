@@ -16,7 +16,7 @@ use crate::idle::idle_task_factory;
 use crate::vga_buffer::VgaOutput;
 use bootloader::BootInfo;
 use core::panic::PanicInfo;
-use kernel::memory::allocator::{MEMORY_ALLOCATOR, MemoryBlock, MemoryBlocks, MAX_MEMORY_BLOCKS};
+use kernel::memory::memory_manager::{MemoryBlock, MemoryBlocks};
 use kernel::default_output::MultiplexOutput;
 use kernel::function_task::FunctionTask;
 use kernel::kconfig::KConfig;
@@ -46,7 +46,7 @@ fn panic(info: &PanicInfo) -> ! {
 pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     let memory_blocks = build_memory_blocks(boot_info);
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
-    kprintln!("[KERNEL] Initializing - {}", MEMORY_ALLOCATOR.used());
+    kprintln!("[KERNEL] Initializing");
     let mut kernel = Kernel::new(&KCONFIG);
     kernel.setup();
     // kernel.schedule(FunctionTask::new("1", dummy::app::main));
@@ -61,8 +61,7 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     let elf_task = kernel::elf::load_elf(HELLO_ELF).expect("Failed to load ELF");
     kernel.schedule(elf_task);
 
-    let used = MEMORY_ALLOCATOR.used();
-    kprintln!("[KERNEL] Starting - {}", used);
+    kprintln!("[KERNEL] Starting");
     kernel.start();
     panic!("[KERNEL] Crashed spectacularly, should never reached here.");
 }
@@ -89,10 +88,9 @@ fn build_memory_blocks(boot_info: &BootInfo) -> MemoryBlocks {
         if let bootloader::bootinfo::MemoryRegionType::Usable = region.region_type {
             let size = (region.range.end_addr() - region.range.start_addr()) as usize;
             let start = (region.range.start_addr() + boot_info.physical_memory_offset) as usize;
-            if memory_blocks.count < MAX_MEMORY_BLOCKS {
-                memory_blocks.blocks[memory_blocks.count] = MemoryBlock { start, size };
-                memory_blocks.count += 1;
-            }
+            memory_blocks.blocks[memory_blocks.count] = MemoryBlock { start, size };
+            memory_blocks.count += 1;
+
         }
     }
 

@@ -8,6 +8,7 @@ use spin::Mutex;
 use usrlib::println;
 use x86_64::instructions::port::Port;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
+use kernel::kernel::kernel;
 
 const PIC_1_OFFSET: u8 = 0x20;
 const PIC_2_OFFSET: u8 = 0x28;
@@ -112,7 +113,7 @@ extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFr
             .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
     }
 
-    kernel::syscall::preempt();
+    kernel().preempt();
 }
 
 const KEYBOARD_PORT: u16 = 0x60;
@@ -126,7 +127,7 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
     };
 
     let keyboard_interrupt = HardwareInterrupt::Keyboard { scancode };
-    kernel::syscall::enqueue_hardware_interrupt(keyboard_interrupt);
+    kernel().enqueue(keyboard_interrupt);
 }
 
 extern "x86-interrupt" fn syscall_handler(_stack_frame: InterruptStackFrame) {
