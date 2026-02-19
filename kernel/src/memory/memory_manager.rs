@@ -10,11 +10,13 @@ use crate::kernel_cell::KernelCell;
 pub(crate) static MEMORY_MANAGER: MemoryManager = MemoryManager::new();
 const MAX_MEMORY_BLOCKS: usize = 32;
 
+#[derive(Copy, Clone)]
 pub struct MemoryBlock {
     pub start: usize,
     pub size: usize,
 }
 
+#[derive(Copy, Clone)]
 pub struct MemoryBlocks {
     pub blocks: [MemoryBlock; MAX_MEMORY_BLOCKS],
     pub count: usize,
@@ -30,6 +32,7 @@ pub struct MemoryManager {
     used: AtomicUsize,
     is_setup: AtomicBool,
     cpu: KernelCell<Option<&'static dyn Cpu>>,
+    memory_blocks: KernelCell<Option<MemoryBlocks>>,
 }
 
 impl MemoryManager {
@@ -39,10 +42,12 @@ impl MemoryManager {
             used: AtomicUsize::new(0),
             is_setup: AtomicBool::new(false),
             cpu: KernelCell::new(None),
+            memory_blocks: KernelCell::new(None),
         }
     }
 
     pub fn bootstrap(&self, memory_blocks: &MemoryBlocks) {
+        *self.memory_blocks.borrow_mut() = Some(*memory_blocks);
         for i in 0..memory_blocks.count {
             let block = &memory_blocks.blocks[i];
             unsafe {
@@ -60,7 +65,9 @@ impl MemoryManager {
         self.used.load(Ordering::Relaxed)
     }
 
-    pub fn print_config(&self, memory_blocks: &MemoryBlocks) {
+    pub fn print_config(&self) {
+        let memory_blocks = self.memory_blocks.borrow();
+        let memory_blocks = memory_blocks.as_ref().expect("MemoryManager not bootstrapped");
         let mut total_size: usize = 0;
         for i in 0..memory_blocks.count {
             let block = &memory_blocks.blocks[i];

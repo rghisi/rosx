@@ -199,8 +199,8 @@ pub fn bootstrap(
     default_output: &'static dyn KernelOutput,
 ) {
     setup_default_output(default_output);
-    MEMORY_MANAGER.print_config(memory_blocks);
     MEMORY_MANAGER.bootstrap(memory_blocks);
+    MEMORY_MANAGER.print_config();
     kprintln!("[KERNEL] Bootstrapped");
 }
 
