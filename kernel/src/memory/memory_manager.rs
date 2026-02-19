@@ -129,6 +129,7 @@ mod tests {
         fn initialize_stack(&self, _: usize, _: usize, _: usize, _: usize) -> usize { 0 }
         fn swap_context(&self, _: *mut usize, _: usize) {}
         fn get_system_time(&self) -> u64 { 0 }
+        fn halt(&self) {}
     }
 
     static MOCK_CPU: MockCpu = MockCpu;

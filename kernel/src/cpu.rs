@@ -15,6 +15,8 @@ pub trait Cpu {
     fn swap_context(&self, stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize);
     fn get_system_time(&self) -> u64;
 
+    fn halt(&self);
+
     fn initialize_task(&self, task: &mut Task) {
         let new_stack_pointer = self.initialize_stack(
             task.stack_pointer(),

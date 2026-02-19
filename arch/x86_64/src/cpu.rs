@@ -121,6 +121,12 @@ impl Cpu for X86_64 {
     fn get_system_time(&self) -> u64 {
         SYSTEM_TIME_MS.load(Relaxed)
     }
+
+    fn halt(&self) {
+        unsafe {
+            asm!("hlt");
+        }
+    }
 }
 
 core::arch::global_asm!(include_str!("context_switching.S"));
