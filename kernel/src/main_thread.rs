@@ -28,12 +28,41 @@ impl MainThread {
             hw_interrupt_queue: VecDeque::with_capacity(5),
         }
     }
-    
+
     pub(crate) fn run(&mut self) {
         loop {
             self.process_hardware_interrupts();
             self.pool_futures();
             self.run_user_process();
+        }
+    }
+
+    pub(crate) fn push_task(&mut self, task_handle: TaskHandle) {
+        match services().task_manager.borrow().get_state(task_handle) {
+            Ready => self.user_tasks.push_back(task_handle),
+            // Blocked => self.blocked_tasks.push(task),
+            _ => (),
+        }
+    }
+
+    pub(crate) fn push_hardware_interrupt(&mut self, hardware_interrupt: HardwareInterrupt) {
+        self.hw_interrupt_queue.push_back(hardware_interrupt);
+    }
+
+    pub(crate) fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle) {
+        let task_future = TaskFuture {
+            task_handle,
+            future_handle,
+        };
+        self.blocked_tasks.push_back(task_future);
+    }
+
+    pub(crate) fn set_idle_task(&mut self, idle_task_handle: TaskHandle) -> Result<(), ()> {
+        if self.idle_task.is_none() {
+            self.idle_task = Some(idle_task_handle);
+            Ok(())
+        } else {
+            Err(())
         }
     }
 
@@ -54,7 +83,7 @@ impl MainThread {
             };
         }
     }
-
+    
     fn run_user_process(&mut self) {
         let next_task_option = self.user_tasks.pop_front();
         let next_task_handle = match next_task_option {
@@ -89,35 +118,6 @@ impl MainThread {
                     .borrow_mut()
                     .remove_task(returned_task_handle);
             }
-        }
-    }
-
-    pub(crate) fn push_task(&mut self, task_handle: TaskHandle) {
-        match services().task_manager.borrow().get_state(task_handle) {
-            Ready => self.user_tasks.push_back(task_handle),
-            // Blocked => self.blocked_tasks.push(task),
-            _ => (),
-        }
-    }
-
-    pub(crate) fn push_hardware_interrupt(&mut self, hardware_interrupt: HardwareInterrupt) {
-        self.hw_interrupt_queue.push_back(hardware_interrupt);
-    }
-
-    pub(crate) fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle) {
-        let task_future = TaskFuture {
-            task_handle,
-            future_handle,
-        };
-        self.blocked_tasks.push_back(task_future);
-    }
-
-    pub(crate) fn set_idle_task(&mut self, idle_task_handle: TaskHandle) -> Result<(), ()> {
-        if self.idle_task.is_none() {
-            self.idle_task = Some(idle_task_handle);
-            Ok(())
-        } else {
-            Err(())
         }
     }
 
