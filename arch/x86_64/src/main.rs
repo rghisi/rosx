@@ -21,7 +21,6 @@ use kernel::kernel::Kernel;
 use kernel::scheduler;
 use kernel::kprintln;
 use kernel::panic::handle_panic;
-use kernel::task::FunctionTask;
 
 static VGA_OUTPUT: VgaOutput = VgaOutput;
 pub static QEMU_OUTPUT: QemuDebugConsole = QemuDebugConsole;
@@ -54,11 +53,15 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     // kernel.schedule(FunctionTask::new("4", dummy::app::main4));
     // kernel.schedule(FunctionTask::new("5", shell::shell::main));
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
-    kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));
+    // kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));
 
-    static HELLO_ELF: &[u8] = include_bytes!("../../../apps/hello_elf/target/rosx-user/release/hello_elf");
-    let elf_task = kernel::elf::load_elf(HELLO_ELF).expect("Failed to load ELF");
-    kernel.schedule(elf_task);
+    // static HELLO_ELF: &[u8] = include_bytes!("../../../apps/hello_elf/target/rosx-user/release/hello_elf");
+    // let elf_task = kernel::elf::load_elf(HELLO_ELF).expect("Failed to load ELF");
+    // kernel.schedule(elf_task);
+
+    static SNAKE_ELF: &[u8] = include_bytes!("../../../apps/snake/target/rosx-user/release/snake");
+    let snake_task = kernel::elf::load_elf(SNAKE_ELF).expect("Failed to load snake ELF");
+    kernel.schedule(snake_task);
 
     kprintln!("[KERNEL] Starting");
     kernel.start();

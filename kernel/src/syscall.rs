@@ -65,6 +65,9 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
             unsafe { services().memory_manager.dealloc(arg1 as *mut u8, layout) };
             0
         }
+        Ok(SyscallNum::TryReadChar) => {
+            crate::keyboard::pop_key().map_or(0, |c| c as usize)
+        }
         Err(_) => 0,
     }
 }

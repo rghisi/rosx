@@ -43,6 +43,15 @@ impl Syscall {
         core::char::from_u32(c as u32).unwrap_or('\0')
     }
 
+    pub fn try_read_char() -> Option<char> {
+        let c = arch::raw_syscall(SyscallNum::TryReadChar as u64, 0, 0, 0);
+        if c == 0 {
+            None
+        } else {
+            core::char::from_u32(c as u32)
+        }
+    }
+
     pub fn alloc(size: usize, align: usize) -> *mut u8 {
         arch::raw_syscall(SyscallNum::Alloc as u64, size as u64, align as u64, 0) as *mut u8
     }

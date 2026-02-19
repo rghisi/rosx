@@ -4,6 +4,7 @@ target = "rosx.json"
 [unstable]
 build-std-features = ["compiler-builtins-mem"]
 build-std = ["core", "alloc", "compiler_builtins"]
+json-target-spec = true
 
 [target.'cfg(target_os = "none")']
 runner = "bootimage runner"

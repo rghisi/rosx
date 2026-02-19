@@ -10,6 +10,7 @@ pub enum SyscallNum {
     IsFutureCompleted = 6,
     Alloc = 7,
     Dealloc = 8,
+    TryReadChar = 9,
 }
 
 impl TryFrom<u64> for SyscallNum {
@@ -26,6 +27,7 @@ impl TryFrom<u64> for SyscallNum {
             6 => Ok(Self::IsFutureCompleted),
             7 => Ok(Self::Alloc),
             8 => Ok(Self::Dealloc),
+            9 => Ok(Self::TryReadChar),
             _ => Err(()),
         }
     }
