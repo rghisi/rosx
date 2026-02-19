@@ -11,7 +11,6 @@ const NUM_QUEUES: usize = 3;
 
 pub struct MlfqScheduler {
     queues: [VecDeque<TaskHandle>; NUM_QUEUES],
-    current_task_priority: usize,
     blocked_tasks: VecDeque<TaskFuture>,
     hw_interrupt_queue: VecDeque<HardwareInterrupt>,
     idle_task: Option<TaskHandle>,
@@ -36,7 +35,6 @@ impl MlfqScheduler {
     pub fn new() -> Self {
         MlfqScheduler {
             queues: [VecDeque::new(), VecDeque::new(), VecDeque::new()],
-            current_task_priority: 0,
             blocked_tasks: VecDeque::new(),
             hw_interrupt_queue: VecDeque::new(),
             idle_task: None,
