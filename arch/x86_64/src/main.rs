@@ -18,12 +18,12 @@ use bootloader::BootInfo;
 use core::panic::PanicInfo;
 use kernel::memory::memory_manager::{MemoryBlock, MemoryBlocks};
 use kernel::default_output::MultiplexOutput;
-use kernel::function_task::FunctionTask;
 use kernel::kconfig::KConfig;
 use kernel::kernel::Kernel;
 use kernel::scheduler;
 use kernel::kprintln;
 use kernel::panic::handle_panic;
+use kernel::task::FunctionTask;
 
 static VGA_OUTPUT: VgaOutput = VgaOutput;
 pub static QEMU_OUTPUT: QemuDebugConsole = QemuDebugConsole;

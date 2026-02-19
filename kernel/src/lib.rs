@@ -11,7 +11,6 @@ pub(crate) mod context_switcher;
 pub mod cpu;
 pub mod default_output;
 pub mod elf;
-pub mod function_task;
 pub mod future;
 pub mod kconfig;
 pub mod kernel;
