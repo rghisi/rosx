@@ -7,7 +7,7 @@ use crate::cpu::Cpu;
 use crate::kernel_cell::KernelCell;
 
 #[cfg_attr(not(test), global_allocator)]
-pub static MEMORY_MANAGER: MemoryManager = MemoryManager::new();
+pub(crate) static MEMORY_MANAGER: MemoryManager = MemoryManager::new();
 const MAX_MEMORY_BLOCKS: usize = 32;
 
 pub struct MemoryBlock {

@@ -63,7 +63,7 @@ impl Kernel {
             KERNEL = self;
         }
         #[cfg(not(test))]
-        MEMORY_MANAGER.set_cpu(self.cpu);
+        services().memory_manager.set_cpu(self.cpu);
         self.cpu.setup();
         let idle_task = (self.kconfig.idle_task_factory)();
         let task_handle = services()

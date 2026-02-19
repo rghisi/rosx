@@ -3,8 +3,6 @@ use core::alloc::{GlobalAlloc, Layout};
 use crate::future::TimeFuture;
 use crate::kernel::KERNEL;
 use crate::kernel_services::services;
-#[cfg(not(test))]
-use crate::memory::memory_manager::MEMORY_MANAGER;
 use crate::messages::HardwareInterrupt;
 use crate::task::TaskHandle;
 use alloc::boxed::Box;
@@ -126,7 +124,7 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
         let size = arg1 as usize;
         let align = arg2 as usize;
         if let Ok(layout) = Layout::from_size_align(size, align) {
-            return unsafe { MEMORY_MANAGER.alloc(layout) } as usize;
+            return unsafe { services().memory_manager.alloc(layout) } as usize;
         }
         return 0;
     } else if num == SyscallNum::Dealloc as u64 {
@@ -134,7 +132,7 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
         let size = arg2 as usize;
         let align = _arg3 as usize;
         if let Ok(layout) = Layout::from_size_align(size, align) {
-            unsafe { MEMORY_MANAGER.dealloc(ptr, layout) };
+            unsafe { services().memory_manager.dealloc(ptr, layout) };
         }
     }
     0
