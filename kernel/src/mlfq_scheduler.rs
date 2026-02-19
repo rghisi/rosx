@@ -1,6 +1,7 @@
 use alloc::collections::VecDeque;
 use crate::kernel_services::services;
 use crate::messages::HardwareInterrupt;
+use crate::scheduler::Scheduler;
 use crate::task::TaskHandle;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use crate::task::YieldReason;
@@ -68,7 +69,7 @@ impl MlfqScheduler {
         }
     }
 
-    pub(crate) fn take_next_handle(&mut self) -> Option<(TaskHandle, usize)> {
+    fn take_next_handle(&mut self) -> Option<(TaskHandle, usize)> {
         for (priority, queue) in self.queues.iter_mut().enumerate() {
             if let Some(handle) = queue.pop_front() {
                 return Some((handle, priority));
@@ -77,7 +78,7 @@ impl MlfqScheduler {
         None
     }
 
-    pub(crate) fn requeue_after_run(&mut self, handle: TaskHandle, priority: usize) {
+    fn requeue_after_run(&mut self, handle: TaskHandle, priority: usize) {
         let yield_reason = services().task_manager.borrow().get_yield_reason(handle);
         let new_priority = Self::next_priority(priority, yield_reason);
         self.queues[new_priority].push_back(handle);
@@ -154,6 +155,28 @@ impl MlfqScheduler {
     #[cfg(test)]
     pub(crate) fn poll_futures_for_test(&mut self) {
         self.poll_futures();
+    }
+}
+
+impl Scheduler for MlfqScheduler {
+    fn run(&mut self) {
+        MlfqScheduler::run(self);
+    }
+
+    fn push_task(&mut self, handle: TaskHandle) {
+        MlfqScheduler::push_task(self, handle);
+    }
+
+    fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle) {
+        MlfqScheduler::push_blocked(self, task_handle, future_handle);
+    }
+
+    fn push_hardware_interrupt(&mut self, interrupt: HardwareInterrupt) {
+        MlfqScheduler::push_hardware_interrupt(self, interrupt);
+    }
+
+    fn set_idle_task(&mut self, handle: TaskHandle) -> Result<(), ()> {
+        MlfqScheduler::set_idle_task(self, handle)
     }
 }
 

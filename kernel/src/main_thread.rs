@@ -1,5 +1,6 @@
 use crate::kernel_services::services;
 use crate::messages::HardwareInterrupt;
+use crate::scheduler::Scheduler;
 use crate::task::TaskHandle;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::collections::VecDeque;
@@ -122,7 +123,7 @@ impl MainThread {
         }
     }
 
-    fn pool_futures(&mut self) {
+    pub(crate) fn pool_futures(&mut self) {
         for _ in 0..self.blocked_tasks.len() {
             if let Some(task_future) = self.blocked_tasks.pop_front() {
                 if task_future.is_completed() {
@@ -136,6 +137,28 @@ impl MainThread {
                 }
             }
         }
+    }
+}
+
+impl Scheduler for MainThread {
+    fn run(&mut self) {
+        MainThread::run(self);
+    }
+
+    fn push_task(&mut self, handle: TaskHandle) {
+        MainThread::push_task(self, handle);
+    }
+
+    fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle) {
+        MainThread::push_blocked(self, task_handle, future_handle);
+    }
+
+    fn push_hardware_interrupt(&mut self, interrupt: HardwareInterrupt) {
+        MainThread::push_hardware_interrupt(self, interrupt);
+    }
+
+    fn set_idle_task(&mut self, handle: TaskHandle) -> Result<(), ()> {
+        MainThread::set_idle_task(self, handle)
     }
 }
 

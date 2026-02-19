@@ -25,6 +25,7 @@ pub mod once;
 mod messaging;
 pub mod panic;
 pub mod pipe;
+pub mod scheduler;
 pub(crate) mod state;
 pub mod syscall;
 pub mod task;

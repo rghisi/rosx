@@ -4,8 +4,8 @@ use crate::future::TaskCompletionFuture;
 use crate::kconfig::KConfig;
 use crate::kernel_services::services;
 use crate::kprintln;
-use crate::main_thread::MainThread;
 use crate::messages::HardwareInterrupt;
+use crate::scheduler::Scheduler;
 use crate::state::{ExecutionContext, ExecutionState};
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, YieldReason};
@@ -25,7 +25,7 @@ pub fn kernel() -> &'static mut Kernel {
 pub struct Kernel {
     kconfig: &'static KConfig,
     cpu: &'static dyn Cpu,
-    main_thread: Box<MainThread>,
+    scheduler: Box<dyn Scheduler>,
     pub(crate) execution_state: ExecutionState,
 }
 
@@ -33,7 +33,7 @@ impl Kernel {
     pub fn new(kconfig: &'static KConfig) -> Self {
         let cpu = kconfig.cpu;
         crate::kernel_services::init();
-        let main_thread = Box::new(MainThread::new());
+        let scheduler = (kconfig.scheduler_factory)();
         let main_thread_task = Task::new(0, "[K] Main Thread", main_thread_run as usize, 0);
         let main_thread_task_handle = services()
             .task_manager
@@ -51,7 +51,7 @@ impl Kernel {
         Kernel {
             kconfig,
             cpu,
-            main_thread,
+            scheduler,
             execution_state: ExecutionState {
                 main_thread: main_thread_task_handle,
                 current_task: None,
@@ -81,7 +81,7 @@ impl Kernel {
                 .borrow_task_mut(task_handle)
                 .unwrap(),
         );
-        let _ = self.main_thread.set_idle_task(task_handle);
+        let _ = self.scheduler.set_idle_task(task_handle);
     }
 
     pub fn start(&mut self) {
@@ -127,7 +127,7 @@ impl Kernel {
                 }
             }
         }
-        self.main_thread.push_task(task_handle);
+        self.scheduler.push_task(task_handle);
     }
 
     pub fn schedule(&mut self, task: SharedTask) {
@@ -141,21 +141,21 @@ impl Kernel {
                 .borrow_task_mut(task_handle)
                 .unwrap(),
         );
-        self.main_thread.push_task(task_handle);
+        self.scheduler.push_task(task_handle);
         self.execution_state.preemption_enabled = prev;
     }
 
     pub fn enqueue(&mut self, hardware_interrupt: HardwareInterrupt) {
         let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
-        self.main_thread.push_hardware_interrupt(hardware_interrupt);
+        self.scheduler.push_hardware_interrupt(hardware_interrupt);
         self.execution_state.preemption_enabled = prev;
     }
 
     pub fn wait_future(&mut self, handle: FutureHandle) {
         self.execution_state.block_current_task();
         let task_handle = self.execution_state.current_task();
-        self.main_thread.push_blocked(task_handle, handle);
+        self.scheduler.push_blocked(task_handle, handle);
         self.execution_state.switch_to_scheduler();
     }
 
@@ -229,7 +229,7 @@ pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
 }
 
 extern "C" fn main_thread_run() -> ! {
-    kernel().main_thread.run();
+    kernel().scheduler.run();
 
     panic!("Kernel main thread returned");
 }

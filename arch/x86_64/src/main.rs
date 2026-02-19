@@ -21,6 +21,7 @@ use kernel::default_output::MultiplexOutput;
 use kernel::function_task::FunctionTask;
 use kernel::kconfig::KConfig;
 use kernel::kernel::Kernel;
+use kernel::scheduler::Scheduler;
 use kernel::kprintln;
 use kernel::panic::handle_panic;
 
@@ -35,6 +36,7 @@ static CPU: X86_64 = X86_64::new();
 static KCONFIG: KConfig = KConfig {
     cpu: &CPU,
     idle_task_factory,
+    scheduler_factory: KConfig::mfq_scheduler,
 };
 
 #[cfg_attr(not(test), panic_handler)]
