@@ -4,7 +4,7 @@ use crate::future::TimeFuture;
 use crate::kernel::KERNEL;
 use crate::kernel_services::services;
 #[cfg(not(test))]
-use crate::memory::allocator::MEMORY_MANAGER;
+use crate::memory::memory_manager::MEMORY_MANAGER;
 use crate::messages::HardwareInterrupt;
 use crate::task::TaskHandle;
 use alloc::boxed::Box;

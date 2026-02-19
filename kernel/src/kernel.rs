@@ -14,7 +14,7 @@ use alloc::boxed::Box;
 use core::ptr::null_mut;
 use system::future::FutureHandle;
 #[cfg(not(test))]
-use crate::memory::allocator::{MEMORY_MANAGER, MemoryBlocks};
+use crate::memory::memory_manager::{MEMORY_MANAGER, MemoryBlocks};
 
 pub(crate) static mut KERNEL: *mut Kernel = null_mut();
 
