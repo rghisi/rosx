@@ -1,10 +1,10 @@
 use crate::kernel_services::services;
 use crate::messages::HardwareInterrupt;
-use crate::syscall::switch_to_task;
 use crate::task::TaskHandle;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::collections::VecDeque;
 use system::future::FutureHandle;
+use crate::kernel::kernel;
 
 pub struct MainThread {
     idle_task: Option<TaskHandle>,
@@ -68,7 +68,7 @@ impl MainThread {
             .borrow_mut()
             .set_state(next_task_handle, Running);
 
-        let returned_task_handle = switch_to_task(next_task_handle);
+        let returned_task_handle = kernel().switch_to_task(next_task_handle);
 
         let task_state = services().task_manager.borrow().get_state(returned_task_handle);
 

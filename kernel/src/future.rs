@@ -2,6 +2,7 @@ use crate::syscall;
 use alloc::boxed::Box;
 use system::future::FutureHandle;
 use collections::generational_arena::GenArena;
+use crate::kernel::kernel;
 use crate::kernel_services::services;
 use crate::task::TaskHandle;
 
@@ -16,13 +17,13 @@ pub struct TimeFuture {
 impl TimeFuture {
     pub fn new(ms: u64) -> TimeFuture {
         TimeFuture {
-            completion_timestamp: syscall::get_system_time() + ms,
+            completion_timestamp: kernel().get_system_time() + ms,
         }
     }
 }
 impl Future for TimeFuture {
     fn is_completed(&self) -> bool {
-        syscall::get_system_time() > self.completion_timestamp
+        kernel().get_system_time() > self.completion_timestamp
     }
 }
 

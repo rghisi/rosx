@@ -7,7 +7,6 @@ use crate::kprintln;
 use crate::main_thread::MainThread;
 use crate::messages::HardwareInterrupt;
 use crate::state::{ExecutionContext, ExecutionState};
-use crate::syscall::{task_yield, terminate_current_task};
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle};
 use alloc::boxed::Box;
@@ -19,7 +18,7 @@ use crate::kernel_cell::KernelCell;
 
 static KERNEL_PTR: KernelCell<*mut Kernel> = KernelCell::new(null_mut());
 
-pub(crate) fn kernel() -> &'static mut Kernel {
+pub fn kernel() -> &'static mut Kernel {
     unsafe { &mut **KERNEL_PTR.borrow() }
 }
 
@@ -214,8 +213,8 @@ pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
 
     task_fn();
 
-    terminate_current_task();
-    task_yield();
+    kernel().terminate_current_task();
+    kernel().task_yield();
 }
 
 extern "C" fn main_thread_run() -> ! {
