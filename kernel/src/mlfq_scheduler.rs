@@ -1,11 +1,12 @@
 use alloc::collections::VecDeque;
 use crate::kernel_services::services;
 use crate::messages::HardwareInterrupt;
-use crate::syscall::switch_to_task;
 use crate::task::TaskHandle;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use crate::task::YieldReason;
 use system::future::FutureHandle;
+use crate::future::TaskFuture;
+use crate::kernel::kernel;
 
 const NUM_QUEUES: usize = 3;
 const QUANTA: [u32; NUM_QUEUES] = [2, 5, 10];
@@ -15,21 +16,6 @@ pub struct MlfqScheduler {
     blocked_tasks: VecDeque<TaskFuture>,
     hw_interrupt_queue: VecDeque<HardwareInterrupt>,
     idle_task: Option<TaskHandle>,
-}
-
-struct TaskFuture {
-    task_handle: TaskHandle,
-    future_handle: FutureHandle,
-}
-
-impl TaskFuture {
-    fn is_completed(&self) -> bool {
-        services()
-            .future_registry
-            .borrow_mut()
-            .get(self.future_handle)
-            .unwrap_or(true)
-    }
 }
 
 impl MlfqScheduler {
@@ -104,8 +90,8 @@ impl MlfqScheduler {
         };
 
         services().task_manager.borrow_mut().set_state(next_handle, Running);
-        unsafe { (*crate::kernel::KERNEL).execution_state.remaining_quantum = QUANTA[priority]; }
-        let returned_handle = switch_to_task(next_handle);
+        kernel().execution_state.remaining_quantum = QUANTA[priority];
+        let returned_handle = kernel().switch_to_task(next_handle);
 
         let task_state = services().task_manager.borrow().get_state(returned_handle);
         match task_state {

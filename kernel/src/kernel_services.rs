@@ -27,6 +27,7 @@ pub(crate) fn init() {
             KERNEL_SERVICES.call_once(|| KernelServices {
                 task_manager: KernelCell::new(TaskManager::new()),
                 future_registry: KernelCell::new(FutureRegistry::new()),
+                memory_manager: &MEMORY_MANAGER,
             });
         });
     }
