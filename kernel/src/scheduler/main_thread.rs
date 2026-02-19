@@ -42,7 +42,6 @@ impl MainThread {
     pub(crate) fn push_task(&mut self, task_handle: TaskHandle) {
         match services().task_manager.borrow().get_state(task_handle) {
             Ready => self.user_tasks.push_back(task_handle),
-            // Blocked => self.blocked_tasks.push(task),
             _ => (),
         }
     }
@@ -72,7 +71,6 @@ impl MainThread {
         while let Some(hardware_interrupt) = self.hw_interrupt_queue.pop_front() {
             match hardware_interrupt {
                 HardwareInterrupt::Keyboard { scancode } => {
-                    // Ignore break codes (key release) in PS/2 Set 1
                     if scancode & 0x80 == 0 {
                         if let Ok(key) = crate::keyboard::Key::from_scancode_set1(scancode) {
                             let event = crate::keyboard::KeyboardEvent::from_key(key);
@@ -161,4 +159,3 @@ impl Scheduler for MainThread {
         MainThread::set_idle_task(self, handle)
     }
 }
-

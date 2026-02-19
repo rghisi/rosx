@@ -1,13 +1,13 @@
 use alloc::collections::VecDeque;
 use crate::kernel_services::services;
 use crate::messages::HardwareInterrupt;
-use crate::scheduler::Scheduler;
 use crate::task::TaskHandle;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use crate::task::YieldReason;
 use system::future::FutureHandle;
 use crate::future::TaskFuture;
 use crate::kernel::kernel;
+use crate::scheduler::Scheduler;
 
 const NUM_QUEUES: usize = 3;
 const QUANTA: [u32; NUM_QUEUES] = [2, 5, 10];

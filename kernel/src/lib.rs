@@ -18,8 +18,6 @@ pub mod kernel;
 pub(crate) mod kernel_cell;
 pub(crate) mod kernel_services;
 mod keyboard;
-pub mod main_thread;
-pub mod mlfq_scheduler;
 pub mod messages;
 pub mod once;
 mod messaging;
