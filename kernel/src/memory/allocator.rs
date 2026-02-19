@@ -3,7 +3,8 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use buddy_system_allocator::LockedHeap;
 
-use crate::kernel::KERNEL;
+use crate::cpu::Cpu;
+use crate::kernel_cell::KernelCell;
 
 pub const MAX_MEMORY_BLOCKS: usize = 32;
 
@@ -17,46 +18,23 @@ pub struct MemoryBlocks {
     pub count: usize,
 }
 
-#[cfg_attr(not(test), global_allocator)]
-pub static GLOBAL_ALLOCATOR: GlobalKernelAllocator = GlobalKernelAllocator;
-
-pub struct GlobalKernelAllocator;
-
-#[cfg(not(test))]
-unsafe impl GlobalAlloc for GlobalKernelAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        unsafe {
-            if !KERNEL.is_null() {
-                (*KERNEL).alloc(layout)
-            } else {
-                MEMORY_ALLOCATOR.alloc(layout)
-            }
-        }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe {
-            if !KERNEL.is_null() {
-                (*KERNEL).dealloc(ptr, layout)
-            } else {
-                MEMORY_ALLOCATOR.dealloc(ptr, layout)
-            }
-        }
-    }
+#[cfg_attr(not(test), alloc_error_handler)]
+pub fn alloc_error_handler(layout: Layout) -> ! {
+    panic!("allocation error: {:?}", layout)
 }
 
-pub static MEMORY_ALLOCATOR: MemoryAllocator = MemoryAllocator::new();
-
-pub struct MemoryAllocator {
+pub struct MemoryManager {
     heap: LockedHeap<27>,
     used: AtomicUsize,
+    cpu: KernelCell<Option<&'static dyn Cpu>>,
 }
 
-impl MemoryAllocator {
-    const fn new() -> Self {
-        MemoryAllocator {
-            heap: LockedHeap::<27>::new(),
+impl MemoryManager {
+    pub const fn new() -> Self {
+        MemoryManager {
+            heap: LockedHeap::new(),
             used: AtomicUsize::new(0),
+            cpu: KernelCell::new(None),
         }
     }
 
@@ -69,7 +47,15 @@ impl MemoryAllocator {
         }
     }
 
-    pub fn print_config(memory_blocks: &MemoryBlocks) {
+    pub fn set_cpu(&self, cpu: &'static dyn Cpu) {
+        *self.cpu.borrow_mut() = Some(cpu);
+    }
+
+    pub fn used(&self) -> usize {
+        self.used.load(Ordering::Relaxed)
+    }
+
+    pub fn print_config(&self, memory_blocks: &MemoryBlocks) {
         let mut total_size: usize = 0;
         for i in 0..memory_blocks.count {
             let block = &memory_blocks.blocks[i];
@@ -84,25 +70,121 @@ impl MemoryAllocator {
         }
         crate::kprintln!("[MEMORY] Total: {} MB", total_size / (1024 * 1024));
     }
-
-    pub fn used(&self) -> usize {
-        self.used.load(Ordering::Relaxed)
-    }
 }
 
-#[cfg_attr(not(test), alloc_error_handler)]
-pub fn alloc_error_handler(layout: Layout) -> ! {
-    panic!("allocation error: {:?}", layout)
-}
+#[cfg_attr(not(test), global_allocator)]
+pub static MEMORY_MANAGER: MemoryManager = MemoryManager::new();
 
-unsafe impl GlobalAlloc for MemoryAllocator {
+unsafe impl GlobalAlloc for MemoryManager {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let cpu = *self.cpu.borrow();
+        let interrupts_enabled = cpu.map_or(false, |c| c.are_interrupts_enabled());
+        if interrupts_enabled {
+            cpu.unwrap().disable_interrupts();
+        }
         self.used.fetch_add(layout.size(), Ordering::Relaxed);
-        unsafe { self.heap.alloc(layout) }
+        let ptr = unsafe { self.heap.alloc(layout) };
+        if interrupts_enabled {
+            cpu.unwrap().enable_interrupts();
+        }
+        ptr
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        self.used.fetch_sub(layout.size(), Ordering::Relaxed);
+        let cpu = *self.cpu.borrow();
+        let interrupts_enabled = cpu.map_or(false, |c| c.are_interrupts_enabled());
+        if interrupts_enabled {
+            cpu.unwrap().disable_interrupts();
+        }
         unsafe { self.heap.dealloc(ptr, layout) };
+        self.used.fetch_sub(layout.size(), Ordering::Relaxed);
+        if interrupts_enabled {
+            cpu.unwrap().enable_interrupts();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::Cpu;
+    use core::alloc::{GlobalAlloc, Layout};
+
+    struct MockCpu;
+
+    impl Cpu for MockCpu {
+        fn setup(&self) {}
+        fn enable_interrupts(&self) {}
+        fn disable_interrupts(&self) {}
+        fn are_interrupts_enabled(&self) -> bool { false }
+        fn initialize_stack(&self, _: usize, _: usize, _: usize, _: usize) -> usize { 0 }
+        fn swap_context(&self, _: *mut usize, _: usize) {}
+        fn get_system_time(&self) -> u64 { 0 }
+    }
+
+    static MOCK_CPU: MockCpu = MockCpu;
+
+    fn make_manager(memory: &mut Vec<u8>) -> MemoryManager {
+        let manager = MemoryManager::new();
+        let blocks = MemoryBlocks {
+            blocks: core::array::from_fn(|i| {
+                if i == 0 {
+                    MemoryBlock { start: memory.as_mut_ptr() as usize, size: memory.len() }
+                } else {
+                    MemoryBlock { start: 0, size: 0 }
+                }
+            }),
+            count: 1,
+        };
+        manager.init(&blocks);
+        manager
+    }
+
+    #[test]
+    fn used_starts_at_zero() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        assert_eq!(manager.used(), 0);
+    }
+
+    #[test]
+    fn alloc_returns_non_null() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { manager.alloc(layout) };
+        assert!(!ptr.is_null());
+        unsafe { manager.dealloc(ptr, layout) };
+    }
+
+    #[test]
+    fn alloc_increases_used() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { manager.alloc(layout) };
+        assert_eq!(manager.used(), 64);
+        unsafe { manager.dealloc(ptr, layout) };
+    }
+
+    #[test]
+    fn dealloc_decreases_used() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { manager.alloc(layout) };
+        unsafe { manager.dealloc(ptr, layout) };
+        assert_eq!(manager.used(), 0);
+    }
+
+    #[test]
+    fn alloc_with_cpu_set_returns_non_null() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        manager.set_cpu(&MOCK_CPU);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { manager.alloc(layout) };
+        assert!(!ptr.is_null());
+        unsafe { manager.dealloc(ptr, layout) };
     }
 }

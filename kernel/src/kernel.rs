@@ -1,5 +1,3 @@
-#[cfg(not(test))]
-use crate::memory::allocator::MEMORY_ALLOCATOR;
 use crate::cpu::Cpu;
 use crate::default_output::{KernelOutput, setup_default_output};
 use crate::future::TaskCompletionFuture;
@@ -13,11 +11,10 @@ use crate::syscall::{task_yield, terminate_current_task};
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle};
 use alloc::boxed::Box;
-use core::alloc::GlobalAlloc;
 use core::ptr::null_mut;
 use system::future::FutureHandle;
 #[cfg(not(test))]
-use crate::memory::allocator::{MemoryAllocator, MemoryBlocks};
+use crate::memory::allocator::{MEMORY_MANAGER, MemoryBlocks};
 
 pub(crate) static mut KERNEL: *mut Kernel = null_mut();
 
@@ -65,6 +62,8 @@ impl Kernel {
         unsafe {
             KERNEL = self;
         }
+        #[cfg(not(test))]
+        MEMORY_MANAGER.set_cpu(self.cpu);
         self.cpu.setup();
         let idle_task = (self.kconfig.idle_task_factory)();
         let task_handle = services()
@@ -195,47 +194,13 @@ impl Kernel {
 }
 
 #[cfg(not(test))]
-unsafe impl GlobalAlloc for Kernel {
-    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        let interrupts_enabled = self.cpu.are_interrupts_enabled();
-        if interrupts_enabled {
-            self.cpu.disable_interrupts();
-        }
-
-        let ptr = unsafe { MEMORY_ALLOCATOR.alloc(layout) };
-
-        if interrupts_enabled {
-            self.cpu.enable_interrupts();
-            // Give a chance for any pending interrupt to fire
-            unsafe { core::arch::asm!("nop"); }
-        }
-        ptr
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
-        let interrupts_enabled = self.cpu.are_interrupts_enabled();
-        if interrupts_enabled {
-            self.cpu.disable_interrupts();
-        }
-
-        unsafe { MEMORY_ALLOCATOR.dealloc(ptr, layout) };
-
-        if interrupts_enabled {
-            self.cpu.enable_interrupts();
-            // Give a chance for any pending interrupt to fire
-            unsafe { core::arch::asm!("nop"); }
-        }
-    }
-}
-
-#[cfg(not(test))]
 pub fn bootstrap(
     memory_blocks: &MemoryBlocks,
     default_output: &'static dyn KernelOutput,
 ) {
     setup_default_output(default_output);
-    MemoryAllocator::print_config(memory_blocks);
-    MEMORY_ALLOCATOR.init(memory_blocks);
+    MEMORY_MANAGER.print_config(memory_blocks);
+    MEMORY_MANAGER.init(memory_blocks);
     kprintln!("[KERNEL] Bootstrapped");
 }
 
