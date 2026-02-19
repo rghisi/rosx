@@ -4,6 +4,7 @@ use crate::task::TaskHandle;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::collections::VecDeque;
 use system::future::FutureHandle;
+use crate::future::TaskFuture;
 use crate::kernel::kernel;
 
 pub struct MainThread {
@@ -83,7 +84,7 @@ impl MainThread {
             };
         }
     }
-    
+
     fn run_user_process(&mut self) {
         let next_task_option = self.user_tasks.pop_front();
         let next_task_handle = match next_task_option {
@@ -138,13 +139,3 @@ impl MainThread {
     }
 }
 
-struct TaskFuture {
-    task_handle: TaskHandle,
-    future_handle: FutureHandle,
-}
-
-impl TaskFuture {
-    fn is_completed(&self) -> bool {
-        services().future_registry.borrow_mut().get(self.future_handle).unwrap_or(true)
-    }
-}

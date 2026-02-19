@@ -1,4 +1,3 @@
-use crate::syscall;
 use alloc::boxed::Box;
 use system::future::FutureHandle;
 use collections::generational_arena::GenArena;
@@ -40,6 +39,17 @@ impl TaskCompletionFuture {
 impl Future for TaskCompletionFuture {
     fn is_completed(&self) -> bool {
         services().task_manager.borrow().get_state(self.task_handle) == crate::task::TaskState::Terminated
+    }
+}
+
+pub(crate) struct TaskFuture {
+    pub(crate) task_handle: TaskHandle,
+    pub(crate) future_handle: FutureHandle,
+}
+
+impl TaskFuture {
+    pub(crate) fn is_completed(&self) -> bool {
+        services().future_registry.borrow_mut().get(self.future_handle).unwrap_or(true)
     }
 }
 
