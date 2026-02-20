@@ -5,4 +5,5 @@ extern crate collections;
 pub mod file;
 pub mod syscall_numbers;
 pub mod future;
+pub mod ipc;
 
