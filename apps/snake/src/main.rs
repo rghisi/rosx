@@ -141,6 +141,7 @@ fn render(snake: &VecDeque<Pos>, food: Pos, score: usize, game_over: bool) {
 }
 
 fn play(rng: &mut Rng) -> bool {
+    let mut frame_ms = FRAME_MS;
     let mut snake: VecDeque<Pos> = VecDeque::new();
     let cx = WIDTH / 2;
     let cy = HEIGHT / 2;
@@ -151,10 +152,11 @@ fn play(rng: &mut Rng) -> bool {
     let mut food = random_food(&snake, rng);
     let mut dir = Dir::Right;
     let mut score = 0usize;
+    let mut frame_step = 0;
 
     loop {
         render(&snake, food, score, false);
-        Syscall::sleep(FRAME_MS);
+        Syscall::sleep(frame_ms);
 
         while let Some(c) = Syscall::try_read_char() {
             let new_dir = match c {
@@ -192,9 +194,15 @@ fn play(rng: &mut Rng) -> bool {
         snake.push_back(new_head);
         if new_head == food {
             score += 1;
+            frame_step += 1;
             food = random_food(&snake, rng);
         } else {
             snake.pop_front();
+        }
+
+        if frame_step > 0 && frame_step % 5 == 0 {
+            frame_ms -= 10;
+            frame_step = 0;
         }
     }
 }
