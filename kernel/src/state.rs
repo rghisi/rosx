@@ -21,20 +21,19 @@ pub struct ExecutionState {
 impl ExecutionState {
     #[inline(always)]
     pub(crate) fn switch_to_task(&mut self, task_handle: TaskHandle) -> TaskHandle {
-        let task_stack_pointer = services().task_manager
+        let task_stack_pointer = services()
+            .task_manager
             .borrow()
             .get_task_stack_pointer(task_handle);
         self.current_task = Some(task_handle);
-        let scheduler_stack_pointer_pointer = services().task_manager
+        let scheduler_stack_pointer_pointer = services()
+            .task_manager
             .borrow_mut()
             .get_task_stack_pointer_ref(self.main_thread);
-
-        // We are in the main thread, preemption_enabled is already false.
         self.execution_context = ExecutionContext::UserTask;
-        self.cpu
-            .swap_context(scheduler_stack_pointer_pointer, task_stack_pointer);
-        // When we return here, we are back in the main thread.
-        // preemption_enabled must remain false.
+        self.preemption_enabled = true;
+        self.cpu.swap_context(scheduler_stack_pointer_pointer, task_stack_pointer);
+        self.preemption_enabled = false;
         self.execution_context = ExecutionContext::Kernel;
 
         self.current_task.take().unwrap()
@@ -43,24 +42,19 @@ impl ExecutionState {
     #[inline(always)]
     pub(crate) fn switch_to_scheduler(&mut self) {
         if let Some(task_handle) = self.current_task.take() {
-            let task_stack_pointer_reference = services().task_manager
+            let task_stack_pointer_reference = services()
+                .task_manager
                 .borrow_mut()
                 .get_task_stack_pointer_ref(task_handle);
-
-            // We are leaving the task, disable preemption
             self.preemption_enabled = false;
             self.execution_context = ExecutionContext::Kernel;
             self.current_task = Some(task_handle);
             let scheduler_stack_pointer = services().task_manager
                 .borrow()
                 .get_task_stack_pointer(self.main_thread);
-
-            self.cpu
-                .swap_context(task_stack_pointer_reference, scheduler_stack_pointer);
-            
-            // When the task resumes here, re-enable preemption
-            self.preemption_enabled = true;
+            self.cpu.swap_context(task_stack_pointer_reference, scheduler_stack_pointer);
             self.execution_context = ExecutionContext::UserTask;
+            self.preemption_enabled = true;
         }
     }
 

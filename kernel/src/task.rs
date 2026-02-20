@@ -1,6 +1,6 @@
 use collections::generational_arena::Handle;
 use crate::cpu::Cpu;
-use crate::kernel::task_wrapper;
+use crate::kernel::{kernel, task_wrapper};
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
@@ -149,6 +149,7 @@ pub fn idle_task_factory(cpu: &'static dyn Cpu) -> Box<Task> {
 }
 
 extern "C" fn idle_entry(cpu_ptr: usize) {
+    kernel().execution_state.preemption_enabled = true;
     let cpu: &'static dyn Cpu = unsafe { *(cpu_ptr as *const &'static dyn Cpu) };
     loop {
         cpu.halt();
