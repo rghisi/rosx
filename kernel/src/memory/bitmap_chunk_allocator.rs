@@ -1,4 +1,5 @@
 use core::alloc::Layout;
+use crate::task::TaskHandle;
 
 pub const DEFAULT_CHUNK_SIZE: usize = 64 * 1024;
 const BITS_PER_WORD: usize = usize::BITS as usize;
@@ -24,6 +25,8 @@ pub struct BitmapChunkAllocator {
     region_count: usize,
     total_chunks: usize,
     chunk_size: usize,
+    #[allow(dead_code)]
+    owner: *mut Option<TaskHandle>,
 }
 
 fn align_up(value: usize, alignment: usize) -> usize {
@@ -47,7 +50,8 @@ impl BitmapChunkAllocator {
         let bitmap_words = (raw_total_chunks + BITS_PER_WORD - 1) / BITS_PER_WORD;
         let regions_bytes = region_count * core::mem::size_of::<Region>();
         let bitmap_bytes = bitmap_words * core::mem::size_of::<usize>();
-        let aligned_metadata = align_up(regions_bytes + bitmap_bytes, METADATA_ALIGNMENT);
+        let owner_bytes = raw_total_chunks * core::mem::size_of::<Option<TaskHandle>>();
+        let aligned_metadata = align_up(regions_bytes + bitmap_bytes + owner_bytes, METADATA_ALIGNMENT);
 
         let (first_base, first_size) = ranges[0];
         assert!(
@@ -57,6 +61,7 @@ impl BitmapChunkAllocator {
 
         let regions_ptr = first_base as *mut Region;
         let bitmap_ptr = (first_base + regions_bytes) as *mut usize;
+        let owner_ptr = (first_base + regions_bytes + bitmap_bytes) as *mut Option<TaskHandle>;
 
         // Safety: first_base points to writable memory large enough for aligned_metadata bytes.
         // The caller guarantees this by providing a valid memory range.
@@ -100,6 +105,7 @@ impl BitmapChunkAllocator {
             region_count,
             total_chunks,
             chunk_size,
+            owner: owner_ptr,
         }
     }
 
@@ -224,12 +230,14 @@ impl BitmapChunkAllocator {
 mod tests {
     use super::*;
     use core::alloc::Layout;
+    use crate::task::TaskHandle;
 
     fn metadata_overhead(region_count: usize, raw_total_chunks: usize) -> usize {
         let bitmap_words = (raw_total_chunks + BITS_PER_WORD - 1) / BITS_PER_WORD;
         let regions_bytes = region_count * core::mem::size_of::<Region>();
         let bitmap_bytes = bitmap_words * core::mem::size_of::<usize>();
-        align_up(regions_bytes + bitmap_bytes, METADATA_ALIGNMENT)
+        let owner_bytes = raw_total_chunks * core::mem::size_of::<Option<TaskHandle>>();
+        align_up(regions_bytes + bitmap_bytes + owner_bytes, METADATA_ALIGNMENT)
     }
 
     fn usable_base(base: usize, region_count: usize, raw_total_chunks: usize) -> usize {
