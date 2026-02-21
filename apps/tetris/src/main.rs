@@ -159,9 +159,9 @@ fn cell_color(index: u8) -> &'static str {
     }
 }
 
-fn render(board: &Board, piece: &Piece, score: usize, lines: usize) {
+fn render(board: &Board, piece: &Piece, score: usize, lines: usize, level: usize) {
     print!("\x1B[H");
-    println!("\x1B[97mTETRIS\x1B[m  Score: {:<6}  Lines: {:<4}  WASD=move  Q=quit", score, lines);
+    println!("\x1B[97mTETRIS\x1B[m  Score: {:<6}  Lines: {:<4}  Level: {:<3}  WASD=move  Q=quit", score, lines, level);
 
     print!("+");
     for _ in 0..WIDTH {
@@ -196,7 +196,8 @@ fn play(rng: &mut Rng) -> bool {
     let mut frame_ms = FRAME_MS;
 
     loop {
-        render(&board, &piece, score, lines);
+        let level = lines / 10 + 1;
+        render(&board, &piece, score, lines, level);
         Syscall::sleep(frame_ms);
 
         while let Some(c) = Syscall::try_read_char() {
@@ -238,6 +239,7 @@ fn play(rng: &mut Rng) -> bool {
             let cleared = clear_lines(&mut board);
             lines += cleared;
             score += line_score(cleared);
+            frame_ms = (FRAME_MS.saturating_sub((lines / 10) as u64 * 50)).max(100);
             piece = Piece::new(rng.next_usize(7));
         } else {
             piece.row += 1;
