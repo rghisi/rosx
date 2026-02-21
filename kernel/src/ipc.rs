@@ -4,6 +4,11 @@ use crate::future::Future;
 use crate::kernel_services::services;
 use crate::task::TaskHandle;
 
+#[cfg(not(test))]
+use alloc::boxed::Box;
+#[cfg(not(test))]
+use crate::kernel::kernel;
+
 pub(crate) struct IpcClientFuture(pub(crate) TaskHandle);
 pub(crate) struct IpcServerFuture(pub(crate) TaskHandle);
 
@@ -16,6 +21,25 @@ impl Future for IpcClientFuture {
 impl Future for IpcServerFuture {
     fn is_completed(&self) -> bool {
         services().endpoint_registry.borrow().has_server_delivery(self.0)
+    }
+}
+
+#[cfg(not(test))]
+pub(crate) fn kernel_ipc_recv_blocking(id: u32) -> (ReplyToken, Message) {
+    let current = kernel().execution_state.current_task();
+    let outcome = services().endpoint_registry.borrow_mut().recv(id, current);
+    match outcome {
+        Ok(RecvOutcome::ServerHasMessage(token, msg)) => (token, msg),
+        Ok(RecvOutcome::ServerBlocked) => {
+            let future = Box::new(IpcServerFuture(current));
+            let handle = services().future_registry.borrow_mut()
+                .register(future).expect("IPC server future registration failed");
+            kernel().wait_future(handle);
+            services().endpoint_registry.borrow_mut()
+                .take_server_delivery(current)
+                .expect("no delivery after server wakeup")
+        }
+        Err(_) => panic!("kernel_ipc_recv_blocking: endpoint not found"),
     }
 }
 

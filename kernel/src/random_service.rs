@@ -1,11 +1,7 @@
 #[cfg(not(test))]
-use alloc::boxed::Box;
-#[cfg(not(test))]
 use system::ipc::{Message, endpoint, random};
 #[cfg(not(test))]
-use crate::ipc::{IpcServerFuture, RecvOutcome};
-#[cfg(not(test))]
-use crate::kernel::kernel;
+use crate::ipc::kernel_ipc_recv_blocking;
 #[cfg(not(test))]
 use crate::kernel_services::services;
 
@@ -29,21 +25,7 @@ pub fn random_server() {
     services().endpoint_registry.borrow_mut().create(endpoint::RANDOM).ok();
     let mut rng = Xorshift64::new(0xDEAD_BEEF_CAFE_BABE);
     loop {
-        let current = kernel().execution_state.current_task();
-        let outcome = services().endpoint_registry.borrow_mut().recv(endpoint::RANDOM, current);
-        let (token, _msg) = match outcome {
-            Ok(RecvOutcome::ServerHasMessage(token, msg)) => (token, msg),
-            Ok(RecvOutcome::ServerBlocked) => {
-                let future = Box::new(IpcServerFuture(current));
-                let handle = services().future_registry.borrow_mut()
-                    .register(future).expect("random server future failed");
-                kernel().wait_future(handle);
-                services().endpoint_registry.borrow_mut()
-                    .take_server_delivery(current)
-                    .expect("no delivery after wakeup")
-            }
-            Err(_) => continue,
-        };
+        let (token, _msg) = kernel_ipc_recv_blocking(endpoint::RANDOM);
         let value = rng.next();
         let reply = Message::new(random::TAG_VALUE).with_word(0, value);
         services().endpoint_registry.borrow_mut().reply(token, reply);
