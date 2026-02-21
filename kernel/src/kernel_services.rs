@@ -1,4 +1,5 @@
 use crate::future::FutureRegistry;
+use crate::ipc::EndpointRegistry;
 use crate::kernel_cell::KernelCell;
 use crate::memory::memory_manager::{MEMORY_MANAGER, MemoryManager};
 use crate::once::Once;
@@ -7,6 +8,7 @@ use crate::task_manager::TaskManager;
 pub(crate) struct KernelServices {
     pub(crate) task_manager: KernelCell<TaskManager>,
     pub(crate) future_registry: KernelCell<FutureRegistry>,
+    pub(crate) endpoint_registry: KernelCell<EndpointRegistry>,
     pub(crate) memory_manager: &'static MemoryManager,
 }
 
@@ -17,6 +19,7 @@ pub(crate) fn init() {
     KERNEL_SERVICES.call_once(|| KernelServices {
         task_manager: KernelCell::new(TaskManager::new()),
         future_registry: KernelCell::new(FutureRegistry::new()),
+        endpoint_registry: KernelCell::new(EndpointRegistry::new()),
         memory_manager: &MEMORY_MANAGER,
     });
 
@@ -27,6 +30,7 @@ pub(crate) fn init() {
             KERNEL_SERVICES.call_once(|| KernelServices {
                 task_manager: KernelCell::new(TaskManager::new()),
                 future_registry: KernelCell::new(FutureRegistry::new()),
+                endpoint_registry: KernelCell::new(EndpointRegistry::new()),
                 memory_manager: &MEMORY_MANAGER,
             });
         });

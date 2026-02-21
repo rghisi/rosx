@@ -10,6 +10,10 @@ pub enum SyscallNum {
     IsFutureCompleted = 6,
     Alloc = 7,
     Dealloc = 8,
+    IpcEndpointCreate = 9,
+    IpcSend = 10,
+    IpcRecv = 11,
+    IpcReply = 12,
 }
 
 impl TryFrom<u64> for SyscallNum {
@@ -26,7 +30,37 @@ impl TryFrom<u64> for SyscallNum {
             6 => Ok(Self::IsFutureCompleted),
             7 => Ok(Self::Alloc),
             8 => Ok(Self::Dealloc),
+            9 => Ok(Self::IpcEndpointCreate),
+            10 => Ok(Self::IpcSend),
+            11 => Ok(Self::IpcRecv),
+            12 => Ok(Self::IpcReply),
             _ => Err(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ipc_endpoint_create_round_trips() {
+        assert_eq!(SyscallNum::try_from(9), Ok(SyscallNum::IpcEndpointCreate));
+        assert_eq!(SyscallNum::IpcEndpointCreate as u64, 9);
+    }
+
+    #[test]
+    fn ipc_send_round_trips() {
+        assert_eq!(SyscallNum::try_from(10), Ok(SyscallNum::IpcSend));
+    }
+
+    #[test]
+    fn ipc_recv_round_trips() {
+        assert_eq!(SyscallNum::try_from(11), Ok(SyscallNum::IpcRecv));
+    }
+
+    #[test]
+    fn ipc_reply_round_trips() {
+        assert_eq!(SyscallNum::try_from(12), Ok(SyscallNum::IpcReply));
     }
 }

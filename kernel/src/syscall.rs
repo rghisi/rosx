@@ -1,14 +1,17 @@
 use core::alloc::{GlobalAlloc, Layout};
 use alloc::boxed::Box;
 use crate::future::TimeFuture;
+use crate::ipc::{IpcClientFuture, IpcServerFuture, RecvOutcome, ReplyToken};
 use crate::kernel::kernel;
 use crate::kernel_services::services;
 use crate::default_output::print;
+use system::ipc::Message;
 use system::syscall_numbers::SyscallNum;
 use system::future::FutureHandle;
+use collections::generational_arena::Handle;
 
 #[cfg(not(test))]
-pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
+pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> usize {
     match SyscallNum::try_from(num) {
         Ok(SyscallNum::Print) => {
             let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(arg1 as *const u8, arg2 as usize)) };
@@ -61,8 +64,66 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
             (unsafe { services().memory_manager.alloc(layout) }) as usize
         }
         Ok(SyscallNum::Dealloc) => {
-            let Ok(layout) = Layout::from_size_align(arg2 as usize, _arg3 as usize) else { return 0 };
+            let Ok(layout) = Layout::from_size_align(arg2 as usize, arg3 as usize) else { return 0 };
             unsafe { services().memory_manager.dealloc(arg1 as *mut u8, layout) };
+            0
+        }
+        Ok(SyscallNum::IpcEndpointCreate) => {
+            let id = arg1 as u32;
+            services().endpoint_registry.borrow_mut().create(id).ok();
+            0
+        }
+        Ok(SyscallNum::IpcSend) => {
+            let id = arg1 as u32;
+            let msg = unsafe { *(arg2 as *const Message) };
+            let reply_ptr = arg3 as *mut Message;
+            let current = kernel().execution_state.current_task();
+            if services().endpoint_registry.borrow_mut().send(id, current, msg).is_err() {
+                return 1;
+            }
+            let future = Box::new(IpcClientFuture(current));
+            let handle = services().future_registry.borrow_mut()
+                .register(future).expect("IPC client future registration failed");
+            kernel().wait_future(handle);
+            if let Some(reply) = services().endpoint_registry.borrow_mut().take_client_reply(current) {
+                unsafe { *reply_ptr = reply; }
+            }
+            0
+        }
+        Ok(SyscallNum::IpcRecv) => {
+            let id = arg1 as u32;
+            let msg_ptr = arg2 as *mut Message;
+            let token_ptr = arg3 as *mut u64;
+            let current = kernel().execution_state.current_task();
+            let outcome = services().endpoint_registry.borrow_mut().recv(id, current);
+            let (token, msg) = match outcome {
+                Ok(RecvOutcome::ServerHasMessage(token, msg)) => (token, msg),
+                Ok(RecvOutcome::ServerBlocked) => {
+                    let future = Box::new(IpcServerFuture(current));
+                    let handle = services().future_registry.borrow_mut()
+                        .register(future).expect("IPC server future registration failed");
+                    kernel().wait_future(handle);
+                    services().endpoint_registry.borrow_mut()
+                        .take_server_delivery(current)
+                        .expect("no delivery after server wakeup")
+                }
+                Err(_) => return 1,
+            };
+            let ReplyToken(task_handle) = token;
+            let token_u64 = task_handle.index as u64 | ((task_handle.generation as u64) << 8);
+            unsafe {
+                *msg_ptr = msg;
+                *token_ptr = token_u64;
+            }
+            0
+        }
+        Ok(SyscallNum::IpcReply) => {
+            let token_u64 = arg1;
+            let reply_msg = unsafe { *(arg2 as *const Message) };
+            let index = (token_u64 & 0xFF) as u8;
+            let generation = ((token_u64 >> 8) & 0xFF) as u8;
+            let token = ReplyToken(Handle::new(index, generation));
+            services().endpoint_registry.borrow_mut().reply(token, reply_msg);
             0
         }
         Err(_) => 0,
