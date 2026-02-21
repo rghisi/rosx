@@ -126,13 +126,36 @@ fn render(grid: &Grid, generation: usize, population: usize, paused: bool) {
 pub extern "C" fn _start() {
     print!("\x1B[2J\x1B[H");
 
-    let grid = Grid::new();
-    render(&grid, 0, 0, false);
+    let mut rng = Rng::new(0xDEAD_BEEF_CAFE_BABE);
+    let mut current = Grid::new();
+    let mut next = Grid::new();
+    let mut generation = 0usize;
+    let mut population = 0usize;
+    let mut paused = false;
+
+    randomize(&mut current, &mut rng);
 
     loop {
-        match Syscall::read_char() {
-            'q' | 'Q' => return,
-            _ => {}
+        render(&current, generation, population, paused);
+        Syscall::sleep(100);
+
+        while let Some(c) = Syscall::try_read_char() {
+            match c {
+                ' ' => paused = !paused,
+                'r' | 'R' => {
+                    randomize(&mut current, &mut rng);
+                    generation = 0;
+                    population = 0;
+                }
+                'q' | 'Q' => return,
+                _ => {}
+            }
+        }
+
+        if !paused {
+            population = step(&current, &mut next);
+            core::mem::swap(&mut current, &mut next);
+            generation += 1;
         }
     }
 }
