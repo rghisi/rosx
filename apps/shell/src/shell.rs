@@ -3,9 +3,12 @@ use usrlib::syscall::Syscall;
 use alloc::string::String;
 use alloc::collections::BTreeMap;
 use lazy_static::lazy_static;
+use crate::command::Command;
 
 static PI_ELF: &[u8] = include_bytes!("../../../apps/hello_elf/target/rosx-user/release/hello_elf");
 static SNAKE_ELF: &[u8] = include_bytes!("../../../apps/snake/target/rosx-user/release/snake");
+
+static PROMPT: &str = "\x1B[32mrose>\x1B[m ";
 
 lazy_static! {
     static ref COMMANDS: BTreeMap<String, fn()> = BTreeMap::from([
@@ -20,8 +23,9 @@ lazy_static! {
 
 pub fn main() {
 
-    println!("RosX Shell");
-    print!("\x1B[32m>\x1B[m ");
+    println!("ROSE Shell");
+    rose();
+    prompt();
     
     let mut buffer = String::new();
     
@@ -31,14 +35,16 @@ pub fn main() {
         if c == '\n' {
             println!();
 
-            if let Some(command) = COMMANDS.get(&buffer) {
-                command();
-            } else if !buffer.is_empty() {
-                println!("Unknown command: {}", buffer);
+            if let Some(cmd) = Command::parse(&buffer) {
+                if let Some(command) = COMMANDS.get(&cmd.name) {
+                    command();
+                } else {
+                    println!("Unknown command: {}", cmd.name);
+                }
             }
             
             buffer.clear();
-            print!("\x1B[32m>\x1B[m ");
+            prompt();
         } else if c == '\x08' {
             if !buffer.is_empty() {
                 buffer.pop();
@@ -49,6 +55,10 @@ pub fn main() {
             buffer.push(c);
         }
     }
+}
+
+fn prompt() {
+    print!("{}", PROMPT);
 }
 
 fn rose() {

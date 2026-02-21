@@ -8,4 +8,5 @@ extern crate lazy_static;
 extern crate system;
 extern crate usrlib;
 
+pub mod command;
 pub mod shell;
