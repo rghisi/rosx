@@ -1,8 +1,6 @@
+use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
-
-use crate::kernel::task_wrapper;
-use crate::task::{SharedTask, Task, next_id};
 
 const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 const PT_LOAD: u32 = 1;
@@ -71,7 +69,12 @@ pub enum ElfError {
     NoLoadSegments,
 }
 
-pub fn load_elf(bytes: &[u8]) -> Result<SharedTask, ElfError> {
+pub struct Image {
+    pub image: Vec<u8>,
+    pub entry: usize,
+}
+
+pub fn load_elf(bytes: &[u8]) -> Result<Image, ElfError> {
     if bytes.len() < mem::size_of::<Elf64Header>() {
         return Err(ElfError::TooSmall);
     }
@@ -104,8 +107,7 @@ pub fn load_elf(bytes: &[u8]) -> Result<SharedTask, ElfError> {
     }
 
     let image_size = max_addr as usize;
-    let mut image = Vec::<u8>::with_capacity(image_size);
-    image.resize(image_size, 0);
+    let mut image = vec![0; image_size];
 
     for phdr in phdrs {
         if phdr.p_type == PT_LOAD {
@@ -125,12 +127,9 @@ pub fn load_elf(bytes: &[u8]) -> Result<SharedTask, ElfError> {
             break;
         }
     }
-
     let entry = base + header.e_entry;
-    let image_leaked = image.leak();
-    let _ = image_leaked;
 
-    Ok(Task::new(next_id(), "ELF", task_wrapper as usize, entry as usize))
+    Ok(Image {image, entry: entry as usize})
 }
 
 fn apply_relocations(image: &[u8], base: u64, dynamic_phdr: &Elf64Phdr) {

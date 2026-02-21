@@ -34,7 +34,7 @@ impl Kernel {
         let cpu = kconfig.cpu;
         crate::kernel_services::init();
         let scheduler = (kconfig.scheduler_factory)();
-        let main_thread_task = Task::new(0, "[K] Main Thread", main_thread_run as usize, 0);
+        let main_thread_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
         let main_thread_task_handle = services()
             .task_manager
             .borrow_mut()
@@ -211,17 +211,6 @@ pub fn bootstrap(
     MEMORY_MANAGER.bootstrap(memory_blocks);
     MEMORY_MANAGER.print_config();
     kprintln!("[KERNEL] Bootstrapped");
-}
-
-pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
-    let task_fn: fn() = unsafe { core::mem::transmute(entry_point) };
-
-    kernel().execution_state.preemption_enabled = true;
-
-    task_fn();
-
-    kernel().terminate_current_task();
-    kernel().task_yield();
 }
 
 extern "C" fn main_thread_run() -> ! {

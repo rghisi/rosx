@@ -1,10 +1,10 @@
 use collections::generational_arena::Handle;
 use crate::cpu::Cpu;
-use crate::kernel::{kernel, task_wrapper};
+use crate::kernel::{kernel};
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
-use core::sync::atomic::{AtomicU32, Ordering};
+use crate::elf::load_elf;
 
 pub(crate) type TaskHandle = Handle<u8, u8>;
 pub type SharedTask = Box<Task>;
@@ -46,7 +46,6 @@ impl Display for TaskState {
     }
 }
 pub struct Task {
-    id: u32,
     name: &'static str,
     state: TaskState,
     yield_reason: Option<YieldReason>,
@@ -58,13 +57,11 @@ pub struct Task {
 
 impl Task {
     pub fn new<'a>(
-        id: u32,
         name: &'static str,
         entry_point: usize,
         entry_param: usize,
     ) -> SharedTask {
         let mut task = Box::new(Task {
-            id,
             name,
             state: Created,
             yield_reason: None,
@@ -80,9 +77,6 @@ impl Task {
         }
 
         task
-    }
-    pub fn id(&self) -> u32 {
-        self.id
     }
     pub fn name(&self) -> &'static str {
         self.name
@@ -139,13 +133,13 @@ pub struct FunctionTask {}
 
 impl FunctionTask {
     pub fn new(name: &'static str, job: fn()) -> SharedTask {
-        Task::new(next_id(), name, task_wrapper as usize, job as usize)
+        Task::new(name, task_wrapper as usize, job as usize)
     }
 }
 
 pub fn idle_task_factory(cpu: &'static dyn Cpu) -> Box<Task> {
     let cpu_ptr = Box::into_raw(Box::new(cpu)) as usize;
-    Task::new(next_id(), "[K] Idle", idle_entry as usize, cpu_ptr)
+    Task::new("[K] Idle", idle_entry as usize, cpu_ptr)
 }
 
 extern "C" fn idle_entry(cpu_ptr: usize) {
@@ -157,10 +151,36 @@ extern "C" fn idle_entry(cpu_ptr: usize) {
 }
 
 pub fn new_entrypoint_task(entrypoint: usize) -> SharedTask {
-    Task::new(next_id(), "EPT", task_wrapper as usize, entrypoint)
+    Task::new("EPT", task_wrapper as usize, entrypoint)
 }
 
-static NEXT_ID: AtomicU32 = AtomicU32::new(100);
-pub fn next_id() -> u32 {
-    NEXT_ID.fetch_add(1, Ordering::Relaxed)
+pub fn new_elf_task(elf: &'static [u8]) -> SharedTask {
+    let elf_ptr = Box::into_raw(Box::new(elf)) as usize;
+    Task::new("ELF", elf_task_wrapper as usize, elf_ptr)
+}
+
+pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
+    let task_entry_point: fn() = unsafe { core::mem::transmute(entry_point) };
+
+    kernel().execution_state.preemption_enabled = true;
+
+    task_entry_point();
+
+    kernel().terminate_current_task();
+    kernel().task_yield();
+}
+
+pub(crate) extern "C" fn elf_task_wrapper(elf: usize) {
+    let elf_bytes: &[u8] = unsafe { *Box::from_raw(elf as *mut &[u8]) };
+    let image = load_elf(elf_bytes).unwrap();
+    let task_entry_point: fn() = unsafe { core::mem::transmute(image.entry) };
+
+    kernel().execution_state.preemption_enabled = true;
+
+    task_entry_point();
+
+    drop(image);
+
+    kernel().terminate_current_task();
+    kernel().task_yield();
 }

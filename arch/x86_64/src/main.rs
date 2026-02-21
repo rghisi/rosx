@@ -21,6 +21,7 @@ use kernel::kernel::Kernel;
 use kernel::scheduler;
 use kernel::kprintln;
 use kernel::panic::handle_panic;
+use kernel::task::new_elf_task;
 
 static VGA_OUTPUT: VgaOutput = VgaOutput;
 pub static QEMU_OUTPUT: QemuDebugConsole = QemuDebugConsole;
@@ -60,8 +61,7 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     // kernel.schedule(elf_task);
 
     static SNAKE_ELF: &[u8] = include_bytes!("../../../apps/snake/target/rosx-user/release/snake");
-    let snake_task = kernel::elf::load_elf(SNAKE_ELF).expect("Failed to load snake ELF");
-    kernel.schedule(snake_task);
+    kernel.schedule(new_elf_task(SNAKE_ELF));
 
     kprintln!("[KERNEL] Starting");
     kernel.start();
