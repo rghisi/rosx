@@ -157,7 +157,52 @@ impl UserSpaceAllocator {
         }
     }
 
-    pub fn dealloc(&mut self, _ptr: *mut u8, _layout: Layout) {}
+    pub fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
+        let ptr_addr = ptr as usize;
+
+        let mut block = self.block_list;
+        while !block.is_null() {
+            // Safety: block points to a BlockHeader we wrote during alloc_new_block.
+            let block_ref = unsafe { &mut *block };
+            let block_start = block as usize;
+            let block_end = block_start + block_ref.chunk_count * block_ref.chunk_size;
+
+            if ptr_addr >= block_start && ptr_addr < block_end {
+                Self::dealloc_from_block(block_ref, ptr, layout.size());
+                block_ref.allocation_count -= 1;
+                if block_ref.allocation_count == 0 {
+                    self.free_block_count += 1;
+                }
+                return;
+            }
+
+            block = block_ref.next;
+        }
+    }
+
+    fn dealloc_from_block(block: &mut BlockHeader, ptr: *mut u8, size: usize) {
+        let ptr_addr = ptr as usize;
+        let mut prev: *mut *mut FreeNode = &mut block.free_list;
+        let mut node = block.free_list;
+
+        while !node.is_null() {
+            // Safety: node is a valid FreeNode pointer.
+            if ptr_addr < node as usize {
+                break;
+            }
+            unsafe {
+                prev = &mut (*node).next;
+                node = (*node).next;
+            }
+        }
+
+        // Safety: ptr points to memory we previously allocated; size bytes are available there.
+        unsafe {
+            let new_node = ptr as *mut FreeNode;
+            *new_node = FreeNode { next: node, size };
+            *prev = new_node;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -182,5 +227,48 @@ mod tests {
         let ptr = allocator.alloc(layout);
 
         assert!(!ptr.is_null());
+    }
+
+    #[test]
+    fn dealloc_returns_space_for_reuse() {
+        let chunk_size = 4096;
+        let mut memory = vec![0u8; 10 * chunk_size];
+        let mut chunk_alloc = make_chunk_alloc(chunk_size, &mut memory);
+        let mut allocator = UserSpaceAllocator::new(&mut chunk_alloc as *mut dyn ChunkAllocator);
+
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr_a = allocator.alloc(layout);
+        let ptr_b = allocator.alloc(layout);
+
+        assert!(!ptr_a.is_null());
+        assert!(!ptr_b.is_null());
+
+        allocator.dealloc(ptr_a, layout);
+
+        let ptr_c = allocator.alloc(layout);
+        assert_eq!(ptr_c, ptr_a);
+    }
+
+    #[test]
+    fn two_allocations_from_same_block_do_not_overlap() {
+        let chunk_size = 4096;
+        let mut memory = vec![0u8; 10 * chunk_size];
+        let mut chunk_alloc = make_chunk_alloc(chunk_size, &mut memory);
+        let mut allocator = UserSpaceAllocator::new(&mut chunk_alloc as *mut dyn ChunkAllocator);
+
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr1 = allocator.alloc(layout);
+        let ptr2 = allocator.alloc(layout);
+
+        assert!(!ptr1.is_null());
+        assert!(!ptr2.is_null());
+        assert_ne!(ptr1, ptr2);
+
+        unsafe {
+            core::ptr::write_bytes(ptr1, 0xAA, 64);
+            core::ptr::write_bytes(ptr2, 0xBB, 64);
+            assert!(core::slice::from_raw_parts(ptr1, 64).iter().all(|&b| b == 0xAA));
+            assert!(core::slice::from_raw_parts(ptr2, 64).iter().all(|&b| b == 0xBB));
+        }
     }
 }
