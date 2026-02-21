@@ -184,6 +184,17 @@ fn play(rng: &mut Rng) -> bool {
                         piece.col += 1;
                     }
                 }
+                'w' | 'W' => {
+                    let new_rot = (piece.rotation + 1) % 4;
+                    let kicks: [i32; 5] = [0, -1, 1, -2, 2];
+                    for kick in kicks {
+                        if !collides(&board, &piece, piece.col + kick, piece.row, new_rot) {
+                            piece.col += kick;
+                            piece.rotation = new_rot;
+                            break;
+                        }
+                    }
+                }
                 's' | 'S' => {
                     if !collides(&board, &piece, piece.col, piece.row + 1, piece.rotation) {
                         piece.row += 1;
