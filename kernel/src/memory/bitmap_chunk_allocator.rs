@@ -17,6 +17,11 @@ pub struct Allocation {
     pub chunk_size: usize,
 }
 
+pub trait ChunkAllocator {
+    fn allocate(&mut self, layout: Layout, owner: ChunkOwner) -> Option<Allocation>;
+    fn deallocate(&mut self, ptr: *mut u8, chunk_count: usize);
+}
+
 struct Region {
     base: usize,
     chunk_count: usize,
@@ -107,57 +112,6 @@ impl BitmapChunkAllocator {
             total_chunks,
             chunk_size,
             owner: owner_ptr,
-        }
-    }
-
-    pub fn allocate(&mut self, layout: Layout, owner: ChunkOwner) -> Option<Allocation> {
-        let bytes = layout.size();
-        if bytes == 0 {
-            return None;
-        }
-        assert!(
-            self.chunk_size >= layout.align(),
-            "chunk_size must be >= layout alignment"
-        );
-        let chunk_count = (bytes + self.chunk_size - 1) / self.chunk_size;
-        for r in 0..self.region_count {
-            let region = self.region(r);
-            let base = region.base;
-            let region_chunks = region.chunk_count;
-            let bitmap_offset = region.bitmap_offset;
-            if region_chunks < chunk_count {
-                continue;
-            }
-            if let Some(start) = self.find_free_run(bitmap_offset, region_chunks, chunk_count) {
-                self.mark_bits(start, chunk_count, true);
-                self.write_owner(start, chunk_count, owner);
-                let chunk_in_region = start - bitmap_offset;
-                let addr = base + chunk_in_region * self.chunk_size;
-                return Some(Allocation {
-                    ptr: addr as *mut u8,
-                    chunk_count,
-                    chunk_size: self.chunk_size,
-                });
-            }
-        }
-        None
-    }
-
-    pub fn deallocate(&mut self, ptr: *mut u8, chunk_count: usize) {
-        let addr = ptr as usize;
-        for r in 0..self.region_count {
-            let region = self.region(r);
-            let base = region.base;
-            let region_chunks = region.chunk_count;
-            let bitmap_offset = region.bitmap_offset;
-            let region_end = base + region_chunks * self.chunk_size;
-            if addr >= base && addr < region_end {
-                let chunk_in_region = (addr - base) / self.chunk_size;
-                let bit_start = bitmap_offset + chunk_in_region;
-                self.mark_bits(bit_start, chunk_count, false);
-                self.write_owner(bit_start, chunk_count, ChunkOwner::Kernel);
-                return;
-            }
         }
     }
 
@@ -256,6 +210,59 @@ impl BitmapChunkAllocator {
                 let chunk_in_region = (addr - base) / self.chunk_size;
                 let bit_start = region.bitmap_offset + chunk_in_region;
                 self.write_owner(bit_start, chunk_count, ChunkOwner::Task(task));
+                return;
+            }
+        }
+    }
+}
+
+impl ChunkAllocator for BitmapChunkAllocator {
+    fn allocate(&mut self, layout: Layout, owner: ChunkOwner) -> Option<Allocation> {
+        let bytes = layout.size();
+        if bytes == 0 {
+            return None;
+        }
+        assert!(
+            self.chunk_size >= layout.align(),
+            "chunk_size must be >= layout alignment"
+        );
+        let chunk_count = (bytes + self.chunk_size - 1) / self.chunk_size;
+        for r in 0..self.region_count {
+            let region = self.region(r);
+            let base = region.base;
+            let region_chunks = region.chunk_count;
+            let bitmap_offset = region.bitmap_offset;
+            if region_chunks < chunk_count {
+                continue;
+            }
+            if let Some(start) = self.find_free_run(bitmap_offset, region_chunks, chunk_count) {
+                self.mark_bits(start, chunk_count, true);
+                self.write_owner(start, chunk_count, owner);
+                let chunk_in_region = start - bitmap_offset;
+                let addr = base + chunk_in_region * self.chunk_size;
+                return Some(Allocation {
+                    ptr: addr as *mut u8,
+                    chunk_count,
+                    chunk_size: self.chunk_size,
+                });
+            }
+        }
+        None
+    }
+
+    fn deallocate(&mut self, ptr: *mut u8, chunk_count: usize) {
+        let addr = ptr as usize;
+        for r in 0..self.region_count {
+            let region = self.region(r);
+            let base = region.base;
+            let region_chunks = region.chunk_count;
+            let bitmap_offset = region.bitmap_offset;
+            let region_end = base + region_chunks * self.chunk_size;
+            if addr >= base && addr < region_end {
+                let chunk_in_region = (addr - base) / self.chunk_size;
+                let bit_start = bitmap_offset + chunk_in_region;
+                self.mark_bits(bit_start, chunk_count, false);
+                self.write_owner(bit_start, chunk_count, ChunkOwner::Kernel);
                 return;
             }
         }
@@ -803,6 +810,21 @@ mod tests {
 
         allocator.transfer_to_task(alloc.ptr, alloc.chunk_count, task);
         allocator.deallocate_by_owner(task);
+
+        assert_eq!(allocator.free_chunks(), total);
+    }
+
+    #[test]
+    fn bitmap_allocator_implements_chunk_allocator_trait() {
+        let mut memory = vec![0u8; 5 * DEFAULT_CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
+        let total = allocator.free_chunks();
+
+        let chunk_allocator: &mut dyn ChunkAllocator = &mut allocator;
+        let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let alloc = chunk_allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
+        chunk_allocator.deallocate(alloc.ptr, alloc.chunk_count);
 
         assert_eq!(allocator.free_chunks(), total);
     }
