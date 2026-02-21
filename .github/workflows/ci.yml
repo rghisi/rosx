@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -78,4 +80,31 @@ jobs:
 
       - name: Build
         working-directory: arch/x86_64
-        run: cargo build
+        run: cargo build --release
+
+      - name: Upload bootimage
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootimage
+          path: arch/x86_64/target/rosx/release/bootimage-rosx.bin
+
+  release:
+    name: Create Release
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - name: Download bootimage
+        uses: actions/download-artifact@v4
+        with:
+          name: bootimage
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.sha }}
+          name: Build ${{ github.sha }}
+          files: bootimage-rosx.bin
