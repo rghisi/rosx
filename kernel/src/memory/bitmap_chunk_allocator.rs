@@ -1,13 +1,25 @@
 use core::alloc::Layout;
+use crate::task::TaskHandle;
 
 pub const DEFAULT_CHUNK_SIZE: usize = 64 * 1024;
 const BITS_PER_WORD: usize = usize::BITS as usize;
 const METADATA_ALIGNMENT: usize = 16;
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum ChunkOwner {
+    Kernel,
+    Task(TaskHandle),
+}
+
 pub struct Allocation {
     pub ptr: *mut u8,
     pub chunk_count: usize,
     pub chunk_size: usize,
+}
+
+pub trait ChunkAllocator {
+    fn allocate(&mut self, layout: Layout, owner: ChunkOwner) -> Option<Allocation>;
+    fn deallocate(&mut self, ptr: *mut u8, chunk_count: usize);
 }
 
 struct Region {
@@ -24,6 +36,7 @@ pub struct BitmapChunkAllocator {
     region_count: usize,
     total_chunks: usize,
     chunk_size: usize,
+    owner: *mut ChunkOwner,
 }
 
 fn align_up(value: usize, alignment: usize) -> usize {
@@ -47,44 +60,42 @@ impl BitmapChunkAllocator {
         let bitmap_words = (raw_total_chunks + BITS_PER_WORD - 1) / BITS_PER_WORD;
         let regions_bytes = region_count * core::mem::size_of::<Region>();
         let bitmap_bytes = bitmap_words * core::mem::size_of::<usize>();
-        let aligned_metadata = align_up(regions_bytes + bitmap_bytes, METADATA_ALIGNMENT);
+        let owner_bytes = raw_total_chunks * core::mem::size_of::<ChunkOwner>();
+        let aligned_metadata = align_up(regions_bytes + bitmap_bytes + owner_bytes, METADATA_ALIGNMENT);
 
-        let (first_base, first_size) = ranges[0];
-        assert!(
-            aligned_metadata + chunk_size <= first_size,
-            "first range too small for metadata"
-        );
+        let metadata_range_idx = ranges
+            .iter()
+            .position(|&(_, size)| size >= aligned_metadata + chunk_size)
+            .expect("no range large enough for metadata");
 
-        let regions_ptr = first_base as *mut Region;
-        let bitmap_ptr = (first_base + regions_bytes) as *mut usize;
+        let (metadata_base, _) = ranges[metadata_range_idx];
 
-        // Safety: first_base points to writable memory large enough for aligned_metadata bytes.
+        let regions_ptr = metadata_base as *mut Region;
+        let bitmap_ptr = (metadata_base + regions_bytes) as *mut usize;
+        let owner_ptr = (metadata_base + regions_bytes + bitmap_bytes) as *mut ChunkOwner;
+
+        // Safety: metadata_base points to writable memory large enough for aligned_metadata bytes.
         // The caller guarantees this by providing a valid memory range.
         unsafe {
-            core::ptr::write_bytes(first_base as *mut u8, 0, aligned_metadata);
+            core::ptr::write_bytes(metadata_base as *mut u8, 0, aligned_metadata);
         }
 
-        let usable_start = first_base + aligned_metadata;
-        let usable_size = first_size - aligned_metadata;
-        let first_chunk_count = usable_size / chunk_size;
-
-        let mut total_chunks = first_chunk_count;
-        let mut bitmap_offset = first_chunk_count;
+        let mut total_chunks = 0;
+        let mut bitmap_offset = 0;
 
         // Safety: regions_ptr points into the zero-initialized metadata area
         // with space for region_count Region entries.
         unsafe {
-            *regions_ptr = Region {
-                base: usable_start,
-                chunk_count: first_chunk_count,
-                bitmap_offset: 0,
-            };
-
-            for i in 1..region_count {
+            for i in 0..region_count {
                 let (base, size) = ranges[i];
-                let chunk_count = size / chunk_size;
+                let (region_base, region_size) = if i == metadata_range_idx {
+                    (base + aligned_metadata, size - aligned_metadata)
+                } else {
+                    (base, size)
+                };
+                let chunk_count = region_size / chunk_size;
                 *regions_ptr.add(i) = Region {
-                    base,
+                    base: region_base,
                     chunk_count,
                     bitmap_offset,
                 };
@@ -100,55 +111,7 @@ impl BitmapChunkAllocator {
             region_count,
             total_chunks,
             chunk_size,
-        }
-    }
-
-    pub fn allocate(&mut self, layout: Layout) -> Option<Allocation> {
-        let bytes = layout.size();
-        if bytes == 0 {
-            return None;
-        }
-        assert!(
-            self.chunk_size >= layout.align(),
-            "chunk_size must be >= layout alignment"
-        );
-        let chunk_count = (bytes + self.chunk_size - 1) / self.chunk_size;
-        for r in 0..self.region_count {
-            let region = self.region(r);
-            let base = region.base;
-            let region_chunks = region.chunk_count;
-            let bitmap_offset = region.bitmap_offset;
-            if region_chunks < chunk_count {
-                continue;
-            }
-            if let Some(start) = self.find_free_run(bitmap_offset, region_chunks, chunk_count) {
-                self.mark_bits(start, chunk_count, true);
-                let chunk_in_region = start - bitmap_offset;
-                let addr = base + chunk_in_region * self.chunk_size;
-                return Some(Allocation {
-                    ptr: addr as *mut u8,
-                    chunk_count,
-                    chunk_size: self.chunk_size,
-                });
-            }
-        }
-        None
-    }
-
-    pub fn deallocate(&mut self, ptr: *mut u8, chunk_count: usize) {
-        let addr = ptr as usize;
-        for r in 0..self.region_count {
-            let region = self.region(r);
-            let base = region.base;
-            let region_chunks = region.chunk_count;
-            let bitmap_offset = region.bitmap_offset;
-            let region_end = base + region_chunks * self.chunk_size;
-            if addr >= base && addr < region_end {
-                let chunk_in_region = (addr - base) / self.chunk_size;
-                let bit_start = bitmap_offset + chunk_in_region;
-                self.mark_bits(bit_start, chunk_count, false);
-                return;
-            }
+            owner: owner_ptr,
         }
     }
 
@@ -218,18 +181,106 @@ impl BitmapChunkAllocator {
             }
         }
     }
+
+    fn write_owner(&mut self, start: usize, count: usize, owner: ChunkOwner) {
+        for i in start..start + count {
+            // Safety: i is bounded by total_chunks, which fits within the owner array.
+            unsafe { *self.owner.add(i) = owner; }
+        }
+    }
+
+    pub fn deallocate_by_owner(&mut self, task: TaskHandle) {
+        for i in 0..self.total_chunks {
+            // Safety: i < total_chunks bounds both the owner and bitmap arrays.
+            let owned_by_task = unsafe { *self.owner.add(i) } == ChunkOwner::Task(task);
+            if owned_by_task && self.is_bit_set(i) {
+                self.mark_bits(i, 1, false);
+                unsafe { *self.owner.add(i) = ChunkOwner::Kernel; }
+            }
+        }
+    }
+
+    pub fn transfer_to_task(&mut self, ptr: *mut u8, chunk_count: usize, task: TaskHandle) {
+        let addr = ptr as usize;
+        for r in 0..self.region_count {
+            let region = self.region(r);
+            let base = region.base;
+            let region_end = base + region.chunk_count * self.chunk_size;
+            if addr >= base && addr < region_end {
+                let chunk_in_region = (addr - base) / self.chunk_size;
+                let bit_start = region.bitmap_offset + chunk_in_region;
+                self.write_owner(bit_start, chunk_count, ChunkOwner::Task(task));
+                return;
+            }
+        }
+    }
+}
+
+impl ChunkAllocator for BitmapChunkAllocator {
+    fn allocate(&mut self, layout: Layout, owner: ChunkOwner) -> Option<Allocation> {
+        let bytes = layout.size();
+        if bytes == 0 {
+            return None;
+        }
+        assert!(
+            self.chunk_size >= layout.align(),
+            "chunk_size must be >= layout alignment"
+        );
+        let chunk_count = (bytes + self.chunk_size - 1) / self.chunk_size;
+        for r in 0..self.region_count {
+            let region = self.region(r);
+            let base = region.base;
+            let region_chunks = region.chunk_count;
+            let bitmap_offset = region.bitmap_offset;
+            if region_chunks < chunk_count {
+                continue;
+            }
+            if let Some(start) = self.find_free_run(bitmap_offset, region_chunks, chunk_count) {
+                self.mark_bits(start, chunk_count, true);
+                self.write_owner(start, chunk_count, owner);
+                let chunk_in_region = start - bitmap_offset;
+                let addr = base + chunk_in_region * self.chunk_size;
+                return Some(Allocation {
+                    ptr: addr as *mut u8,
+                    chunk_count,
+                    chunk_size: self.chunk_size,
+                });
+            }
+        }
+        None
+    }
+
+    fn deallocate(&mut self, ptr: *mut u8, chunk_count: usize) {
+        let addr = ptr as usize;
+        for r in 0..self.region_count {
+            let region = self.region(r);
+            let base = region.base;
+            let region_chunks = region.chunk_count;
+            let bitmap_offset = region.bitmap_offset;
+            let region_end = base + region_chunks * self.chunk_size;
+            if addr >= base && addr < region_end {
+                let chunk_in_region = (addr - base) / self.chunk_size;
+                let bit_start = bitmap_offset + chunk_in_region;
+                self.mark_bits(bit_start, chunk_count, false);
+                self.write_owner(bit_start, chunk_count, ChunkOwner::Kernel);
+                return;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use core::alloc::Layout;
+    use crate::task::TaskHandle;
 
     fn metadata_overhead(region_count: usize, raw_total_chunks: usize) -> usize {
         let bitmap_words = (raw_total_chunks + BITS_PER_WORD - 1) / BITS_PER_WORD;
         let regions_bytes = region_count * core::mem::size_of::<Region>();
         let bitmap_bytes = bitmap_words * core::mem::size_of::<usize>();
-        align_up(regions_bytes + bitmap_bytes, METADATA_ALIGNMENT)
+        let owner_bytes = raw_total_chunks * core::mem::size_of::<ChunkOwner>();
+        align_up(regions_bytes + bitmap_bytes + owner_bytes, METADATA_ALIGNMENT)
     }
 
     fn usable_base(base: usize, region_count: usize, raw_total_chunks: usize) -> usize {
@@ -294,7 +345,7 @@ mod tests {
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
         let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
-        let alloc = allocator.allocate(layout).unwrap();
+        let alloc = allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
 
         assert_eq!(alloc.ptr, usable as *mut u8);
     }
@@ -308,7 +359,7 @@ mod tests {
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
         let layout = Layout::from_size_align(3 * DEFAULT_CHUNK_SIZE, 1).unwrap();
-        let alloc = allocator.allocate(layout).unwrap();
+        let alloc = allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
 
         assert_eq!(alloc.ptr, usable as *mut u8);
     }
@@ -323,8 +374,8 @@ mod tests {
 
         let layout1 = Layout::from_size_align(2 * DEFAULT_CHUNK_SIZE, 1).unwrap();
         let layout2 = Layout::from_size_align(3 * DEFAULT_CHUNK_SIZE, 1).unwrap();
-        let first = allocator.allocate(layout1).unwrap();
-        let second = allocator.allocate(layout2).unwrap();
+        let first = allocator.allocate(layout1, ChunkOwner::Kernel).unwrap();
+        let second = allocator.allocate(layout2, ChunkOwner::Kernel).unwrap();
 
         assert_eq!(first.ptr, usable as *mut u8);
         assert_eq!(second.ptr, (usable + 2 * DEFAULT_CHUNK_SIZE) as *mut u8);
@@ -340,7 +391,7 @@ mod tests {
         let overhead = metadata_overhead(1, 3);
         let available = (3 * DEFAULT_CHUNK_SIZE - overhead) / DEFAULT_CHUNK_SIZE;
         let layout = Layout::from_size_align((available + 1) * DEFAULT_CHUNK_SIZE, 1).unwrap();
-        let result = allocator.allocate(layout);
+        let result = allocator.allocate(layout, ChunkOwner::Kernel);
 
         assert!(result.is_none());
     }
@@ -353,7 +404,7 @@ mod tests {
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
         let layout = Layout::from_size_align(0, 1).unwrap();
-        assert!(allocator.allocate(layout).is_none());
+        assert!(allocator.allocate(layout, ChunkOwner::Kernel).is_none());
     }
 
     #[test]
@@ -368,9 +419,9 @@ mod tests {
 
         let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
         for _ in 0..available {
-            assert!(allocator.allocate(layout).is_some());
+            assert!(allocator.allocate(layout, ChunkOwner::Kernel).is_some());
         }
-        assert!(allocator.allocate(layout).is_none());
+        assert!(allocator.allocate(layout, ChunkOwner::Kernel).is_none());
     }
 
     #[test]
@@ -390,11 +441,11 @@ mod tests {
 
         let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
         for _ in 0..first_region_chunks {
-            allocator.allocate(layout).unwrap();
+            allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
         }
 
         let layout2 = Layout::from_size_align(2 * DEFAULT_CHUNK_SIZE, 1).unwrap();
-        let from_second = allocator.allocate(layout2).unwrap();
+        let from_second = allocator.allocate(layout2, ChunkOwner::Kernel).unwrap();
         assert_eq!(from_second.ptr, base2 as *mut u8);
     }
 
@@ -411,12 +462,12 @@ mod tests {
 
         let layout_all = Layout::from_size_align(available * DEFAULT_CHUNK_SIZE, 1).unwrap();
         let layout_one = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
-        let alloc = allocator.allocate(layout_all).unwrap();
-        assert!(allocator.allocate(layout_one).is_none());
+        let alloc = allocator.allocate(layout_all, ChunkOwner::Kernel).unwrap();
+        assert!(allocator.allocate(layout_one, ChunkOwner::Kernel).is_none());
 
         allocator.deallocate(alloc.ptr, available);
 
-        let alloc2 = allocator.allocate(layout_all).unwrap();
+        let alloc2 = allocator.allocate(layout_all, ChunkOwner::Kernel).unwrap();
         assert_eq!(alloc2.ptr, usable as *mut u8);
     }
 
@@ -429,13 +480,13 @@ mod tests {
         let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
 
         let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
-        let a = allocator.allocate(layout).unwrap();
-        let _b = allocator.allocate(layout).unwrap();
-        let _c = allocator.allocate(layout).unwrap();
-        allocator.allocate(layout).unwrap();
+        let a = allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
+        let _b = allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
+        let _c = allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
+        allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
 
         allocator.deallocate(a.ptr, 1);
-        let reused = allocator.allocate(layout).unwrap();
+        let reused = allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
         assert_eq!(reused.ptr, usable as *mut u8);
     }
 
@@ -449,13 +500,13 @@ mod tests {
 
         let layout_one = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
         let layout_two = Layout::from_size_align(2 * DEFAULT_CHUNK_SIZE, 1).unwrap();
-        allocator.allocate(layout_one).unwrap();
-        let b = allocator.allocate(layout_two).unwrap();
-        allocator.allocate(layout_one).unwrap();
+        allocator.allocate(layout_one, ChunkOwner::Kernel).unwrap();
+        let b = allocator.allocate(layout_two, ChunkOwner::Kernel).unwrap();
+        allocator.allocate(layout_one, ChunkOwner::Kernel).unwrap();
 
         allocator.deallocate(b.ptr, 2);
 
-        let reused = allocator.allocate(layout_two).unwrap();
+        let reused = allocator.allocate(layout_two, ChunkOwner::Kernel).unwrap();
         assert_eq!(reused.ptr, (usable + DEFAULT_CHUNK_SIZE) as *mut u8);
     }
 
@@ -483,11 +534,11 @@ mod tests {
 
         let layout_one = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
         let layout_two = Layout::from_size_align(2 * DEFAULT_CHUNK_SIZE, 1).unwrap();
-        allocator.allocate(layout_one);
+        allocator.allocate(layout_one, ChunkOwner::Kernel);
         assert_eq!(allocator.used_chunks(), 1);
         assert_eq!(allocator.free_chunks(), total - 1);
 
-        allocator.allocate(layout_two);
+        allocator.allocate(layout_two, ChunkOwner::Kernel);
         assert_eq!(allocator.used_chunks(), 3);
         assert_eq!(allocator.free_chunks(), total - 3);
     }
@@ -502,7 +553,7 @@ mod tests {
         let total = allocator.free_chunks();
 
         let layout = Layout::from_size_align(3 * DEFAULT_CHUNK_SIZE, 1).unwrap();
-        let alloc = allocator.allocate(layout).unwrap();
+        let alloc = allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
         assert_eq!(allocator.used_chunks(), 3);
 
         allocator.deallocate(alloc.ptr, 2);
@@ -525,8 +576,8 @@ mod tests {
         let total = allocator.free_chunks();
         let layout_one = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
         let layout_two = Layout::from_size_align(2 * DEFAULT_CHUNK_SIZE, 1).unwrap();
-        allocator.allocate(layout_one);
-        allocator.allocate(layout_two);
+        allocator.allocate(layout_one, ChunkOwner::Kernel);
+        allocator.allocate(layout_two, ChunkOwner::Kernel);
         assert_eq!(allocator.used_chunks(), 3);
         assert_eq!(allocator.free_chunks(), total - 3);
     }
@@ -558,7 +609,7 @@ mod tests {
         );
 
         let layout = Layout::from_size_align(chunk_size + 1, 1).unwrap();
-        let alloc = allocator.allocate(layout).unwrap();
+        let alloc = allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
 
         assert_eq!(alloc.chunk_count, 2);
         assert_eq!(alloc.chunk_size, chunk_size);
@@ -577,11 +628,11 @@ mod tests {
         );
 
         let layout_one = Layout::from_size_align(chunk_size, 1).unwrap();
-        let alloc = allocator.allocate(layout_one).unwrap();
+        let alloc = allocator.allocate(layout_one, ChunkOwner::Kernel).unwrap();
         assert_eq!(alloc.chunk_count, 1);
 
         let layout_two = Layout::from_size_align(2 * chunk_size, 1).unwrap();
-        let alloc2 = allocator.allocate(layout_two).unwrap();
+        let alloc2 = allocator.allocate(layout_two, ChunkOwner::Kernel).unwrap();
         assert_eq!(alloc2.chunk_count, 2);
     }
 
@@ -597,7 +648,7 @@ mod tests {
         );
 
         let layout = Layout::from_size_align(0, 1).unwrap();
-        assert!(allocator.allocate(layout).is_none());
+        assert!(allocator.allocate(layout, ChunkOwner::Kernel).is_none());
     }
 
     #[test]
@@ -628,7 +679,7 @@ mod tests {
         );
 
         let layout = Layout::from_size_align(chunk_size, chunk_size).unwrap();
-        let alloc = allocator.allocate(layout).unwrap();
+        let alloc = allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
         assert!(!alloc.ptr.is_null());
     }
 
@@ -645,6 +696,136 @@ mod tests {
         );
 
         let layout = Layout::from_size_align(chunk_size, chunk_size * 2).unwrap();
-        allocator.allocate(layout);
+        allocator.allocate(layout, ChunkOwner::Kernel);
+    }
+
+    #[test]
+    fn deallocate_by_owner_frees_task_chunks() {
+        let mut memory = vec![0u8; 5 * DEFAULT_CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let task = TaskHandle::new(1, 1);
+
+        let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
+        let total = allocator.free_chunks();
+        let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
+
+        allocator.allocate(layout, ChunkOwner::Task(task));
+        allocator.allocate(layout, ChunkOwner::Kernel);
+        assert_eq!(allocator.used_chunks(), 2);
+
+        allocator.deallocate_by_owner(task);
+
+        assert_eq!(allocator.used_chunks(), 1);
+        assert_eq!(allocator.free_chunks(), total - 1);
+    }
+
+    #[test]
+    fn deallocate_by_owner_does_not_free_kernel_chunks() {
+        let mut memory = vec![0u8; 5 * DEFAULT_CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let task = TaskHandle::new(1, 1);
+
+        let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
+        let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
+        allocator.allocate(layout, ChunkOwner::Kernel);
+        let used_before = allocator.used_chunks();
+
+        allocator.deallocate_by_owner(task);
+
+        assert_eq!(allocator.used_chunks(), used_before);
+    }
+
+    #[test]
+    fn deallocate_by_owner_only_frees_matching_task_chunks() {
+        let mut memory = vec![0u8; 5 * DEFAULT_CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let task_a = TaskHandle::new(1, 1);
+        let task_b = TaskHandle::new(2, 1);
+
+        let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
+        let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
+        allocator.allocate(layout, ChunkOwner::Task(task_a));
+        allocator.allocate(layout, ChunkOwner::Task(task_b));
+        assert_eq!(allocator.used_chunks(), 2);
+
+        allocator.deallocate_by_owner(task_a);
+
+        assert_eq!(allocator.used_chunks(), 1);
+    }
+
+    #[test]
+    fn metadata_stored_in_second_range_when_first_too_small() {
+        // One chunk is too small: overhead(96) + chunk(65536) = 65632 > 65536
+        let mut mem1 = vec![0u8; DEFAULT_CHUNK_SIZE];
+        let mut mem2 = vec![0u8; 10 * DEFAULT_CHUNK_SIZE];
+        let base1 = mem1.as_mut_ptr() as usize;
+        let base2 = mem2.as_mut_ptr() as usize;
+
+        let allocator = BitmapChunkAllocator::new(&[
+            (base1, mem1.len()),
+            (base2, mem2.len()),
+        ]);
+
+        let overhead = metadata_overhead(2, 11);
+        let mem1_chunks = DEFAULT_CHUNK_SIZE / DEFAULT_CHUNK_SIZE;
+        let mem2_chunks = (10 * DEFAULT_CHUNK_SIZE - overhead) / DEFAULT_CHUNK_SIZE;
+        assert_eq!(allocator.free_chunks(), mem1_chunks + mem2_chunks);
+    }
+
+    #[test]
+    fn first_range_chunks_fully_available_when_metadata_in_later_range() {
+        let mut mem1 = vec![0u8; DEFAULT_CHUNK_SIZE];
+        let mut mem2 = vec![0u8; 10 * DEFAULT_CHUNK_SIZE];
+        let base1 = mem1.as_mut_ptr() as usize;
+        let base2 = mem2.as_mut_ptr() as usize;
+
+        let mut allocator = BitmapChunkAllocator::new(&[
+            (base1, mem1.len()),
+            (base2, mem2.len()),
+        ]);
+
+        let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let alloc = allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
+        assert_eq!(alloc.ptr, base1 as *mut u8);
+    }
+
+    #[test]
+    #[should_panic(expected = "no range large enough for metadata")]
+    fn panics_when_no_range_large_enough_for_metadata() {
+        let mems: Vec<Vec<u8>> = (0..4).map(|_| vec![0u8; DEFAULT_CHUNK_SIZE]).collect();
+        let ranges: Vec<(usize, usize)> = mems.iter().map(|m| (m.as_ptr() as usize, m.len())).collect();
+        BitmapChunkAllocator::new(&ranges);
+    }
+
+    #[test]
+    fn transfer_to_task_moves_kernel_chunks_to_task() {
+        let mut memory = vec![0u8; 5 * DEFAULT_CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let task = TaskHandle::new(1, 1);
+
+        let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
+        let total = allocator.free_chunks();
+        let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let alloc = allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
+
+        allocator.transfer_to_task(alloc.ptr, alloc.chunk_count, task);
+        allocator.deallocate_by_owner(task);
+
+        assert_eq!(allocator.free_chunks(), total);
+    }
+
+    #[test]
+    fn bitmap_allocator_implements_chunk_allocator_trait() {
+        let mut memory = vec![0u8; 5 * DEFAULT_CHUNK_SIZE];
+        let base = memory.as_mut_ptr() as usize;
+        let mut allocator = BitmapChunkAllocator::new(&[(base, memory.len())]);
+        let total = allocator.free_chunks();
+
+        let chunk_allocator: &mut dyn ChunkAllocator = &mut allocator;
+        let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let alloc = chunk_allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
+        chunk_allocator.deallocate(alloc.ptr, alloc.chunk_count);
+
+        assert_eq!(allocator.free_chunks(), total);
     }
 }
