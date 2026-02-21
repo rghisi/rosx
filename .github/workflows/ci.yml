@@ -54,12 +54,27 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             arch/x86_64/target/
+            apps/hello_elf/target/
+            apps/snake/target/
+            apps/tetris/target/
           key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-build-
 
       - name: Install bootimage
         run: cargo install bootimage
+
+      - name: Build hello_elf
+        working-directory: apps/hello_elf
+        run: cargo build --release
+
+      - name: Build snake
+        working-directory: apps/snake
+        run: cargo build --release
+
+      - name: Build tetris
+        working-directory: apps/tetris
+        run: cargo build --release
 
       - name: Build
         working-directory: arch/x86_64
