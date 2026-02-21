@@ -97,15 +97,15 @@ fn step(current: &Grid, next: &mut Grid) -> usize {
     population
 }
 
-fn render(grid: &Grid, generation: usize, population: usize, paused: bool) {
+fn render(grid: &Grid, generation: usize, population: usize, delay_ms: u64, paused: bool) {
     print!("\x1B[H");
 
     if paused {
-        println!("\x1B[97mCONWAY\x1B[m  Gen: {:<6}  Pop: {:<6}  \x1B[93mPAUSED\x1B[m  Space=pause  R=randomize  Q=quit",
-            generation, population);
+        println!("\x1B[97mCONWAY\x1B[m Gen: {:<6} Pop: {:<4} {:<4}ms \x1B[93mPAUSED\x1B[m Spc=pause Q=quit",
+            generation, population, delay_ms);
     } else {
-        println!("\x1B[97mCONWAY\x1B[m  Gen: {:<6}  Pop: {:<6}  Space=pause  R=randomize  Q=quit          ",
-            generation, population);
+        println!("\x1B[97mCONWAY\x1B[m Gen: {:<6} Pop: {:<4} {:<4}ms Spc=pause =/-=speed R=rand Q=quit",
+            generation, population, delay_ms);
     }
 
     for row in 0..ROWS {
@@ -132,16 +132,21 @@ pub extern "C" fn _start() {
     let mut generation = 0usize;
     let mut population = 0usize;
     let mut paused = false;
+    let mut delay_ms: u64 = 100;
 
     randomize(&mut current, &mut rng);
 
     loop {
-        render(&current, generation, population, paused);
-        Syscall::sleep(100);
+        render(&current, generation, population, delay_ms, paused);
+        if delay_ms > 0 {
+            Syscall::sleep(delay_ms);
+        }
 
         while let Some(c) = Syscall::try_read_char() {
             match c {
                 ' ' => paused = !paused,
+                '+' | '=' => delay_ms = delay_ms.saturating_sub(50),
+                '-' => delay_ms = (delay_ms + 50).min(1000),
                 'r' | 'R' => {
                     randomize(&mut current, &mut rng);
                     generation = 0;
