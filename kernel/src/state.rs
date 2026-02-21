@@ -13,7 +13,6 @@ pub struct ExecutionState {
     pub(crate) scheduler: TaskHandle,
     pub(crate) current_task: Option<TaskHandle>,
     pub(crate) preemption_enabled: bool,
-    pub(crate) remaining_quantum: u32,
     pub(crate) execution_context: ExecutionContext,
     pub(crate) cpu: &'static dyn Cpu,
 }
@@ -72,10 +71,5 @@ impl ExecutionState {
 
     pub fn execution_context(&self) -> ExecutionContext {
         self.execution_context
-    }
-
-    pub fn decrement_remaining_quantum(&mut self) -> u32 {
-        self.remaining_quantum = self.remaining_quantum.saturating_sub(1);
-        self.remaining_quantum
     }
 }

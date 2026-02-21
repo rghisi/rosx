@@ -13,6 +13,7 @@ pub trait Scheduler {
     fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle);
     fn push_hardware_interrupt(&mut self, interrupt: HardwareInterrupt);
     fn set_idle_task(&mut self, handle: TaskHandle) -> Result<(), ()>;
+    fn should_preempt(&mut self) -> bool;
 }
 
 pub type SchedulerFactory = fn() -> Box<dyn Scheduler>;

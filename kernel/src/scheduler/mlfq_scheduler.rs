@@ -10,13 +10,14 @@ use crate::kernel::kernel;
 use crate::scheduler::Scheduler;
 
 const NUM_QUEUES: usize = 3;
-const QUANTA: [u32; NUM_QUEUES] = [2, 5, 10];
+const QUANTA: [usize; NUM_QUEUES] = [2, 5, 10];
 
 pub struct MlfqScheduler {
     queues: [VecDeque<TaskHandle>; NUM_QUEUES],
     blocked_tasks: VecDeque<TaskFuture>,
     hw_interrupt_queue: VecDeque<HardwareInterrupt>,
     idle_task: Option<TaskHandle>,
+    remaining_quantum: usize
 }
 
 impl MlfqScheduler {
@@ -26,6 +27,7 @@ impl MlfqScheduler {
             blocked_tasks: VecDeque::new(),
             hw_interrupt_queue: VecDeque::new(),
             idle_task: None,
+            remaining_quantum: 0usize
         }
     }
 
@@ -91,7 +93,7 @@ impl MlfqScheduler {
         };
 
         services().task_manager.borrow_mut().set_state(next_handle, Running);
-        kernel().execution_state.remaining_quantum = QUANTA[priority];
+        self.remaining_quantum = QUANTA[priority];
         let returned_handle = kernel().switch_to_task(next_handle);
 
         let task_state = services().task_manager.borrow().get_state(returned_handle);
@@ -177,6 +179,11 @@ impl Scheduler for MlfqScheduler {
 
     fn set_idle_task(&mut self, handle: TaskHandle) -> Result<(), ()> {
         MlfqScheduler::set_idle_task(self, handle)
+    }
+
+    fn should_preempt(&mut self) -> bool {
+        self.remaining_quantum = self.remaining_quantum.saturating_sub(1);
+        self.remaining_quantum == 0
     }
 }
 

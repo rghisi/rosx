@@ -54,7 +54,6 @@ impl Kernel {
                 scheduler: scheduler_task_handler,
                 current_task: None,
                 preemption_enabled: false,
-                remaining_quantum: 0,
                 execution_context: ExecutionContext::Kernel,
                 cpu,
             },
@@ -139,7 +138,7 @@ impl Kernel {
     }
 
     pub fn preempt(&mut self) {
-        if self.execution_state.preemption_enabled && self.execution_state.decrement_remaining_quantum() == 0 {
+        if self.execution_state.preemption_enabled && self.scheduler.should_preempt() {
             if let Some(task_handle) = self.execution_state.current_task {
                 services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
             }

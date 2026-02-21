@@ -158,4 +158,8 @@ impl Scheduler for FifoScheduler {
     fn set_idle_task(&mut self, handle: TaskHandle) -> Result<(), ()> {
         FifoScheduler::set_idle_task(self, handle)
     }
+
+    fn should_preempt(&mut self) -> bool {
+        true
+    }
 }
