@@ -4,13 +4,13 @@ use usrlib::println;
 use crate::random::SimpleRng;
 
 pub struct DataBlock {
-    pub magic: u64,
+    pub magic: usize,
     pub id: usize,
     pub data: Vec<u8>,
 }
 
 impl DataBlock {
-    pub fn new(id: usize, size: usize, magic: u64) -> Self {
+    pub fn new(id: usize, size: usize, magic: usize) -> Self {
         let mut data = Vec::with_capacity(size);
         for i in 0..size {
             data.push((id as u8).wrapping_add(i as u8));
@@ -22,7 +22,7 @@ impl DataBlock {
         }
     }
 
-    pub fn verify(&self, expected_magic: u64) -> bool {
+    pub fn verify(&self, expected_magic: usize) -> bool {
         if self.magic != expected_magic {
             println!("Memory Corruption: Magic number mismatch for block {}! Expected: {:x}, Found: {:x}", self.id, expected_magic, self.magic);
             return false;
@@ -40,12 +40,17 @@ impl DataBlock {
 pub fn run() {
     println!("[MemWorker] Starting Allocation/Deallocation Stress Test...");
 
-    let mut allocations: Vec<(Box<DataBlock>, u64)> = Vec::new();
+    let mut allocations: Vec<(Box<DataBlock>, usize)> = Vec::new();
     let mut rng = SimpleRng::new(0x1337);
     let mut total_allocs_performed = 0;
 
-    const MAX_CONCURRENT_ALLOCS: usize = 5000;
-    const TOTAL_OPERATIONS: usize = 20000;
+    const MAX_CONCURRENT_ALLOCS: usize = 5;
+    const TOTAL_OPERATIONS: usize = 1000;
+
+    const MINIMUM_SIZE: u32 = 16; //16B
+    const MAXIMUM_SIZE: u32 = 16 * 1024 * 1024; //16MB
+
+    let mut allocated: usize = 0;
 
     for i in 0..TOTAL_OPERATIONS {
         let should_allocate = if allocations.len() >= MAX_CONCURRENT_ALLOCS {
@@ -59,8 +64,9 @@ pub fn run() {
         if should_allocate {
             let id = total_allocs_performed;
             total_allocs_performed += 1;
-            let size = rng.next_range(16, 20480) as usize;
-            let magic = rng.next_u64();
+            let size = rng.next_range(MINIMUM_SIZE, MAXIMUM_SIZE) as usize;
+            let magic = rng.next_u64() as usize;
+            allocated += size;
 
             let block = Box::new(DataBlock::new(id, size, magic));
 
@@ -83,8 +89,9 @@ pub fn run() {
             }
         }
 
-        if i > 0 && i % 1000 == 0 {
-            println!("[MemWorker] Progress: {}/{}", i, TOTAL_OPERATIONS);
+        if i > 0 && i % 50 == 0 {
+            println!("[MemWorker] Progress: {}/{} - {}MB", i, TOTAL_OPERATIONS, allocated / 1024 / 1024);
+            allocated = 0;
         }
     }
 
