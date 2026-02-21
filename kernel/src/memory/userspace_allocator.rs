@@ -160,6 +160,7 @@ impl UserSpaceAllocator {
     pub fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
         let ptr_addr = ptr as usize;
 
+        let mut prev_block: *mut BlockHeader = core::ptr::null_mut();
         let mut block = self.block_list;
         while !block.is_null() {
             // Safety: block points to a BlockHeader we wrote during alloc_new_block.
@@ -170,12 +171,30 @@ impl UserSpaceAllocator {
             if ptr_addr >= block_start && ptr_addr < block_end {
                 Self::dealloc_from_block(block_ref, ptr, layout.size());
                 block_ref.allocation_count -= 1;
+
                 if block_ref.allocation_count == 0 {
                     self.free_block_count += 1;
+
+                    if self.free_block_count > RESERVE_THRESHOLD {
+                        let chunk_count = block_ref.chunk_count;
+                        let next = block_ref.next;
+
+                        if prev_block.is_null() {
+                            self.block_list = next;
+                        } else {
+                            // Safety: prev_block is a valid BlockHeader.
+                            unsafe { (*prev_block).next = next; }
+                        }
+
+                        // Safety: chunk_allocator is valid; block is the start of the chunk.
+                        unsafe { (*self.chunk_allocator).deallocate(block as *mut u8, chunk_count); }
+                        self.free_block_count -= 1;
+                    }
                 }
                 return;
             }
 
+            prev_block = block;
             block = block_ref.next;
         }
     }
@@ -333,6 +352,39 @@ mod tests {
         while !allocator.alloc(layout).is_null() {}
 
         assert!(allocator.alloc(layout).is_null());
+    }
+
+    #[test]
+    fn dealloc_releases_block_chunk_when_above_reserve_threshold() {
+        let chunk_size = 512;
+        let header_size = core::mem::size_of::<BlockHeader>();
+        let alloc_size = 64;
+        let allocs_per_block = (chunk_size - header_size) / alloc_size;
+
+        let mut memory = vec![0u8; 10 * chunk_size];
+        let mut chunk_alloc = make_chunk_alloc(chunk_size, &mut memory);
+        let mut allocator = UserSpaceAllocator::new(&mut chunk_alloc as *mut dyn ChunkAllocator);
+
+        let layout = Layout::from_size_align(alloc_size, 8).unwrap();
+
+        let ptrs_a: Vec<*mut u8> = (0..allocs_per_block)
+            .map(|_| allocator.alloc(layout))
+            .collect();
+
+        let ptr_b = allocator.alloc(layout);
+        assert!(!ptr_b.is_null());
+
+        let chunks_used = chunk_alloc.used_chunks();
+
+        for &ptr in &ptrs_a {
+            allocator.dealloc(ptr, layout);
+        }
+        assert_eq!(chunk_alloc.used_chunks(), chunks_used,
+            "A's chunk should be kept as reserve");
+
+        allocator.dealloc(ptr_b, layout);
+        assert_eq!(chunk_alloc.used_chunks(), chunks_used - 1,
+            "B's chunk should be returned when free_block_count exceeds RESERVE_THRESHOLD");
     }
 
     #[test]
