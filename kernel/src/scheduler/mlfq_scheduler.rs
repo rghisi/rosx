@@ -185,7 +185,7 @@ mod tests {
     use super::*;
     use crate::future::TaskCompletionFuture;
     use crate::kernel_services::{init, services};
-    use crate::task::{Task, TaskState, next_id};
+    use crate::task::{Task, TaskState};
     use alloc::boxed::Box;
     use std::sync::Once;
 
@@ -196,7 +196,7 @@ mod tests {
     }
 
     fn create_ready_task(name: &'static str) -> TaskHandle {
-        let task = Task::new(next_id(), name, 0x1000, 0);
+        let task = Task::new(name, 0x1000, 0);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
         services().task_manager.borrow_mut().set_state(handle, TaskState::Ready);
         handle
