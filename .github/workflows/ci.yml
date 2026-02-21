@@ -55,7 +55,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            arch/x86_64/target/
+            target/
             apps/hello_elf/target/
             apps/snake/target/
             apps/tetris/target/
@@ -87,7 +87,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bootimage
-          path: arch/x86_64/target/rosx/release/bootimage-rosx.bin
+          path: target/rosx/release/bootimage-rosx.bin
           if-no-files-found: error
 
   release:
