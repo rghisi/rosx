@@ -27,3 +27,4 @@ pub(crate) mod state;
 pub mod syscall;
 pub mod task;
 pub(crate) mod task_manager;
+pub(crate) mod ipc;
