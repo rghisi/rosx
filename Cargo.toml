@@ -11,6 +11,7 @@ members = [
 exclude = [
     "apps/hello_elf",
     "apps/snake",
+    "apps/tetris",
 ]
 resolver = "3"
 
