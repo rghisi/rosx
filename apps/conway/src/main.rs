@@ -36,6 +36,67 @@ impl Grid {
     }
 }
 
+struct Rng {
+    state: u64,
+}
+
+impl Rng {
+    fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
+
+    fn next_bool(&mut self, threshold: u64) -> bool {
+        self.state = self.state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (self.state >> 33) % 100 < threshold
+    }
+}
+
+fn randomize(grid: &mut Grid, rng: &mut Rng) {
+    for row in 0..ROWS {
+        for col in 0..COLS {
+            grid.cells[row][col] = rng.next_bool(30);
+        }
+    }
+}
+
+fn neighbours(grid: &Grid, row: usize, col: usize) -> u8 {
+    let mut count = 0;
+    for dr in [ROWS - 1, 0, 1] {
+        for dc in [COLS - 1, 0, 1] {
+            if dr == 0 && dc == 0 {
+                continue;
+            }
+            let r = (row + dr) % ROWS;
+            let c = (col + dc) % COLS;
+            if grid.cells[r][c] {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+fn step(current: &Grid, next: &mut Grid) -> usize {
+    let mut population = 0;
+    for row in 0..ROWS {
+        for col in 0..COLS {
+            let n = neighbours(current, row, col);
+            let alive = match (current.cells[row][col], n) {
+                (true, 2) | (true, 3) => true,
+                (false, 3) => true,
+                _ => false,
+            };
+            next.cells[row][col] = alive;
+            if alive {
+                population += 1;
+            }
+        }
+    }
+    population
+}
+
 fn render(grid: &Grid, generation: usize, population: usize, paused: bool) {
     print!("\x1B[H");
 
