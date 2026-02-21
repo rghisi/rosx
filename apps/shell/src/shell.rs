@@ -67,7 +67,8 @@ fn clear() {
 }
 
 fn ls() {
-    COMMANDS.iter().for_each(|(command, _)| println!("{}", command));
+    COMMANDS.iter().for_each(|(command, _)| print!("{}\t", command));
+    println!();
 }
 
 fn pi() {
