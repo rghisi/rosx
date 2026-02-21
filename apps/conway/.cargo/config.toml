@@ -1,0 +1,10 @@
+[build]
+target = "../../arch/x86_64/rosx-user.json"
+
+[unstable]
+build-std = ["core", "alloc", "compiler_builtins"]
+build-std-features = ["compiler-builtins-mem"]
+json-target-spec = true
+
+[target.'cfg(target_arch = "x86_64")']
+rustflags = ["-C", "link-arg=-T../../apps/conway/linker.ld", "-C", "link-arg=--pie"]

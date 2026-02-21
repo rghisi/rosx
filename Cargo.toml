@@ -12,6 +12,7 @@ exclude = [
     "apps/hello_elf",
     "apps/snake",
     "apps/tetris",
+    "apps/conway",
 ]
 resolver = "3"
 
