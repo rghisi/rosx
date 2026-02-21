@@ -86,6 +86,10 @@ impl MlfqScheduler {
         self.queues[new_priority].push_back(handle);
     }
 
+    fn reset_quantum(&mut self, priority: usize) {
+        self.remaining_quantum = QUANTA[priority];
+    }
+
     fn run_next_task(&mut self) {
         let (next_handle, priority) = match self.take_next_handle() {
             Some((handle, priority)) => (handle, priority),
@@ -93,7 +97,7 @@ impl MlfqScheduler {
         };
 
         services().task_manager.borrow_mut().set_state(next_handle, Running);
-        self.remaining_quantum = QUANTA[priority];
+        self.reset_quantum(priority);
         let returned_handle = kernel().switch_to_task(next_handle);
 
         let task_state = services().task_manager.borrow().get_state(returned_handle);
@@ -346,5 +350,80 @@ mod tests {
     fn take_next_returns_none_when_all_queues_empty() {
         let mut scheduler = MlfqScheduler::new();
         assert!(scheduler.take_next_handle().is_none());
+    }
+
+    #[test]
+    fn reset_quantum_sets_correct_quantum_for_each_priority() {
+        for (priority, &quantum) in QUANTA.iter().enumerate() {
+            let mut scheduler = MlfqScheduler::new();
+            scheduler.reset_quantum(priority);
+            assert_eq!(scheduler.remaining_quantum, quantum);
+        }
+    }
+
+    #[test]
+    fn reset_quantum_restores_quantum_after_exhaustion() {
+        let mut scheduler = MlfqScheduler::new();
+        scheduler.reset_quantum(0);
+
+        for _ in 0..QUANTA[0] {
+            scheduler.should_preempt();
+        }
+        assert_eq!(scheduler.remaining_quantum, 0);
+
+        scheduler.reset_quantum(0);
+        assert_eq!(scheduler.remaining_quantum, QUANTA[0]);
+    }
+
+    #[test]
+    fn should_preempt_returns_false_while_quantum_remaining() {
+        let mut scheduler = MlfqScheduler::new();
+        scheduler.remaining_quantum = QUANTA[0];
+
+        for _ in 0..QUANTA[0] - 1 {
+            assert!(!scheduler.should_preempt());
+        }
+    }
+
+    #[test]
+    fn should_preempt_returns_true_when_quantum_exhausted() {
+        let mut scheduler = MlfqScheduler::new();
+        scheduler.remaining_quantum = QUANTA[0];
+
+        for _ in 0..QUANTA[0] - 1 {
+            scheduler.should_preempt();
+        }
+
+        assert!(scheduler.should_preempt());
+    }
+
+    #[test]
+    fn should_preempt_saturates_at_zero_after_exhaustion() {
+        let mut scheduler = MlfqScheduler::new();
+        scheduler.remaining_quantum = QUANTA[0];
+
+        for _ in 0..QUANTA[0] {
+            scheduler.should_preempt();
+        }
+
+        assert!(scheduler.should_preempt());
+        assert!(scheduler.should_preempt());
+    }
+
+    #[test]
+    fn should_preempt_respects_quantum_for_each_priority() {
+        for (priority, &quantum) in QUANTA.iter().enumerate() {
+            let mut scheduler = MlfqScheduler::new();
+            scheduler.remaining_quantum = quantum;
+
+            for tick in 1..=quantum {
+                let result = scheduler.should_preempt();
+                if tick < quantum {
+                    assert!(!result, "priority {priority}: expected false at tick {tick}");
+                } else {
+                    assert!(result, "priority {priority}: expected true at tick {tick}");
+                }
+            }
+        }
     }
 }
