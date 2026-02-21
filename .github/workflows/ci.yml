@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+
+      - name: Test collections
+        run: cargo test -p collections
+
+      - name: Test kernel
+        run: cargo test -p kernel
+
+  build:
+    name: Build Kernel (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src, llvm-tools-preview
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            arch/x86_64/target/
+            apps/hello_elf/target/
+            apps/snake/target/
+            apps/tetris/target/
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-
+
+      - name: Install bootimage
+        run: cargo install bootimage
+
+      - name: Build hello_elf
+        working-directory: apps/hello_elf
+        run: cargo build --release
+
+      - name: Build snake
+        working-directory: apps/snake
+        run: cargo build --release
+
+      - name: Build tetris
+        working-directory: apps/tetris
+        run: cargo build --release
+
+      - name: Build
+        working-directory: arch/x86_64
+        run: cargo build --release
+
+      - name: Upload bootimage
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootimage
+          path: arch/x86_64/target/rosx/release/bootimage-rosx.bin
+
+  release:
+    name: Create Release
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - name: Download bootimage
+        uses: actions/download-artifact@v4
+        with:
+          name: bootimage
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.sha }}
+          name: Build ${{ github.sha }}
+          files: bootimage-rosx.bin
