@@ -115,6 +115,10 @@ impl Writer {
     fn internal_write_byte(&mut self, byte: u8) {
         match byte {
             b'\n' => self.new_line(),
+            b'\t' => {
+                let next_tab_stop = (self.column_position / 8 + 1) * 8;
+                self.column_position = next_tab_stop.min(BUFFER_WIDTH);
+            }
             0x08 => {
                 if self.column_position > 0 {
                     self.column_position -= 1;
@@ -174,7 +178,7 @@ impl Writer {
         for byte in s.bytes() {
             match byte {
                 // printable ASCII byte, newline, backspace or escape
-                0x20..=0x7e | b'\n' | 0x08 | 0x1B => self.write_byte(byte),
+                0x20..=0x7e | b'\n' | b'\t' | 0x08 | 0x1B => self.write_byte(byte),
                 // not part of printable ASCII range
                 _ => self.write_byte(0xfe),
             }
