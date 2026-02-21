@@ -159,7 +159,7 @@ fn cell_color(index: u8) -> &'static str {
     }
 }
 
-fn render_next(next_kind: usize, row: usize) {
+fn render_next(next_kind: usize) {
     let mask = TETROMINOES[next_kind].rotations[0];
     let color = TETROMINOES[next_kind].color;
     for r in 0..4 {
@@ -174,13 +174,16 @@ fn render_next(next_kind: usize, row: usize) {
         if r < 3 {
             print!("\x1B[1A\x1B[9C");
         }
-        let _ = row;
     }
 }
 
-fn render(board: &Board, piece: &Piece, next_kind: usize, score: usize, lines: usize, level: usize) {
+fn render(board: &Board, piece: &Piece, next_kind: usize, score: usize, lines: usize, level: usize, game_over: bool) {
     print!("\x1B[H");
-    println!("\x1B[97mTETRIS\x1B[m  Score: {:<6}  Lines: {:<4}  Level: {:<3}  WASD=move  Q=quit", score, lines, level);
+    if game_over {
+        println!("\x1B[97mTETRIS  \x1B[91mGAME OVER!\x1B[m  Score: {:<6}  R=restart  Q=quit      ", score);
+    } else {
+        println!("\x1B[97mTETRIS\x1B[m  Score: {:<6}  Lines: {:<4}  Level: {:<3}  WASD=move  Q=quit", score, lines, level);
+    }
 
     print!("+");
     for _ in 0..WIDTH {
@@ -199,10 +202,12 @@ fn render(board: &Board, piece: &Piece, next_kind: usize, score: usize, lines: u
         }
         print!("|");
 
-        match row {
-            1 => print!("  NEXT:"),
-            3 => { print!("  "); render_next(next_kind, row); }
-            _ => {}
+        if !game_over {
+            match row {
+                1 => print!("  NEXT:"),
+                3 => { print!("  "); render_next(next_kind); }
+                _ => {}
+            }
         }
 
         println!();
@@ -225,7 +230,7 @@ fn play(rng: &mut Rng) -> bool {
 
     loop {
         let level = lines / 10 + 1;
-        render(&board, &piece, next_kind, score, lines, level);
+        render(&board, &piece, next_kind, score, lines, level, false);
         Syscall::sleep(frame_ms);
 
         while let Some(c) = Syscall::try_read_char() {
@@ -270,6 +275,17 @@ fn play(rng: &mut Rng) -> bool {
             frame_ms = (FRAME_MS.saturating_sub((lines / 10) as u64 * 50)).max(100);
             piece = Piece::new(next_kind);
             next_kind = rng.next_usize(7);
+
+            if collides(&board, &piece, piece.col, piece.row, piece.rotation) {
+                render(&board, &piece, next_kind, score, lines, level, true);
+                loop {
+                    match Syscall::read_char() {
+                        'r' | 'R' => return false,
+                        'q' | 'Q' => return true,
+                        _ => {}
+                    }
+                }
+            }
         } else {
             piece.row += 1;
         }
@@ -279,9 +295,9 @@ fn play(rng: &mut Rng) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() {
     let mut rng = Rng::new(0xDEAD_BEEF_CAFE_BABE);
-    print!("\x1B[2J\x1B[H");
 
     loop {
+        print!("\x1B[2J\x1B[H");
         let quit = play(&mut rng);
         if quit {
             println!("Goodbye!");
