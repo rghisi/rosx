@@ -80,7 +80,7 @@ jobs:
 
       - name: Build
         working-directory: arch/x86_64
-        run: cargo build --release
+        run: cargo bootimage --release
 
       - name: Upload bootimage
         if: github.event_name == 'push'
@@ -88,6 +88,7 @@ jobs:
         with:
           name: bootimage
           path: arch/x86_64/target/rosx/release/bootimage-rosx.bin
+          if-no-files-found: error
 
   release:
     name: Create Release
