@@ -297,6 +297,45 @@ mod tests {
     }
 
     #[test]
+    fn alloc_acquires_new_chunk_when_block_is_full() {
+        // chunk_size=512, header=40, free_space=472.
+        // 64-byte allocs: 7 fit (7*64=448, trailing=24 < 64), 8th must go to a second chunk.
+        let chunk_size = 512;
+        let alloc_size = 64;
+        let header_size = core::mem::size_of::<BlockHeader>();
+        let allocs_per_block = (chunk_size - header_size) / alloc_size;
+
+        let mut memory = vec![0u8; 3 * chunk_size];
+        let base = memory.as_mut_ptr() as usize;
+        let mut chunk_alloc = make_chunk_alloc(chunk_size, &mut memory);
+        let mut allocator = UserSpaceAllocator::new(&mut chunk_alloc as *mut dyn ChunkAllocator);
+
+        let layout = Layout::from_size_align(alloc_size, 8).unwrap();
+
+        for _ in 0..allocs_per_block {
+            assert!(!allocator.alloc(layout).is_null());
+        }
+
+        let ptr = allocator.alloc(layout);
+        assert!(!ptr.is_null());
+        assert!(ptr as usize >= base + chunk_size);
+    }
+
+    #[test]
+    fn alloc_returns_null_when_memory_is_exhausted() {
+        let chunk_size = 512;
+        let mut memory = vec![0u8; 3 * chunk_size];
+        let mut chunk_alloc = make_chunk_alloc(chunk_size, &mut memory);
+        let mut allocator = UserSpaceAllocator::new(&mut chunk_alloc as *mut dyn ChunkAllocator);
+
+        let layout = Layout::from_size_align(64, 8).unwrap();
+
+        while !allocator.alloc(layout).is_null() {}
+
+        assert!(allocator.alloc(layout).is_null());
+    }
+
+    #[test]
     fn two_allocations_from_same_block_do_not_overlap() {
         let chunk_size = 4096;
         let mut memory = vec![0u8; 10 * chunk_size];
