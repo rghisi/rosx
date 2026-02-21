@@ -23,7 +23,6 @@ pub fn kernel() -> &'static mut Kernel {
 }
 
 pub struct Kernel {
-    kconfig: &'static KConfig,
     cpu: &'static dyn Cpu,
     scheduler: Box<dyn Scheduler>,
     pub(crate) execution_state: ExecutionState,
@@ -49,7 +48,6 @@ impl Kernel {
         );
 
         Kernel {
-            kconfig,
             cpu,
             scheduler,
             execution_state: ExecutionState {
