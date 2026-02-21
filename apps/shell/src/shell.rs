@@ -8,6 +8,7 @@ use crate::command::Command;
 static PI_ELF: &[u8] = include_bytes!("../../../apps/hello_elf/target/rosx-user/release/hello_elf");
 static SNAKE_ELF: &[u8] = include_bytes!("../../../apps/snake/target/rosx-user/release/snake");
 static TETRIS_ELF: &[u8] = include_bytes!("../../../apps/tetris/target/rosx-user/release/tetris");
+static CONWAY_ELF: &[u8] = include_bytes!("../../../apps/conway/target/rosx-user/release/conway");
 
 static PROMPT: &str = "\x1B[32mrose>\x1B[m ";
 
@@ -20,6 +21,7 @@ lazy_static! {
         (String::from("snake"), snake as fn()),
         (String::from("tests"), tests as fn()),
         (String::from("tetris"), tetris as fn()),
+        (String::from("conway"), conway as fn()),
     ]);
 }
 
@@ -93,6 +95,10 @@ fn snake() {
 
 fn tetris() {
     Syscall::wait_future(Syscall::load(TETRIS_ELF));
+}
+
+fn conway() {
+    Syscall::wait_future(Syscall::load(CONWAY_ELF));
 }
 
 fn tests() {
