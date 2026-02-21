@@ -159,7 +159,26 @@ fn cell_color(index: u8) -> &'static str {
     }
 }
 
-fn render(board: &Board, piece: &Piece, score: usize, lines: usize, level: usize) {
+fn render_next(next_kind: usize, row: usize) {
+    let mask = TETROMINOES[next_kind].rotations[0];
+    let color = TETROMINOES[next_kind].color;
+    for r in 0..4 {
+        for c in 0..4 {
+            let bit = 0x8000u16 >> (r * 4 + c);
+            if mask & bit != 0 {
+                print!("{}\x1B[m ", cell_color(color));
+            } else {
+                print!("  ");
+            }
+        }
+        if r < 3 {
+            print!("\x1B[1A\x1B[9C");
+        }
+        let _ = row;
+    }
+}
+
+fn render(board: &Board, piece: &Piece, next_kind: usize, score: usize, lines: usize, level: usize) {
     print!("\x1B[H");
     println!("\x1B[97mTETRIS\x1B[m  Score: {:<6}  Lines: {:<4}  Level: {:<3}  WASD=move  Q=quit", score, lines, level);
 
@@ -178,7 +197,15 @@ fn render(board: &Board, piece: &Piece, score: usize, lines: usize, level: usize
             print!("{}\x1B[m", cell_color(color_index));
             print!(" ");
         }
-        println!("|");
+        print!("|");
+
+        match row {
+            1 => print!("  NEXT:"),
+            3 => { print!("  "); render_next(next_kind, row); }
+            _ => {}
+        }
+
+        println!();
     }
 
     print!("+");
@@ -191,13 +218,14 @@ fn render(board: &Board, piece: &Piece, score: usize, lines: usize, level: usize
 fn play(rng: &mut Rng) -> bool {
     let mut board = Board::new();
     let mut piece = Piece::new(rng.next_usize(7));
+    let mut next_kind = rng.next_usize(7);
     let mut score = 0usize;
     let mut lines = 0usize;
     let mut frame_ms = FRAME_MS;
 
     loop {
         let level = lines / 10 + 1;
-        render(&board, &piece, score, lines, level);
+        render(&board, &piece, next_kind, score, lines, level);
         Syscall::sleep(frame_ms);
 
         while let Some(c) = Syscall::try_read_char() {
@@ -240,7 +268,8 @@ fn play(rng: &mut Rng) -> bool {
             lines += cleared;
             score += line_score(cleared);
             frame_ms = (FRAME_MS.saturating_sub((lines / 10) as u64 * 50)).max(100);
-            piece = Piece::new(rng.next_usize(7));
+            piece = Piece::new(next_kind);
+            next_kind = rng.next_usize(7);
         } else {
             piece.row += 1;
         }
