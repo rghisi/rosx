@@ -159,20 +159,15 @@ fn cell_color(index: u8) -> &'static str {
     }
 }
 
-fn render_next(next_kind: usize) {
+fn render_next_row(next_kind: usize, preview_row: usize) {
     let mask = TETROMINOES[next_kind].rotations[0];
     let color = TETROMINOES[next_kind].color;
-    for r in 0..4 {
-        for c in 0..4 {
-            let bit = 0x8000u16 >> (r * 4 + c);
-            if mask & bit != 0 {
-                print!("{}\x1B[m ", cell_color(color));
-            } else {
-                print!("  ");
-            }
-        }
-        if r < 3 {
-            print!("\x1B[1A\x1B[9C");
+    for c in 0..4 {
+        let bit = 0x8000u16 >> (preview_row * 4 + c);
+        if mask & bit != 0 {
+            print!("{}\x1B[m ", cell_color(color));
+        } else {
+            print!("  ");
         }
     }
 }
@@ -205,7 +200,10 @@ fn render(board: &Board, piece: &Piece, next_kind: usize, score: usize, lines: u
         if !game_over {
             match row {
                 1 => print!("  NEXT:"),
-                3 => { print!("  "); render_next(next_kind); }
+                2 => { print!("  "); render_next_row(next_kind, 0); }
+                3 => { print!("  "); render_next_row(next_kind, 1); }
+                4 => { print!("  "); render_next_row(next_kind, 2); }
+                5 => { print!("  "); render_next_row(next_kind, 3); }
                 _ => {}
             }
         }
