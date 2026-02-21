@@ -424,7 +424,7 @@ impl KeyboardEvent {
             Key::RightShift => KeyboardEvent { key, char: None },
             Key::KeypadAsterisk => KeyboardEvent { key, char: None },
             Key::LeftAlt => KeyboardEvent { key, char: None },
-            Key::Spacebar => KeyboardEvent { key, char: None },
+            Key::Spacebar => KeyboardEvent { key, char: Some(' ') },
             Key::CapsLock => KeyboardEvent { key, char: None },
             Key::F1 => KeyboardEvent { key, char: None },
             Key::F2 => KeyboardEvent { key, char: None },
