@@ -33,17 +33,17 @@ impl Kernel {
         let cpu = kconfig.cpu;
         crate::kernel_services::init();
         let scheduler = (kconfig.scheduler_factory)();
-        let main_thread_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
-        let main_thread_task_handle = services()
+        let scheduler_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
+        let scheduler_task_handler = services()
             .task_manager
             .borrow_mut()
-            .add_task(main_thread_task)
+            .add_task(scheduler_task)
             .unwrap();
         cpu.initialize_task(
             services()
                 .task_manager
                 .borrow_mut()
-                .borrow_task_mut(main_thread_task_handle)
+                .borrow_task_mut(scheduler_task_handler)
                 .unwrap(),
         );
 
@@ -51,7 +51,7 @@ impl Kernel {
             cpu,
             scheduler,
             execution_state: ExecutionState {
-                main_thread: main_thread_task_handle,
+                scheduler: scheduler_task_handler,
                 current_task: None,
                 preemption_enabled: false,
                 remaining_quantum: 0,
@@ -83,7 +83,7 @@ impl Kernel {
     }
 
     pub fn start(&mut self) {
-        let main_thread_handle = self.execution_state.main_thread;
+        let main_thread_handle = self.execution_state.scheduler;
         let scheduler_thread_stack_pointer = services()
             .task_manager
             .borrow()
