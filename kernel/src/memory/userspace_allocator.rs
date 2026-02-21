@@ -182,25 +182,49 @@ impl UserSpaceAllocator {
 
     fn dealloc_from_block(block: &mut BlockHeader, ptr: *mut u8, size: usize) {
         let ptr_addr = ptr as usize;
-        let mut prev: *mut *mut FreeNode = &mut block.free_list;
-        let mut node = block.free_list;
+        let mut prev_node: *mut FreeNode = core::ptr::null_mut();
+        let mut prev_next: *mut *mut FreeNode = &mut block.free_list;
+        let mut next_node = block.free_list;
 
-        while !node.is_null() {
-            // Safety: node is a valid FreeNode pointer.
-            if ptr_addr < node as usize {
+        while !next_node.is_null() {
+            // Safety: next_node is a valid FreeNode pointer.
+            if ptr_addr < next_node as usize {
                 break;
             }
             unsafe {
-                prev = &mut (*node).next;
-                node = (*node).next;
+                prev_node = next_node;
+                prev_next = &mut (*next_node).next;
+                next_node = (*next_node).next;
             }
         }
 
         // Safety: ptr points to memory we previously allocated; size bytes are available there.
-        unsafe {
-            let new_node = ptr as *mut FreeNode;
-            *new_node = FreeNode { next: node, size };
-            *prev = new_node;
+        let new_node = ptr as *mut FreeNode;
+        unsafe { *new_node = FreeNode { next: next_node, size } };
+
+        // Forward coalesce: merge new_node with next_node if they are contiguous.
+        if !next_node.is_null() && ptr_addr + size == next_node as usize {
+            // Safety: next_node is a valid FreeNode.
+            unsafe {
+                (*new_node).size += (*next_node).size;
+                (*new_node).next = (*next_node).next;
+            }
+        }
+
+        // Link new_node into the list.
+        // Safety: prev_next is the address of the pointer that should point to new_node.
+        unsafe { *prev_next = new_node };
+
+        // Backward coalesce: merge prev_node with new_node if they are contiguous.
+        if !prev_node.is_null() {
+            // Safety: prev_node is a valid FreeNode.
+            let (prev_addr, prev_size) = unsafe { (prev_node as usize, (*prev_node).size) };
+            if prev_addr + prev_size == ptr_addr {
+                unsafe {
+                    (*prev_node).size += (*new_node).size;
+                    (*prev_node).next = (*new_node).next;
+                }
+            }
         }
     }
 }
@@ -247,6 +271,29 @@ mod tests {
 
         let ptr_c = allocator.alloc(layout);
         assert_eq!(ptr_c, ptr_a);
+    }
+
+    #[test]
+    fn dealloc_coalesces_adjacent_free_nodes() {
+        let chunk_size = 4096;
+        let mut memory = vec![0u8; 10 * chunk_size];
+        let mut chunk_alloc = make_chunk_alloc(chunk_size, &mut memory);
+        let mut allocator = UserSpaceAllocator::new(&mut chunk_alloc as *mut dyn ChunkAllocator);
+
+        let small = Layout::from_size_align(64, 8).unwrap();
+        let ptr_a = allocator.alloc(small);
+        let ptr_b = allocator.alloc(small);
+        let _ptr_c = allocator.alloc(small);
+
+        assert!(!ptr_a.is_null());
+        assert!(!ptr_b.is_null());
+
+        allocator.dealloc(ptr_a, small);
+        allocator.dealloc(ptr_b, small);
+
+        let combined = Layout::from_size_align(128, 8).unwrap();
+        let ptr_d = allocator.alloc(combined);
+        assert_eq!(ptr_d, ptr_a);
     }
 
     #[test]
