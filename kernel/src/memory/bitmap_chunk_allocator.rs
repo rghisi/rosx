@@ -58,43 +58,39 @@ impl BitmapChunkAllocator {
         let owner_bytes = raw_total_chunks * core::mem::size_of::<ChunkOwner>();
         let aligned_metadata = align_up(regions_bytes + bitmap_bytes + owner_bytes, METADATA_ALIGNMENT);
 
-        let (first_base, first_size) = ranges[0];
-        assert!(
-            aligned_metadata + chunk_size <= first_size,
-            "first range too small for metadata"
-        );
+        let metadata_range_idx = ranges
+            .iter()
+            .position(|&(_, size)| size >= aligned_metadata + chunk_size)
+            .expect("no range large enough for metadata");
 
-        let regions_ptr = first_base as *mut Region;
-        let bitmap_ptr = (first_base + regions_bytes) as *mut usize;
-        let owner_ptr = (first_base + regions_bytes + bitmap_bytes) as *mut ChunkOwner;
+        let (metadata_base, _) = ranges[metadata_range_idx];
 
-        // Safety: first_base points to writable memory large enough for aligned_metadata bytes.
+        let regions_ptr = metadata_base as *mut Region;
+        let bitmap_ptr = (metadata_base + regions_bytes) as *mut usize;
+        let owner_ptr = (metadata_base + regions_bytes + bitmap_bytes) as *mut ChunkOwner;
+
+        // Safety: metadata_base points to writable memory large enough for aligned_metadata bytes.
         // The caller guarantees this by providing a valid memory range.
         unsafe {
-            core::ptr::write_bytes(first_base as *mut u8, 0, aligned_metadata);
+            core::ptr::write_bytes(metadata_base as *mut u8, 0, aligned_metadata);
         }
 
-        let usable_start = first_base + aligned_metadata;
-        let usable_size = first_size - aligned_metadata;
-        let first_chunk_count = usable_size / chunk_size;
-
-        let mut total_chunks = first_chunk_count;
-        let mut bitmap_offset = first_chunk_count;
+        let mut total_chunks = 0;
+        let mut bitmap_offset = 0;
 
         // Safety: regions_ptr points into the zero-initialized metadata area
         // with space for region_count Region entries.
         unsafe {
-            *regions_ptr = Region {
-                base: usable_start,
-                chunk_count: first_chunk_count,
-                bitmap_offset: 0,
-            };
-
-            for i in 1..region_count {
+            for i in 0..region_count {
                 let (base, size) = ranges[i];
-                let chunk_count = size / chunk_size;
+                let (region_base, region_size) = if i == metadata_range_idx {
+                    (base + aligned_metadata, size - aligned_metadata)
+                } else {
+                    (base, size)
+                };
+                let chunk_count = region_size / chunk_size;
                 *regions_ptr.add(i) = Region {
-                    base,
+                    base: region_base,
                     chunk_count,
                     bitmap_offset,
                 };
@@ -748,6 +744,50 @@ mod tests {
         allocator.deallocate_by_owner(task_a);
 
         assert_eq!(allocator.used_chunks(), 1);
+    }
+
+    #[test]
+    fn metadata_stored_in_second_range_when_first_too_small() {
+        // One chunk is too small: overhead(96) + chunk(65536) = 65632 > 65536
+        let mut mem1 = vec![0u8; DEFAULT_CHUNK_SIZE];
+        let mut mem2 = vec![0u8; 10 * DEFAULT_CHUNK_SIZE];
+        let base1 = mem1.as_mut_ptr() as usize;
+        let base2 = mem2.as_mut_ptr() as usize;
+
+        let allocator = BitmapChunkAllocator::new(&[
+            (base1, mem1.len()),
+            (base2, mem2.len()),
+        ]);
+
+        let overhead = metadata_overhead(2, 11);
+        let mem1_chunks = DEFAULT_CHUNK_SIZE / DEFAULT_CHUNK_SIZE;
+        let mem2_chunks = (10 * DEFAULT_CHUNK_SIZE - overhead) / DEFAULT_CHUNK_SIZE;
+        assert_eq!(allocator.free_chunks(), mem1_chunks + mem2_chunks);
+    }
+
+    #[test]
+    fn first_range_chunks_fully_available_when_metadata_in_later_range() {
+        let mut mem1 = vec![0u8; DEFAULT_CHUNK_SIZE];
+        let mut mem2 = vec![0u8; 10 * DEFAULT_CHUNK_SIZE];
+        let base1 = mem1.as_mut_ptr() as usize;
+        let base2 = mem2.as_mut_ptr() as usize;
+
+        let mut allocator = BitmapChunkAllocator::new(&[
+            (base1, mem1.len()),
+            (base2, mem2.len()),
+        ]);
+
+        let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
+        let alloc = allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
+        assert_eq!(alloc.ptr, base1 as *mut u8);
+    }
+
+    #[test]
+    #[should_panic(expected = "no range large enough for metadata")]
+    fn panics_when_no_range_large_enough_for_metadata() {
+        let mems: Vec<Vec<u8>> = (0..4).map(|_| vec![0u8; DEFAULT_CHUNK_SIZE]).collect();
+        let ranges: Vec<(usize, usize)> = mems.iter().map(|m| (m.as_ptr() as usize, m.len())).collect();
+        BitmapChunkAllocator::new(&ranges);
     }
 
     #[test]
