@@ -6,5 +6,10 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+test_suite = { path = "../test_suite" }
 system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }
+
+[dependencies.lazy_static]
+version = "1.0"
+features = ["spin_no_std"]
