@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use core::fmt;
 use system::syscall_numbers::SyscallNum;
 use system::future::FutureHandle;
@@ -8,6 +9,15 @@ pub struct Syscall {}
 impl Syscall {
     pub fn exec(entrypoint: usize) -> FutureHandle {
         let raw = arch::raw_syscall(SyscallNum::Exec as u64, entrypoint as u64, 0, 0);
+        FutureHandle {
+            index: (raw >> 32) as u32,
+            generation: raw as u32,
+        }
+    }
+
+    pub fn load(elf: &'static [u8]) -> FutureHandle {
+        let elf_ptr = Box::into_raw(Box::new(elf)) as usize;
+        let raw = arch::raw_syscall(SyscallNum::LoadElf as u64, elf_ptr as u64, 0, 0);
         FutureHandle {
             index: (raw >> 32) as u32,
             generation: raw as u32,

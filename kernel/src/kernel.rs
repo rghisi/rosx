@@ -96,10 +96,10 @@ impl Kernel {
             .swap_context(null_mut(), scheduler_thread_stack_pointer);
     }
 
-    pub fn exec(&mut self, entrypoint: usize) -> Result<FutureHandle, ()> {
+    pub fn schedule(&mut self, task: SharedTask) -> Result<FutureHandle, ()> {
         let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
-        let result = services().task_manager.borrow_mut().new_task(entrypoint);
+        let result = services().task_manager.borrow_mut().add_task(task);
         let future_handle = match result {
             Ok(task_handle) => {
                 let future = Box::new(TaskCompletionFuture::new(task_handle));
@@ -113,36 +113,6 @@ impl Kernel {
         };
         self.execution_state.preemption_enabled = prev;
         future_handle.ok_or(())
-    }
-
-    fn schedule_task(&mut self, task_handle: TaskHandle) {
-        {
-            let result = services().task_manager.borrow_mut().borrow_task_mut(task_handle);
-            match result {
-                Ok(task) => {
-                    self.cpu.initialize_task(task);
-                }
-                Err(_) => {
-                    panic!("Not able to schedule task");
-                }
-            }
-        }
-        self.scheduler.push_task(task_handle);
-    }
-
-    pub fn schedule(&mut self, task: SharedTask) {
-        let prev = self.execution_state.preemption_enabled;
-        self.execution_state.preemption_enabled = false;
-        let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
-        self.cpu.initialize_task(
-            services()
-                .task_manager
-                .borrow_mut()
-                .borrow_task_mut(task_handle)
-                .unwrap(),
-        );
-        self.scheduler.push_task(task_handle);
-        self.execution_state.preemption_enabled = prev;
     }
 
     pub fn enqueue(&mut self, hardware_interrupt: HardwareInterrupt) {
@@ -200,6 +170,22 @@ impl Kernel {
     pub fn get_system_time(&self) -> u64 {
         self.cpu.get_system_time()
     }
+
+    fn schedule_task(&mut self, task_handle: TaskHandle) {
+        {
+            let result = services().task_manager.borrow_mut().borrow_task_mut(task_handle);
+            match result {
+                Ok(task) => {
+                    self.cpu.initialize_task(task);
+                }
+                Err(_) => {
+                    panic!("Not able to schedule task");
+                }
+            }
+        }
+        self.scheduler.push_task(task_handle);
+    }
+
 }
 
 #[cfg(not(test))]

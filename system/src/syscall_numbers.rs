@@ -1,4 +1,4 @@
-#[repr(u64)]
+#[repr(usize)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum SyscallNum {
     Print = 0,
@@ -11,12 +11,13 @@ pub enum SyscallNum {
     Alloc = 7,
     Dealloc = 8,
     TryReadChar = 9,
+    LoadElf = 10,
 }
 
-impl TryFrom<u64> for SyscallNum {
+impl TryFrom<usize> for SyscallNum {
     type Error = ();
 
-    fn try_from(v: u64) -> Result<Self, ()> {
+    fn try_from(v: usize) -> Result<Self, ()> {
         match v {
             0 => Ok(Self::Print),
             1 => Ok(Self::Sleep),
@@ -28,6 +29,7 @@ impl TryFrom<u64> for SyscallNum {
             7 => Ok(Self::Alloc),
             8 => Ok(Self::Dealloc),
             9 => Ok(Self::TryReadChar),
+            10 => Ok(Self::LoadElf),
             _ => Err(()),
         }
     }

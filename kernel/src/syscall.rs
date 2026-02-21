@@ -6,10 +6,11 @@ use crate::kernel_services::services;
 use crate::default_output::print;
 use system::syscall_numbers::SyscallNum;
 use system::future::FutureHandle;
+use crate::task::{new_elf_task, new_entrypoint_task};
 
 #[cfg(not(test))]
 pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
-    match SyscallNum::try_from(num) {
+    match SyscallNum::try_from(num as usize) {
         Ok(SyscallNum::Print) => {
             let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(arg1 as *const u8, arg2 as usize)) };
             print(format_args!("{}", s));
@@ -26,7 +27,7 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
         }
         Ok(SyscallNum::Exec) => {
             let entrypoint = arg1 as usize;
-            match kernel().exec(entrypoint).ok() {
+            match kernel().schedule(new_entrypoint_task(entrypoint)).ok() {
                 Some(handle) => ((handle.index as u64) << 32 | (handle.generation as u64)) as usize,
                 None => u64::MAX as usize,
             }
@@ -67,6 +68,14 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
         }
         Ok(SyscallNum::TryReadChar) => {
             crate::keyboard::pop_key().map_or(0, |c| c as usize)
+        }
+        Ok(SyscallNum::LoadElf) => {
+            let elf_ptr = arg1 as usize;
+            let elf_bytes: &[u8] = unsafe { *Box::from_raw(elf_ptr as *mut &[u8]) };
+            match kernel().schedule(new_elf_task(elf_bytes)).ok() {
+                Some(handle) => ((handle.index as u64) << 32 | (handle.generation as u64)) as usize,
+                None => u64::MAX as usize,
+            }
         }
         Err(_) => 0,
     }
