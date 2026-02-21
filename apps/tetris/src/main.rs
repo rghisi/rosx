@@ -119,6 +119,33 @@ fn lock(board: &mut Board, piece: &Piece) {
     }
 }
 
+fn clear_lines(board: &mut Board) -> usize {
+    let mut cleared = 0;
+    let mut row = HEIGHT as i32 - 1;
+    while row >= 0 {
+        if board.cells[row as usize].iter().all(|&c| c != 0) {
+            for r in (1..=row as usize).rev() {
+                board.cells[r] = board.cells[r - 1];
+            }
+            board.cells[0] = [0; WIDTH];
+            cleared += 1;
+        } else {
+            row -= 1;
+        }
+    }
+    cleared
+}
+
+fn line_score(cleared: usize) -> usize {
+    match cleared {
+        1 => 100,
+        2 => 300,
+        3 => 500,
+        4 => 800,
+        _ => 0,
+    }
+}
+
 fn cell_color(index: u8) -> &'static str {
     match index {
         1 => "\x1B[46m ",
@@ -208,6 +235,9 @@ fn play(rng: &mut Rng) -> bool {
 
         if collides(&board, &piece, piece.col, piece.row + 1, piece.rotation) {
             lock(&mut board, &piece);
+            let cleared = clear_lines(&mut board);
+            lines += cleared;
+            score += line_score(cleared);
             piece = Piece::new(rng.next_usize(7));
         } else {
             piece.row += 1;
