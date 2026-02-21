@@ -54,6 +54,7 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     // kernel.schedule(FunctionTask::new("4", dummy::app::main4));
     // kernel.schedule(FunctionTask::new("5", shell::shell::main));
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
+    kernel.schedule(FunctionTask::new("random", kernel::random_service::random_server));
     kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));
 
     static HELLO_ELF: &[u8] = include_bytes!("../../../apps/hello_elf/target/rosx-user/release/hello_elf");

@@ -79,6 +79,12 @@ impl Syscall {
         (token, msg)
     }
 
+    pub fn random_next_u64() -> u64 {
+        let request = Message::new(system::ipc::random::TAG_NEXT);
+        let reply = Self::ipc_send(system::ipc::endpoint::RANDOM, request);
+        reply.words[0]
+    }
+
     pub fn ipc_reply(token: u64, reply: Message) {
         arch::raw_syscall(
             SyscallNum::IpcReply as u64,

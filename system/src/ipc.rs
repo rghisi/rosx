@@ -31,11 +31,27 @@ impl Message {
 pub mod endpoint {
     pub const TERMINAL: u32 = 1;
     pub const KEYBOARD: u32 = 2;
+    pub const RANDOM: u32 = 3;
+}
+
+pub mod random {
+    pub const TAG_NEXT: u64 = 1;
+    pub const TAG_VALUE: u64 = 2;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn endpoint_random_id_is_three() {
+        assert_eq!(endpoint::RANDOM, 3);
+    }
+
+    #[test]
+    fn random_tags_are_distinct() {
+        assert_ne!(random::TAG_NEXT, random::TAG_VALUE);
+    }
 
     #[test]
     fn new_message_has_correct_tag() {

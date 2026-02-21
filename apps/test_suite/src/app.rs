@@ -1,10 +1,11 @@
-use crate::{allocation_test, context_switching};
+use crate::{allocation_test, context_switching, random_service_test};
 use usrlib::println;
 use usrlib::syscall::Syscall;
 
 pub fn main() {
     println!("=== RosX Test Suite Started ===");
 
+    Syscall::wait_future(Syscall::exec(random_service_test::run as usize));
     Syscall::wait_future(Syscall::exec(allocation_test::run as usize));
     Syscall::wait_future(Syscall::exec(context_switching::worker_context_switch as usize));
     Syscall::wait_future(Syscall::exec(worker_mixed_load as usize));

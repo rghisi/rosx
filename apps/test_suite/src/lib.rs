@@ -11,3 +11,4 @@ pub mod app;
 mod random;
 mod allocation_test;
 mod context_switching;
+pub mod random_service_test;
