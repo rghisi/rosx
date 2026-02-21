@@ -25,6 +25,7 @@ static ALLOCATOR: SyscallAllocator = SyscallAllocator;
 
 const WIDTH: usize = 10;
 const HEIGHT: usize = 20;
+const FRAME_MS: u64 = 500;
 
 struct Board {
     cells: [[u8; WIDTH]; HEIGHT],
@@ -51,6 +52,23 @@ const TETROMINOES: [TetrominoType; 7] = [
     TetrominoType { rotations: [0x2E00, 0x4460, 0x0E80, 0xC440], color: 7 }, // L - white
 ];
 
+struct Rng {
+    state: u64,
+}
+
+impl Rng {
+    fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
+
+    fn next_usize(&mut self, max: usize) -> usize {
+        self.state = self.state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (self.state >> 33) as usize % max
+    }
+}
+
 struct Piece {
     kind: usize,
     rotation: usize,
@@ -63,21 +81,41 @@ impl Piece {
         Self { kind, rotation: 0, col: (WIDTH as i32 / 2) - 2, row: 0 }
     }
 
-    fn mask(&self) -> u16 {
-        TETROMINOES[self.kind].rotations[self.rotation]
-    }
-
     fn color(&self) -> u8 {
         TETROMINOES[self.kind].color
     }
 
-    fn blocks(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
-        let mask = self.mask();
-        (0..16).filter(move |i| mask & (0x8000 >> i) != 0).map(move |i| {
+    fn blocks_at(&self, col: i32, row: i32, rotation: usize) -> impl Iterator<Item = (i32, i32)> {
+        let mask = TETROMINOES[self.kind].rotations[rotation];
+        (0..16u32).filter(move |i| mask & (0x8000u16 >> i) != 0).map(move |i| {
             let r = i / 4;
             let c = i % 4;
-            (self.col + c as i32, self.row + r as i32)
+            (col + c as i32, row + r as i32)
         })
+    }
+
+    fn blocks(&self) -> impl Iterator<Item = (i32, i32)> {
+        self.blocks_at(self.col, self.row, self.rotation)
+    }
+}
+
+fn collides(board: &Board, piece: &Piece, col: i32, row: i32, rotation: usize) -> bool {
+    for (c, r) in piece.blocks_at(col, row, rotation) {
+        if c < 0 || c >= WIDTH as i32 || r >= HEIGHT as i32 {
+            return true;
+        }
+        if r >= 0 && board.cells[r as usize][c as usize] != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+fn lock(board: &mut Board, piece: &Piece) {
+    for (c, r) in piece.blocks() {
+        if r >= 0 && r < HEIGHT as i32 && c >= 0 && c < WIDTH as i32 {
+            board.cells[r as usize][c as usize] = piece.color();
+        }
     }
 }
 
@@ -123,18 +161,59 @@ fn render(board: &Board, piece: &Piece, score: usize, lines: usize) {
     println!("+");
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn _start() {
-    print!("\x1B[2J\x1B[H");
-
-    let board = Board::new();
-    let piece = Piece::new(0);
-    render(&board, &piece, 0, 0);
+fn play(rng: &mut Rng) -> bool {
+    let mut board = Board::new();
+    let mut piece = Piece::new(rng.next_usize(7));
+    let mut score = 0usize;
+    let mut lines = 0usize;
+    let mut frame_ms = FRAME_MS;
 
     loop {
-        match Syscall::read_char() {
-            'q' | 'Q' => return,
-            _ => {}
+        render(&board, &piece, score, lines);
+        Syscall::sleep(frame_ms);
+
+        while let Some(c) = Syscall::try_read_char() {
+            match c {
+                'a' | 'A' => {
+                    if !collides(&board, &piece, piece.col - 1, piece.row, piece.rotation) {
+                        piece.col -= 1;
+                    }
+                }
+                'd' | 'D' => {
+                    if !collides(&board, &piece, piece.col + 1, piece.row, piece.rotation) {
+                        piece.col += 1;
+                    }
+                }
+                's' | 'S' => {
+                    if !collides(&board, &piece, piece.col, piece.row + 1, piece.rotation) {
+                        piece.row += 1;
+                        score += 1;
+                    }
+                }
+                'q' | 'Q' => return true,
+                _ => {}
+            }
+        }
+
+        if collides(&board, &piece, piece.col, piece.row + 1, piece.rotation) {
+            lock(&mut board, &piece);
+            piece = Piece::new(rng.next_usize(7));
+        } else {
+            piece.row += 1;
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn _start() {
+    let mut rng = Rng::new(0xDEAD_BEEF_CAFE_BABE);
+    print!("\x1B[2J\x1B[H");
+
+    loop {
+        let quit = play(&mut rng);
+        if quit {
+            println!("Goodbye!");
+            return;
         }
     }
 }
