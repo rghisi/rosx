@@ -6,3 +6,4 @@ extern crate system;
 pub mod out;
 pub mod arch;
 pub mod syscall;
+pub mod ipc;
