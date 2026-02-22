@@ -42,7 +42,7 @@ impl RandomGeneratorServer {
             .borrow_mut()
             .register(future)
             .expect("Failed to register sleep future");
-        kernel().wait_future(handle);
+        let _ = kernel().wait_future(handle);
     }
 
     fn next(&mut self) -> u32 {
