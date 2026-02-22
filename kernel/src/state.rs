@@ -68,8 +68,4 @@ impl ExecutionState {
     pub(crate) fn current_task(&self) -> TaskHandle {
         self.current_task.unwrap()
     }
-
-    pub fn execution_context(&self) -> ExecutionContext {
-        self.execution_context
-    }
 }

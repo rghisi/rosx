@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "collections"
+version = "0.1.0"
+
+[[package]]
 name = "hello_elf"
 version = "0.1.0"
 dependencies = [
@@ -13,6 +17,9 @@ dependencies = [
 [[package]]
 name = "system"
 version = "0.1.0"
+dependencies = [
+ "collections",
+]
 
 [[package]]
 name = "usrlib"

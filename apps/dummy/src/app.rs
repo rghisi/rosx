@@ -1,4 +1,3 @@
-use core::arch::asm;
 use usrlib::print;
 use usrlib::syscall::Syscall;
 

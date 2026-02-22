@@ -90,11 +90,11 @@ impl Task {
     pub fn set_stack_pointer(&mut self, new_stack_pointer: usize) {
         self.stack_pointer = new_stack_pointer;
     }
-    pub fn state(&self) -> TaskState {
+    pub(crate) fn state(&self) -> TaskState {
         self.state
     }
 
-    pub fn set_state(&mut self, new_state: TaskState) {
+    pub(crate) fn set_state(&mut self, new_state: TaskState) {
         self.state = new_state;
     }
     pub fn set_ready(&mut self) {
@@ -117,7 +117,7 @@ impl Task {
         self.yield_reason = Some(reason);
     }
     pub fn is_schedulable(&self) -> bool {
-        self.state() != Created && self.state() != Terminated
+        self.state != Created && self.state != Terminated
     }
 
     pub fn entry_point(&self) -> usize {

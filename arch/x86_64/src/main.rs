@@ -21,7 +21,7 @@ use kernel::kernel::Kernel;
 use kernel::scheduler;
 use kernel::kprintln;
 use kernel::panic::handle_panic;
-use kernel::task::{new_elf_task, FunctionTask};
+use kernel::task::{FunctionTask};
 
 static VGA_OUTPUT: VgaOutput = VgaOutput;
 pub static QEMU_OUTPUT: QemuDebugConsole = QemuDebugConsole;
