@@ -59,6 +59,7 @@ jobs:
             apps/hello_elf/target/
             apps/snake/target/
             apps/tetris/target/
+            apps/conway/target/
           key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-build-
@@ -76,6 +77,10 @@ jobs:
 
       - name: Build tetris
         working-directory: apps/tetris
+        run: cargo build --release
+
+      - name: Build conway
+        working-directory: apps/conway
         run: cargo build --release
 
       - name: Build
