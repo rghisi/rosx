@@ -166,8 +166,7 @@ impl<T, I: IndexType, G: GenerationType> GenArena<T, I, G> {
         let index = handle.index.as_usize();
         let generation = handle.generation;
         if generation == self.generations[index] {
-            self.items.remove(index);
-            self.items.insert(index, Some(item));
+            self.items[index] = Some(item);
             Ok(handle)
         } else {
             Err(Error::NotFound)
