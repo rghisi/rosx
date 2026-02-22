@@ -1,5 +1,7 @@
 pub mod fifo_scheduler;
 pub mod mlfq_scheduler;
+mod timer;
+
 use alloc::boxed::Box;
 use system::future::FutureHandle;
 use crate::messages::HardwareInterrupt;
