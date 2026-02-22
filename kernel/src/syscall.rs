@@ -1,15 +1,18 @@
 use core::alloc::{GlobalAlloc, Layout};
 use alloc::boxed::Box;
+use alloc::string::String;
 use crate::future::TimeFuture;
 use crate::kernel::kernel;
 use crate::kernel_services::services;
 use crate::default_output::print;
 use system::syscall_numbers::SyscallNum;
 use system::future::FutureHandle;
+use system::ipc::{IpcReplyFuture, IpcServerHandle};
+use system::ipc::IpcSendMessage;
 use crate::task::{new_elf_task, new_entrypoint_task};
 
 #[cfg(not(test))]
-pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
+pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> usize {
     match SyscallNum::try_from(num as usize) {
         Ok(SyscallNum::Print) => {
             let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(arg1 as *const u8, arg2 as usize)) };
@@ -22,7 +25,7 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
                 .borrow_mut()
                 .register(future)
                 .expect("Failed to register sleep future");
-            kernel().wait_future(handle);
+            let _ = kernel().wait_future(handle);
             0
         }
         Ok(SyscallNum::Exec) => {
@@ -45,13 +48,13 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
                 .borrow_mut()
                 .register(future)
                 .expect("Failed to register keyboard future");
-            kernel().wait_future(handle);
+            let _ = kernel().wait_future(handle);
             crate::keyboard::pop_key().map_or(0, |c| c as usize)
         }
         Ok(SyscallNum::WaitFuture) => {
             let handle = FutureHandle { index: (arg1 >> 32) as u32, generation: arg1 as u32 };
-            kernel().wait_future(handle);
-            0
+            let future = kernel().wait_future(handle).unwrap();
+            Box::into_raw(Box::new(future)) as usize
         }
         Ok(SyscallNum::IsFutureCompleted) => {
             let handle = FutureHandle { index: (arg1 >> 32) as u32, generation: arg1 as u32 };
@@ -62,7 +65,7 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
             (unsafe { services().memory_manager.alloc(layout) }) as usize
         }
         Ok(SyscallNum::Dealloc) => {
-            let Ok(layout) = Layout::from_size_align(arg2 as usize, _arg3 as usize) else { return 0 };
+            let Ok(layout) = Layout::from_size_align(arg2 as usize, arg3 as usize) else { return 0 };
             unsafe { services().memory_manager.dealloc(arg1 as *mut u8, layout) };
             0
         }
@@ -76,6 +79,22 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, _arg3: u64) -> usize {
                 Some(handle) => ((handle.index as u64) << 32 | (handle.generation as u64)) as usize,
                 None => u64::MAX as usize,
             }
+        }
+        Ok(SyscallNum::IpcFind) => {
+            let service: &str = unsafe { *Box::from_raw(arg1 as *mut &str) };
+            let result = services().ipc_manager.borrow().find(service);
+            Box::into_raw(Box::new(result)) as usize
+        }
+        Ok(SyscallNum::IpcSend) => {
+            let handle_index = arg1 as u8;
+            let handle_generation = arg2 as u8;
+            let value = arg3 as u32;
+            let ipc_server_handle = IpcServerHandle { index: handle_index, generation: handle_generation };
+            let message = IpcSendMessage { value };
+            let future_handle = services().ipc_manager.borrow_mut().send(ipc_server_handle, message);
+            let future = kernel().wait_future(future_handle).unwrap();
+            let ipc_reply_future = *future.as_any().downcast_ref::<IpcReplyFuture>().unwrap();
+            Box::into_raw(Box::new(ipc_reply_future)) as usize
         }
         Err(_) => 0,
     }

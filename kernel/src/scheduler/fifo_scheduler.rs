@@ -125,7 +125,6 @@ impl FifoScheduler {
         for _ in 0..self.blocked_tasks.len() {
             if let Some(task_future) = self.blocked_tasks.pop_front() {
                 if task_future.is_completed() {
-                    services().future_registry.borrow_mut().remove(task_future.future_handle);
                     services().task_manager
                         .borrow_mut()
                         .set_state(task_future.task_handle, Ready);

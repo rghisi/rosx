@@ -11,7 +11,8 @@ use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, YieldReason};
 use alloc::boxed::Box;
 use core::ptr::null_mut;
-use system::future::FutureHandle;
+use collections::generational_arena::Error;
+use system::future::{Future, FutureHandle };
 #[cfg(not(test))]
 use crate::memory::memory_manager::{MEMORY_MANAGER, MemoryBlocks};
 use crate::kernel_cell::KernelCell;
@@ -119,11 +120,13 @@ impl Kernel {
         self.execution_state.preemption_enabled = prev;
     }
 
-    pub fn wait_future(&mut self, handle: FutureHandle) {
+    pub fn wait_future(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
         self.execution_state.block_current_task();
         let task_handle = self.execution_state.current_task();
         self.scheduler.push_blocked(task_handle, handle);
         self.execution_state.switch_to_scheduler();
+
+        services().future_registry.borrow_mut().consume(handle)
     }
 
     pub fn is_future_completed(&self, handle: FutureHandle) -> bool {

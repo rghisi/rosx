@@ -22,6 +22,8 @@ lazy_static! {
         (String::from("tests"), tests as fn()),
         (String::from("tetris"), tetris as fn()),
         (String::from("conway"), conway as fn()),
+        (String::from("sleep"), sleep as fn()),
+        (String::from("random"), random as fn()),
     ]);
 }
 
@@ -103,4 +105,21 @@ fn conway() {
 
 fn tests() {
     Syscall::wait_future(Syscall::exec(test_suite::app::main as usize));
+}
+
+fn sleep() {
+    Syscall::sleep(1000);
+}
+
+fn random() {
+    let result = Syscall::ipc_find("RANDOM");
+    if let Ok(handle) = result {
+        println!("RANDOM Server: {} {}", handle.index, handle.generation);
+        for i in 1..100 {
+            let random = Syscall::ipc_send(handle, 0);
+            println!("RANDOM Value: {}", random.reply.unwrap().value);
+        }
+    } else {
+        println!("Find failed");;
+    }
 }

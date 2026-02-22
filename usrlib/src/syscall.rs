@@ -1,7 +1,10 @@
 use alloc::boxed::Box;
+use alloc::string::String;
 use core::fmt;
 use system::syscall_numbers::SyscallNum;
 use system::future::FutureHandle;
+use system::future::Future;
+use system::ipc::{IpcError, IpcReplyFuture, IpcServerHandle};
 use crate::arch;
 
 pub struct Syscall {}
@@ -32,9 +35,11 @@ impl Syscall {
         arch::raw_syscall(SyscallNum::Sleep as u64, ms, 0, 0);
     }
 
-    pub fn wait_future(handle: FutureHandle) {
+    pub fn wait_future(handle: FutureHandle) -> Box<dyn Future + Send + Sync> {
         let packed = (handle.index as u64) << 32 | (handle.generation as u64);
-        arch::raw_syscall(SyscallNum::WaitFuture as u64, packed, 0, 0);
+        let result = arch::raw_syscall(SyscallNum::WaitFuture as u64, packed, 0, 0);
+        let r: Box<dyn Future + Send + Sync> = unsafe { *Box::from_raw(result as *mut Box<dyn Future + Send + Sync>) };
+        r
     }
 
     pub fn is_future_completed(handle: FutureHandle) -> bool {
@@ -68,6 +73,17 @@ impl Syscall {
 
     pub fn dealloc(ptr: *mut u8, size: usize, align: usize) {
         arch::raw_syscall(SyscallNum::Dealloc as u64, ptr as u64, size as u64, align as u64);
+    }
+
+    pub fn ipc_find(service: &str) -> Result<IpcServerHandle, IpcError> {
+        let boxed = Box::into_raw(Box::new(service)) as u64;
+        let result = arch::raw_syscall(SyscallNum::IpcFind as u64, boxed, 0, 0);
+        unsafe { *Box::from_raw(result as *mut Result<IpcServerHandle, IpcError>) }
+    }
+
+    pub fn ipc_send(handle: IpcServerHandle, value: u32) -> IpcReplyFuture {
+        let result = arch::raw_syscall(SyscallNum::IpcSend as u64, handle.index as u64, handle.generation as u64, value as u64);
+        unsafe { *Box::from_raw(result as *mut IpcReplyFuture) }
     }
 }
 

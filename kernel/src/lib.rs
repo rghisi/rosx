@@ -6,16 +6,17 @@ extern crate collections;
 extern crate lazy_static;
 extern crate system;
 
-pub mod memory;
 pub mod cpu;
 pub mod default_output;
 pub mod elf;
 pub mod future;
+pub mod ipc;
 pub mod kconfig;
 pub mod kernel;
 pub(crate) mod kernel_cell;
 pub(crate) mod kernel_services;
 mod keyboard;
+pub mod memory;
 pub mod messages;
 pub mod once;
 pub mod panic;

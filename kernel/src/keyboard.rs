@@ -1,7 +1,8 @@
-use crate::future::Future;
+use system::future::Future;
 use crate::kernel_cell::KernelCell;
 use alloc::collections::VecDeque;
 use alloc::fmt::{Display, Formatter};
+use core::any::Any;
 use lazy_static::lazy_static;
 
 lazy_static! {
@@ -27,6 +28,10 @@ impl KeyboardFuture {
 impl Future for KeyboardFuture {
     fn is_completed(&self) -> bool {
         !KEYBOARD_BUFFER.borrow_mut().is_empty()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

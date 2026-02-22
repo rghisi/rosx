@@ -161,6 +161,18 @@ impl<T, I: IndexType, G: GenerationType> GenArena<T, I, G> {
             Err(Error::NotFound)
         }
     }
+    
+    pub fn replace(&mut self, handle: Handle<I, G>, item: T) -> Result<Handle<I, G>, Error> {
+        let index = handle.index.as_usize();
+        let generation = handle.generation;
+        if generation == self.generations[index] {
+            self.items.remove(index);
+            self.items.insert(index, Some(item));
+            Ok(handle)
+        } else {
+            Err(Error::NotFound)
+        }
+    }
 }
 
 #[cfg(test)]

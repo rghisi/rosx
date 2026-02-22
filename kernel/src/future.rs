@@ -1,13 +1,11 @@
 use alloc::boxed::Box;
+use core::any::Any;
 use system::future::FutureHandle;
-use collections::generational_arena::GenArena;
+use system::future::Future;
+use collections::generational_arena::{Error, GenArena, Handle};
 use crate::kernel::kernel;
 use crate::kernel_services::services;
 use crate::task::TaskHandle;
-
-pub trait Future: Send + Sync {
-    fn is_completed(&self) -> bool;
-}
 
 pub struct TimeFuture {
     completion_timestamp: u64,
@@ -24,6 +22,10 @@ impl Future for TimeFuture {
     fn is_completed(&self) -> bool {
         kernel().get_system_time() > self.completion_timestamp
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 pub struct TaskCompletionFuture {
@@ -39,6 +41,10 @@ impl TaskCompletionFuture {
 impl Future for TaskCompletionFuture {
     fn is_completed(&self) -> bool {
         services().task_manager.borrow().get_state(self.task_handle) == crate::task::TaskState::Terminated
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -82,9 +88,14 @@ impl FutureRegistry {
         }
     }
 
-    pub fn remove(&mut self, handle: FutureHandle) {
-        let _ = self.arena.remove(handle);
+    pub fn consume(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
+        self.arena.remove(handle)
     }
+
+    pub fn replace(&mut self, handle: FutureHandle, future: Box<dyn Future + Send + Sync>) -> Result<FutureHandle, Error> {
+        self.arena.replace(handle, future)
+    }
+
 }
 
 

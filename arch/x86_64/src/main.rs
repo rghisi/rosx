@@ -52,7 +52,8 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     // kernel.schedule(FunctionTask::new("2", dummy::app::main2));
     // kernel.schedule(FunctionTask::new("3", dummy::app::main3));
     // kernel.schedule(FunctionTask::new("4", dummy::app::main4));
-    let _ = kernel.schedule(FunctionTask::new("5", shell::shell::main));
+    let _ = kernel.schedule(FunctionTask::new("RandomServer", kernel::ipc::random_gen_server::main));
+    let _ = kernel.schedule(FunctionTask::new("Shell", shell::shell::main));
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
     // kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));
 
