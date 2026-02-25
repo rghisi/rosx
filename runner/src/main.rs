@@ -21,7 +21,7 @@ fn main() {
             .args(["-debugcon", "stdio"])
             .arg("-no-reboot")
             .arg("-no-shutdown")
-            .args(["-d", "cpu_reset,int"])
+            .args(["-d", "cpu_reset"])
             .status()
             .expect("failed to run QEMU");
 
