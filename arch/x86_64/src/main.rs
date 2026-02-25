@@ -51,6 +51,8 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
+    let physical_memory_offset = boot_info.physical_memory_offset.into_option().unwrap();
+    vga_buffer::init(physical_memory_offset);
     let memory_blocks = build_memory_blocks(boot_info);
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kprintln!("[KERNEL] Initializing");
