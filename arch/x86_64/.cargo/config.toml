@@ -7,4 +7,4 @@ build-std = ["core", "alloc", "compiler_builtins"]
 json-target-spec = true
 
 [target.'cfg(target_os = "none")']
-runner = "bootimage runner"
+runner = "./run.sh"

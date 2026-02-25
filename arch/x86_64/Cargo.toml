@@ -11,7 +11,7 @@ shell = { path = "../../apps/shell"}
 dummy = { path = "../../apps/dummy"}
 test_suite = { path = "../../apps/test_suite"}
 
-bootloader = { version = "0.9", features = ["map_physical_memory"] }
+bootloader_api = "0.11"
 volatile = "0.2.6"
 spin = "0.10.0"
 x86_64 = "0.15"
@@ -26,5 +26,3 @@ name = "rosx"
 bench = false
 test = false
 
-[package.metadata.bootimage]
-run-args = ["-debugcon", "stdio", "-no-reboot"]

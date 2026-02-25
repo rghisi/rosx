@@ -12,7 +12,8 @@ mod ansi_parser;
 use crate::cpu::X86_64;
 use crate::debug_console::QemuDebugConsole;
 use crate::vga_buffer::VgaOutput;
-use bootloader::BootInfo;
+use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
+use bootloader_api::config::Mapping;
 use core::panic::PanicInfo;
 use kernel::memory::memory_manager::{MemoryBlock, MemoryBlocks};
 use kernel::default_output::MultiplexOutput;
@@ -36,13 +37,20 @@ static KCONFIG: KConfig = KConfig {
     scheduler_factory: scheduler::mfq_scheduler,
 };
 
+const BOOTLOADER_CONFIG: BootloaderConfig = {
+    let mut config = BootloaderConfig::new_default();
+    config.mappings.physical_memory = Some(Mapping::Dynamic);
+    config
+};
+
+entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
+
 #[cfg_attr(not(test), panic_handler)]
 fn panic(info: &PanicInfo) -> ! {
     handle_panic(info);
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
+fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let memory_blocks = build_memory_blocks(boot_info);
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kprintln!("[KERNEL] Initializing");
@@ -65,9 +73,9 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
 fn build_memory_blocks(boot_info: &BootInfo) -> MemoryBlocks {
     let mut largest_region_size = 0u64;
 
-    for region in boot_info.memory_map.iter() {
-        if let bootloader::bootinfo::MemoryRegionType::Usable = region.region_type {
-            let size = region.range.end_addr() - region.range.start_addr();
+    for region in boot_info.memory_regions.iter() {
+        if let bootloader_api::MemoryRegionKind::Usable = region.kind {
+            let size = region.end - region.start;
 
             if size > largest_region_size {
                 largest_region_size = size;
@@ -80,13 +88,14 @@ fn build_memory_blocks(boot_info: &BootInfo) -> MemoryBlocks {
         count: 0,
     };
 
-    for region in boot_info.memory_map.iter() {
-        if let bootloader::bootinfo::MemoryRegionType::Usable = region.region_type {
-            let size = (region.range.end_addr() - region.range.start_addr()) as usize;
-            let start = (region.range.start_addr() + boot_info.physical_memory_offset) as usize;
+    let physical_memory_offset = boot_info.physical_memory_offset.into_option().unwrap();
+
+    for region in boot_info.memory_regions.iter() {
+        if let bootloader_api::MemoryRegionKind::Usable = region.kind {
+            let size = (region.end - region.start) as usize;
+            let start = (region.start + physical_memory_offset) as usize;
             memory_blocks.blocks[memory_blocks.count] = MemoryBlock { start, size };
             memory_blocks.count += 1;
-
         }
     }
 
