@@ -20,6 +20,8 @@ fn main() {
             .args(["-drive", &format!("format=raw,file={}", disk_image.display())])
             .args(["-debugcon", "stdio"])
             .arg("-no-reboot")
+            .arg("-no-shutdown")
+            .args(["-d", "cpu_reset"])
             .status()
             .expect("failed to run QEMU");
 
