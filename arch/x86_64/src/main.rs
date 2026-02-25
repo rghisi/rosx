@@ -74,7 +74,7 @@ fn build_memory_blocks(boot_info: &BootInfo) -> MemoryBlocks {
     let mut largest_region_size = 0u64;
 
     for region in boot_info.memory_regions.iter() {
-        if let bootloader_api::MemoryRegionKind::Usable = region.kind {
+        if let bootloader_api::info::MemoryRegionKind::Usable = region.kind {
             let size = region.end - region.start;
 
             if size > largest_region_size {
@@ -91,7 +91,7 @@ fn build_memory_blocks(boot_info: &BootInfo) -> MemoryBlocks {
     let physical_memory_offset = boot_info.physical_memory_offset.into_option().unwrap();
 
     for region in boot_info.memory_regions.iter() {
-        if let bootloader_api::MemoryRegionKind::Usable = region.kind {
+        if let bootloader_api::info::MemoryRegionKind::Usable = region.kind {
             let size = (region.end - region.start) as usize;
             let start = (region.start + physical_memory_offset) as usize;
             memory_blocks.blocks[memory_blocks.count] = MemoryBlock { start, size };
