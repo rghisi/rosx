@@ -7,11 +7,12 @@ mod cpu;
 mod debug_console;
 mod interrupts;
 mod vga_buffer;
+mod framebuffer;
 mod ansi_parser;
 
 use crate::cpu::X86_64;
 use crate::debug_console::QemuDebugConsole;
-use crate::vga_buffer::VgaOutput;
+use crate::framebuffer::FramebufferOutput;
 use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
 use bootloader_api::config::Mapping;
 use core::panic::PanicInfo;
@@ -24,9 +25,9 @@ use kernel::kprintln;
 use kernel::panic::handle_panic;
 use kernel::task::{FunctionTask};
 
-static VGA_OUTPUT: VgaOutput = VgaOutput;
+static FB_OUTPUT: FramebufferOutput = FramebufferOutput;
 pub static QEMU_OUTPUT: QemuDebugConsole = QemuDebugConsole;
-static OUTPUTS: &[&dyn kernel::default_output::KernelOutput] = &[&VGA_OUTPUT, &QEMU_OUTPUT];
+static OUTPUTS: &[&dyn kernel::default_output::KernelOutput] = &[&FB_OUTPUT, &QEMU_OUTPUT];
 
 static MULTIPLEXED_OUTPUT: MultiplexOutput = MultiplexOutput::new(OUTPUTS);
 
@@ -51,8 +52,9 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
-    let physical_memory_offset = boot_info.physical_memory_offset.into_option().unwrap();
-    vga_buffer::init(physical_memory_offset);
+    if let Some(fb) = boot_info.framebuffer.as_mut() {
+        framebuffer::init(fb.buffer_mut().as_mut_ptr() as u64, fb.info());
+    }
     let memory_blocks = build_memory_blocks(boot_info);
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kprintln!("[KERNEL] Initializing");
