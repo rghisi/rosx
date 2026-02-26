@@ -21,8 +21,14 @@ impl Cpu for X86_64 {
         crate::interrupts::enable_keyboard();
 
         unsafe {
-            // Enable System Call Extension (SCE) in EFER
-            Efer::update(|flags| flags.insert(EferFlags::SYSTEM_CALL_EXTENSIONS));
+            // Enable System Call Extension (SCE) in EFER.
+            // Disable No-Execute Enable (NXE): bootloader 0.11 sets NXE and maps the
+            // physical memory region (kernel heap) as non-executable. ELF images are
+            // loaded into heap memory, so clearing NXE makes all pages executable.
+            Efer::update(|flags| {
+                flags.insert(EferFlags::SYSTEM_CALL_EXTENSIONS);
+                flags.remove(EferFlags::NO_EXECUTE_ENABLE);
+            });
 
             // Set the entry point for syscalls
             LStar::write(VirtAddr::new(syscall_handler_entry as *const () as u64));
