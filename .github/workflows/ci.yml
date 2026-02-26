@@ -85,7 +85,7 @@ jobs:
         run: cargo build --release
 
       - name: Create disk image
-        run: cargo run --manifest-path arch/x86_64/runner/Cargo.toml -- target/rosx/release/rosx x86_64 --no-run
+        run: cargo run --manifest-path arch/x86_64-runner/Cargo.toml -- target/rosx/release/rosx x86_64 --no-run
 
       - name: Upload disk image
         if: github.event_name == 'push'
