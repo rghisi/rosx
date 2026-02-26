@@ -27,6 +27,9 @@ pub fn init(buffer_start: u64, info: FrameBufferInfo) {
         PixelFormat::Bgr => 1,
         _ => 0,
     }, Relaxed);
+    unsafe {
+        core::ptr::write_bytes(buffer_start as *mut u8, 0, info.stride * info.height * info.bytes_per_pixel);
+    }
 }
 
 // Public-domain IBM PC 8x8 bitmap font for printable ASCII (0x20–0x7E).
@@ -143,7 +146,7 @@ fn draw_char(col: usize, row: usize, ch: u8, fg: (u8, u8, u8), bg: (u8, u8, u8))
     for (bit_y, &row_bits) in glyph.iter().enumerate() {
         let row_base = (base_y + bit_y) * stride * bpp;
         for bit_x in 0..CHAR_W {
-            let (r, g, b) = if (row_bits >> (7 - bit_x)) & 1 != 0 { fg } else { bg };
+            let (r, g, b) = if (row_bits >> bit_x) & 1 != 0 { fg } else { bg };
             let off = row_base + (base_x + bit_x) * bpp;
             unsafe {
                 let ptr = start.add(off);
