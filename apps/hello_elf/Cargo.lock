@@ -25,5 +25,6 @@ dependencies = [
 name = "usrlib"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "system",
 ]

@@ -64,9 +64,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-build-
 
-      - name: Install bootimage
-        run: cargo install bootimage
-
       - name: Build hello_elf
         working-directory: apps/hello_elf
         run: cargo build --release
@@ -85,14 +82,17 @@ jobs:
 
       - name: Build
         working-directory: arch/x86_64
-        run: cargo bootimage --release
+        run: cargo build --release
 
-      - name: Upload bootimage
+      - name: Create disk image
+        run: cargo run --manifest-path arch/x86_64-runner/Cargo.toml -- target/rosx/release/rosx x86_64 --no-run
+
+      - name: Upload disk image
         if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
-          name: bootimage
-          path: target/rosx/release/bootimage-rosx.bin
+          name: rosx-x86_64
+          path: target/rosx/release/rosx-x86_64.img
           if-no-files-found: error
 
   release:
@@ -103,14 +103,14 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download bootimage
+      - name: Download disk image
         uses: actions/download-artifact@v4
         with:
-          name: bootimage
+          name: rosx-x86_64
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.sha }}
           name: Build ${{ github.sha }}
-          files: bootimage-rosx.bin
+          files: rosx-x86_64.img

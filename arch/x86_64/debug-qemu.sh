@@ -2,15 +2,7 @@
 
 set -e
 
-#echo "Building RosX with debug symbols and creating bootable image..."
-#cargo bootimage
-#
-KERNEL_BINARY="../../target/rosx/debug/bootimage-rosx.bin"
-#
-#if [ ! -f "$KERNEL_BINARY" ]; then
-#    echo "Error: Bootimage not found at $KERNEL_BINARY"
-#    exit 1
-#fi
+KERNEL_BINARY="../../target/rosx/debug/rosx-x86_64.img"
 
 echo "Launching QEMU with GDB server..."
 echo "GDB server listening on localhost:1234"

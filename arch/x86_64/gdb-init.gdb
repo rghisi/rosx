@@ -7,7 +7,7 @@ set architecture i386:x86-64
 target remote localhost:1234
 
 # Load kernel symbols from ELF binary
-symbol-file target/rosx/debug/rosx
+symbol-file ../../target/rosx/debug/rosx
 
 # Disable pagination for cleaner output
 set pagination off

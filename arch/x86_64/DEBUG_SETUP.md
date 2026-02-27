@@ -144,8 +144,8 @@ x/10xg 0x100000
 ## Troubleshooting
 
 ### QEMU won't start
-- Check that bootimage built successfully: `ls -l target/rosx/debug/bootimage-rosx_arch_x86_64.bin`
-- Try building manually: `cargo build && bootimage build`
+- Check that disk image was created: `ls -l ../../target/rosx/debug/rosx-x86_64.img`
+- Try building manually: `cargo build`
 
 ### Debugger won't connect
 - Ensure QEMU is running with `./debug-qemu.sh`
@@ -154,8 +154,8 @@ x/10xg 0x100000
 
 ### No symbols loaded
 - Ensure debug build was created: `cargo build` (not `cargo build --release`)
-- Check symbol file exists: `ls -l target/rosx/debug/rosx_arch_x86_64`
-- In GDB, manually load symbols: `symbol-file target/rosx/debug/rosx_arch_x86_64`
+- Check symbol file exists: `ls -l ../../target/rosx/debug/rosx`
+- In GDB, manually load symbols: `symbol-file ../../target/rosx/debug/rosx`
 
 ### Breakpoints not hitting
 - Verify code is actually executing (use `si` to step through)

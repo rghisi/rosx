@@ -7,12 +7,14 @@ mod cpu;
 mod debug_console;
 mod interrupts;
 mod vga_buffer;
+mod framebuffer;
 mod ansi_parser;
 
 use crate::cpu::X86_64;
 use crate::debug_console::QemuDebugConsole;
-use crate::vga_buffer::VgaOutput;
-use bootloader::BootInfo;
+use crate::framebuffer::FramebufferOutput;
+use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
+use bootloader_api::config::Mapping;
 use core::panic::PanicInfo;
 use kernel::memory::memory_manager::{MemoryBlock, MemoryBlocks};
 use kernel::default_output::MultiplexOutput;
@@ -23,9 +25,9 @@ use kernel::kprintln;
 use kernel::panic::handle_panic;
 use kernel::task::{FunctionTask};
 
-static VGA_OUTPUT: VgaOutput = VgaOutput;
+static FB_OUTPUT: FramebufferOutput = FramebufferOutput;
 pub static QEMU_OUTPUT: QemuDebugConsole = QemuDebugConsole;
-static OUTPUTS: &[&dyn kernel::default_output::KernelOutput] = &[&VGA_OUTPUT, &QEMU_OUTPUT];
+static OUTPUTS: &[&dyn kernel::default_output::KernelOutput] = &[&FB_OUTPUT, &QEMU_OUTPUT];
 
 static MULTIPLEXED_OUTPUT: MultiplexOutput = MultiplexOutput::new(OUTPUTS);
 
@@ -36,14 +38,26 @@ static KCONFIG: KConfig = KConfig {
     scheduler_factory: scheduler::mfq_scheduler,
 };
 
+const BOOTLOADER_CONFIG: BootloaderConfig = {
+    let mut config = BootloaderConfig::new_default();
+    config.mappings.physical_memory = Some(Mapping::Dynamic);
+    config
+};
+
+entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
+
 #[cfg_attr(not(test), panic_handler)]
 fn panic(info: &PanicInfo) -> ! {
     handle_panic(info);
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
-    let memory_blocks = build_memory_blocks(boot_info);
+fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
+    if let Some(fb) = boot_info.framebuffer.as_mut() {
+        framebuffer::init(fb.buffer_mut().as_mut_ptr() as u64, fb.info());
+    }
+    let phys_offset = boot_info.physical_memory_offset.into_option().unwrap();
+    unsafe { cpu::clear_nx_bits(phys_offset); }
+    let memory_blocks = build_memory_blocks(boot_info, phys_offset);
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kprintln!("[KERNEL] Initializing");
     let mut kernel = Kernel::new(&KCONFIG);
@@ -62,31 +76,18 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     panic!("[KERNEL] Crashed spectacularly, should never reached here.");
 }
 
-fn build_memory_blocks(boot_info: &BootInfo) -> MemoryBlocks {
-    let mut largest_region_size = 0u64;
-
-    for region in boot_info.memory_map.iter() {
-        if let bootloader::bootinfo::MemoryRegionType::Usable = region.region_type {
-            let size = region.range.end_addr() - region.range.start_addr();
-
-            if size > largest_region_size {
-                largest_region_size = size;
-            }
-        }
-    }
-
+fn build_memory_blocks(boot_info: &BootInfo, phys_offset: u64) -> MemoryBlocks {
     let mut memory_blocks = MemoryBlocks {
         blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),
         count: 0,
     };
 
-    for region in boot_info.memory_map.iter() {
-        if let bootloader::bootinfo::MemoryRegionType::Usable = region.region_type {
-            let size = (region.range.end_addr() - region.range.start_addr()) as usize;
-            let start = (region.range.start_addr() + boot_info.physical_memory_offset) as usize;
+    for region in boot_info.memory_regions.iter() {
+        if let bootloader_api::info::MemoryRegionKind::Usable = region.kind {
+            let size = (region.end - region.start) as usize;
+            let start = (region.start + phys_offset) as usize;
             memory_blocks.blocks[memory_blocks.count] = MemoryBlock { start, size };
             memory_blocks.count += 1;
-
         }
     }
 
