@@ -79,12 +79,12 @@ impl<I: IndexType, G: GenerationType> Handle<I, G> {
 
 impl Handle<u32, u32> {
     pub fn pack(&self) -> usize {
-        ((self.index as usize) << 32) | (self.generation as usize)
+        ((self.index as usize) << (usize::BITS / 2)) | (self.generation as usize)
     }
 
     pub fn unpack(v: usize) -> Self {
         Self {
-            index: (v >> 32) as u32,
+            index: (v >> (usize::BITS / 2)) as u32,
             generation: v as u32,
         }
     }
@@ -92,12 +92,12 @@ impl Handle<u32, u32> {
 
 impl Handle<u8, u8> {
     pub fn pack(&self) -> usize {
-        ((self.index as usize) << 32) | (self.generation as usize)
+        ((self.index as usize) << (usize::BITS / 2)) | (self.generation as usize)
     }
 
     pub fn unpack(v: usize) -> Self {
         Self {
-            index: (v >> 32) as u8,
+            index: (v >> (usize::BITS / 2)) as u8,
             generation: v as u8,
         }
     }
@@ -353,7 +353,7 @@ mod tests {
     fn pack_should_place_index_in_upper_bits_and_generation_in_lower_bits_for_u32_handle() {
         let handle = Handle::<u32, u32>::new(1, 2);
         let packed = handle.pack();
-        assert_eq!((packed >> 32) as u32, 1);
+        assert_eq!((packed >> (usize::BITS / 2)) as u32, 1);
         assert_eq!(packed as u32, 2);
     }
 
@@ -367,7 +367,7 @@ mod tests {
     fn pack_should_place_index_in_upper_bits_and_generation_in_lower_bits_for_u8_handle() {
         let handle = Handle::<u8, u8>::new(1, 2);
         let packed = handle.pack();
-        assert_eq!((packed >> 32) as u8, 1);
+        assert_eq!((packed >> (usize::BITS / 2)) as u8, 1);
         assert_eq!(packed as u8, 2);
     }
 
