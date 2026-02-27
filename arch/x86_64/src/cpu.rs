@@ -135,6 +135,27 @@ impl Cpu for X86_64 {
     }
 }
 
+pub unsafe fn clear_nx_bits(phys_offset: u64) {
+    use x86_64::registers::control::Cr3;
+    let (frame, flags) = Cr3::read();
+    walk_page_table(frame.start_address().as_u64(), phys_offset, 4);
+    Cr3::write(frame, flags);
+}
+
+unsafe fn walk_page_table(table_phys: u64, phys_offset: u64, level: u8) {
+    let table = (table_phys + phys_offset) as *mut u64;
+    for i in 0usize..512 {
+        let entry = table.add(i).read();
+        if entry & 1 == 0 {
+            continue;
+        }
+        table.add(i).write(entry & !(1u64 << 63));
+        if level > 1 && entry & (1 << 7) == 0 {
+            walk_page_table(entry & 0x000f_ffff_ffff_f000, phys_offset, level - 1);
+        }
+    }
+}
+
 core::arch::global_asm!(include_str!("context_switching.S"));
 core::arch::global_asm!(include_str!("syscall.S"));
 

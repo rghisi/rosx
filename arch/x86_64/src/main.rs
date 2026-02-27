@@ -55,7 +55,9 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     if let Some(fb) = boot_info.framebuffer.as_mut() {
         framebuffer::init(fb.buffer_mut().as_mut_ptr() as u64, fb.info());
     }
-    let memory_blocks = build_memory_blocks(boot_info);
+    let phys_offset = boot_info.physical_memory_offset.into_option().unwrap();
+    unsafe { cpu::clear_nx_bits(phys_offset); }
+    let memory_blocks = build_memory_blocks(boot_info, phys_offset);
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kprintln!("[KERNEL] Initializing");
     let mut kernel = Kernel::new(&KCONFIG);
@@ -74,30 +76,16 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     panic!("[KERNEL] Crashed spectacularly, should never reached here.");
 }
 
-fn build_memory_blocks(boot_info: &BootInfo) -> MemoryBlocks {
-    let mut largest_region_size = 0u64;
-
-    for region in boot_info.memory_regions.iter() {
-        if let bootloader_api::info::MemoryRegionKind::Usable = region.kind {
-            let size = region.end - region.start;
-
-            if size > largest_region_size {
-                largest_region_size = size;
-            }
-        }
-    }
-
+fn build_memory_blocks(boot_info: &BootInfo, phys_offset: u64) -> MemoryBlocks {
     let mut memory_blocks = MemoryBlocks {
         blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),
         count: 0,
     };
 
-    let physical_memory_offset = boot_info.physical_memory_offset.into_option().unwrap();
-
     for region in boot_info.memory_regions.iter() {
         if let bootloader_api::info::MemoryRegionKind::Usable = region.kind {
             let size = (region.end - region.start) as usize;
-            let start = (region.start + physical_memory_offset) as usize;
+            let start = (region.start + phys_offset) as usize;
             memory_blocks.blocks[memory_blocks.count] = MemoryBlock { start, size };
             memory_blocks.count += 1;
         }
