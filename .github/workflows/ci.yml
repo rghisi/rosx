@@ -108,9 +108,12 @@ jobs:
         with:
           name: rosx-x86_64
 
+      - name: Compress disk image
+        run: gzip -9 rosx-x86_64.img
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.sha }}
           name: Build ${{ github.sha }}
-          files: rosx-x86_64.img
+          files: rosx-x86_64.img.gz
