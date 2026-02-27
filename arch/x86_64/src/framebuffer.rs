@@ -44,8 +44,7 @@ fn draw_char(col: usize, row: usize, ch: u8, fg: (u8, u8, u8), bg: (u8, u8, u8))
     for (bit_y, &row_bits) in glyph.iter().enumerate() {
         let row_base = (base_y + bit_y) * stride * bpp;
         for bit_x in 0..FONT.char_w {
-            let bit = if FONT.lsb_first { (row_bits >> bit_x) & 1 } else { (row_bits >> (7 - bit_x)) & 1 };
-            let (r, g, b) = if bit != 0 { fg } else { bg };
+            let (r, g, b) = if (row_bits >> (7 - bit_x)) & 1 != 0 { fg } else { bg };
             let off = row_base + (base_x + bit_x) * bpp;
             unsafe {
                 let ptr = start.add(off);
