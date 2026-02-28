@@ -6,7 +6,7 @@ use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
 use crate::elf::load_elf;
 
-pub(crate) type TaskHandle = Handle<u8, u8>;
+pub(crate) type TaskHandle = Handle;
 pub type SharedTask = Box<Task>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

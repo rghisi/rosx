@@ -1,6 +1,5 @@
 use core::alloc::{GlobalAlloc, Layout};
 use alloc::boxed::Box;
-use alloc::string::String;
 use crate::future::TimeFuture;
 use crate::kernel::kernel;
 use crate::kernel_services::services;
@@ -31,8 +30,8 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> usize {
         Ok(SyscallNum::Exec) => {
             let entrypoint = arg1 as usize;
             match kernel().schedule(new_entrypoint_task(entrypoint)).ok() {
-                Some(handle) => ((handle.index as u64) << 32 | (handle.generation as u64)) as usize,
-                None => u64::MAX as usize,
+                Some(handle) => handle.to_usize(),
+                None => usize::MAX,
             }
         }
         Ok(SyscallNum::Yield) => {
@@ -52,12 +51,12 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> usize {
             crate::keyboard::pop_key().map_or(0, |c| c as usize)
         }
         Ok(SyscallNum::WaitFuture) => {
-            let handle = FutureHandle { index: (arg1 >> 32) as u32, generation: arg1 as u32 };
+            let handle = FutureHandle::from_usize(arg1 as usize);
             let future = kernel().wait_future(handle).unwrap();
             Box::into_raw(Box::new(future)) as usize
         }
         Ok(SyscallNum::IsFutureCompleted) => {
-            let handle = FutureHandle { index: (arg1 >> 32) as u32, generation: arg1 as u32 };
+            let handle = FutureHandle::from_usize(arg1 as usize);
             if kernel().is_future_completed(handle) { 1 } else { 0 }
         }
         Ok(SyscallNum::Alloc) => {
@@ -76,8 +75,8 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> usize {
             let elf_ptr = arg1 as usize;
             let elf_bytes: &[u8] = unsafe { *Box::from_raw(elf_ptr as *mut &[u8]) };
             match kernel().schedule(new_elf_task(elf_bytes)).ok() {
-                Some(handle) => ((handle.index as u64) << 32 | (handle.generation as u64)) as usize,
-                None => u64::MAX as usize,
+                Some(handle) => handle.to_usize(),
+                None => usize::MAX,
             }
         }
         Ok(SyscallNum::IpcFind) => {
@@ -86,10 +85,10 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> usize {
             Box::into_raw(Box::new(result)) as usize
         }
         Ok(SyscallNum::IpcSend) => {
-            let handle_index = arg1 as u8;
-            let handle_generation = arg2 as u8;
+            let handle_index = arg1 as u32;
+            let handle_generation = arg2 as u32;
             let value = arg3 as u32;
-            let ipc_server_handle = IpcServerHandle { index: handle_index, generation: handle_generation };
+            let ipc_server_handle = IpcServerHandle::new(handle_index, handle_generation);
             let message = IpcSendMessage { value };
             let future_handle = services().ipc_manager.borrow_mut().send(ipc_server_handle, message);
             let future = kernel().wait_future(future_handle).unwrap();

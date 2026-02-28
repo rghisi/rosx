@@ -2,7 +2,7 @@ use core::any::Any;
 use collections::generational_arena::Handle;
 use crate::future::Future;
 
-pub type IpcServerHandle = Handle<u8, u8>;
+pub type IpcServerHandle = Handle;
 
 #[derive(Debug)]
 pub enum IpcError {
