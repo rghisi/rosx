@@ -181,13 +181,113 @@ impl<T, I: IndexType> GenArena<T, I> {
     }
 }
 
+pub struct GenerationalArena<T, const S: usize> {
+    items: Vec<Option<T>>,
+    generations: Vec<HalfSize>,
+    free_slots: VecDeque<HalfSize>,
+}
+
+impl<T, const S: usize> GenerationalArena<T, S> {
+    pub fn new() -> Self {
+        assert!(S > 0, "S must be greater than zero");
+        let mut items = Vec::with_capacity(S);
+        let mut generations = Vec::with_capacity(S);
+        let mut free_slots = VecDeque::with_capacity(S);
+        for slot in 0..S {
+            items.push(None);
+            generations.push(0);
+            free_slots.push_back(slot as HalfSize);
+        }
+        Self { items, generations, free_slots }
+    }
+
+    pub fn add(&mut self, item: T) -> Result<Handle, Error> {
+        match self.free_slots.pop_front() {
+            Some(index) => {
+                let generation = self.generations[index as usize];
+                self.items[index as usize] = Some(item);
+                Ok(Handle::new(index, generation))
+            }
+            None => Err(Error::OutOfMemory),
+        }
+    }
+
+    pub fn borrow(&self, handle: Handle) -> Result<&T, Error> {
+        let index = handle.index as usize;
+        if index < self.items.len() && self.generations[index] == handle.generation {
+            return Ok(self.items[index].as_ref().unwrap());
+        }
+        Err(Error::NotFound)
+    }
+
+    pub fn borrow_mut(&mut self, handle: Handle) -> Result<&mut T, Error> {
+        let index = handle.index as usize;
+        if index < self.items.len() && self.generations[index] == handle.generation {
+            return Ok(self.items[index].as_mut().unwrap());
+        }
+        Err(Error::NotFound)
+    }
+
+    pub fn remove(&mut self, handle: Handle) -> Result<T, Error> {
+        let index = handle.index as usize;
+        if index >= self.items.len() || self.generations[index] != handle.generation {
+            return Err(Error::NotFound);
+        }
+        let item = self.items[index].take().unwrap();
+        self.generations[index] = self.generations[index].wrapping_add(1);
+        self.free_slots.push_back(handle.index);
+        Ok(item)
+    }
+
+    pub fn replace(&mut self, handle: Handle, item: T) -> Result<Handle, Error> {
+        let index = handle.index as usize;
+        if index >= self.items.len() || self.generations[index] != handle.generation {
+            return Err(Error::NotFound);
+        }
+        self.items[index] = Some(item);
+        Ok(handle)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
-    use crate::generational_arena::{Error, GenArena, Handle, HalfSize};
+    use crate::generational_arena::{Error, GenArena, GenerationalArena, Handle, HalfSize};
     use std::string::String;
     use std::string::ToString;
     use std::vec;
+
+    #[test]
+    fn generational_arena_should_initialize_with_s_slots() {
+        let arena: GenerationalArena<i32, 10> = GenerationalArena::new();
+        assert_eq!(arena.items.len(), 10);
+        assert_eq!(arena.generations.len(), 10);
+        assert_eq!(arena.free_slots.len(), 10);
+    }
+
+    #[test]
+    fn generational_arena_should_add_and_borrow_item() {
+        let mut arena: GenerationalArena<i32, 5> = GenerationalArena::new();
+        let handle = arena.add(42).unwrap();
+        assert_eq!(*arena.borrow(handle).unwrap(), 42);
+    }
+
+    #[test]
+    fn generational_arena_should_not_exceed_max_size_s() {
+        let mut arena: GenerationalArena<i32, 3> = GenerationalArena::new();
+        arena.add(1).unwrap();
+        arena.add(2).unwrap();
+        arena.add(3).unwrap();
+        assert_eq!(arena.add(4), Err(Error::OutOfMemory));
+    }
+
+    #[test]
+    fn generational_arena_should_return_not_found_for_removed_handle() {
+        let mut arena: GenerationalArena<i32, 5> = GenerationalArena::new();
+        let handle = arena.add(42).unwrap();
+        arena.remove(handle).unwrap();
+        assert_eq!(arena.borrow(handle), Err(Error::NotFound));
+    }
 
     #[test]
     fn handle_pack_should_encode_index_in_upper_half_and_generation_in_lower_half() {
