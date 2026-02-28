@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
-use collections::generational_arena::{GenArena, Handle};
+use collections::generational_arena::GenerationalArena;
 use system::future::{ Future, FutureHandle };
 use system::ipc::IpcError::ServerNotFound;
 use system::ipc::{IpcError, IpcReply, IpcReplyFuture, IpcSendMessage, IpcServerHandle};
@@ -26,7 +26,7 @@ pub(crate) struct IpcReplyMessage {
 type Mailbox = VecDeque<IpcReceiveMessage>;
 
 pub(crate) struct IpcManager {
-    bindings: GenArena<IpcServerConnection, u8, u8>,
+    bindings: GenerationalArena<IpcServerConnection, 256>,
     mailboxes: Vec<Mailbox>,
     registry: BTreeMap<String, IpcServerHandle>,
 }
@@ -35,7 +35,7 @@ impl IpcManager {
 
     pub(crate) fn new() -> IpcManager {
         IpcManager {
-            bindings: GenArena::new(10),
+            bindings: GenerationalArena::new(),
             mailboxes: Vec::new(),
             registry: BTreeMap::new(),
         }
@@ -43,10 +43,7 @@ impl IpcManager {
 
     pub(crate) fn find(&self, service: &str) -> Result<IpcServerHandle, IpcError> {
         if let Some(handle) = self.registry.get(service) {
-            Ok(IpcServerHandle {
-                index: handle.index,
-                generation: handle.generation
-            })
+            Ok(*handle)
         } else {
             Err(ServerNotFound)
         }
