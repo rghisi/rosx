@@ -19,7 +19,7 @@ static KCONFIG: kernel::kconfig::KConfig = kernel::kconfig::KConfig {
 };
 
 use core::panic::PanicInfo;
-use kernel::memory::memory_manager::{MemoryBlock, MemoryBlocks};
+use kernel::memory::{MemoryBlock, MemoryBlocks};
 use kernel::panic::handle_panic;
 
 core::arch::global_asm!(include_str!("boot.S"));
