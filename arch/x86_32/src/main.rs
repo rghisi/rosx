@@ -1,7 +1,10 @@
 #![no_main]
 #![no_std]
 
+mod cpu;
 mod debug_console;
+
+pub static CPU: cpu::X86_32 = cpu::X86_32::new();
 
 use core::panic::PanicInfo;
 use kernel::memory::memory_manager::{MemoryBlock, MemoryBlocks};
