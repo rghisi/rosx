@@ -154,7 +154,6 @@ impl Kernel {
     }
 
     pub(crate) fn terminate_current_task(&mut self) {
-        let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
         if let Some(task_handle) = self.execution_state.current_task.take() {
             services()
@@ -163,7 +162,6 @@ impl Kernel {
                 .set_state(task_handle, Terminated);
             self.execution_state.current_task = Some(task_handle);
         }
-        self.execution_state.preemption_enabled = prev;
     }
 
     #[inline(always)]
