@@ -13,15 +13,15 @@ use system::ipc::IpcSendMessage;
 use crate::task::{new_elf_task, new_entrypoint_task};
 
 #[cfg(not(test))]
-pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> usize {
-    match SyscallNum::try_from(num as usize) {
+pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usize {
+    match SyscallNum::try_from(num) {
         Ok(SyscallNum::Print) => {
-            let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(arg1 as *const u8, arg2 as usize)) };
+            let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(arg1 as *const u8, arg2)) };
             print(format_args!("{}", s));
             0
         }
         Ok(SyscallNum::Sleep) => {
-            let future = Box::new(TimeFuture::new(arg1));
+            let future = Box::new(TimeFuture::new(arg1 as u64));
             let handle = services().future_registry
                 .borrow_mut()
                 .register(future)
@@ -30,7 +30,7 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> usize {
             0
         }
         Ok(SyscallNum::Exec) => {
-            let entrypoint = arg1 as usize;
+            let entrypoint = arg1;
             match kernel().schedule(new_entrypoint_task(entrypoint)).ok() {
                 Some(handle) => handle.pack(),
                 None => u64::MAX as usize,
@@ -62,11 +62,11 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> usize {
             if kernel().is_future_completed(handle) { 1 } else { 0 }
         }
         Ok(SyscallNum::Alloc) => {
-            let Ok(layout) = Layout::from_size_align(arg1 as usize, arg2 as usize) else { return 0 };
+            let Ok(layout) = Layout::from_size_align(arg1, arg2) else { return 0 };
             (unsafe { services().memory_manager.alloc(layout) }) as usize
         }
         Ok(SyscallNum::Dealloc) => {
-            let Ok(layout) = Layout::from_size_align(arg2 as usize, arg3 as usize) else { return 0 };
+            let Ok(layout) = Layout::from_size_align(arg2, arg3) else { return 0 };
             unsafe { services().memory_manager.dealloc(arg1 as *mut u8, layout) };
             0
         }
@@ -74,7 +74,7 @@ pub fn handle_syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> usize {
             crate::keyboard::pop_key().map_or(0, |c| c as usize)
         }
         Ok(SyscallNum::LoadElf) => {
-            let elf_ptr = arg1 as usize;
+            let elf_ptr = arg1;
             let elf_bytes: &[u8] = unsafe { *Box::from_raw(elf_ptr as *mut &[u8]) };
             match kernel().schedule(new_elf_task(elf_bytes)).ok() {
                 Some(handle) => handle.pack(),

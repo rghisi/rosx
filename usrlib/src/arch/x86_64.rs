@@ -1,5 +1,5 @@
-pub fn raw_syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
-    let result: u64;
+pub fn raw_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usize {
+    let result: usize;
     unsafe {
         core::arch::asm!(
             "syscall",
