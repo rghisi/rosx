@@ -177,13 +177,13 @@ mod tests {
     }
 
     #[test]
-    fn allocate_single_block_returns_nonnull_pointer() {
+    fn allocate_single_block_returns_ok() {
         let mut memory = vec![0u8; 4096];
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = FreeListAllocator::new(&[(base, 4096)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        let ptr = unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
-        assert!(!ptr.is_null());
+        let result = unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -192,7 +192,7 @@ mod tests {
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = FreeListAllocator::new(&[(base, 4096)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        let ptr = unsafe { alloc.allocate(layout, BlockOwner::Kernel) } as usize;
+        let ptr = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap() as usize;
         assert!(ptr >= base);
         assert!(ptr + 64 <= base + 4096);
     }
@@ -203,7 +203,7 @@ mod tests {
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = FreeListAllocator::new(&[(base, 4096)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        let ptr = unsafe { alloc.allocate(layout, BlockOwner::Kernel) } as usize;
+        let ptr = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap() as usize;
         assert_eq!(ptr % 8, 0);
     }
 
@@ -213,40 +213,47 @@ mod tests {
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = FreeListAllocator::new(&[(base, 4096)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        let first = unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
+        let first = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
         unsafe { alloc.deallocate(first) };
-        let second = unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
+        let second = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
         assert_eq!(first, second);
     }
 
     #[test]
-    fn allocate_returns_null_when_out_of_memory() {
+    fn allocate_returns_out_of_memory_when_exhausted() {
         let mut memory = vec![0u8; 128];
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = FreeListAllocator::new(&[(base, 128)]);
         let layout = Layout::from_size_align(256, 8).unwrap();
-        let ptr = unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
-        assert!(ptr.is_null());
+        let result = unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
+        assert!(matches!(result, Err(AllocError::OutOfMemory)));
+    }
+
+    #[test]
+    fn allocate_returns_alignment_unsupported_when_alignment_exceeds_block_align() {
+        let mut memory = vec![0u8; 4096];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = FreeListAllocator::new(&[(base, 4096)]);
+        let layout = Layout::from_size_align(64, BLOCK_ALIGN * 2).unwrap();
+        let result = unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
+        assert!(matches!(result, Err(AllocError::AlignmentUnsupported)));
     }
 
     #[test]
     fn adjacent_freed_blocks_can_serve_a_larger_allocation() {
-        // exactly 3 allocations of 64 bytes, no tail remaining
         let region_size = 3 * needed_for(64);
         let mut memory = vec![0u8; region_size];
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = FreeListAllocator::new(&[(base, region_size)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        let a = unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
-        let b = unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
-        let _c = unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
+        let a = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        let b = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        let _c = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
         unsafe { alloc.deallocate(a) };
         unsafe { alloc.deallocate(b) };
-        // without coalescing: two needed_for(64)-byte blocks, neither fits needed_for(80)
-        // with coalescing: merged 2*needed_for(64) block fits
         let large = Layout::from_size_align(80, 8).unwrap();
-        let ptr = unsafe { alloc.allocate(large, BlockOwner::Kernel) };
-        assert!(!ptr.is_null());
+        let result = unsafe { alloc.allocate(large, BlockOwner::Kernel) };
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -255,16 +262,14 @@ mod tests {
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = FreeListAllocator::new(&[(base, 4096)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        let first = unsafe { alloc.allocate(layout, BlockOwner::Kernel) } as usize;
-        let second = unsafe { alloc.allocate(layout, BlockOwner::Kernel) } as usize;
+        let first = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap() as usize;
+        let second = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap() as usize;
         let no_overlap = second >= first + 64 || first >= second + 64;
         assert!(no_overlap);
     }
 
     #[test]
     fn allocates_from_second_region_when_first_is_exhausted() {
-        // Region 1 fits exactly one 64-byte allocation (needed_for(64) bytes, no split tail).
-        // Region 2 is large. After region 1 is full the next alloc must come from region 2.
         let region1_size = needed_for(64) + BLOCK_ALIGN;
         let mut mem1 = vec![0u8; region1_size];
         let mut mem2 = vec![0u8; 4096];
@@ -272,48 +277,47 @@ mod tests {
         let base2 = mem2.as_mut_ptr() as usize;
         let mut alloc = FreeListAllocator::new(&[(base1, region1_size), (base2, 4096)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        let first = unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
-        assert!(!first.is_null());
-        let second = unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
-        assert!(!second.is_null());
+        unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        let second = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
         let second_addr = second as usize;
         assert!(second_addr >= base2 && second_addr + 64 <= base2 + 4096);
     }
 
     #[test]
-    fn allocate_with_kernel_owner_returns_non_null() {
+    fn allocate_with_kernel_owner_returns_ok() {
         let mut memory = vec![0u8; 4096];
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = FreeListAllocator::new(&[(base, 4096)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        let ptr = unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
-        assert!(!ptr.is_null());
+        let result = unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
+        assert!(result.is_ok());
     }
 
     #[test]
-    fn allocate_with_task_owner_returns_non_null() {
+    fn allocate_with_task_owner_returns_ok() {
         let mut memory = vec![0u8; 4096];
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = FreeListAllocator::new(&[(base, 4096)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        let ptr = unsafe { alloc.allocate(layout, BlockOwner::Task(1)) };
-        assert!(!ptr.is_null());
+        let result = unsafe { alloc.allocate(layout, BlockOwner::Task(1)) };
+        assert!(result.is_ok());
     }
 
     #[test]
     fn deallocate_by_owner_frees_task_blocks() {
-        // Two allocations exactly fill the region; a third would fail.
-        // After freeing the task block, a new allocation must succeed.
         let region_size = 2 * needed_for(64);
         let mut memory = vec![0u8; region_size];
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = FreeListAllocator::new(&[(base, region_size)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        unsafe { alloc.allocate(layout, BlockOwner::Task(42)) };
-        unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
-        assert!(unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_null());
+        unsafe { alloc.allocate(layout, BlockOwner::Task(42)) }.unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        assert!(matches!(
+            unsafe { alloc.allocate(layout, BlockOwner::Kernel) },
+            Err(AllocError::OutOfMemory)
+        ));
         unsafe { alloc.deallocate_by_owner(42) };
-        assert!(!unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_null());
+        assert!(unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_ok());
     }
 
     #[test]
@@ -323,27 +327,31 @@ mod tests {
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = FreeListAllocator::new(&[(base, region_size)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
-        unsafe { alloc.allocate(layout, BlockOwner::Kernel) };
+        unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
         unsafe { alloc.deallocate_by_owner(99) };
-        assert!(unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_null());
+        assert!(matches!(
+            unsafe { alloc.allocate(layout, BlockOwner::Kernel) },
+            Err(AllocError::OutOfMemory)
+        ));
     }
 
     #[test]
     fn deallocate_by_owner_only_frees_matching_task() {
-        // task-1 owns slots 0 and 2, task-2 owns slot 1 (sits between them, so no coalescing).
-        // After freeing task-1, exactly two 64-byte slots become available, not three.
         let region_size = 3 * needed_for(64);
         let mut memory = vec![0u8; region_size];
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = FreeListAllocator::new(&[(base, region_size)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        unsafe { alloc.allocate(layout, BlockOwner::Task(1)) };
-        unsafe { alloc.allocate(layout, BlockOwner::Task(2)) };
-        unsafe { alloc.allocate(layout, BlockOwner::Task(1)) };
+        unsafe { alloc.allocate(layout, BlockOwner::Task(1)) }.unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Task(2)) }.unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Task(1)) }.unwrap();
         unsafe { alloc.deallocate_by_owner(1) };
-        assert!(!unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_null());
-        assert!(!unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_null());
-        assert!(unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_null());
+        assert!(unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_ok());
+        assert!(unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_ok());
+        assert!(matches!(
+            unsafe { alloc.allocate(layout, BlockOwner::Kernel) },
+            Err(AllocError::OutOfMemory)
+        ));
     }
 }
