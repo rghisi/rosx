@@ -94,6 +94,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rosx-x86"
+version = "0.1.0"
+dependencies = [
+ "kernel",
+ "lazy_static",
+ "spin 0.10.0",
+ "system",
+]
+
+[[package]]
 name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
