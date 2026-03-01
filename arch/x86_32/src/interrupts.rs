@@ -53,6 +53,16 @@ impl IdtEntry {
             offset_high: ((addr >> 16) & 0xFFFF) as u16,
         }
     }
+
+    fn trap_gate_ring3(handler_addr: u32) -> Self {
+        Self {
+            offset_low: (handler_addr & 0xFFFF) as u16,
+            selector: 0x08,
+            zero: 0,
+            type_attr: 0xEF, // P=1, DPL=3, type=0xF (32-bit trap gate, callable from ring 3)
+            offset_high: ((handler_addr >> 16) & 0xFFFF) as u16,
+        }
+    }
 }
 
 // Full 256-entry IDT aligned to 16 bytes as recommended by the IA-32 manual.
@@ -66,11 +76,16 @@ struct IdtPtr {
     base: u32,
 }
 
+unsafe extern "C" {
+    fn int80_handler();
+}
+
 lazy_static! {
     static ref IDT: Idt = {
         let mut idt = Idt([IdtEntry::absent(); 256]);
         idt.0[PIC_MASTER_OFFSET as usize]     = IdtEntry::interrupt_gate(timer_interrupt_handler);
         idt.0[PIC_MASTER_OFFSET as usize + 1] = IdtEntry::interrupt_gate(keyboard_interrupt_handler);
+        idt.0[0x80] = IdtEntry::trap_gate_ring3(int80_handler as *const () as u32);
         idt
     };
 }

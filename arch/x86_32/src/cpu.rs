@@ -95,6 +95,11 @@ unsafe extern "C" {
     fn swap_context(store: *mut usize, load: usize);
 }
 
+#[unsafe(no_mangle)]
+unsafe extern "C" fn syscall_handler(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usize {
+    kernel::syscall::handle_syscall(num, arg1, arg2, arg3)
+}
+
 // swap_context(store: *mut usize, load: usize)
 //
 // Stack on entry (after push of return address by call instruction):
@@ -131,4 +136,42 @@ core::arch::global_asm!(
     "    pop ebp",
     "    sti",
     "    ret",                   // jump to next task's saved return address
+);
+
+// int80_handler — raw entry point for `int 0x80` system calls.
+//
+// Calling convention (matching usrlib/src/arch/x86_32.rs):
+//   eax = syscall number
+//   ebx = arg1
+//   ecx = arg2
+//   edx = arg3
+//   return value: eax
+//
+// The CPU pushes [eip, cs, eflags] before entering. iretd restores them on exit,
+// which means eflags is preserved from the caller's perspective (preserves_flags).
+//
+// ebx, ecx, edx are saved/restored so the caller sees them unchanged (mirrors
+// the Linux int 0x80 ABI and matches the usrlib asm declaration).
+core::arch::global_asm!(
+    ".global int80_handler",
+    "int80_handler:",
+    "    push ebp",
+    "    push edi",
+    "    push esi",
+    "    push edx",             // save arg3 (caller-saved in cdecl, but we preserve it)
+    "    push ecx",             // save arg2
+    "    push ebx",             // save arg1
+    "    push edx",             // cdecl arg3
+    "    push ecx",             // cdecl arg2
+    "    push ebx",             // cdecl arg1
+    "    push eax",             // cdecl num
+    "    call syscall_handler", // result in eax
+    "    add esp, 16",          // discard 4 cdecl args
+    "    pop ebx",
+    "    pop ecx",
+    "    pop edx",
+    "    pop esi",
+    "    pop edi",
+    "    pop ebp",
+    "    iretd",
 );
