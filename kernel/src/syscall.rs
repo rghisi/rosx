@@ -21,7 +21,7 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             0
         }
         Ok(SyscallNum::Sleep) => {
-            let future = Box::new(TimeFuture::new(arg1));
+            let future = Box::new(TimeFuture::new(arg1 as u64));
             let handle = services().future_registry
                 .borrow_mut()
                 .register(future)

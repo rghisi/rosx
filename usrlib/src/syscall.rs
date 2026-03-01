@@ -32,19 +32,17 @@ impl Syscall {
     }
 
     pub fn sleep(ms: u64) {
-        arch::raw_syscall(SyscallNum::Sleep as u64, ms, 0, 0);
+        arch::raw_syscall(SyscallNum::Sleep as usize, ms as usize, 0, 0);
     }
 
     pub fn wait_future(handle: FutureHandle) -> Box<dyn Future + Send + Sync> {
-        let packed = (handle.index as u64) << 32 | (handle.generation as u64);
-        let result = arch::raw_syscall(SyscallNum::WaitFuture as usize, packed, 0, 0);
+        let result = arch::raw_syscall(SyscallNum::WaitFuture as usize, handle.pack(), 0, 0);
         let r: Box<dyn Future + Send + Sync> = unsafe { *Box::from_raw(result as *mut Box<dyn Future + Send + Sync>) };
         r
     }
 
     pub fn is_future_completed(handle: FutureHandle) -> bool {
-        let packed = (handle.index as u64) << 32 | (handle.generation as u64);
-        let result = arch::raw_syscall(SyscallNum::IsFutureCompleted as usize, packed, 0, 0);
+        let result = arch::raw_syscall(SyscallNum::IsFutureCompleted as usize, handle.pack(), 0, 0);
         result != 0
     }
 
