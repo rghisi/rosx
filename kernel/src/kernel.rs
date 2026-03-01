@@ -106,6 +106,9 @@ impl Kernel {
             Ok(task_handle) => {
                 let future = Box::new(TaskCompletionFuture::new(task_handle));
                 let future_handle = services().future_registry.borrow_mut().register(future);
+                if let Some(fh) = future_handle {
+                    services().task_manager.borrow_mut().set_completion_future(task_handle, fh);
+                }
                 self.schedule_task(task_handle);
                 future_handle
             }
@@ -157,8 +160,7 @@ impl Kernel {
         self.execution_state.switch_to_task(task_handle)
     }
 
-    pub(crate) fn terminate_current_task(&mut self) {
-        let prev = self.execution_state.preemption_enabled;
+    pub(crate) fn terminate_and_yield(&mut self) -> ! {
         self.execution_state.preemption_enabled = false;
         if let Some(task_handle) = self.execution_state.current_task.take() {
             services()
@@ -167,7 +169,8 @@ impl Kernel {
                 .set_state(task_handle, Terminated);
             self.execution_state.current_task = Some(task_handle);
         }
-        self.execution_state.preemption_enabled = prev;
+        self.execution_state.switch_to_scheduler();
+        unreachable!()
     }
 
     #[inline(always)]

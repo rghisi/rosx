@@ -2,6 +2,7 @@ use collections::generational_arena::GenerationalArena;
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, TaskState, YieldReason};
 use core::ptr::null_mut;
+use system::future::FutureHandle;
 
 pub(crate) struct TaskManager {
     tasks: GenerationalArena<SharedTask, 256>,
@@ -77,5 +78,48 @@ impl TaskManager {
             Ok(task) => task.stack_pointer_mut(),
             Err(_) => null_mut(),
         }
+    }
+
+    pub(crate) fn get_completion_future(&self, handle: TaskHandle) -> Option<FutureHandle> {
+        match self.tasks.borrow(handle) {
+            Ok(task) => task.completion_future(),
+            Err(_) => None,
+        }
+    }
+
+    pub(crate) fn set_completion_future(&mut self, handle: TaskHandle, future_handle: FutureHandle) {
+        if let Ok(task) = self.tasks.borrow_mut(handle) {
+            task.set_completion_future(future_handle);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::task::Task;
+    use collections::generational_arena::GenerationalArena;
+
+    fn make_future_handle() -> FutureHandle {
+        let mut arena: GenerationalArena<u8, 1> = GenerationalArena::new();
+        arena.add(0u8).unwrap()
+    }
+
+    #[test]
+    fn completion_future_is_none_by_default() {
+        let mut manager = TaskManager::new();
+        let task = Task::new("test", 0, 0);
+        let handle = manager.add_task(task).unwrap();
+        assert!(manager.get_completion_future(handle).is_none());
+    }
+
+    #[test]
+    fn set_completion_future_persists() {
+        let mut manager = TaskManager::new();
+        let task = Task::new("test", 0, 0);
+        let handle = manager.add_task(task).unwrap();
+        let fh = make_future_handle();
+        manager.set_completion_future(handle, fh);
+        assert_eq!(manager.get_completion_future(handle), Some(fh));
     }
 }

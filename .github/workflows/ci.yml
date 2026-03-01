@@ -36,7 +36,7 @@ jobs:
         run: cargo test -p collections
 
       - name: Test kernel
-        run: cargo test -p kernel
+        run: cargo test -p kernel -- --test-threads=1
 
   build:
     name: Build Kernel (x86_64)
