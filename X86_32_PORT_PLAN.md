@@ -45,22 +45,24 @@ Add `Elf32Header`, `Elf32Phdr`, `Elf32Dyn`, `Elf32Rel` to `kernel/src/elf/struct
 Update `load_elf` to read `e_ident[4]` (ELF class: `1`=32-bit, `2`=64-bit) and dispatch to a
 32-bit or 64-bit load path.
 
-### Step 3 — `arch/x86_32/` scaffolding + target JSON [ WIP ]
+### Step 3 — `arch/x86_32/` scaffolding + target JSON [DONE]
 
-Create directory layout mirroring `arch/x86_64/`. Write `rosx-i686.json`
-(`target-pointer-width: 32`, `disable-redzone: true`, no SSE).
+Created directory layout mirroring `arch/x86_64/`. `rosx-i686.json` targets i686-unknown-none:
+- `target-pointer-width: 32`, no SSE/MMX (`-mmx,-sse,-sse2`), rust-lld linker, panic=abort
+- `+soft-float` rejected by rustc (ABI-incompatible with i686); x87 FPU left as-is
+- `pic8259` crate removed — it hard-requires `x86_64` port I/O; PIC will use inline asm
 
-### Step 5 — Multiboot2 entry point [ ]
+### Step 4 — Multiboot2 entry point [ ]
 
 Embed a Multiboot2 header, implement `kernel_main` that receives the Multiboot2 info pointer,
 extracts memory regions into `MemoryBlocks`, bootstraps the kernel.
 
-### Step 6 — CPU trait: stack init + context switch [ ]
+### Step 5 — CPU trait: stack init + context switch [ ]
 
 `cpu.rs` (`X86_32`) + `context_switching.S` for x86-32 cdecl ABI.
 Only 4 callee-saved registers (EBX, ESI, EDI, EBP) vs 15 on x86_64.
 
-### Step 7 — Interrupts [ ]
+### Step 6 — Interrupts [ ]
 
 `interrupts.rs`: 32-bit IDT, PIC 8259 (same hardware as x86_64!), PIT timer (same!).
 Drop MSR/SYSCALL setup (x86_64-only); use `int 0x80` for syscalls instead.
