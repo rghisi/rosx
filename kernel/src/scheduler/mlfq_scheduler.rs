@@ -5,17 +5,18 @@ use crate::task::TaskHandle;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use crate::task::YieldReason;
 use system::future::FutureHandle;
-use crate::future::TaskFuture;
 use crate::kernel::kernel;
 use crate::scheduler::Scheduler;
+use crate::scheduler::timer::Timer;
 
 const NUM_QUEUES: usize = 3;
 const QUANTA: [usize; NUM_QUEUES] = [2, 5, 10];
 
 pub struct MlfqScheduler {
     queues: [VecDeque<TaskHandle>; NUM_QUEUES],
-    blocked_tasks: VecDeque<TaskFuture>,
+    wake_queue: VecDeque<TaskHandle>,
     hw_interrupt_queue: VecDeque<HardwareInterrupt>,
+    timer: Timer,
     idle_task: Option<TaskHandle>,
     remaining_quantum: usize
 }
@@ -24,8 +25,9 @@ impl MlfqScheduler {
     pub fn new() -> Self {
         MlfqScheduler {
             queues: [VecDeque::new(), VecDeque::new(), VecDeque::new()],
-            blocked_tasks: VecDeque::new(),
+            wake_queue: VecDeque::new(),
             hw_interrupt_queue: VecDeque::new(),
+            timer: Timer::new(),
             idle_task: None,
             remaining_quantum: 0usize
         }
@@ -34,7 +36,8 @@ impl MlfqScheduler {
     pub(crate) fn run(&mut self) {
         loop {
             self.process_hardware_interrupts();
-            self.poll_futures();
+            self.process_timers();
+            self.process_wakeups();
             self.run_next_task();
         }
     }
@@ -46,8 +49,8 @@ impl MlfqScheduler {
         }
     }
 
-    pub(crate) fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle) {
-        self.blocked_tasks.push_back(TaskFuture { task_handle, future_handle });
+    pub(crate) fn wake_task(&mut self, handle: TaskHandle) {
+        self.wake_queue.push_back(handle);
     }
 
     pub(crate) fn push_hardware_interrupt(&mut self, interrupt: HardwareInterrupt) {
@@ -111,9 +114,25 @@ impl MlfqScheduler {
             }
             Blocked => {}
             Terminated => {
+                self.complete_task_future(returned_handle);
                 self.cleanup_completion_future(returned_handle);
                 services().task_manager.borrow_mut().remove_task(returned_handle);
             }
+        }
+    }
+
+    fn process_timers(&mut self) {
+        if let Some(expired) = self.timer.pop_expired(kernel().get_system_time()) {
+            for handle in expired {
+                services().future_registry.borrow_mut().complete(handle);
+            }
+        }
+    }
+
+    fn process_wakeups(&mut self) {
+        while let Some(handle) = self.wake_queue.pop_front() {
+            services().task_manager.borrow_mut().set_state(handle, Ready);
+            self.queues[0].push_back(handle);
         }
     }
 
@@ -134,28 +153,19 @@ impl MlfqScheduler {
         }
     }
 
-    fn cleanup_completion_future(&mut self, task_handle: TaskHandle) {
+    fn complete_task_future(&mut self, task_handle: TaskHandle) {
         let completion_future = services().task_manager.borrow().get_completion_future(task_handle);
         if let Some(future_handle) = completion_future {
-            let is_waited_on = self.blocked_tasks.iter().any(|tf| tf.future_handle == future_handle);
-            if !is_waited_on {
-                services().future_registry.borrow_mut().consume(future_handle).ok();
-            }
+            services().future_registry.borrow_mut().complete(future_handle);
         }
     }
 
-    fn poll_futures(&mut self) {
-        for _ in 0..self.blocked_tasks.len() {
-            if let Some(task_future) = self.blocked_tasks.pop_front() {
-                if task_future.is_completed() {
-                    services()
-                        .task_manager
-                        .borrow_mut()
-                        .set_state(task_future.task_handle, Ready);
-                    self.queues[0].push_back(task_future.task_handle);
-                } else {
-                    self.blocked_tasks.push_back(task_future);
-                }
+    fn cleanup_completion_future(&mut self, task_handle: TaskHandle) {
+        let completion_future = services().task_manager.borrow().get_completion_future(task_handle);
+        if let Some(future_handle) = completion_future {
+            let is_subscribed = services().future_registry.borrow().is_subscribed(future_handle);
+            if !is_subscribed {
+                services().future_registry.borrow_mut().consume(future_handle).ok();
             }
         }
     }
@@ -163,11 +173,6 @@ impl MlfqScheduler {
     #[cfg(test)]
     pub(crate) fn queue_len(&self, priority: usize) -> usize {
         self.queues[priority].len()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn poll_futures_for_test(&mut self) {
-        self.poll_futures();
     }
 
     #[cfg(test)]
@@ -185,8 +190,12 @@ impl Scheduler for MlfqScheduler {
         MlfqScheduler::push_task(self, handle);
     }
 
-    fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle) {
-        MlfqScheduler::push_blocked(self, task_handle, future_handle);
+    fn wake_task(&mut self, handle: TaskHandle) {
+        MlfqScheduler::wake_task(self, handle);
+    }
+
+    fn push_sleep(&mut self, now: u64, sleep: core::time::Duration, future_handle: FutureHandle) {
+        self.timer.add_sleep(now, sleep, future_handle);
     }
 
     fn push_hardware_interrupt(&mut self, interrupt: HardwareInterrupt) {
@@ -206,7 +215,6 @@ impl Scheduler for MlfqScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::future::TaskCompletionFuture;
     use crate::kernel_services::{init, services};
     use crate::task::{Task, TaskState};
     use alloc::boxed::Box;
@@ -338,27 +346,6 @@ mod tests {
     }
 
     #[test]
-    fn poll_futures_places_unblocked_task_in_queue_0() {
-        setup();
-        let mut scheduler = MlfqScheduler::new();
-
-        let waited_on = create_ready_task("WaitedOn");
-        let future = Box::new(TaskCompletionFuture::new(waited_on));
-        let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
-
-        let waiting_task = create_ready_task("Waiting");
-        scheduler.push_blocked(waiting_task, future_handle);
-
-        services().task_manager.borrow_mut().set_state(waited_on, TaskState::Terminated);
-
-        scheduler.poll_futures_for_test();
-
-        assert_eq!(scheduler.queue_len(0), 1);
-        assert_eq!(scheduler.queue_len(1), 0);
-        assert_eq!(scheduler.queue_len(2), 0);
-    }
-
-    #[test]
     fn take_next_returns_none_when_all_queues_empty() {
         let mut scheduler = MlfqScheduler::new();
         assert!(scheduler.take_next_handle().is_none());
@@ -429,7 +416,7 @@ mod tests {
 
         let task = Task::new("T", 0, 0);
         let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
-        let future = alloc::boxed::Box::new(TaskCompletionFuture::new(task_handle));
+        let future = Box::new(crate::future::TaskCompletionFuture::new(task_handle));
         let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
         services().task_manager.borrow_mut().set_completion_future(task_handle, future_handle);
         services().task_manager.borrow_mut().set_state(task_handle, TaskState::Terminated);
@@ -446,12 +433,12 @@ mod tests {
 
         let task = Task::new("T", 0, 0);
         let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
-        let future = alloc::boxed::Box::new(TaskCompletionFuture::new(task_handle));
+        let future = Box::new(crate::future::TaskCompletionFuture::new(task_handle));
         let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
         services().task_manager.borrow_mut().set_completion_future(task_handle, future_handle);
 
         let waiter = create_ready_task("Waiter");
-        scheduler.push_blocked(waiter, future_handle);
+        services().future_registry.borrow_mut().subscribe(future_handle, waiter);
 
         services().task_manager.borrow_mut().set_state(task_handle, TaskState::Terminated);
 
@@ -475,5 +462,48 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn wake_task_moves_task_from_blocked_to_ready_and_queues_it() {
+        setup();
+        let mut scheduler = MlfqScheduler::new();
+        let h = create_ready_task("T");
+        services().task_manager.borrow_mut().set_state(h, Blocked);
+
+        scheduler.wake_task(h);
+
+        // Before running, it's in the wake queue
+        assert_eq!(scheduler.queue_len(0), 0);
+
+        // Process wakeups (we'll call it in run or equivalent)
+        scheduler.process_wakeups();
+
+        assert_eq!(services().task_manager.borrow().get_state(h), Ready);
+        assert_eq!(scheduler.queue_len(0), 1);
+    }
+
+    #[test]
+    fn task_termination_completes_its_completion_future() {
+        setup();
+        let mut scheduler = MlfqScheduler::new();
+
+        let target_task = create_ready_task("Target");
+        let future = Box::new(crate::future::TaskCompletionFuture::new(target_task));
+        let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
+        services().task_manager.borrow_mut().set_completion_future(target_task, future_handle);
+
+        let waiter_task = create_ready_task("Waiter");
+        services().task_manager.borrow_mut().set_state(waiter_task, Blocked);
+        services().future_registry.borrow_mut().subscribe(future_handle, waiter_task);
+
+        // Simulate target task returning from run_next_task with Terminated state
+        services().task_manager.borrow_mut().set_state(target_task, Terminated);
+
+        scheduler.complete_task_future(target_task);
+
+        // The waiter should now be in the wake queue (in non-test it would be via kernel().wake_task(waiter_task))
+        // Since we are in test and kernel() is not available/mocked, we check if subscribe was removed
+        assert!(services().future_registry.borrow_mut().complete(future_handle).is_none());
     }
 }
