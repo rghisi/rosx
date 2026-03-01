@@ -23,9 +23,9 @@
 `Elf64Header` and casts directly. On x86-32 we need to load Elf32 binaries (different header/phdr
 sizes and field widths).
 
-Secondary consequence: `ElfArch::apply_relocation(info: u64, addend: i64)` is designed for Elf64
-RELA. Elf32 uses REL (no addend — the patched word encodes the base). Trait needs to accommodate
-this.
+The `ElfArch::apply_relocation` signature works as-is for 32-bit: the loader reads the implicit
+addend from the patch location before calling the trait method, so `X86_32ElfArch` receives
+`(base, offset, info, addend)` with the same semantics as the 64-bit path.
 
 #### Architecture layer — everything in `arch/x86_32/` to be created
 
@@ -45,12 +45,7 @@ Add `Elf32Header`, `Elf32Phdr`, `Elf32Dyn`, `Elf32Rel` to `kernel/src/elf/struct
 Update `load_elf` to read `e_ident[4]` (ELF class: `1`=32-bit, `2`=64-bit) and dispatch to a
 32-bit or 64-bit load path.
 
-### Step 3 — Kernel: update `ElfArch` trait for REL support [ ]
-
-Add `apply_rel_relocation(&self, base: usize, offset: usize, info: u32)` with a default no-op,
-so existing `X86_64ElfArch` doesn't break.
-
-### Step 4 — `arch/x86_32/` scaffolding + target JSON [ ]
+### Step 3 — `arch/x86_32/` scaffolding + target JSON [ WIP ]
 
 Create directory layout mirroring `arch/x86_64/`. Write `rosx-i686.json`
 (`target-pointer-width: 32`, `disable-redzone: true`, no SSE).
@@ -70,10 +65,11 @@ Only 4 callee-saved registers (EBX, ESI, EDI, EBP) vs 15 on x86_64.
 `interrupts.rs`: 32-bit IDT, PIC 8259 (same hardware as x86_64!), PIT timer (same!).
 Drop MSR/SYSCALL setup (x86_64-only); use `int 0x80` for syscalls instead.
 
-### Step 8 — ELF arch for x86-32 [ ]
+### Step 7 — ELF arch for x86-32 [ ]
 
 `elf_arch.rs`: `X86_32ElfArch` implementing `ElfArch`.
-`R_386_RELATIVE = 8` in Elf32Rel: `*patch_addr = (*patch_addr).wrapping_add(base as u32)`.
+`R_386_RELATIVE = 8`: `info & 0xff == 8`, write `(base as i64 + addend) as u32` to patch addr.
+No trait change needed — loader already extracts the implicit addend before calling the trait.
 
 ---
 
