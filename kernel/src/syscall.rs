@@ -1,4 +1,4 @@
-use core::alloc::Layout;
+use core::alloc::{GlobalAlloc, Layout};
 use alloc::boxed::Box;
 use crate::kernel::kernel;
 use crate::kernel_services::services;

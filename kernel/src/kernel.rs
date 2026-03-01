@@ -1,8 +1,10 @@
 use crate::cpu::Cpu;
+use crate::default_output::{KernelOutput, setup_default_output};
 use crate::elf::ElfArch;
 use crate::future::TaskCompletionFuture;
 use crate::kconfig::KConfig;
 use crate::kernel_services::services;
+use crate::kprintln;
 use crate::messages::HardwareInterrupt;
 use crate::scheduler::Scheduler;
 use crate::state::{ExecutionContext, ExecutionState};
@@ -126,6 +128,10 @@ impl Kernel {
     }
 
     pub fn wait_future(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
+        if services().future_registry.borrow().is_completed(handle) {
+            return services().future_registry.borrow_mut().consume(handle);
+        }
+
         self.execution_state.block_current_task();
         let task_handle = self.execution_state.current_task();
         services().future_registry.borrow_mut().subscribe(handle, task_handle);
