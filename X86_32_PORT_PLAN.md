@@ -36,11 +36,11 @@ All x86_64-specific code is correctly isolated in `arch/x86_64/`. The port requi
 
 ## Implementation Steps
 
-### Step 1 — Kernel: add Elf32 structs [ WIP ]
+### Step 1 — Kernel: add Elf32 structs [DONE]
 
 Add `Elf32Header`, `Elf32Phdr`, `Elf32Dyn`, `Elf32Rel` to `kernel/src/elf/structs.rs`.
 
-### Step 2 — Kernel: update ELF loader for class detection [ ]
+### Step 2 — Kernel: update ELF loader for class detection [DONE]
 
 Update `load_elf` to read `e_ident[4]` (ELF class: `1`=32-bit, `2`=64-bit) and dispatch to a
 32-bit or 64-bit load path.
