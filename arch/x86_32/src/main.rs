@@ -1,8 +1,10 @@
 #![no_main]
 #![no_std]
+#![feature(abi_x86_interrupt)]
 
 mod cpu;
 mod debug_console;
+mod interrupts;
 
 pub static CPU: cpu::X86_32 = cpu::X86_32::new();
 

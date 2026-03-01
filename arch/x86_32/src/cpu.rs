@@ -1,4 +1,5 @@
 use core::arch::asm;
+use core::sync::atomic::Ordering::Relaxed;
 use kernel::cpu::Cpu;
 
 pub struct X86_32 {}
@@ -11,7 +12,9 @@ impl X86_32 {
 
 impl Cpu for X86_32 {
     fn setup(&self) {
-        // Interrupt initialisation added in next step
+        crate::interrupts::init();
+        crate::interrupts::enable_timer();
+        crate::interrupts::enable_keyboard();
     }
 
     fn enable_interrupts(&self) {
@@ -80,7 +83,7 @@ impl Cpu for X86_32 {
     }
 
     fn get_system_time(&self) -> u64 {
-        0
+        crate::interrupts::SYSTEM_TIME_MS.load(Relaxed) as u64
     }
 
     fn halt(&self) {
