@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use core::any::Any;
 use system::future::FutureHandle;
 use system::future::Future;
-use collections::generational_arena::{Error, GenArena, Handle};
+use collections::generational_arena::{Error, GenerationalArena};
 use crate::kernel::kernel;
 use crate::kernel_services::services;
 use crate::task::TaskHandle;
@@ -60,7 +60,7 @@ impl TaskFuture {
 }
 
 pub struct FutureRegistry {
-    arena: GenArena<Box<dyn Future + Send + Sync>, u32, u32>,
+    arena: GenerationalArena<Box<dyn Future + Send + Sync>, 1024>,
 }
 
 impl Default for FutureRegistry {
@@ -72,7 +72,7 @@ impl Default for FutureRegistry {
 impl FutureRegistry {
     pub fn new() -> Self {
         Self {
-            arena: GenArena::new(10),
+            arena: GenerationalArena::new(),
         }
     }
 

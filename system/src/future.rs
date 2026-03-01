@@ -1,7 +1,7 @@
 use core::any::Any;
 use collections::generational_arena::Handle;
 
-pub type FutureHandle = Handle<u32, u32>;
+pub type FutureHandle = Handle;
 
 pub trait Future: Send + Sync {
     fn is_completed(&self) -> bool;
