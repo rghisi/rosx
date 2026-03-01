@@ -102,6 +102,9 @@ impl Kernel {
             Ok(task_handle) => {
                 let future = Box::new(TaskCompletionFuture::new(task_handle));
                 let future_handle = services().future_registry.borrow_mut().register(future);
+                if let Some(fh) = future_handle {
+                    services().task_manager.borrow_mut().set_completion_future(task_handle, fh);
+                }
                 self.schedule_task(task_handle);
                 future_handle
             }

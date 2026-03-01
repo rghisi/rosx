@@ -5,6 +5,7 @@ use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
 use crate::elf::load_elf;
+use system::future::FutureHandle;
 
 pub(crate) type TaskHandle = Handle;
 pub type SharedTask = Box<Task>;
@@ -53,6 +54,7 @@ pub struct Task {
     entry_point: usize,
     entry_param: usize,
     stack: [usize; 2048], //16KB on 64bit systems
+    completion_future: Option<FutureHandle>,
 }
 
 impl Task {
@@ -69,6 +71,7 @@ impl Task {
             entry_point,
             entry_param,
             stack: [0; 2048],
+            completion_future: None,
         });
 
         unsafe {
@@ -120,6 +123,14 @@ impl Task {
         self.state != Created && self.state != Terminated
     }
 
+    pub(crate) fn completion_future(&self) -> Option<FutureHandle> {
+        self.completion_future
+    }
+
+    pub(crate) fn set_completion_future(&mut self, handle: FutureHandle) {
+        self.completion_future = Some(handle);
+    }
+
     pub fn entry_point(&self) -> usize {
         self.entry_point
     }
@@ -167,6 +178,31 @@ pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
     task_entry_point();
 
     kernel().terminate_and_yield();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use collections::generational_arena::GenerationalArena;
+
+    fn make_future_handle() -> FutureHandle {
+        let mut arena: GenerationalArena<u8, 1> = GenerationalArena::new();
+        arena.add(0u8).unwrap()
+    }
+
+    #[test]
+    fn new_task_has_no_completion_future() {
+        let task = Task::new("test", 0, 0);
+        assert!(task.completion_future().is_none());
+    }
+
+    #[test]
+    fn can_set_and_get_completion_future() {
+        let mut task = Task::new("test", 0, 0);
+        let fh = make_future_handle();
+        task.set_completion_future(fh);
+        assert_eq!(task.completion_future(), Some(fh));
+    }
 }
 
 pub(crate) extern "C" fn elf_task_wrapper(elf: usize) {

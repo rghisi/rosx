@@ -111,6 +111,7 @@ impl MlfqScheduler {
             }
             Blocked => {}
             Terminated => {
+                self.cleanup_completion_future(returned_handle);
                 services().task_manager.borrow_mut().remove_task(returned_handle);
             }
         }
@@ -129,6 +130,16 @@ impl MlfqScheduler {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    fn cleanup_completion_future(&mut self, task_handle: TaskHandle) {
+        let completion_future = services().task_manager.borrow().get_completion_future(task_handle);
+        if let Some(future_handle) = completion_future {
+            let is_waited_on = self.blocked_tasks.iter().any(|tf| tf.future_handle == future_handle);
+            if !is_waited_on {
+                services().future_registry.borrow_mut().consume(future_handle).ok();
             }
         }
     }
@@ -157,6 +168,11 @@ impl MlfqScheduler {
     #[cfg(test)]
     pub(crate) fn poll_futures_for_test(&mut self) {
         self.poll_futures();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cleanup_completion_future_for_test(&mut self, handle: TaskHandle) {
+        self.cleanup_completion_future(handle);
     }
 }
 
@@ -404,6 +420,44 @@ mod tests {
 
         assert!(scheduler.should_preempt());
         assert!(scheduler.should_preempt());
+    }
+
+    #[test]
+    fn orphaned_completion_future_is_removed_when_task_terminates() {
+        setup();
+        let mut scheduler = MlfqScheduler::new();
+
+        let task = Task::new("T", 0, 0);
+        let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+        let future = alloc::boxed::Box::new(TaskCompletionFuture::new(task_handle));
+        let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
+        services().task_manager.borrow_mut().set_completion_future(task_handle, future_handle);
+        services().task_manager.borrow_mut().set_state(task_handle, TaskState::Terminated);
+
+        scheduler.cleanup_completion_future_for_test(task_handle);
+
+        assert!(services().future_registry.borrow_mut().get(future_handle).is_none());
+    }
+
+    #[test]
+    fn waited_on_completion_future_is_not_removed_when_task_terminates() {
+        setup();
+        let mut scheduler = MlfqScheduler::new();
+
+        let task = Task::new("T", 0, 0);
+        let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+        let future = alloc::boxed::Box::new(TaskCompletionFuture::new(task_handle));
+        let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
+        services().task_manager.borrow_mut().set_completion_future(task_handle, future_handle);
+
+        let waiter = create_ready_task("Waiter");
+        scheduler.push_blocked(waiter, future_handle);
+
+        services().task_manager.borrow_mut().set_state(task_handle, TaskState::Terminated);
+
+        scheduler.cleanup_completion_future_for_test(task_handle);
+
+        assert!(services().future_registry.borrow_mut().get(future_handle).is_some());
     }
 
     #[test]
