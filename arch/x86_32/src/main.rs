@@ -4,9 +4,11 @@
 
 mod cpu;
 mod debug_console;
+mod elf_arch;
 mod interrupts;
 
 pub static CPU: cpu::X86_32 = cpu::X86_32::new();
+pub static ELF_ARCH: elf_arch::X86_32ElfArch = elf_arch::X86_32ElfArch;
 
 use core::panic::PanicInfo;
 use kernel::memory::memory_manager::{MemoryBlock, MemoryBlocks};

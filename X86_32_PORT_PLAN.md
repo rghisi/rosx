@@ -52,26 +52,45 @@ Created directory layout mirroring `arch/x86_64/`. `rosx-i686.json` targets i686
 - `+soft-float` rejected by rustc (ABI-incompatible with i686); x87 FPU left as-is
 - `pic8259` crate removed — it hard-requires `x86_64` port I/O; PIC will use inline asm
 
-### Step 4 — Multiboot2 entry point [ ]
+### Step 4 — Multiboot2 entry point [DONE]
 
-Embed a Multiboot2 header, implement `kernel_main` that receives the Multiboot2 info pointer,
-extracts memory regions into `MemoryBlocks`, bootstraps the kernel.
+- `boot.S`: Multiboot2 header (magic `0xE85250D6`, checksum, end tag), 64 KB `.bss` stack,
+  `_start` sets up `esp`, pushes `eax`/`ebx`, calls `kernel_main`
+- `linker.ld`: load at 1 MB, `KEEP(*(.multiboot))` prevents lld GC of unreferenced section
+- `build.rs`: emits absolute `-T<path>/linker.ld` (lld rejects relative paths)
+- `debug_console.rs`: `QemuDebugConsole` via port 0xE9, implements `KernelOutput`
+- `main.rs`: `kernel_main` validates Multiboot2 magic, parses memory-map tag (type 6),
+  calls `kernel::kernel::bootstrap`
 
-### Step 5 — CPU trait: stack init + context switch [ ]
+### Step 5 — CPU trait: stack init + context switch [DONE]
 
-`cpu.rs` (`X86_32`) + `context_switching.S` for x86-32 cdecl ABI.
-Only 4 callee-saved registers (EBX, ESI, EDI, EBP) vs 15 on x86_64.
+- `cpu.rs`: `X86_32` struct implementing `Cpu` trait
+- `initialize_stack`: System V i386 ABI (cdecl) — args pushed right-to-left, `esp ≡ 12 mod 16`
+  at task entry; callee-saved: ebp, ebx, esi, edi
+- `swap_context` in `global_asm!`: `cli` → read args before pushes → null check first →
+  conditional save → load new esp → pop registers → `sti` → `ret`
+- Decision: `global_asm!` inline (one function, tightly coupled); `boot.S` stays separate
 
-### Step 6 — Interrupts [ ]
+### Step 6 — Interrupts [DONE]
 
-`interrupts.rs`: 32-bit IDT, PIC 8259 (same hardware as x86_64!), PIT timer (same!).
-Drop MSR/SYSCALL setup (x86_64-only); use `int 0x80` for syscalls instead.
+- `interrupts.rs`: hand-rolled 256-entry IDT (no `x86_64` crate), `lazy_static!` init
+- IDT entry: `interrupt_gate` type (`0x8E`), code selector `0x08`
+- 8259A PIC: full ICW1-ICW4 re-initialisation sequence, master at `0x20`, slave at `0x28`
+- PIT: 100 Hz (divisor = 11931), 10 ms/tick
+- `AtomicU32` instead of `AtomicU64` — bare-metal i686 has no `target_has_atomic = "64"`
+- Rust 2024: explicit `unsafe {}` required inside `unsafe fn` for inline asm
 
-### Step 7 — ELF arch for x86-32 [ ]
+### Step 7 — ELF arch for x86-32 [DONE]
 
-`elf_arch.rs`: `X86_32ElfArch` implementing `ElfArch`.
-`R_386_RELATIVE = 8`: `info & 0xff == 8`, write `(base as i64 + addend) as u32` to patch addr.
-No trait change needed — loader already extracts the implicit addend before calling the trait.
+- `elf_arch.rs`: `X86_32ElfArch` implementing `ElfArch`
+- `R_386_RELATIVE = 8`: `info & 0xff == 8`, write `(base as i64 + addend) as u32` to patch addr
+- `main.rs`: `pub static ELF_ARCH: X86_32ElfArch` exposed for kernel use
+
+### Step 8 — Wire up kernel bootstrap with CPU + ELF arch [ ]
+
+Update `kernel_main` to pass `&CPU` and `&ELF_ARCH` to the kernel bootstrap/init call once
+the kernel's `Kernel::new` / `kernel.setup()` / `kernel.start()` API is plumbed to accept them.
+Currently `bootstrap` only takes memory blocks and console output; extend as needed.
 
 ---
 
