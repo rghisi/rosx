@@ -98,7 +98,10 @@ unsafe extern "C" {
 //   [esp+4]  = store — address where current esp should be saved (may be null)
 //   [esp+8]  = load  — esp value to restore for the next task
 //
-// Callee-saved registers are pushed so that a suspended task's stack holds:
+// Arguments are read before any push so that offsets stay fixed at +4/+8.
+// When store is null the current context is abandoned entirely (no save).
+//
+// A suspended task's stack holds (from lowest address):
 //   [sp+0]   edi
 //   [sp+4]   esi
 //   [sp+8]   ebx
@@ -107,20 +110,22 @@ unsafe extern "C" {
 core::arch::global_asm!(
     ".global swap_context",
     "swap_context:",
+    "    cli",
+    "    mov eax, [esp + 4]",   // store ptr — read BEFORE any pushes
+    "    mov ecx, [esp + 8]",   // load value — read BEFORE any pushes
+    "    test eax, eax",
+    "    jz 1f",                 // if null: abandon current context, skip save
     "    push ebp",
     "    push ebx",
     "    push esi",
     "    push edi",
-    "    mov eax, [esp + 20]",  // store ptr (offset past 4 pushes + return addr)
-    "    mov ecx, [esp + 24]",  // load value
-    "    test eax, eax",
-    "    jz 1f",
-    "    mov [eax], esp",        // *store = current esp
+    "    mov [eax], esp",        // *store = esp (points to complete register frame)
     "1:",
     "    mov esp, ecx",          // switch to next task's stack
     "    pop edi",
     "    pop esi",
     "    pop ebx",
     "    pop ebp",
+    "    sti",
     "    ret",                   // jump to next task's saved return address
 );
