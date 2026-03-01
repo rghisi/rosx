@@ -95,9 +95,43 @@ jobs:
           path: target/rosx/release/rosx-x86_64.img
           if-no-files-found: error
 
+  build-x86_32:
+    name: Build Kernel (x86_32)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src, llvm-tools-preview
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-build-x86_32-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-x86_32-
+
+      - name: Build
+        working-directory: arch/x86_32
+        run: cargo build --release
+
+      - name: Upload kernel binary
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rosx-x86_32
+          path: target/rosx-i686/release/rosx-x86
+          if-no-files-found: error
+
   release:
     name: Create Release
-    needs: [test, build]
+    needs: [test, build, build-x86_32]
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
     permissions:
@@ -109,17 +143,27 @@ jobs:
           echo "date_name=$(date -u +'%Y-%m-%d %H%M%S')" >> $GITHUB_OUTPUT
           echo "date_tag=$(date -u +'%Y-%m-%d-%H%M%S')" >> $GITHUB_OUTPUT
 
-      - name: Download disk image
+      - name: Download x86_64 disk image
         uses: actions/download-artifact@v4
         with:
           name: rosx-x86_64
 
-      - name: Compress disk image
-        run: gzip -9 rosx-x86_64.img
+      - name: Download x86_32 kernel binary
+        uses: actions/download-artifact@v4
+        with:
+          name: rosx-x86_32
+
+      - name: Compress artifacts
+        run: |
+          gzip -9 rosx-x86_64.img
+          mv rosx-x86 rosx-x86_32
+          gzip -9 rosx-x86_32
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.date.outputs.date_tag }}
           name: ${{ steps.date.outputs.date_name }}
-          files: rosx-x86_64.img.gz
+          files: |
+            rosx-x86_64.img.gz
+            rosx-x86_32.gz
