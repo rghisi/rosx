@@ -166,8 +166,7 @@ pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
 
     task_entry_point();
 
-    kernel().terminate_current_task();
-    kernel().task_yield();
+    kernel().terminate_and_yield();
 }
 
 pub(crate) extern "C" fn elf_task_wrapper(elf: usize) {
@@ -181,6 +180,5 @@ pub(crate) extern "C" fn elf_task_wrapper(elf: usize) {
 
     drop(image);
 
-    kernel().terminate_current_task();
-    kernel().task_yield();
+    kernel().terminate_and_yield();
 }

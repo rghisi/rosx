@@ -153,7 +153,7 @@ impl Kernel {
         self.execution_state.switch_to_task(task_handle)
     }
 
-    pub(crate) fn terminate_current_task(&mut self) {
+    pub(crate) fn terminate_and_yield(&mut self) -> ! {
         self.execution_state.preemption_enabled = false;
         if let Some(task_handle) = self.execution_state.current_task.take() {
             services()
@@ -162,6 +162,8 @@ impl Kernel {
                 .set_state(task_handle, Terminated);
             self.execution_state.current_task = Some(task_handle);
         }
+        self.execution_state.switch_to_scheduler();
+        unreachable!()
     }
 
     #[inline(always)]
