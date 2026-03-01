@@ -1,78 +1,35 @@
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::fmt::Debug;
-use core::ops::{Add, AddAssign};
 
-pub trait IndexType: Copy + PartialEq + Default {
-    fn max_value() -> usize;
-    fn from_usize(v: usize) -> Self;
-    fn as_usize(&self) -> usize;
-}
+#[cfg(target_pointer_width = "64")]
+pub type HalfSize = u32;
+#[cfg(target_pointer_width = "32")]
+pub type HalfSize = u16;
 
-impl IndexType for u8 {
-    fn max_value() -> usize {
-        u8::MAX as usize
-    }
-    fn from_usize(v: usize) -> Self {
-        v as Self
-    }
-    fn as_usize(&self) -> usize {
-        *self as usize
-    }
-}
-impl IndexType for u16 {
-    fn max_value() -> usize {
-        u16::MAX as usize
-    }
-    fn from_usize(v: usize) -> Self {
-        v as Self
-    }
-    fn as_usize(&self) -> usize {
-        *self as usize
-    }
-}
-impl IndexType for u32 {
-    fn max_value() -> usize {
-        u32::MAX as usize
-    }
-    fn from_usize(v: usize) -> Self {
-        v as Self
-    }
-    fn as_usize(&self) -> usize {
-        *self as usize
-    }
-}
-impl IndexType for usize {
-    fn max_value() -> usize {
-        usize::MAX
-    }
-    fn from_usize(v: usize) -> Self {
-        v as Self
-    }
-    fn as_usize(&self) -> usize {
-        *self
-    }
-}
-
-pub trait GenerationType:
-    Copy + PartialEq + Eq + Add<Self, Output = Self> + AddAssign + From<u8> + Default + Debug
-{
-}
-
-impl GenerationType for u8 {}
-impl GenerationType for u16 {}
-impl GenerationType for u32 {}
-impl GenerationType for u64 {}
-impl GenerationType for usize {}
+const HALF_SIZE_BITS: usize = (core::mem::size_of::<usize>() * 8) / 2;
+const HALF_SIZE_MASK: usize = (1 << HALF_SIZE_BITS) - 1;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Handle<I: IndexType, G: GenerationType> {
-    pub index: I,
-    pub generation: G,
+pub struct Handle {
+    pub index: HalfSize,
+    pub generation: HalfSize,
 }
 
-impl<I: IndexType, G: GenerationType> Handle<I, G> {
-    pub fn new(index: I, generation: G) -> Self {
+impl Handle {
+    pub fn new(index: HalfSize, generation: HalfSize) -> Self {
+        Self { index, generation }
+    }
+
+    pub fn to_usize(&self) -> usize {
+        let index = self.index as usize;
+        let generation = self.generation as usize;
+        (index << HALF_SIZE_BITS) | generation
+    }
+
+    pub fn from_usize(val: usize) -> Self {
+        let index = (val >> HALF_SIZE_BITS) as HalfSize;
+        let generation = (val & HALF_SIZE_MASK) as HalfSize;
         Self { index, generation }
     }
 }
@@ -83,28 +40,27 @@ pub enum Error {
     OutOfMemory,
 }
 
-pub struct GenArena<T, I: IndexType, G: GenerationType> {
+pub struct GenArena<T, const S: usize> {
     items: Vec<Option<T>>,
-    generations: Vec<G>,
-    free_slots: VecDeque<I>,
+    generations: Vec<HalfSize>,
+    free_slots: VecDeque<HalfSize>,
 }
 
-impl<T, I: IndexType, G: GenerationType> GenArena<T, I, G> {
-    pub fn new(initial_capacity: usize) -> Self {
-        let capacity = I::max_value();
+impl<T, const S: usize> GenArena<T, S> {
+    pub fn new() -> Self {
+        assert!(S > 0, "Initial capacity cannot be zero");
         assert!(
-            initial_capacity <= capacity,
+            S <= HalfSize::MAX as usize,
             "Initial capacity cannot exceed the max value of the index type"
         );
-        assert!(initial_capacity > 0, "Initial capacity cannot be zero");
 
-        let mut items = Vec::with_capacity(initial_capacity);
-        let mut generations = Vec::with_capacity(initial_capacity);
-        let mut free_slots = VecDeque::with_capacity(initial_capacity);
-        for slot in 0..initial_capacity {
+        let mut items = Vec::with_capacity(S);
+        let mut generations = Vec::with_capacity(S);
+        let mut free_slots = VecDeque::with_capacity(S);
+        for slot in 0..S {
             items.push(None);
-            generations.push(G::default());
-            free_slots.push_back(I::from_usize(slot));
+            generations.push(0);
+            free_slots.push_back(slot as HalfSize);
         }
 
         Self {
@@ -114,58 +70,53 @@ impl<T, I: IndexType, G: GenerationType> GenArena<T, I, G> {
         }
     }
 
-    pub fn add(&mut self, item: T) -> Result<Handle<I, G>, Error> {
+    pub fn add(&mut self, item: T) -> Result<Handle, Error> {
         if self.free_slots.is_empty() {
-            let increment = self.generations.capacity().max(1);
-            if increment >= I::max_value() {
-                return Err(Error::OutOfMemory);
-            }
-            let new_size = (increment + increment).min(I::max_value());
-            for i in increment..new_size {
-                self.items.push(None);
-                self.generations.push(G::default());
-                self.free_slots.push_back(I::from_usize(i));
-            }
+            return Err(Error::OutOfMemory);
         }
 
         let index = self.free_slots.pop_front().unwrap();
-        let generation = self.generations[index.as_usize()];
-        self.items[index.as_usize()] = Some(item);
+        let generation = self.generations[index as usize];
+        self.items[index as usize] = Some(item);
 
         Ok(Handle::new(index, generation))
     }
 
-    pub fn borrow(&self, handle: Handle<I, G>) -> Result<&T, Error> {
-        if self.generations[handle.index.as_usize()] == handle.generation {
-            return Ok(self.items[handle.index.as_usize()].as_ref().unwrap());
+    pub fn borrow(&self, handle: Handle) -> Result<&T, Error> {
+        if (handle.index as usize) < self.generations.len()
+            && self.generations[handle.index as usize] == handle.generation
+        {
+            return Ok(self.items[handle.index as usize].as_ref().unwrap());
         }
         Err(Error::NotFound)
     }
 
-    pub fn borrow_mut(&mut self, handle: Handle<I, G>) -> Result<&mut T, Error> {
-        if self.generations[handle.index.as_usize()] == handle.generation {
-            return Ok(self.items[handle.index.as_usize()].as_mut().unwrap());
+    pub fn borrow_mut(&mut self, handle: Handle) -> Result<&mut T, Error> {
+        if (handle.index as usize) < self.generations.len()
+            && self.generations[handle.index as usize] == handle.generation
+        {
+            return Ok(self.items[handle.index as usize].as_mut().unwrap());
         }
         Err(Error::NotFound)
     }
 
-    pub fn remove(&mut self, handle: Handle<I, G>) -> Result<T, Error> {
-        let index = handle.index.as_usize();
+    pub fn remove(&mut self, handle: Handle) -> Result<T, Error> {
+        let index = handle.index as usize;
         let generation = handle.generation;
-        if generation == self.generations[index] {
+        if index < self.generations.len() && generation == self.generations[index] {
             let item = self.items[index].take().unwrap();
-            self.generations[index] += 1.into();
+            self.generations[index] = self.generations[index].wrapping_add(1);
             self.free_slots.push_back(handle.index);
             Ok(item)
         } else {
             Err(Error::NotFound)
         }
     }
-    
-    pub fn replace(&mut self, handle: Handle<I, G>, item: T) -> Result<Handle<I, G>, Error> {
-        let index = handle.index.as_usize();
+
+    pub fn replace(&mut self, handle: Handle, item: T) -> Result<Handle, Error> {
+        let index = handle.index as usize;
         let generation = handle.generation;
-        if generation == self.generations[index] {
+        if index < self.generations.len() && generation == self.generations[index] {
             self.items[index] = Some(item);
             Ok(handle)
         } else {
@@ -184,7 +135,7 @@ mod tests {
 
     #[test]
     fn should_initialize_to_the_initial_capacity() {
-        let arena: GenArena<i32, u8, u8> = GenArena::new(10);
+        let arena: GenArena<i32, 10> = GenArena::new();
         assert_eq!(arena.items.len(), 10);
         assert_eq!(arena.generations.len(), 10);
         assert_eq!(arena.free_slots.len(), 10);
@@ -192,7 +143,7 @@ mod tests {
 
     #[test]
     fn should_borrow_when_handle_is_valid() {
-        let mut arena: GenArena<i32, u8, u8> = GenArena::new(5);
+        let mut arena: GenArena<i32, 5> = GenArena::new();
         let handle = arena.add(42).unwrap();
         let value = arena.borrow(handle).unwrap();
         assert_eq!(*value, 42);
@@ -200,7 +151,7 @@ mod tests {
 
     #[test]
     fn should_borrow_mut_when_handle_is_valid() {
-        let mut arena: GenArena<i32, u8, u8> = GenArena::new(5);
+        let mut arena: GenArena<i32, 5> = GenArena::new();
         let handle = arena.add(10).unwrap();
 
         {
@@ -213,7 +164,7 @@ mod tests {
 
     #[test]
     fn should_accept_multiple_items_when_there_are_free_slots() {
-        let mut arena: GenArena<String, u8, u8> = GenArena::new(3);
+        let mut arena: GenArena<String, 3> = GenArena::new();
         let h1 = arena.add("first".to_string()).unwrap();
         let h2 = arena.add("second".to_string()).unwrap();
         let h3 = arena.add("third".to_string()).unwrap();
@@ -224,19 +175,18 @@ mod tests {
     }
 
     #[test]
-    fn should_return_error_when_full_and_capacity_cannot_be_extended() {
-        let mut arena: GenArena<i32, u8, u8> = GenArena::new(255);
+    fn should_return_error_when_full() {
+        let mut arena: GenArena<i32, 2> = GenArena::new();
 
-        for i in 0..255 {
-            arena.add(i).unwrap();
-        }
+        arena.add(0).unwrap();
+        arena.add(1).unwrap();
 
         assert_eq!(arena.add(999), Err(Error::OutOfMemory));
     }
 
     #[test]
     fn should_return_error_when_borrowing_removed_handle() {
-        let mut arena: GenArena<i32, u8, u8> = GenArena::new(5);
+        let mut arena: GenArena<i32, 5> = GenArena::new();
         let old_handle = arena.add(42).unwrap();
 
         arena.remove(old_handle).unwrap();
@@ -247,7 +197,7 @@ mod tests {
 
     #[test]
     fn should_return_error_when_removing_invalid_handle() {
-        let mut arena: GenArena<i32, u8, u8> = GenArena::new(5);
+        let mut arena: GenArena<i32, 5> = GenArena::new();
         let handle = arena.add(42).unwrap();
 
         arena.remove(handle).unwrap();
@@ -255,37 +205,8 @@ mod tests {
     }
 
     #[test]
-    fn should_grow_when_out_of_space() {
-        let mut arena: GenArena<i32, u16, u8> = GenArena::new(2);
-
-        let h1 = arena.add(1).unwrap();
-        let h2 = arena.add(2).unwrap();
-        let h3 = arena.add(3).unwrap();
-
-        assert_eq!(*arena.borrow(h1).unwrap(), 1);
-        assert_eq!(*arena.borrow(h2).unwrap(), 2);
-        assert_eq!(*arena.borrow(h3).unwrap(), 3);
-        assert!(arena.items.len() >= 3);
-    }
-
-    #[test]
-    fn should_double_capacity_when_out_of_space() {
-        let mut arena: GenArena<i32, u16, u8> = GenArena::new(4);
-
-        for i in 0..4 {
-            arena.add(i).unwrap();
-        }
-
-        let capacity_before = arena.items.capacity();
-        arena.add(100).unwrap();
-
-        assert_eq!(capacity_before, 4);
-        assert_eq!(arena.items.capacity(), 8);
-    }
-
-    #[test]
     fn should_maintain_consistency_when_added_and_removed_multiple_times() {
-        let mut arena: GenArena<i32, u8, u8> = GenArena::new(3);
+        let mut arena: GenArena<i32, 3> = GenArena::new();
 
         let h1 = arena.add(1).unwrap();
         let h2 = arena.add(2).unwrap();
@@ -303,25 +224,10 @@ mod tests {
     }
 
     #[test]
-    fn should_support_different_number_types_for_handle() {
-        let mut arena_u8: GenArena<i32, u8, u16> = GenArena::new(10);
-        let mut arena_u16: GenArena<i32, u16, u16> = GenArena::new(10);
-        let mut arena_u32: GenArena<i32, u32, u16> = GenArena::new(10);
-
-        let h1 = arena_u8.add(1).unwrap();
-        let h2 = arena_u16.add(2).unwrap();
-        let h3 = arena_u32.add(3).unwrap();
-
-        assert_eq!(*arena_u8.borrow(h1).unwrap(), 1);
-        assert_eq!(*arena_u16.borrow(h2).unwrap(), 2);
-        assert_eq!(*arena_u32.borrow(h3).unwrap(), 3);
-    }
-
-    #[test]
     fn handles_should_be_equals_when_created_with_the_same_index_and_generation() {
-        let h1 = Handle::<u8, u8>::new(5, 10);
-        let h2 = Handle::<u8, u8>::new(5, 10);
-        let h3 = Handle::<u8, u8>::new(5, 11);
+        let h1 = Handle::new(5, 10);
+        let h2 = Handle::new(5, 10);
+        let h3 = Handle::new(5, 11);
 
         assert_eq!(h1, h2);
         assert_ne!(h1, h3);
@@ -336,7 +242,7 @@ mod tests {
             values: Vec<i32>,
         }
 
-        let mut arena: GenArena<ComplexType, u16, u16> = GenArena::new(5);
+        let mut arena: GenArena<ComplexType, 5> = GenArena::new();
 
         let item = ComplexType {
             id: 42,
@@ -355,18 +261,12 @@ mod tests {
     #[test]
     #[should_panic(expected = "Initial capacity cannot be zero")]
     fn should_panic_when_initial_capacity_is_zero() {
-        let arena: GenArena<i32, u8, u8> = GenArena::new(0);
-    }
-
-    #[test]
-    #[should_panic(expected = "Initial capacity cannot exceed the max value of the index type")]
-    fn should_panic_when_initial_capacity_is_too_large() {
-        let _arena: GenArena<i32, u8, u8> = GenArena::new(256);
+        let _arena: GenArena<i32, 0> = GenArena::new();
     }
 
     #[test]
     fn should_round_hobin_indexes_when_adding_and_removing() {
-        let mut arena: GenArena<i32, u8, u8> = GenArena::new(3);
+        let mut arena: GenArena<i32, 3> = GenArena::new();
 
         let h1 = arena.add(1).unwrap();
         arena.remove(h1).unwrap();
@@ -392,5 +292,17 @@ mod tests {
         assert_eq!(h4.index, 0);
         assert_eq!(h5.index, 1);
         assert_eq!(h6.index, 2);
+    }
+
+    #[test]
+    fn should_pack_and_unpack_handle() {
+        let h = Handle::new(0x12345678, 0x9ABCDEF0);
+        let packed = h.to_usize();
+
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(packed, 0x123456789ABCDEF0);
+
+        let unpacked = Handle::from_usize(packed);
+        assert_eq!(h, unpacked);
     }
 }
