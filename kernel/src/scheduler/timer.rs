@@ -31,9 +31,9 @@ impl Timer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use collections::generational_arena::Handle;
+    use collections::generational_arena::{Handle, HalfSize};
 
-    fn handle(index: u32) -> FutureHandle {
+    fn handle(index: HalfSize) -> FutureHandle {
         Handle::new(index, 0)
     }
 

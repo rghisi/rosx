@@ -1,10 +1,10 @@
-use collections::generational_arena::GenArena;
+use collections::generational_arena::GenerationalArena;
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, TaskState, YieldReason};
 use core::ptr::null_mut;
 
 pub(crate) struct TaskManager {
-    tasks: GenArena<SharedTask, u8, u8>,
+    tasks: GenerationalArena<SharedTask, 256>,
 }
 
 #[derive(Debug)]
@@ -16,7 +16,7 @@ pub(crate) enum Error {
 impl TaskManager {
     pub(crate) fn new() -> Self {
         TaskManager {
-            tasks: GenArena::new(10),
+            tasks: GenerationalArena::new(),
         }
     }
 
