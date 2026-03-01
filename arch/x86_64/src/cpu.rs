@@ -165,6 +165,6 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syscall_handler(num: u64, arg1: u64, arg2: u64, arg3: u64) -> usize {
+unsafe extern "C" fn syscall_handler(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usize {
     kernel::syscall::handle_syscall(num, arg1, arg2, arg3)
 }
