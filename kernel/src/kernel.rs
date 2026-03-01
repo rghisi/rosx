@@ -15,7 +15,9 @@ use core::ptr::null_mut;
 use collections::generational_arena::Error;
 use system::future::{Future, FutureHandle };
 #[cfg(not(test))]
-use crate::memory::memory_manager::{MEMORY_MANAGER, MemoryBlocks};
+use crate::memory::memory_manager::MEMORY_MANAGER;
+#[cfg(not(test))]
+use crate::memory::MemoryBlocks;
 use crate::kernel_cell::KernelCell;
 
 static KERNEL_PTR: KernelCell<*mut Kernel> = KernelCell::new(null_mut());

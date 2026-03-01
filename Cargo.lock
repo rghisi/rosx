@@ -27,15 +27,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c074a3d1075b26ed77e502d6af8ab1263abbdc3d026c166e46480f973287293"
 
 [[package]]
-name = "buddy_system_allocator"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1a0108968a3a2dab95b089c0fc3f1afa7759aa5ebe6f1d86d206d6f7ba726eb"
-dependencies = [
- "spin 0.9.8",
-]
-
-[[package]]
 name = "collections"
 version = "0.1.0"
 
@@ -51,7 +42,6 @@ dependencies = [
 name = "kernel"
 version = "0.1.0"
 dependencies = [
- "buddy_system_allocator",
  "collections",
  "lazy_static",
  "system",
@@ -130,9 +120,6 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
-dependencies = [
- "lock_api",
-]
 
 [[package]]
 name = "spin"
