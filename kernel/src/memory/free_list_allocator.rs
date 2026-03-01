@@ -74,8 +74,37 @@ impl FreeListAllocator {
     pub unsafe fn deallocate(&mut self, ptr: *mut u8) {
         let start = ptr as usize - SIZE_SLOT;
         let block = start as *mut FreeBlock;
-        (*block).next = self.head;
-        self.head = block;
+
+        let mut prev: *mut FreeBlock = ptr::null_mut();
+        let mut current = self.head;
+        while !current.is_null() && (current as usize) < start {
+            prev = current;
+            current = (*current).next;
+        }
+
+        (*block).next = current;
+        if prev.is_null() {
+            self.head = block;
+        } else {
+            (*prev).next = block;
+        }
+
+        if !(*block).next.is_null() {
+            let block_end = start + (*block).size;
+            let next = (*block).next;
+            if block_end == next as usize {
+                (*block).size += (*next).size;
+                (*block).next = (*next).next;
+            }
+        }
+
+        if !prev.is_null() {
+            let prev_end = prev as usize + (*prev).size;
+            if prev_end == start {
+                (*prev).size += (*block).size;
+                (*prev).next = (*block).next;
+            }
+        }
     }
 }
 
@@ -113,5 +142,58 @@ mod tests {
         let layout = Layout::from_size_align(64, 8).unwrap();
         let ptr = unsafe { alloc.allocate(layout) } as usize;
         assert_eq!(ptr % 8, 0);
+    }
+
+    #[test]
+    fn freed_block_can_be_reallocated() {
+        let mut memory = vec![0u8; 4096];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = FreeListAllocator::new(&[(base, 4096)]);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let first = unsafe { alloc.allocate(layout) };
+        unsafe { alloc.deallocate(first) };
+        let second = unsafe { alloc.allocate(layout) };
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn allocate_returns_null_when_out_of_memory() {
+        let mut memory = vec![0u8; 128];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = FreeListAllocator::new(&[(base, 128)]);
+        let layout = Layout::from_size_align(256, 8).unwrap();
+        let ptr = unsafe { alloc.allocate(layout) };
+        assert!(ptr.is_null());
+    }
+
+    #[test]
+    fn adjacent_freed_blocks_can_serve_a_larger_allocation() {
+        // 216 bytes = exactly 3 × 72 (needed per 64-byte allocation), no tail left
+        let mut memory = vec![0u8; 216];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = FreeListAllocator::new(&[(base, 216)]);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let a = unsafe { alloc.allocate(layout) };
+        let b = unsafe { alloc.allocate(layout) };
+        let _c = unsafe { alloc.allocate(layout) };
+        unsafe { alloc.deallocate(a) };
+        unsafe { alloc.deallocate(b) };
+        // Without coalescing: two 72-byte free blocks, neither fits 88-byte request.
+        // With coalescing: merged 144-byte block, fits 88-byte request.
+        let large = Layout::from_size_align(80, 8).unwrap();
+        let ptr = unsafe { alloc.allocate(large) };
+        assert!(!ptr.is_null());
+    }
+
+    #[test]
+    fn two_allocations_do_not_overlap() {
+        let mut memory = vec![0u8; 4096];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = FreeListAllocator::new(&[(base, 4096)]);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let first = unsafe { alloc.allocate(layout) } as usize;
+        let second = unsafe { alloc.allocate(layout) } as usize;
+        let no_overlap = second >= first + 64 || first >= second + 64;
+        assert!(no_overlap);
     }
 }
