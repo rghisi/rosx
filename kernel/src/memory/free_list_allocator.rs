@@ -196,4 +196,22 @@ mod tests {
         let no_overlap = second >= first + 64 || first >= second + 64;
         assert!(no_overlap);
     }
+
+    #[test]
+    fn allocates_from_second_region_when_first_is_exhausted() {
+        // Region 1 is 80 bytes — fits at most one 64-byte allocation (needed=72, <=80, tail<BLOCK_HDR).
+        // Region 2 is 4096 bytes. After region 1 is full, the next alloc must come from region 2.
+        let mut mem1 = vec![0u8; 80];
+        let mut mem2 = vec![0u8; 4096];
+        let base1 = mem1.as_mut_ptr() as usize;
+        let base2 = mem2.as_mut_ptr() as usize;
+        let mut alloc = FreeListAllocator::new(&[(base1, 80), (base2, 4096)]);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let first = unsafe { alloc.allocate(layout) };
+        assert!(!first.is_null());
+        let second = unsafe { alloc.allocate(layout) };
+        assert!(!second.is_null());
+        let second_addr = second as usize;
+        assert!(second_addr >= base2 && second_addr + 64 <= base2 + 4096);
+    }
 }
