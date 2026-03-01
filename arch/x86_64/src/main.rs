@@ -19,7 +19,7 @@ use crate::framebuffer::FramebufferOutput;
 use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
 use bootloader_api::config::Mapping;
 use core::panic::PanicInfo;
-use kernel::memory::memory_manager::{MemoryBlock, MemoryBlocks};
+use kernel::memory::{MemoryBlock, MemoryBlocks};
 use kernel::default_output::MultiplexOutput;
 use kernel::kconfig::KConfig;
 use kernel::kernel::Kernel;

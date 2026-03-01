@@ -5,22 +5,10 @@ use buddy_system_allocator::LockedHeap;
 
 use crate::cpu::Cpu;
 use crate::kernel_cell::KernelCell;
+use crate::memory::{MemoryBlock, MemoryBlocks, MAX_MEMORY_BLOCKS};
 
 #[cfg_attr(not(test), global_allocator)]
 pub(crate) static MEMORY_MANAGER: MemoryManager = MemoryManager::new();
-const MAX_MEMORY_BLOCKS: usize = 32;
-
-#[derive(Copy, Clone)]
-pub struct MemoryBlock {
-    pub start: usize,
-    pub size: usize,
-}
-
-#[derive(Copy, Clone)]
-pub struct MemoryBlocks {
-    pub blocks: [MemoryBlock; MAX_MEMORY_BLOCKS],
-    pub count: usize,
-}
 
 #[cfg_attr(not(test), alloc_error_handler)]
 pub fn alloc_error_handler(layout: Layout) -> ! {
