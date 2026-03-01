@@ -1,11 +1,11 @@
 use core::alloc::{GlobalAlloc, Layout};
+use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
-use buddy_system_allocator::LockedHeap;
 
 use crate::cpu::Cpu;
 use crate::kernel_cell::KernelCell;
-use crate::memory::{MemoryBlock, MemoryBlocks, MAX_MEMORY_BLOCKS};
+use crate::memory::MemoryBlocks;
+use crate::memory::free_list_allocator::{BlockOwner, FreeListAllocator};
 
 #[cfg_attr(not(test), global_allocator)]
 pub(crate) static MEMORY_MANAGER: MemoryManager = MemoryManager::new();
@@ -16,7 +16,7 @@ pub fn alloc_error_handler(layout: Layout) -> ! {
 }
 
 pub struct MemoryManager {
-    heap: LockedHeap<27>,
+    allocator: KernelCell<Option<FreeListAllocator>>,
     used: AtomicUsize,
     is_setup: AtomicBool,
     cpu: KernelCell<Option<&'static dyn Cpu>>,
@@ -26,7 +26,7 @@ pub struct MemoryManager {
 impl MemoryManager {
     pub const fn new() -> Self {
         MemoryManager {
-            heap: LockedHeap::new(),
+            allocator: KernelCell::new(None),
             used: AtomicUsize::new(0),
             is_setup: AtomicBool::new(false),
             cpu: KernelCell::new(None),
@@ -36,12 +36,7 @@ impl MemoryManager {
 
     pub fn bootstrap(&self, memory_blocks: &MemoryBlocks) {
         *self.memory_blocks.borrow_mut() = Some(*memory_blocks);
-        for i in 0..memory_blocks.count {
-            let block = &memory_blocks.blocks[i];
-            unsafe {
-                self.heap.lock().init(block.start, block.size);
-            }
-        }
+        *self.allocator.borrow_mut() = Some(FreeListAllocator::new(memory_blocks));
     }
 
     pub fn setup(&self, cpu: &'static dyn Cpu) {
@@ -80,11 +75,20 @@ unsafe impl GlobalAlloc for MemoryManager {
             self.cpu.borrow().unwrap().disable_interrupts();
         }
         self.used.fetch_add(layout.size(), Ordering::Relaxed);
-        let ptr = unsafe { self.heap.alloc(layout) };
+        let result = unsafe {
+            self.allocator
+                .borrow_mut()
+                .as_mut()
+                .expect("MemoryManager not bootstrapped")
+                .allocate(layout, BlockOwner::Kernel)
+        };
         if interrupts_enabled {
             self.cpu.borrow().unwrap().enable_interrupts();
         }
-        ptr
+        match result {
+            Ok(ptr) => ptr,
+            Err(_) => ptr::null_mut(),
+        }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -93,7 +97,13 @@ unsafe impl GlobalAlloc for MemoryManager {
         if interrupts_enabled {
             self.cpu.borrow().unwrap().disable_interrupts();
         }
-        unsafe { self.heap.dealloc(ptr, layout) };
+        unsafe {
+            self.allocator
+                .borrow_mut()
+                .as_mut()
+                .expect("MemoryManager not bootstrapped")
+                .deallocate(ptr)
+        };
         self.used.fetch_sub(layout.size(), Ordering::Relaxed);
         if interrupts_enabled {
             self.cpu.borrow().unwrap().enable_interrupts();
@@ -105,6 +115,7 @@ unsafe impl GlobalAlloc for MemoryManager {
 mod tests {
     use super::*;
     use crate::cpu::Cpu;
+    use crate::memory::{MemoryBlock, MAX_MEMORY_BLOCKS};
     use core::alloc::{GlobalAlloc, Layout};
 
     struct MockCpu;
