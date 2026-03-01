@@ -1,10 +1,8 @@
 use crate::cpu::Cpu;
-use crate::default_output::{KernelOutput, setup_default_output};
 use crate::elf::ElfArch;
 use crate::future::TaskCompletionFuture;
 use crate::kconfig::KConfig;
 use crate::kernel_services::services;
-use crate::kprintln;
 use crate::messages::HardwareInterrupt;
 use crate::scheduler::Scheduler;
 use crate::state::{ExecutionContext, ExecutionState};
@@ -130,7 +128,26 @@ impl Kernel {
     pub fn wait_future(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
         self.execution_state.block_current_task();
         let task_handle = self.execution_state.current_task();
-        self.scheduler.push_blocked(task_handle, handle);
+        services().future_registry.borrow_mut().subscribe(handle, task_handle);
+
+        let is_time_future = if let Ok(f) = services().future_registry.borrow_mut().arena.borrow(handle) {
+            let dyn_f: &dyn Future = f.as_ref();
+            dyn_f.as_any().is::<crate::future::TimeFuture>()
+        } else {
+            false
+        };
+
+        if is_time_future {
+            let now = self.get_system_time();
+            let duration = if let Ok(f) = services().future_registry.borrow_mut().arena.borrow(handle) {
+                let dyn_f: &dyn Future = f.as_ref();
+                dyn_f.as_any().downcast_ref::<crate::future::TimeFuture>().unwrap().duration()
+            } else {
+                core::time::Duration::from_millis(0)
+            };
+            self.scheduler.push_sleep(now, duration, handle);
+        }
+
         self.execution_state.switch_to_scheduler();
 
         services().future_registry.borrow_mut().consume(handle)
@@ -158,6 +175,10 @@ impl Kernel {
 
     pub fn switch_to_task(&mut self, task_handle: TaskHandle) -> TaskHandle {
         self.execution_state.switch_to_task(task_handle)
+    }
+
+    pub fn wake_task(&mut self, task_handle: TaskHandle) {
+        self.scheduler.wake_task(task_handle);
     }
 
     pub(crate) fn terminate_and_yield(&mut self) -> ! {

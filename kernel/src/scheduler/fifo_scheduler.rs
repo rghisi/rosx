@@ -1,17 +1,18 @@
 use crate::kernel_services::services;
 use crate::messages::HardwareInterrupt;
 use crate::scheduler::Scheduler;
+use crate::scheduler::timer::Timer;
 use crate::task::TaskHandle;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::collections::VecDeque;
 use system::future::FutureHandle;
-use crate::future::TaskFuture;
 use crate::kernel::kernel;
 
 pub struct FifoScheduler {
     idle_task: Option<TaskHandle>,
     user_tasks: VecDeque<TaskHandle>,
-    blocked_tasks: VecDeque<TaskFuture>,
+    wake_queue: VecDeque<TaskHandle>,
+    timer: Timer,
     hw_interrupt_queue: VecDeque<HardwareInterrupt>,
 }
 
@@ -26,7 +27,8 @@ impl FifoScheduler {
         FifoScheduler {
             idle_task: None,
             user_tasks: VecDeque::with_capacity(5),
-            blocked_tasks: VecDeque::with_capacity(5),
+            wake_queue: VecDeque::with_capacity(5),
+            timer: Timer::new(),
             hw_interrupt_queue: VecDeque::with_capacity(5),
         }
     }
@@ -34,7 +36,8 @@ impl FifoScheduler {
     pub(crate) fn run(&mut self) {
         loop {
             self.process_hardware_interrupts();
-            self.pool_futures();
+            self.process_timers();
+            self.process_wakeups();
             self.run_user_process();
         }
     }
@@ -46,16 +49,12 @@ impl FifoScheduler {
         }
     }
 
-    pub(crate) fn push_hardware_interrupt(&mut self, hardware_interrupt: HardwareInterrupt) {
-        self.hw_interrupt_queue.push_back(hardware_interrupt);
+    pub(crate) fn wake_task(&mut self, handle: TaskHandle) {
+        self.wake_queue.push_back(handle);
     }
 
-    pub(crate) fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle) {
-        let task_future = TaskFuture {
-            task_handle,
-            future_handle,
-        };
-        self.blocked_tasks.push_back(task_future);
+    pub(crate) fn push_hardware_interrupt(&mut self, hardware_interrupt: HardwareInterrupt) {
+        self.hw_interrupt_queue.push_back(hardware_interrupt);
     }
 
     pub(crate) fn set_idle_task(&mut self, idle_task_handle: TaskHandle) -> Result<(), ()> {
@@ -64,6 +63,21 @@ impl FifoScheduler {
             Ok(())
         } else {
             Err(())
+        }
+    }
+
+    fn process_timers(&mut self) {
+        if let Some(expired) = self.timer.pop_expired(kernel().get_system_time()) {
+            for handle in expired {
+                services().future_registry.borrow_mut().complete(handle);
+            }
+        }
+    }
+
+    fn process_wakeups(&mut self) {
+        while let Some(handle) = self.wake_queue.pop_front() {
+            services().task_manager.borrow_mut().set_state(handle, Ready);
+            self.user_tasks.push_back(handle);
         }
     }
 
@@ -114,6 +128,7 @@ impl FifoScheduler {
             }
             Blocked => {}
             Terminated => {
+                self.complete_task_future(returned_task_handle);
                 self.cleanup_completion_future(returned_task_handle);
                 services().task_manager
                     .borrow_mut()
@@ -122,11 +137,18 @@ impl FifoScheduler {
         }
     }
 
+    fn complete_task_future(&mut self, task_handle: TaskHandle) {
+        let completion_future = services().task_manager.borrow().get_completion_future(task_handle);
+        if let Some(future_handle) = completion_future {
+            services().future_registry.borrow_mut().complete(future_handle);
+        }
+    }
+
     fn cleanup_completion_future(&mut self, task_handle: TaskHandle) {
         let completion_future = services().task_manager.borrow().get_completion_future(task_handle);
         if let Some(future_handle) = completion_future {
-            let is_waited_on = self.blocked_tasks.iter().any(|tf| tf.future_handle == future_handle);
-            if !is_waited_on {
+            let is_subscribed = services().future_registry.borrow().is_subscribed(future_handle);
+            if !is_subscribed {
                 services().future_registry.borrow_mut().consume(future_handle).ok();
             }
         }
@@ -135,21 +157,6 @@ impl FifoScheduler {
     #[cfg(test)]
     pub(crate) fn cleanup_completion_future_for_test(&mut self, handle: TaskHandle) {
         self.cleanup_completion_future(handle);
-    }
-
-    pub(crate) fn pool_futures(&mut self) {
-        for _ in 0..self.blocked_tasks.len() {
-            if let Some(task_future) = self.blocked_tasks.pop_front() {
-                if task_future.is_completed() {
-                    services().task_manager
-                        .borrow_mut()
-                        .set_state(task_future.task_handle, Ready);
-                    self.user_tasks.push_back(task_future.task_handle);
-                } else {
-                    self.blocked_tasks.push_back(task_future);
-                }
-            }
-        }
     }
 }
 
@@ -162,8 +169,12 @@ impl Scheduler for FifoScheduler {
         FifoScheduler::push_task(self, handle);
     }
 
-    fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle) {
-        FifoScheduler::push_blocked(self, task_handle, future_handle);
+    fn wake_task(&mut self, handle: TaskHandle) {
+        FifoScheduler::wake_task(self, handle);
+    }
+
+    fn push_sleep(&mut self, now: u64, sleep: core::time::Duration, future_handle: FutureHandle) {
+        self.timer.add_sleep(now, sleep, future_handle);
     }
 
     fn push_hardware_interrupt(&mut self, interrupt: HardwareInterrupt) {
@@ -182,7 +193,6 @@ impl Scheduler for FifoScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::future::TaskCompletionFuture;
     use crate::kernel_services::{init, services};
     use crate::task::{Task, TaskState};
     use alloc::boxed::Box;
@@ -208,7 +218,7 @@ mod tests {
 
         let task = Task::new("T", 0, 0);
         let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
-        let future = Box::new(TaskCompletionFuture::new(task_handle));
+        let future = Box::new(crate::future::TaskCompletionFuture::new(task_handle));
         let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
         services().task_manager.borrow_mut().set_completion_future(task_handle, future_handle);
         services().task_manager.borrow_mut().set_state(task_handle, TaskState::Terminated);
@@ -225,12 +235,12 @@ mod tests {
 
         let task = Task::new("T", 0, 0);
         let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
-        let future = Box::new(TaskCompletionFuture::new(task_handle));
+        let future = Box::new(crate::future::TaskCompletionFuture::new(task_handle));
         let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
         services().task_manager.borrow_mut().set_completion_future(task_handle, future_handle);
 
         let waiter = create_ready_task("Waiter");
-        scheduler.push_blocked(waiter, future_handle);
+        services().future_registry.borrow_mut().subscribe(future_handle, waiter);
 
         services().task_manager.borrow_mut().set_state(task_handle, TaskState::Terminated);
 

@@ -7,31 +7,57 @@ use lazy_static::lazy_static;
 
 lazy_static! {
     static ref KEYBOARD_BUFFER: KernelCell<VecDeque<char>> = KernelCell::new(VecDeque::new());
+    static ref KEYBOARD_FUTURE: KernelCell<Option<system::future::FutureHandle>> = KernelCell::new(None);
 }
 
-pub fn push_key(c: char) {
-    KEYBOARD_BUFFER.borrow_mut().push_back(c);
+pub fn set_keyboard_future(handle: system::future::FutureHandle) {
+    *KEYBOARD_FUTURE.borrow_mut() = Some(handle);
 }
 
 pub fn pop_key() -> Option<char> {
     KEYBOARD_BUFFER.borrow_mut().pop_front()
 }
 
-pub struct KeyboardFuture {}
+pub fn push_key(c: char) {
+    let handle = KEYBOARD_FUTURE.borrow_mut().take();
+    if let Some(handle) = handle {
+        if let Ok(future) = crate::kernel_services::services().future_registry.borrow_mut().arena.borrow_mut(handle) {
+            let dyn_f: &mut dyn system::future::Future = future.as_mut();
+            if let Some(kf) = dyn_f.as_any_mut().downcast_mut::<KeyboardFuture>() {
+                kf.char = Some(c);
+            }
+        }
+        crate::kernel_services::services().future_registry.borrow_mut().complete(handle);
+    } else {
+        KEYBOARD_BUFFER.borrow_mut().push_back(c);
+    }
+}
+
+
+pub struct KeyboardFuture {
+    pub char: Option<char>,
+}
 
 impl KeyboardFuture {
     pub fn new() -> Self {
-        Self {}
+        Self { char: None }
     }
 }
 
 impl Future for KeyboardFuture {
     fn is_completed(&self) -> bool {
-        !KEYBOARD_BUFFER.borrow_mut().is_empty()
+        self.char.is_some() || !KEYBOARD_BUFFER.borrow_mut().is_empty()
     }
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn complete(&mut self) {
     }
 }
 
@@ -322,5 +348,27 @@ impl Display for KeyboardEvent {
             ' '
         };
         write!(f, "KeyboardEvent: {}", char)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel_services::init;
+
+    #[test]
+    fn push_key_completes_keyboard_future() {
+        init();
+        let future = Box::new(KeyboardFuture::new());
+        let handle = crate::kernel_services::services().future_registry.borrow_mut().register(future).unwrap();
+        set_keyboard_future(handle);
+
+        push_key('a');
+        assert!(KEYBOARD_FUTURE.borrow().is_none());
+
+        let registry = crate::kernel_services::services().future_registry.borrow_mut();
+        let future = registry.consume(handle).unwrap();
+        let kf = future.as_any().downcast_ref::<KeyboardFuture>().unwrap();
+        assert_eq!(kf.char, Some('a'));
     }
 }

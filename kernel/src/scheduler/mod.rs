@@ -12,7 +12,8 @@ use crate::task::TaskHandle;
 pub trait Scheduler {
     fn run(&mut self);
     fn push_task(&mut self, handle: TaskHandle);
-    fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle);
+    fn wake_task(&mut self, handle: TaskHandle);
+    fn push_sleep(&mut self, now: u64, sleep: core::time::Duration, future_handle: FutureHandle);
     fn push_hardware_interrupt(&mut self, interrupt: HardwareInterrupt);
     fn set_idle_task(&mut self, handle: TaskHandle) -> Result<(), ()>;
     fn should_preempt(&mut self) -> bool;
