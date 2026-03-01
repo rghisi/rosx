@@ -2,6 +2,8 @@
 #![no_std]
 #![feature(abi_x86_interrupt)]
 
+extern crate alloc;
+
 mod cpu;
 mod debug_console;
 mod elf_arch;
@@ -9,6 +11,12 @@ mod interrupts;
 
 pub static CPU: cpu::X86_32 = cpu::X86_32::new();
 pub static ELF_ARCH: elf_arch::X86_32ElfArch = elf_arch::X86_32ElfArch;
+
+static KCONFIG: kernel::kconfig::KConfig = kernel::kconfig::KConfig {
+    cpu: &CPU,
+    elf_arch: &ELF_ARCH,
+    scheduler_factory: kernel::scheduler::mfq_scheduler,
+};
 
 use core::panic::PanicInfo;
 use kernel::memory::memory_manager::{MemoryBlock, MemoryBlocks};
@@ -35,9 +43,10 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
     kernel::kernel::bootstrap(&memory_blocks, &DEBUG_CONSOLE);
     kernel::kprintln!("[x86] Bootstrapped");
 
-    loop {
-        unsafe { core::arch::asm!("hlt") };
-    }
+    let mut kernel = kernel::kernel::Kernel::new(&KCONFIG);
+    kernel.setup();
+    kernel.start();
+    panic!("[x86] kernel.start() returned");
 }
 
 fn parse_memory_map(info_ptr: *const u8) -> MemoryBlocks {

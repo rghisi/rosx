@@ -86,11 +86,11 @@ Created directory layout mirroring `arch/x86_64/`. `rosx-i686.json` targets i686
 - `R_386_RELATIVE = 8`: `info & 0xff == 8`, write `(base as i64 + addend) as u32` to patch addr
 - `main.rs`: `pub static ELF_ARCH: X86_32ElfArch` exposed for kernel use
 
-### Step 8 — Wire up kernel bootstrap with CPU + ELF arch [ ]
+### Step 8 — Wire up kernel bootstrap with CPU + ELF arch [DONE]
 
-Update `kernel_main` to pass `&CPU` and `&ELF_ARCH` to the kernel bootstrap/init call once
-the kernel's `Kernel::new` / `kernel.setup()` / `kernel.start()` API is plumbed to accept them.
-Currently `bootstrap` only takes memory blocks and console output; extend as needed.
+- `main.rs`: `static KCONFIG: KConfig` bundling `&CPU`, `&ELF_ARCH`, `mfq_scheduler`
+- `kernel_main` now calls `Kernel::new(&KCONFIG)` → `kernel.setup()` → `kernel.start()`
+- `extern crate alloc` added (required by `Kernel::new` which allocates `Box<dyn Scheduler>`)
 
 ---
 
