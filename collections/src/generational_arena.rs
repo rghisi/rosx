@@ -7,6 +7,9 @@ pub type HalfSize = u32;
 #[cfg(target_pointer_width = "32")]
 pub type HalfSize = u16;
 
+const HALF_SIZE_BITS: usize = (core::mem::size_of::<usize>() * 8) / 2;
+const HALF_SIZE_MASK: usize = (1 << HALF_SIZE_BITS) - 1;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Handle {
     pub index: HalfSize,
@@ -21,15 +24,12 @@ impl Handle {
     pub fn to_usize(&self) -> usize {
         let index = self.index as usize;
         let generation = self.generation as usize;
-        let shift = (core::mem::size_of::<usize>() * 8) / 2;
-        (index << shift) | generation
+        (index << HALF_SIZE_BITS) | generation
     }
 
     pub fn from_usize(val: usize) -> Self {
-        let shift = (core::mem::size_of::<usize>() * 8) / 2;
-        let mask = (1 << shift) - 1;
-        let index = (val >> shift) as HalfSize;
-        let generation = (val & mask) as HalfSize;
+        let index = (val >> HALF_SIZE_BITS) as HalfSize;
+        let generation = (val & HALF_SIZE_MASK) as HalfSize;
         Self { index, generation }
     }
 }
