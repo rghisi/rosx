@@ -22,6 +22,12 @@ const BLOCK_HDR: usize = core::mem::size_of::<FreeBlock>();
 const BLOCK_ALIGN: usize = core::mem::align_of::<FreeBlock>();
 const ALLOC_HDR: usize = core::mem::size_of::<AllocHeader>();
 
+#[derive(Debug, PartialEq)]
+pub(crate) enum AllocError {
+    OutOfMemory,
+    AlignmentUnsupported,
+}
+
 pub struct FreeListAllocator {
     head: *mut FreeBlock,
     alloc_head: *mut AllocHeader,
@@ -51,11 +57,13 @@ impl FreeListAllocator {
         FreeListAllocator { head, alloc_head: ptr::null_mut() }
     }
 
-    pub unsafe fn allocate(&mut self, layout: Layout, owner: BlockOwner) -> *mut u8 {
+    pub unsafe fn allocate(&mut self, layout: Layout, owner: BlockOwner) -> Result<*mut u8, AllocError> {
         if layout.size() == 0 {
-            return ptr::null_mut();
+            return Err(AllocError::OutOfMemory);
         }
-        assert!(layout.align() <= BLOCK_ALIGN, "alignment exceeds block alignment");
+        if layout.align() > BLOCK_ALIGN {
+            return Err(AllocError::AlignmentUnsupported);
+        }
 
         let usable = align_up(layout.size(), BLOCK_ALIGN);
         let needed = (ALLOC_HDR + usable).max(BLOCK_HDR);
@@ -83,12 +91,12 @@ impl FreeListAllocator {
                 (*header).owner = owner;
                 (*header).next = self.alloc_head;
                 self.alloc_head = header;
-                return (start + ALLOC_HDR) as *mut u8;
+                return Ok((start + ALLOC_HDR) as *mut u8);
             }
             prev_next = &mut (*current).next;
             current = (*current).next;
         }
-        ptr::null_mut()
+        Err(AllocError::OutOfMemory)
     }
 
     pub unsafe fn deallocate(&mut self, ptr: *mut u8) {
