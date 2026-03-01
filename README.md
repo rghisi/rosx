@@ -1,6 +1,6 @@
 # RosX
 
-RosX is a hobbyist operating system written in Rust from scratch. It is designed with a focus on portability, a microkernel-inspired architecture, and networking capabilities.
+RosX is a hobbyist operating system written in Rust from scratch. It is designed with a focus on portability, a microkernel-inspired architecture, and networking capabilities. A key design goal is to not require an MMU, enabling it to run on smaller and simpler devices.
 
 ## Goals
 
