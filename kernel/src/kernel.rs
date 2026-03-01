@@ -1,5 +1,6 @@
 use crate::cpu::Cpu;
 use crate::default_output::{KernelOutput, setup_default_output};
+use crate::elf::ElfArch;
 use crate::future::TaskCompletionFuture;
 use crate::kconfig::KConfig;
 use crate::kernel_services::services;
@@ -25,6 +26,7 @@ pub fn kernel() -> &'static mut Kernel {
 
 pub struct Kernel {
     cpu: &'static dyn Cpu,
+    pub(crate) elf_arch: &'static dyn ElfArch,
     scheduler: Box<dyn Scheduler>,
     pub(crate) execution_state: ExecutionState,
 }
@@ -32,6 +34,7 @@ pub struct Kernel {
 impl Kernel {
     pub fn new(kconfig: &'static KConfig) -> Self {
         let cpu = kconfig.cpu;
+        let elf_arch = kconfig.elf_arch;
         crate::kernel_services::init();
         let scheduler = (kconfig.scheduler_factory)();
         let scheduler_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
@@ -50,6 +53,7 @@ impl Kernel {
 
         Kernel {
             cpu,
+            elf_arch,
             scheduler,
             execution_state: ExecutionState {
                 scheduler: scheduler_task_handler,

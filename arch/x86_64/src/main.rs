@@ -5,6 +5,7 @@
 extern crate alloc;
 mod cpu;
 mod debug_console;
+mod elf_arch;
 mod interrupts;
 mod vga_buffer;
 mod terminal_fonts;
@@ -13,6 +14,7 @@ mod ansi_parser;
 
 use crate::cpu::X86_64;
 use crate::debug_console::QemuDebugConsole;
+use crate::elf_arch::X86_64ElfArch;
 use crate::framebuffer::FramebufferOutput;
 use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
 use bootloader_api::config::Mapping;
@@ -33,9 +35,11 @@ static OUTPUTS: &[&dyn kernel::default_output::KernelOutput] = &[&FB_OUTPUT, &QE
 static MULTIPLEXED_OUTPUT: MultiplexOutput = MultiplexOutput::new(OUTPUTS);
 
 static CPU: X86_64 = X86_64::new();
+static ELF_ARCH: X86_64ElfArch = X86_64ElfArch;
 
 static KCONFIG: KConfig = KConfig {
     cpu: &CPU,
+    elf_arch: &ELF_ARCH,
     scheduler_factory: scheduler::mfq_scheduler,
 };
 

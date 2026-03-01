@@ -172,7 +172,7 @@ pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
 
 pub(crate) extern "C" fn elf_task_wrapper(elf: usize) {
     let elf_bytes: &[u8] = unsafe { *Box::from_raw(elf as *mut &[u8]) };
-    let image = load_elf(elf_bytes).unwrap();
+    let image = load_elf(elf_bytes, kernel().elf_arch).unwrap();
     let task_entry_point: fn() = unsafe { core::mem::transmute(image.entry) };
 
     kernel().execution_state.preemption_enabled = true;
