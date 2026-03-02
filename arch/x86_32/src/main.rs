@@ -45,7 +45,8 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
         panic!("bad Multiboot magic: {:#x}", multiboot_magic);
     }
 
-    let memory_blocks = parse_memory_map(multiboot_info as *const u8);
+    let raw_blocks = parse_memory_map(multiboot_info as *const u8);
+    let memory_blocks = trim_to_safe_memory(raw_blocks);
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kernel::kprintln!("[x86] Bootstrapped");
 
@@ -53,6 +54,28 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
     kernel.setup();
     kernel.start();
     panic!("[x86] kernel.start() returned");
+}
+
+unsafe extern "C" {
+    static kernel_end: u8;
+}
+
+fn trim_to_safe_memory(raw: MemoryBlocks) -> MemoryBlocks {
+    let safe_start = unsafe { core::ptr::addr_of!(kernel_end) as usize };
+    let mut out = MemoryBlocks {
+        blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),
+        count: 0,
+    };
+    for i in 0..raw.count {
+        let b = raw.blocks[i];
+        let region_end = b.start + b.size;
+        let start = b.start.max(safe_start);
+        if start < region_end {
+            out.blocks[out.count] = MemoryBlock { start, size: region_end - start };
+            out.count += 1;
+        }
+    }
+    out
 }
 
 fn parse_memory_map(info_ptr: *const u8) -> MemoryBlocks {
