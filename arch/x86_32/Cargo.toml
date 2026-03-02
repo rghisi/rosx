@@ -7,6 +7,7 @@ edition.workspace = true
 kernel = { path = "../../kernel" }
 system = { path = "../../system" }
 spin = "0.10.0"
+volatile = "0.2.6"
 
 [dependencies.lazy_static]
 version = "1.0"

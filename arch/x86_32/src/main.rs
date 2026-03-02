@@ -4,10 +4,12 @@
 
 extern crate alloc;
 
+mod ansi_parser;
 mod cpu;
 mod debug_console;
 mod elf_arch;
 mod interrupts;
+mod vga_buffer;
 
 pub static CPU: cpu::X86_32 = cpu::X86_32::new();
 pub static ELF_ARCH: elf_arch::X86_32ElfArch = elf_arch::X86_32ElfArch;
@@ -19,12 +21,16 @@ static KCONFIG: kernel::kconfig::KConfig = kernel::kconfig::KConfig {
 };
 
 use core::panic::PanicInfo;
+use kernel::default_output::MultiplexOutput;
 use kernel::memory::{MemoryBlock, MemoryBlocks};
 use kernel::panic::handle_panic;
 
 core::arch::global_asm!(include_str!("boot.S"));
 
 static DEBUG_CONSOLE: debug_console::QemuDebugConsole = debug_console::QemuDebugConsole;
+static VGA_OUTPUT: vga_buffer::VgaOutput = vga_buffer::VgaOutput;
+static OUTPUTS: &[&dyn kernel::default_output::KernelOutput] = &[&VGA_OUTPUT, &DEBUG_CONSOLE];
+static MULTIPLEXED_OUTPUT: MultiplexOutput = MultiplexOutput::new(OUTPUTS);
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -40,7 +46,7 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
     }
 
     let memory_blocks = parse_memory_map(multiboot_info as *const u8);
-    kernel::kernel::bootstrap(&memory_blocks, &DEBUG_CONSOLE);
+    kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kernel::kprintln!("[x86] Bootstrapped");
 
     let mut kernel = kernel::kernel::Kernel::new(&KCONFIG);

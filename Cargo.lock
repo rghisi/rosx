@@ -101,6 +101,7 @@ dependencies = [
  "lazy_static",
  "spin 0.10.0",
  "system",
+ "volatile 0.2.7",
 ]
 
 [[package]]
