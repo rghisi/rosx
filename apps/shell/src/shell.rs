@@ -5,10 +5,25 @@ use alloc::collections::BTreeMap;
 use lazy_static::lazy_static;
 use crate::command::Command;
 
+#[cfg(target_arch = "x86_64")]
 static PI_ELF: &[u8] = include_bytes!("../../../apps/hello_elf/target/rosx-user/release/hello_elf");
+#[cfg(target_arch = "x86")]
+static PI_ELF: &[u8] = include_bytes!("../../../apps/hello_elf/target/rosx-i686-user/release/hello_elf");
+
+#[cfg(target_arch = "x86_64")]
 static SNAKE_ELF: &[u8] = include_bytes!("../../../apps/snake/target/rosx-user/release/snake");
+#[cfg(target_arch = "x86")]
+static SNAKE_ELF: &[u8] = include_bytes!("../../../apps/snake/target/rosx-i686-user/release/snake");
+
+#[cfg(target_arch = "x86_64")]
 static TETRIS_ELF: &[u8] = include_bytes!("../../../apps/tetris/target/rosx-user/release/tetris");
+#[cfg(target_arch = "x86")]
+static TETRIS_ELF: &[u8] = include_bytes!("../../../apps/tetris/target/rosx-i686-user/release/tetris");
+
+#[cfg(target_arch = "x86_64")]
 static CONWAY_ELF: &[u8] = include_bytes!("../../../apps/conway/target/rosx-user/release/conway");
+#[cfg(target_arch = "x86")]
+static CONWAY_ELF: &[u8] = include_bytes!("../../../apps/conway/target/rosx-i686-user/release/conway");
 
 static PROMPT: &str = "\x1B[32mrose>\x1B[m ";
 

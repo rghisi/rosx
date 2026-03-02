@@ -8,3 +8,6 @@ json-target-spec = true
 
 [target.'cfg(target_arch = "x86_64")']
 rustflags = ["-C", "link-arg=-T../../apps/hello_elf/linker.ld", "-C", "link-arg=--pie"]
+
+[target.'cfg(target_arch = "x86")']
+rustflags = ["-C", "link-arg=-T../../apps/hello_elf/linker.ld", "-C", "link-arg=--pie"]

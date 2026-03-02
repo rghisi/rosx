@@ -113,9 +113,29 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/
+            apps/hello_elf/target/
+            apps/snake/target/
+            apps/tetris/target/
+            apps/conway/target/
           key: ${{ runner.os }}-cargo-build-x86_32-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-build-x86_32-
+
+      - name: Build hello_elf (x86_32)
+        working-directory: apps/hello_elf
+        run: cargo build --release --target ../../arch/x86_32/rosx-i686-user.json
+
+      - name: Build snake (x86_32)
+        working-directory: apps/snake
+        run: cargo build --release --target ../../arch/x86_32/rosx-i686-user.json
+
+      - name: Build tetris (x86_32)
+        working-directory: apps/tetris
+        run: cargo build --release --target ../../arch/x86_32/rosx-i686-user.json
+
+      - name: Build conway (x86_32)
+        working-directory: apps/conway
+        run: cargo build --release --target ../../arch/x86_32/rosx-i686-user.json
 
       - name: Install image tools
         run: sudo apt-get install -y grub-pc-bin grub-common xorriso mtools

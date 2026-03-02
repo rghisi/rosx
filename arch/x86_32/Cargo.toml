@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 kernel = { path = "../../kernel" }
 system = { path = "../../system" }
+shell = { path = "../../apps/shell" }
 spin = "0.10.0"
 volatile = "0.2.6"
 
