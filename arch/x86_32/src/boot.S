@@ -1,16 +1,10 @@
-/* Multiboot2 header — must be within first 32 KB and 8-byte aligned */
+/* Multiboot v1 header — must be within first 8 KB and 4-byte aligned */
 .section .multiboot, "a"
-.align 8
+.align 4
 multiboot_header:
-    .long 0xE85250D6                                             /* magic */
-    .long 0                                                      /* arch: i386 protected mode */
-    .long (multiboot_header_end - multiboot_header)              /* header length */
-    .long -(0xE85250D6 + 0 + (multiboot_header_end - multiboot_header)) /* checksum */
-    /* end tag */
-    .short 0    /* type  */
-    .short 0    /* flags */
-    .long  8    /* size  */
-multiboot_header_end:
+    .long 0x1BADB002                         /* magic */
+    .long 0x00000000                         /* flags */
+    .long -(0x1BADB002 + 0x00000000)         /* checksum */
 
 /* 64 KB boot stack in BSS (zero-initialised, not included in the binary image) */
 .section .bss
@@ -19,7 +13,7 @@ boot_stack_bottom:
     .skip 65536
 boot_stack_top:
 
-/* Entry point — GRUB leaves eax = Multiboot2 magic, ebx = info-struct pointer */
+/* Entry point — bootloader leaves eax = 0x2BADB002, ebx = multiboot info pointer */
 .section .text
 .global _start
 _start:

@@ -37,12 +37,12 @@ fn panic(info: &PanicInfo) -> ! {
     handle_panic(info);
 }
 
-const MULTIBOOT2_MAGIC: u32 = 0x36d76289;
+const MULTIBOOT_MAGIC: u32 = 0x2BADB002;
 
 #[unsafe(no_mangle)]
 extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
-    if multiboot_magic != MULTIBOOT2_MAGIC {
-        panic!("bad Multiboot2 magic: {:#x}", multiboot_magic);
+    if multiboot_magic != MULTIBOOT_MAGIC {
+        panic!("bad Multiboot magic: {:#x}", multiboot_magic);
     }
 
     let memory_blocks = parse_memory_map(multiboot_info as *const u8);
@@ -61,43 +61,35 @@ fn parse_memory_map(info_ptr: *const u8) -> MemoryBlocks {
         count: 0,
     };
 
-    // Multiboot2 info layout: [total_size: u32][reserved: u32][tags...]
-    let total_size = unsafe { (info_ptr as *const u32).read_unaligned() } as usize;
-    let mut offset = 8usize;
+    // Multiboot v1 info layout (flat struct):
+    //   offset  0: flags (u32)        — bit 6 = mmap fields valid
+    //   offset 44: mmap_length (u32)  — byte length of the mmap buffer
+    //   offset 48: mmap_addr (u32)    — physical address of the mmap buffer
+    let flags = unsafe { (info_ptr as *const u32).read_unaligned() };
+    if flags & (1 << 6) == 0 {
+        return memory_blocks;
+    }
 
-    while offset < total_size {
-        let tag_ptr = unsafe { info_ptr.add(offset) };
-        let tag_type = unsafe { (tag_ptr as *const u32).read_unaligned() };
-        let tag_size = unsafe { (tag_ptr as *const u32).add(1).read_unaligned() } as usize;
+    let mmap_length = unsafe { (info_ptr as *const u32).add(11).read_unaligned() } as usize;
+    let mmap_addr   = unsafe { (info_ptr as *const u32).add(12).read_unaligned() } as usize;
 
-        if tag_type == 0 {
-            break;
+    // Each mmap entry: [size: u32][addr: u64][len: u64][type: u32]
+    // `size` covers everything after itself; advance by size + 4 per entry.
+    let mut offset = 0;
+    while offset < mmap_length && memory_blocks.count < memory_blocks.blocks.len() {
+        let entry = (mmap_addr + offset) as *const u8;
+        let size     = unsafe { (entry as *const u32).read_unaligned() } as usize;
+        let addr     = unsafe { (entry.add(4)  as *const u64).read_unaligned() };
+        let len      = unsafe { (entry.add(12) as *const u64).read_unaligned() };
+        let mem_type = unsafe {  entry.add(20).cast::<u32>().read_unaligned() };
+
+        if mem_type == 1 && addr + len <= usize::MAX as u64 {
+            memory_blocks.blocks[memory_blocks.count] =
+                MemoryBlock { start: addr as usize, size: len as usize };
+            memory_blocks.count += 1;
         }
 
-        if tag_type == 6 {
-            // Memory map tag layout: [type][size][entry_size: u32][entry_version: u32][entries...]
-            // Each entry: [base_addr: u64][length: u64][type: u32][reserved: u32]
-            let entry_size = unsafe { (tag_ptr as *const u32).add(2).read_unaligned() } as usize;
-            let entries_end = unsafe { tag_ptr.add(tag_size) };
-            let mut entry_ptr = unsafe { tag_ptr.add(16) };
-
-            while entry_ptr < entries_end && memory_blocks.count < memory_blocks.blocks.len() {
-                let base = unsafe { (entry_ptr as *const u64).read_unaligned() };
-                let length = unsafe { (entry_ptr as *const u64).add(1).read_unaligned() };
-                let mem_type = unsafe { entry_ptr.add(16).cast::<u32>().read_unaligned() };
-
-                if mem_type == 1 && base + length <= usize::MAX as u64 {
-                    memory_blocks.blocks[memory_blocks.count] =
-                        MemoryBlock { start: base as usize, size: length as usize };
-                    memory_blocks.count += 1;
-                }
-
-                entry_ptr = unsafe { entry_ptr.add(entry_size) };
-            }
-        }
-
-        // Tags are padded to 8-byte alignment
-        offset += (tag_size + 7) & !7;
+        offset += size + 4;
     }
 
     memory_blocks
