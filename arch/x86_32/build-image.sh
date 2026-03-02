@@ -19,19 +19,23 @@ for cmd in grub-mkrescue grub2-mkrescue; do
     fi
 done
 
-if [ -z "$GRUB_MKRESCUE" ]; then
-    echo "error: grub-mkrescue not found"
-    echo "  Debian/Ubuntu: sudo apt install grub-pc-bin grub-common xorriso mtools"
-    echo "  Fedora/RHEL:   sudo dnf install grub2-tools xorriso mtools"
-    echo "  Arch Linux:    sudo pacman -S grub xorriso mtools"
-    exit 1
-fi
+MISSING=()
+[ -z "$GRUB_MKRESCUE" ] && MISSING+=("grub-mkrescue")
+command -v xorriso &>/dev/null || MISSING+=("xorriso")
+command -v mcopy   &>/dev/null || MISSING+=("mtools")
 
-if ! command -v xorriso &>/dev/null; then
-    echo "error: xorriso not found (required by grub-mkrescue)"
-    echo "  Debian/Ubuntu: sudo apt install xorriso"
-    echo "  Fedora/RHEL:   sudo dnf install xorriso"
-    echo "  Arch Linux:    sudo pacman -S xorriso"
+if [ ${#MISSING[@]} -gt 0 ]; then
+    echo "error: missing required tools: ${MISSING[*]}"
+    echo ""
+    if command -v apt-get &>/dev/null; then
+        echo "  sudo apt install grub-pc-bin grub-common xorriso mtools"
+    elif command -v dnf &>/dev/null; then
+        echo "  sudo dnf install grub2-tools xorriso mtools"
+    elif command -v pacman &>/dev/null; then
+        echo "  sudo pacman -S grub xorriso mtools"
+    else
+        echo "  Install: grub (grub-pc-bin), xorriso, mtools"
+    fi
     exit 1
 fi
 
