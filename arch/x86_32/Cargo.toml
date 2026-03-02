@@ -1,0 +1,19 @@
+[package]
+name = "rosx-x86"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+kernel = { path = "../../kernel" }
+system = { path = "../../system" }
+spin = "0.10.0"
+volatile = "0.2.6"
+
+[dependencies.lazy_static]
+version = "1.0"
+features = ["spin_no_std"]
+
+[[bin]]
+name = "rosx-x86"
+bench = false
+test = false

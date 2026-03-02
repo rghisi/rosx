@@ -1,0 +1,10 @@
+[build]
+target = "rosx-i686.json"
+
+[unstable]
+build-std-features = ["compiler-builtins-mem"]
+build-std = ["core", "alloc", "compiler_builtins"]
+json-target-spec = true
+
+[target.'cfg(target_os = "none")']
+runner = "./run.sh"

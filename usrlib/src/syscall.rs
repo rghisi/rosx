@@ -12,19 +12,13 @@ pub struct Syscall {}
 impl Syscall {
     pub fn exec(entrypoint: usize) -> FutureHandle {
         let raw = arch::raw_syscall(SyscallNum::Exec as usize, entrypoint as usize, 0, 0);
-        FutureHandle {
-            index: (raw >> 32) as u32,
-            generation: raw as u32,
-        }
+        FutureHandle::unpack(raw)
     }
 
     pub fn load(elf: &'static [u8]) -> FutureHandle {
         let elf_ptr = Box::into_raw(Box::new(elf)) as usize;
         let raw = arch::raw_syscall(SyscallNum::LoadElf as usize, elf_ptr as usize, 0, 0);
-        FutureHandle {
-            index: (raw >> 32) as u32,
-            generation: raw as u32,
-        }
+        FutureHandle::unpack(raw)
     }
 
     pub fn task_yield() {

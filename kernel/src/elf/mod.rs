@@ -4,21 +4,27 @@ pub(crate) mod structs;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
-use structs::{Elf64Dyn, Elf64Header, Elf64Phdr, Elf64Rela};
+use structs::{Elf32Dyn, Elf32Header, Elf32Phdr, Elf32Rel, Elf64Dyn, Elf64Header, Elf64Phdr, Elf64Rela};
 
 pub use arch::ElfArch;
 
 const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
+const EI_CLASS: usize = 4;
+const ELFCLASS32: u8 = 1;
+const ELFCLASS64: u8 = 2;
 const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
 const DT_RELA: i64 = 7;
 const DT_RELASZ: i64 = 8;
+const DT_REL: i32 = 17;
+const DT_RELSZ: i32 = 18;
 
 #[derive(Debug)]
 pub enum ElfError {
     InvalidMagic,
     TooSmall,
     NoLoadSegments,
+    UnsupportedClass,
 }
 
 pub struct Image {
@@ -27,15 +33,28 @@ pub struct Image {
 }
 
 pub fn load_elf(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError> {
-    if bytes.len() < mem::size_of::<Elf64Header>() {
+    if bytes.len() < mem::size_of::<Elf32Header>() {
         return Err(ElfError::TooSmall);
     }
 
-    let header = unsafe { &*(bytes.as_ptr() as *const Elf64Header) };
-
-    if header.e_ident[..4] != ELF_MAGIC {
+    if bytes[..4] != ELF_MAGIC {
         return Err(ElfError::InvalidMagic);
     }
+
+    match bytes[EI_CLASS] {
+        ELFCLASS32 => load_elf32(bytes, elf_arch),
+        ELFCLASS64 => {
+            if bytes.len() < mem::size_of::<Elf64Header>() {
+                return Err(ElfError::TooSmall);
+            }
+            load_elf64(bytes, elf_arch)
+        }
+        _ => Err(ElfError::UnsupportedClass),
+    }
+}
+
+fn load_elf64(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError> {
+    let header = unsafe { &*(bytes.as_ptr() as *const Elf64Header) };
 
     let phdrs = unsafe {
         core::slice::from_raw_parts(
@@ -74,7 +93,7 @@ pub fn load_elf(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError>
 
     for phdr in phdrs {
         if phdr.p_type == PT_DYNAMIC {
-            apply_relocations(&image, base, phdr, elf_arch);
+            apply_relocations64(&image, base, phdr, elf_arch);
             break;
         }
     }
@@ -84,7 +103,57 @@ pub fn load_elf(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError>
     Ok(Image { image, entry })
 }
 
-fn apply_relocations(image: &[u8], base: usize, dynamic_phdr: &Elf64Phdr, elf_arch: &dyn ElfArch) {
+fn load_elf32(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError> {
+    let header = unsafe { &*(bytes.as_ptr() as *const Elf32Header) };
+
+    let phdrs = unsafe {
+        core::slice::from_raw_parts(
+            bytes.as_ptr().add(header.e_phoff as usize) as *const Elf32Phdr,
+            header.e_phnum as usize,
+        )
+    };
+
+    let mut max_addr: u32 = 0;
+    for phdr in phdrs {
+        if phdr.p_type == PT_LOAD {
+            let end = phdr.p_vaddr + phdr.p_memsz;
+            if end > max_addr {
+                max_addr = end;
+            }
+        }
+    }
+
+    if max_addr == 0 {
+        return Err(ElfError::NoLoadSegments);
+    }
+
+    let mut image = vec![0u8; max_addr as usize];
+
+    for phdr in phdrs {
+        if phdr.p_type == PT_LOAD {
+            let dst_start = phdr.p_vaddr as usize;
+            let src_start = phdr.p_offset as usize;
+            let copy_len = phdr.p_filesz as usize;
+            image[dst_start..dst_start + copy_len]
+                .copy_from_slice(&bytes[src_start..src_start + copy_len]);
+        }
+    }
+
+    let base = image.as_ptr() as usize;
+
+    for phdr in phdrs {
+        if phdr.p_type == PT_DYNAMIC {
+            apply_relocations32(&image, base, phdr, elf_arch);
+            break;
+        }
+    }
+
+    let entry = base + header.e_entry as usize;
+
+    Ok(Image { image, entry })
+}
+
+fn apply_relocations64(image: &[u8], base: usize, dynamic_phdr: &Elf64Phdr, elf_arch: &dyn ElfArch) {
     let dyn_start = dynamic_phdr.p_vaddr as usize;
     let dyn_count = dynamic_phdr.p_memsz as usize / mem::size_of::<Elf64Dyn>();
 
@@ -120,6 +189,50 @@ fn apply_relocations(image: &[u8], base: usize, dynamic_phdr: &Elf64Phdr, elf_ar
 
         for rela in relas {
             elf_arch.apply_relocation(base, rela.r_offset as usize, rela.r_info, rela.r_addend);
+        }
+    }
+}
+
+fn apply_relocations32(image: &[u8], base: usize, dynamic_phdr: &Elf32Phdr, elf_arch: &dyn ElfArch) {
+    let dyn_start = dynamic_phdr.p_vaddr as usize;
+    let dyn_count = dynamic_phdr.p_memsz as usize / mem::size_of::<Elf32Dyn>();
+
+    let dyns = unsafe {
+        core::slice::from_raw_parts(
+            image.as_ptr().add(dyn_start) as *const Elf32Dyn,
+            dyn_count,
+        )
+    };
+
+    let mut rel_offset: Option<u32> = None;
+    let mut rel_size: Option<u32> = None;
+
+    for dyn_entry in dyns {
+        if dyn_entry.d_tag == 0 {
+            break;
+        }
+        match dyn_entry.d_tag {
+            DT_REL => rel_offset = Some(dyn_entry.d_val),
+            DT_RELSZ => rel_size = Some(dyn_entry.d_val),
+            _ => {}
+        }
+    }
+
+    if let (Some(offset), Some(size)) = (rel_offset, rel_size) {
+        let rel_count = size as usize / mem::size_of::<Elf32Rel>();
+        let rels = unsafe {
+            core::slice::from_raw_parts(
+                image.as_ptr().add(offset as usize) as *const Elf32Rel,
+                rel_count,
+            )
+        };
+
+        for rel in rels {
+            let patch_offset = rel.r_offset as usize;
+            let implicit_addend = unsafe {
+                core::ptr::read_unaligned(image.as_ptr().add(patch_offset) as *const i32) as i64
+            };
+            elf_arch.apply_relocation(base, patch_offset, rel.r_info as u64, implicit_addend);
         }
     }
 }
@@ -163,7 +276,7 @@ mod tests {
         let mut buf = vec![0u8; total];
 
         let header = Elf64Header {
-            e_ident: { let mut id = [0u8; 16]; id[..4].copy_from_slice(&ELF_MAGIC); id },
+            e_ident: { let mut id = [0u8; 16]; id[..4].copy_from_slice(&ELF_MAGIC); id[4] = 2; id },
             e_type: 2,
             e_machine: 0x3E,
             e_version: 1,
@@ -212,7 +325,7 @@ mod tests {
         let mut buf = vec![0u8; total];
 
         let header = Elf64Header {
-            e_ident: { let mut id = [0u8; 16]; id[..4].copy_from_slice(&ELF_MAGIC); id },
+            e_ident: { let mut id = [0u8; 16]; id[..4].copy_from_slice(&ELF_MAGIC); id[4] = 2; id },
             e_type: 2,
             e_machine: 0x3E,
             e_version: 1,
@@ -281,7 +394,7 @@ mod tests {
         let header_size = mem::size_of::<Elf64Header>();
         let mut buf = vec![0u8; header_size];
         let header = Elf64Header {
-            e_ident: { let mut id = [0u8; 16]; id[..4].copy_from_slice(&ELF_MAGIC); id },
+            e_ident: { let mut id = [0u8; 16]; id[..4].copy_from_slice(&ELF_MAGIC); id[4] = 2; id },
             e_type: 2,
             e_machine: 0x3E,
             e_version: 1,
@@ -330,5 +443,150 @@ mod tests {
         let elf = build_minimal_elf(0);
         load_elf(&elf, &mock).unwrap();
         assert!(mock.calls().is_empty());
+    }
+
+    #[test]
+    fn rejects_unsupported_elf_class() {
+        let mock = MockElfArch::new();
+        let mut buf = vec![0u8; mem::size_of::<Elf64Header>()];
+        buf[..4].copy_from_slice(&ELF_MAGIC);
+        buf[4] = 0; // ELFCLASSNONE
+        assert!(matches!(load_elf(&buf, &mock), Err(ElfError::UnsupportedClass)));
+    }
+
+    fn build_elf32_minimal(entry_vaddr: u32) -> Vec<u8> {
+        let header_size = mem::size_of::<Elf32Header>();
+        let phdr_size = mem::size_of::<Elf32Phdr>();
+        let total = header_size + phdr_size + 32;
+        let mut buf = vec![0u8; total];
+
+        let header = Elf32Header {
+            e_ident: { let mut id = [0u8; 16]; id[..4].copy_from_slice(&ELF_MAGIC); id[4] = 1; id },
+            e_type: 2,
+            e_machine: 3,
+            e_version: 1,
+            e_entry: entry_vaddr,
+            e_phoff: header_size as u32,
+            e_shoff: 0,
+            e_flags: 0,
+            e_ehsize: header_size as u16,
+            e_phentsize: phdr_size as u16,
+            e_phnum: 1,
+            e_shentsize: 0,
+            e_shnum: 0,
+            e_shstrndx: 0,
+        };
+        let phdr = Elf32Phdr {
+            p_type: PT_LOAD,
+            p_offset: 0,
+            p_vaddr: 0,
+            p_paddr: 0,
+            p_filesz: total as u32,
+            p_memsz: total as u32,
+            p_flags: 5,
+            p_align: 1,
+        };
+
+        unsafe {
+            write_at(&mut buf, 0, header);
+            write_at(&mut buf, header_size, phdr);
+        }
+        buf
+    }
+
+    fn build_elf32_with_rel(r_offset: u32, r_info: u32, implicit_addend: u32) -> Vec<u8> {
+        let header_size = mem::size_of::<Elf32Header>();
+        let phdr_size = mem::size_of::<Elf32Phdr>();
+        let dyn_size = mem::size_of::<Elf32Dyn>();
+        let rel_size = mem::size_of::<Elf32Rel>();
+
+        let load_phdr_at = header_size;
+        let dyn_phdr_at = load_phdr_at + phdr_size;
+        let dyn_data_at = dyn_phdr_at + phdr_size;
+        let rel_data_at = dyn_data_at + 3 * dyn_size;
+        let total = rel_data_at + rel_size;
+
+        let mut buf = vec![0u8; total];
+
+        let header = Elf32Header {
+            e_ident: { let mut id = [0u8; 16]; id[..4].copy_from_slice(&ELF_MAGIC); id[4] = 1; id },
+            e_type: 2,
+            e_machine: 3,
+            e_version: 1,
+            e_entry: 0,
+            e_phoff: load_phdr_at as u32,
+            e_shoff: 0,
+            e_flags: 0,
+            e_ehsize: header_size as u16,
+            e_phentsize: phdr_size as u16,
+            e_phnum: 2,
+            e_shentsize: 0,
+            e_shnum: 0,
+            e_shstrndx: 0,
+        };
+        let load_phdr = Elf32Phdr {
+            p_type: PT_LOAD,
+            p_offset: 0,
+            p_vaddr: 0,
+            p_paddr: 0,
+            p_filesz: total as u32,
+            p_memsz: total as u32,
+            p_flags: 5,
+            p_align: 1,
+        };
+        let dyn_phdr = Elf32Phdr {
+            p_type: PT_DYNAMIC,
+            p_offset: dyn_data_at as u32,
+            p_vaddr: dyn_data_at as u32,
+            p_paddr: dyn_data_at as u32,
+            p_filesz: (3 * dyn_size + rel_size) as u32,
+            p_memsz: (3 * dyn_size + rel_size) as u32,
+            p_flags: 6,
+            p_align: 1,
+        };
+
+        unsafe {
+            write_at(&mut buf, 0, header);
+            write_at(&mut buf, load_phdr_at, load_phdr);
+            write_at(&mut buf, dyn_phdr_at, dyn_phdr);
+            write_at(&mut buf, dyn_data_at,              Elf32Dyn { d_tag: 17, d_val: rel_data_at as u32 }); // DT_REL
+            write_at(&mut buf, dyn_data_at + dyn_size,   Elf32Dyn { d_tag: 18, d_val: rel_size as u32 });    // DT_RELSZ
+            write_at(&mut buf, dyn_data_at + 2 * dyn_size, Elf32Dyn { d_tag: 0, d_val: 0 });
+            write_at(&mut buf, rel_data_at, Elf32Rel { r_offset, r_info });
+            write_at(&mut buf, r_offset as usize, implicit_addend);
+        }
+        buf
+    }
+
+    #[test]
+    fn load_elf32_loads_single_segment() {
+        let mock = MockElfArch::new();
+        let elf = build_elf32_minimal(0);
+        let image = load_elf(&elf, &mock).unwrap();
+        assert_eq!(&image.image[..4], &[0x7f, b'E', b'L', b'F']);
+    }
+
+    #[test]
+    fn load_elf32_computes_entry_from_base_plus_e_entry() {
+        let mock = MockElfArch::new();
+        let elf = build_elf32_minimal(42);
+        let image = load_elf(&elf, &mock).unwrap();
+        assert_eq!(image.entry, image.image.as_ptr() as usize + 42);
+    }
+
+    #[test]
+    fn load_elf32_delegates_rel_entries_to_elf_arch() {
+        let mock = MockElfArch::new();
+        let elf = build_elf32_with_rel(0x10, 0x08, 0x5000);
+        let image = load_elf(&elf, &mock).unwrap();
+
+        let calls = mock.calls();
+        assert_eq!(calls.len(), 1);
+
+        let (base, offset, info, addend) = calls[0];
+        assert_eq!(base, image.image.as_ptr() as usize);
+        assert_eq!(offset, 0x10);
+        assert_eq!(info, 0x08);
+        assert_eq!(addend, 0x5000);
     }
 }

@@ -2,4 +2,8 @@
 #[path = "x86_64.rs"]
 mod implementation;
 
+#[cfg(target_arch = "x86")]
+#[path = "x86_32.rs"]
+mod implementation;
+
 pub use implementation::raw_syscall;
