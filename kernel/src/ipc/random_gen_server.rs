@@ -2,8 +2,8 @@ use crate::future::TimeFuture;
 use crate::ipc::ipc_manager::IpcReplyMessage;
 use crate::kernel::kernel;
 use crate::kernel_services::services;
-use alloc::boxed::Box;
 use crate::kprintln;
+use alloc::boxed::Box;
 
 struct RandomGeneratorServer {
     state: u32,

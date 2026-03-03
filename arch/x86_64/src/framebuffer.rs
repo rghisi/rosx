@@ -1,21 +1,21 @@
+use crate::ansi_parser::{AnsiColor, AnsiCommand, AnsiParser};
+use crate::terminal_fonts::{BitmapFont, IBM_8X8, IBM_VGA_8X16, SPLEEN_8X16, TERMINUS_8X16};
+use bootloader_api::info::{FrameBufferInfo, PixelFormat};
 use core::fmt;
 use core::fmt::Write;
-use core::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering::Relaxed};
-use bootloader_api::info::{FrameBufferInfo, PixelFormat};
+use core::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering::Relaxed};
 use kernel::default_output::KernelOutput;
 use lazy_static::lazy_static;
 use spin::Mutex;
-use crate::ansi_parser::{AnsiColor, AnsiCommand, AnsiParser};
-use crate::terminal_fonts::{BitmapFont, IBM_8X8, IBM_VGA_8X16, TERMINUS_8X16, SPLEEN_8X16};
 
 const FONT: &BitmapFont = &TERMINUS_8X16;
 
-static FB_START:  AtomicU64   = AtomicU64::new(0);
-static FB_WIDTH:  AtomicUsize = AtomicUsize::new(0);
+static FB_START: AtomicU64 = AtomicU64::new(0);
+static FB_WIDTH: AtomicUsize = AtomicUsize::new(0);
 static FB_HEIGHT: AtomicUsize = AtomicUsize::new(0);
 static FB_STRIDE: AtomicUsize = AtomicUsize::new(0);
-static FB_BPP:    AtomicUsize = AtomicUsize::new(4);
-static FB_FMT:    AtomicU8    = AtomicU8::new(0); // 0 = RGB, 1 = BGR
+static FB_BPP: AtomicUsize = AtomicUsize::new(4);
+static FB_FMT: AtomicU8 = AtomicU8::new(0); // 0 = RGB, 1 = BGR
 
 pub fn init(buffer_start: u64, info: FrameBufferInfo) {
     FB_START.store(buffer_start, Relaxed);
@@ -23,47 +23,69 @@ pub fn init(buffer_start: u64, info: FrameBufferInfo) {
     FB_HEIGHT.store(info.height, Relaxed);
     FB_STRIDE.store(info.stride, Relaxed);
     FB_BPP.store(info.bytes_per_pixel, Relaxed);
-    FB_FMT.store(match info.pixel_format {
-        PixelFormat::Bgr => 1,
-        _ => 0,
-    }, Relaxed);
+    FB_FMT.store(
+        match info.pixel_format {
+            PixelFormat::Bgr => 1,
+            _ => 0,
+        },
+        Relaxed,
+    );
     unsafe {
-        core::ptr::write_bytes(buffer_start as *mut u8, 0, info.stride * info.height * info.bytes_per_pixel);
+        core::ptr::write_bytes(
+            buffer_start as *mut u8,
+            0,
+            info.stride * info.height * info.bytes_per_pixel,
+        );
     }
 }
 
 fn draw_char(col: usize, row: usize, ch: u8, fg: (u8, u8, u8), bg: (u8, u8, u8)) {
     let start = FB_START.load(Relaxed) as *mut u8;
-    if start.is_null() { return; }
+    if start.is_null() {
+        return;
+    }
     let stride = FB_STRIDE.load(Relaxed);
-    let bpp    = FB_BPP.load(Relaxed);
-    let fmt    = FB_FMT.load(Relaxed);
-    let glyph  = FONT.glyph(ch);
+    let bpp = FB_BPP.load(Relaxed);
+    let fmt = FB_FMT.load(Relaxed);
+    let glyph = FONT.glyph(ch);
     let base_x = col * FONT.char_w;
     let base_y = row * FONT.char_h;
     for (bit_y, &row_bits) in glyph.iter().enumerate() {
         let row_base = (base_y + bit_y) * stride * bpp;
         for bit_x in 0..FONT.char_w {
-            let (r, g, b) = if (row_bits >> (7 - bit_x)) & 1 != 0 { fg } else { bg };
+            let (r, g, b) = if (row_bits >> (7 - bit_x)) & 1 != 0 {
+                fg
+            } else {
+                bg
+            };
             let off = row_base + (base_x + bit_x) * bpp;
             unsafe {
                 let ptr = start.add(off);
-                if fmt == 1 { ptr.write(b); ptr.add(1).write(g); ptr.add(2).write(r); }
-                else         { ptr.write(r); ptr.add(1).write(g); ptr.add(2).write(b); }
+                if fmt == 1 {
+                    ptr.write(b);
+                    ptr.add(1).write(g);
+                    ptr.add(2).write(r);
+                } else {
+                    ptr.write(r);
+                    ptr.add(1).write(g);
+                    ptr.add(2).write(b);
+                }
             }
         }
     }
 }
 
 fn scroll_up() {
-    let start  = FB_START.load(Relaxed) as *mut u8;
-    if start.is_null() { return; }
+    let start = FB_START.load(Relaxed) as *mut u8;
+    if start.is_null() {
+        return;
+    }
     let height = FB_HEIGHT.load(Relaxed);
     let stride = FB_STRIDE.load(Relaxed);
-    let bpp    = FB_BPP.load(Relaxed);
-    let row_bytes    = stride * bpp;
+    let bpp = FB_BPP.load(Relaxed);
+    let row_bytes = stride * bpp;
     let scroll_bytes = FONT.char_h * row_bytes;
-    let total_bytes  = height * row_bytes;
+    let total_bytes = height * row_bytes;
     unsafe {
         core::ptr::copy(start.add(scroll_bytes), start, total_bytes - scroll_bytes);
         core::ptr::write_bytes(start.add(total_bytes - scroll_bytes), 0, scroll_bytes);
@@ -72,32 +94,32 @@ fn scroll_up() {
 
 fn ansi_to_rgb(c: AnsiColor) -> (u8, u8, u8) {
     match c {
-        AnsiColor::Black         => (0,   0,   0),
-        AnsiColor::Red           => (170, 0,   0),
-        AnsiColor::Green         => (0,   170, 0),
-        AnsiColor::Yellow        => (170, 170, 0),
-        AnsiColor::Blue          => (0,   0,   170),
-        AnsiColor::Magenta       => (170, 0,   170),
-        AnsiColor::Cyan          => (0,   170, 170),
-        AnsiColor::White         => (170, 170, 170),
-        AnsiColor::BrightBlack   => (85,  85,  85),
-        AnsiColor::BrightRed     => (255, 85,  85),
-        AnsiColor::BrightGreen   => (85,  255, 85),
-        AnsiColor::BrightYellow  => (255, 255, 85),
-        AnsiColor::BrightBlue    => (85,  85,  255),
-        AnsiColor::BrightMagenta => (255, 85,  255),
-        AnsiColor::BrightCyan    => (85,  255, 255),
-        AnsiColor::BrightWhite   => (255, 255, 255),
+        AnsiColor::Black => (0, 0, 0),
+        AnsiColor::Red => (170, 0, 0),
+        AnsiColor::Green => (0, 170, 0),
+        AnsiColor::Yellow => (170, 170, 0),
+        AnsiColor::Blue => (0, 0, 170),
+        AnsiColor::Magenta => (170, 0, 170),
+        AnsiColor::Cyan => (0, 170, 170),
+        AnsiColor::White => (170, 170, 170),
+        AnsiColor::BrightBlack => (85, 85, 85),
+        AnsiColor::BrightRed => (255, 85, 85),
+        AnsiColor::BrightGreen => (85, 255, 85),
+        AnsiColor::BrightYellow => (255, 255, 85),
+        AnsiColor::BrightBlue => (85, 85, 255),
+        AnsiColor::BrightMagenta => (255, 85, 255),
+        AnsiColor::BrightCyan => (85, 255, 255),
+        AnsiColor::BrightWhite => (255, 255, 255),
     }
 }
 
 struct Writer {
-    col:        usize,
-    row:        usize,
-    text_cols:  usize,
-    text_rows:  usize,
-    fg:         (u8, u8, u8),
-    bg:         (u8, u8, u8),
+    col: usize,
+    row: usize,
+    text_cols: usize,
+    text_rows: usize,
+    fg: (u8, u8, u8),
+    bg: (u8, u8, u8),
     default_fg: (u8, u8, u8),
     default_bg: (u8, u8, u8),
     ansi_parser: AnsiParser,
@@ -110,8 +132,8 @@ impl Writer {
         Writer {
             col: 0,
             row: 0,
-            text_cols:  FB_WIDTH.load(Relaxed)  / FONT.char_w,
-            text_rows:  FB_HEIGHT.load(Relaxed) / FONT.char_h,
+            text_cols: FB_WIDTH.load(Relaxed) / FONT.char_w,
+            text_rows: FB_HEIGHT.load(Relaxed) / FONT.char_h,
             fg,
             bg,
             default_fg: fg,
@@ -124,25 +146,38 @@ impl Writer {
         self.ansi_parser.handle_byte(byte);
         while let Some(cmd) = self.ansi_parser.next_command() {
             match cmd {
-                AnsiCommand::PrintChar(b)          => self.internal_write_byte(b),
-                AnsiCommand::SetForeground(c)      => { self.fg = ansi_to_rgb(c); }
-                AnsiCommand::SetBackground(c)      => { self.bg = ansi_to_rgb(c); }
-                AnsiCommand::ResetAttributes       => { self.fg = self.default_fg; self.bg = self.default_bg; }
-                AnsiCommand::SetCursorPos{row, col} => {
+                AnsiCommand::PrintChar(b) => self.internal_write_byte(b),
+                AnsiCommand::SetForeground(c) => {
+                    self.fg = ansi_to_rgb(c);
+                }
+                AnsiCommand::SetBackground(c) => {
+                    self.bg = ansi_to_rgb(c);
+                }
+                AnsiCommand::ResetAttributes => {
+                    self.fg = self.default_fg;
+                    self.bg = self.default_bg;
+                }
+                AnsiCommand::SetCursorPos { row, col } => {
                     self.row = row.min(self.text_rows.saturating_sub(1));
                     self.col = col.min(self.text_cols.saturating_sub(1));
                 }
                 AnsiCommand::ClearScreen => {
                     let start = FB_START.load(Relaxed) as *mut u8;
                     if !start.is_null() {
-                        let bytes = FB_HEIGHT.load(Relaxed) * FB_STRIDE.load(Relaxed) * FB_BPP.load(Relaxed);
-                        unsafe { core::ptr::write_bytes(start, 0, bytes); }
+                        let bytes = FB_HEIGHT.load(Relaxed)
+                            * FB_STRIDE.load(Relaxed)
+                            * FB_BPP.load(Relaxed);
+                        unsafe {
+                            core::ptr::write_bytes(start, 0, bytes);
+                        }
                     }
                     self.row = 0;
                     self.col = 0;
                 }
                 AnsiCommand::ClearLine => {
-                    for c in 0..self.text_cols { draw_char(c, self.row, b' ', self.fg, self.bg); }
+                    for c in 0..self.text_cols {
+                        draw_char(c, self.row, b' ', self.fg, self.bg);
+                    }
                     self.col = 0;
                 }
             }
@@ -163,7 +198,9 @@ impl Writer {
                 }
             }
             byte => {
-                if self.col >= self.text_cols { self.new_line(); }
+                if self.col >= self.text_cols {
+                    self.new_line();
+                }
                 draw_char(self.col, self.row, byte, self.fg, self.bg);
                 self.col += 1;
             }

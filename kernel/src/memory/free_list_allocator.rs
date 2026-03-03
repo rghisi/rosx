@@ -15,7 +15,7 @@ struct AllocHeader {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum BlockOwner {
+pub enum BlockOwner {
     Kernel,
     Task(usize),
 }
@@ -25,7 +25,7 @@ const BLOCK_ALIGN: usize = core::mem::align_of::<FreeBlock>();
 const ALLOC_HDR: usize = core::mem::size_of::<AllocHeader>();
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum AllocError {
+pub enum AllocError {
     OutOfMemory,
     AlignmentUnsupported,
 }
@@ -56,10 +56,19 @@ impl FreeListAllocator {
                 head = fb;
             }
         }
-        FreeListAllocator { head, alloc_head: ptr::null_mut() }
+        FreeListAllocator {
+            head,
+            alloc_head: ptr::null_mut(),
+        }
     }
 
-    pub unsafe fn allocate(&mut self, layout: Layout, owner: BlockOwner) -> Result<*mut u8, AllocError> {
+    /// # Safety
+    /// This function is unsafe because it performs raw pointer dereferencing.
+    pub unsafe fn allocate(
+        &mut self,
+        layout: Layout,
+        owner: BlockOwner,
+    ) -> Result<*mut u8, AllocError> {
         if layout.size() == 0 {
             return Err(AllocError::OutOfMemory);
         }
@@ -73,104 +82,134 @@ impl FreeListAllocator {
         let mut prev_next: *mut *mut FreeBlock = &mut self.head;
         let mut current = self.head;
         while !current.is_null() {
-            let block_size = (*current).size;
+            let block_size = unsafe { (*current).size };
             if block_size >= needed {
                 let start = current as usize;
                 let remaining = block_size - needed;
                 let used_size;
                 if remaining >= BLOCK_HDR {
                     let split = (start + needed) as *mut FreeBlock;
-                    (*split).size = remaining;
-                    (*split).next = (*current).next;
-                    *prev_next = split;
+                    unsafe {
+                        (*split).size = remaining;
+                        (*split).next = (*current).next;
+                        *prev_next = split;
+                    }
                     used_size = needed;
                 } else {
-                    *prev_next = (*current).next;
+                    unsafe {
+                        *prev_next = (*current).next;
+                    }
                     used_size = block_size;
                 }
                 let header = start as *mut AllocHeader;
-                (*header).size = used_size;
-                (*header).owner = owner;
-                (*header).next = self.alloc_head;
+                unsafe {
+                    (*header).size = used_size;
+                    (*header).owner = owner;
+                    (*header).next = self.alloc_head;
+                }
                 self.alloc_head = header;
                 return Ok((start + ALLOC_HDR) as *mut u8);
             }
-            prev_next = &mut (*current).next;
-            current = (*current).next;
+            prev_next = unsafe { &mut (*current).next };
+            current = unsafe { (*current).next };
         }
         Err(AllocError::OutOfMemory)
     }
 
+    /// # Safety
+    /// This function is unsafe because it performs raw pointer dereferencing.
+    /// # Safety
+    /// This function is unsafe because it performs raw pointer dereferencing.
     pub unsafe fn deallocate(&mut self, ptr: *mut u8) {
         let start = ptr as usize - ALLOC_HDR;
         let header = start as *mut AllocHeader;
-        let block_size = (*header).size;
+        let block_size = unsafe { (*header).size };
 
         let mut prev: *mut AllocHeader = ptr::null_mut();
         let mut current = self.alloc_head;
         while !current.is_null() && current != header {
             prev = current;
-            current = (*current).next;
+            current = unsafe { (*current).next };
         }
         if prev.is_null() {
-            self.alloc_head = (*header).next;
+            self.alloc_head = unsafe { (*header).next };
         } else {
-            (*prev).next = (*header).next;
+            unsafe {
+                (*prev).next = (*header).next;
+            }
         }
 
-        self.insert_free_block(start, block_size);
+        unsafe { self.insert_free_block(start, block_size) };
     }
 
+    /// # Safety
+    /// This function is unsafe because it performs raw pointer dereferencing.
+    /// # Safety
+    /// This function is unsafe because it performs raw pointer dereferencing.
     pub unsafe fn deallocate_by_owner(&mut self, task_id: usize) {
         let target = BlockOwner::Task(task_id);
         let mut prev_next: *mut *mut AllocHeader = &mut self.alloc_head;
         let mut current = self.alloc_head;
         while !current.is_null() {
-            let next = (*current).next;
-            if (*current).owner == target {
-                *prev_next = next;
+            let next = unsafe { (*current).next };
+            if unsafe { (*current).owner } == target {
+                unsafe {
+                    *prev_next = next;
+                }
                 let start = current as usize;
-                let block_size = (*current).size;
-                self.insert_free_block(start, block_size);
+                let block_size = unsafe { (*current).size };
+                unsafe { self.insert_free_block(start, block_size) };
             } else {
-                prev_next = &mut (*current).next;
+                prev_next = unsafe { &mut (*current).next };
             }
             current = next;
         }
     }
 
+    /// # Safety
+    /// This function is unsafe because it performs raw pointer dereferencing.
     unsafe fn insert_free_block(&mut self, start: usize, block_size: usize) {
         let block = start as *mut FreeBlock;
-        (*block).size = block_size;
+        unsafe {
+            (*block).size = block_size;
+        }
 
         let mut prev: *mut FreeBlock = ptr::null_mut();
         let mut current = self.head;
         while !current.is_null() && (current as usize) < start {
             prev = current;
-            current = (*current).next;
+            current = unsafe { (*current).next };
         }
 
-        (*block).next = current;
+        unsafe {
+            (*block).next = current;
+        }
         if prev.is_null() {
             self.head = block;
         } else {
-            (*prev).next = block;
+            unsafe {
+                (*prev).next = block;
+            }
         }
 
-        if !(*block).next.is_null() {
-            let block_end = start + (*block).size;
-            let next = (*block).next;
+        if unsafe { !(*block).next.is_null() } {
+            let block_end = unsafe { start + (*block).size };
+            let next = unsafe { (*block).next };
             if block_end == next as usize {
-                (*block).size += (*next).size;
-                (*block).next = (*next).next;
+                unsafe {
+                    (*block).size += (*next).size;
+                    (*block).next = (*next).next;
+                }
             }
         }
 
         if !prev.is_null() {
-            let prev_end = prev as usize + (*prev).size;
+            let prev_end = unsafe { prev as usize + (*prev).size };
             if prev_end == start {
-                (*prev).size += (*block).size;
-                (*prev).next = (*block).next;
+                unsafe {
+                    (*prev).size += (*block).size;
+                    (*prev).next = (*block).next;
+                }
             }
         }
     }
@@ -179,15 +218,18 @@ impl FreeListAllocator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::{MAX_MEMORY_BLOCKS, MemoryBlock, MemoryBlocks};
     use core::alloc::Layout;
-    use crate::memory::{MemoryBlock, MemoryBlocks, MAX_MEMORY_BLOCKS};
 
     fn make_allocator(regions: &[(usize, usize)]) -> FreeListAllocator {
         let mut blocks = [MemoryBlock { start: 0, size: 0 }; MAX_MEMORY_BLOCKS];
         for (i, &(start, size)) in regions.iter().enumerate() {
             blocks[i] = MemoryBlock { start, size };
         }
-        FreeListAllocator::new(&MemoryBlocks { blocks, count: regions.len() })
+        FreeListAllocator::new(&MemoryBlocks {
+            blocks,
+            count: regions.len(),
+        })
     }
 
     fn needed_for(size: usize) -> usize {

@@ -9,4 +9,3 @@ pub struct KConfig {
 }
 
 unsafe impl Sync for KConfig {}
-

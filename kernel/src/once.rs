@@ -18,6 +18,12 @@ pub struct Once<T> {
 unsafe impl<T: Send + Sync> Sync for Once<T> {}
 unsafe impl<T: Send> Send for Once<T> {}
 
+impl<T> Default for Once<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> Once<T> {
     pub const fn new() -> Self {
         Self {
@@ -27,12 +33,10 @@ impl<T> Once<T> {
     }
 
     pub fn call_once(&self, f: impl FnOnce() -> T) {
-        match self.state.compare_exchange(
-            UNINIT,
-            INITIALIZING,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
+        match self
+            .state
+            .compare_exchange(UNINIT, INITIALIZING, Ordering::AcqRel, Ordering::Acquire)
+        {
             Ok(_) => {
                 // Safety: we are the only thread that transitioned from UNINIT
                 // to INITIALIZING, so we have exclusive access to the value.

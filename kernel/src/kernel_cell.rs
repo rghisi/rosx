@@ -1,5 +1,5 @@
 use core::cell::UnsafeCell;
-use core::sync::atomic::{compiler_fence, Ordering};
+use core::sync::atomic::{Ordering, compiler_fence};
 
 pub(crate) struct KernelCell<T> {
     data: UnsafeCell<T>,

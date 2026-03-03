@@ -1,14 +1,15 @@
-use usrlib::{print, println};
-use usrlib::syscall::Syscall;
-use alloc::string::String;
-use alloc::collections::BTreeMap;
-use lazy_static::lazy_static;
 use crate::command::Command;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
+use lazy_static::lazy_static;
+use usrlib::syscall::Syscall;
+use usrlib::{print, println};
 
 #[cfg(target_arch = "x86_64")]
 static PI_ELF: &[u8] = include_bytes!("../../../apps/hello_elf/target/rosx-user/release/hello_elf");
 #[cfg(target_arch = "x86")]
-static PI_ELF: &[u8] = include_bytes!("../../../apps/hello_elf/target/rosx-i686-user/release/hello_elf");
+static PI_ELF: &[u8] =
+    include_bytes!("../../../apps/hello_elf/target/rosx-i686-user/release/hello_elf");
 
 #[cfg(target_arch = "x86_64")]
 static SNAKE_ELF: &[u8] = include_bytes!("../../../apps/snake/target/rosx-user/release/snake");
@@ -18,12 +19,14 @@ static SNAKE_ELF: &[u8] = include_bytes!("../../../apps/snake/target/rosx-i686-u
 #[cfg(target_arch = "x86_64")]
 static TETRIS_ELF: &[u8] = include_bytes!("../../../apps/tetris/target/rosx-user/release/tetris");
 #[cfg(target_arch = "x86")]
-static TETRIS_ELF: &[u8] = include_bytes!("../../../apps/tetris/target/rosx-i686-user/release/tetris");
+static TETRIS_ELF: &[u8] =
+    include_bytes!("../../../apps/tetris/target/rosx-i686-user/release/tetris");
 
 #[cfg(target_arch = "x86_64")]
 static CONWAY_ELF: &[u8] = include_bytes!("../../../apps/conway/target/rosx-user/release/conway");
 #[cfg(target_arch = "x86")]
-static CONWAY_ELF: &[u8] = include_bytes!("../../../apps/conway/target/rosx-i686-user/release/conway");
+static CONWAY_ELF: &[u8] =
+    include_bytes!("../../../apps/conway/target/rosx-i686-user/release/conway");
 
 static PROMPT: &str = "\x1B[32mrose>\x1B[m ";
 
@@ -43,16 +46,15 @@ lazy_static! {
 }
 
 pub fn main() {
-
     println!("ROSE Shell");
     rose();
     prompt();
-    
+
     let mut buffer = String::new();
-    
+
     loop {
         let c = Syscall::read_char();
-        
+
         if c == '\n' {
             println!();
 
@@ -63,7 +65,7 @@ pub fn main() {
                     println!("Unknown command: {}", cmd.name);
                 }
             }
-            
+
             buffer.clear();
             prompt();
         } else if c == '\x08' {
@@ -98,7 +100,9 @@ fn clear() {
 }
 
 fn ls() {
-    COMMANDS.iter().for_each(|(command, _)| print!("{}\t", command));
+    COMMANDS
+        .iter()
+        .for_each(|(command, _)| print!("{}\t", command));
     println!();
 }
 
@@ -135,6 +139,6 @@ fn random() {
             println!("RANDOM Value: {}", random.reply.unwrap().value);
         }
     } else {
-        println!("Find failed");;
+        println!("Find failed");
     }
 }

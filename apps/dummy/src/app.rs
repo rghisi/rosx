@@ -42,4 +42,3 @@ pub fn main_with_wait() {
     Syscall::sleep(1000);
     print!("2. Done");
 }
-

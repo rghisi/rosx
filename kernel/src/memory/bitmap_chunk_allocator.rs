@@ -1,5 +1,5 @@
-use core::alloc::Layout;
 use crate::task::TaskHandle;
+use core::alloc::Layout;
 
 pub const DEFAULT_CHUNK_SIZE: usize = 64 * 1024;
 const BITS_PER_WORD: usize = usize::BITS as usize;
@@ -52,7 +52,8 @@ impl BitmapChunkAllocator {
         assert!(!ranges.is_empty(), "at least one range required");
         let region_count = ranges.len();
 
-        let raw_total_chunks: usize = ranges.iter()
+        let raw_total_chunks: usize = ranges
+            .iter()
             .take(region_count)
             .map(|&(_, size)| size / chunk_size)
             .sum();
@@ -61,7 +62,10 @@ impl BitmapChunkAllocator {
         let regions_bytes = region_count * core::mem::size_of::<Region>();
         let bitmap_bytes = bitmap_words * core::mem::size_of::<usize>();
         let owner_bytes = raw_total_chunks * core::mem::size_of::<ChunkOwner>();
-        let aligned_metadata = align_up(regions_bytes + bitmap_bytes + owner_bytes, METADATA_ALIGNMENT);
+        let aligned_metadata = align_up(
+            regions_bytes + bitmap_bytes + owner_bytes,
+            METADATA_ALIGNMENT,
+        );
 
         let metadata_range_idx = ranges
             .iter()
@@ -140,7 +144,12 @@ impl BitmapChunkAllocator {
         unsafe { &*self.regions.add(index) }
     }
 
-    fn find_free_run(&self, bitmap_offset: usize, region_chunks: usize, needed: usize) -> Option<usize> {
+    fn find_free_run(
+        &self,
+        bitmap_offset: usize,
+        region_chunks: usize,
+        needed: usize,
+    ) -> Option<usize> {
         let mut run_start = bitmap_offset;
         let region_end = bitmap_offset + region_chunks;
         while run_start + needed <= region_end {
@@ -185,7 +194,9 @@ impl BitmapChunkAllocator {
     fn write_owner(&mut self, start: usize, count: usize, owner: ChunkOwner) {
         for i in start..start + count {
             // Safety: i is bounded by total_chunks, which fits within the owner array.
-            unsafe { *self.owner.add(i) = owner; }
+            unsafe {
+                *self.owner.add(i) = owner;
+            }
         }
     }
 
@@ -195,7 +206,9 @@ impl BitmapChunkAllocator {
             let owned_by_task = unsafe { *self.owner.add(i) } == ChunkOwner::Task(task);
             if owned_by_task && self.is_bit_set(i) {
                 self.mark_bits(i, 1, false);
-                unsafe { *self.owner.add(i) = ChunkOwner::Kernel; }
+                unsafe {
+                    *self.owner.add(i) = ChunkOwner::Kernel;
+                }
             }
         }
     }
@@ -272,15 +285,18 @@ impl ChunkAllocator for BitmapChunkAllocator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::alloc::Layout;
     use crate::task::TaskHandle;
+    use core::alloc::Layout;
 
     fn metadata_overhead(region_count: usize, raw_total_chunks: usize) -> usize {
         let bitmap_words = (raw_total_chunks + BITS_PER_WORD - 1) / BITS_PER_WORD;
         let regions_bytes = region_count * core::mem::size_of::<Region>();
         let bitmap_bytes = bitmap_words * core::mem::size_of::<usize>();
         let owner_bytes = raw_total_chunks * core::mem::size_of::<ChunkOwner>();
-        align_up(regions_bytes + bitmap_bytes + owner_bytes, METADATA_ALIGNMENT)
+        align_up(
+            regions_bytes + bitmap_bytes + owner_bytes,
+            METADATA_ALIGNMENT,
+        )
     }
 
     fn usable_base(base: usize, region_count: usize, raw_total_chunks: usize) -> usize {
@@ -324,10 +340,7 @@ mod tests {
         let base1 = mem1.as_mut_ptr() as usize;
         let base2 = mem2.as_mut_ptr() as usize;
 
-        let allocator = BitmapChunkAllocator::new(&[
-            (base1, mem1.len()),
-            (base2, mem2.len()),
-        ]);
+        let allocator = BitmapChunkAllocator::new(&[(base1, mem1.len()), (base2, mem2.len())]);
 
         let overhead = metadata_overhead(2, 9);
         let first_region_chunks = (4 * DEFAULT_CHUNK_SIZE - overhead) / DEFAULT_CHUNK_SIZE;
@@ -431,10 +444,7 @@ mod tests {
         let base1 = mem1.as_mut_ptr() as usize;
         let base2 = mem2.as_mut_ptr() as usize;
 
-        let mut allocator = BitmapChunkAllocator::new(&[
-            (base1, mem1.len()),
-            (base2, mem2.len()),
-        ]);
+        let mut allocator = BitmapChunkAllocator::new(&[(base1, mem1.len()), (base2, mem2.len())]);
 
         let overhead = metadata_overhead(2, 6);
         let first_region_chunks = (2 * DEFAULT_CHUNK_SIZE - overhead) / DEFAULT_CHUNK_SIZE;
@@ -568,10 +578,7 @@ mod tests {
         let base1 = mem1.as_mut_ptr() as usize;
         let base2 = mem2.as_mut_ptr() as usize;
 
-        let mut allocator = BitmapChunkAllocator::new(&[
-            (base1, mem1.len()),
-            (base2, mem2.len()),
-        ]);
+        let mut allocator = BitmapChunkAllocator::new(&[(base1, mem1.len()), (base2, mem2.len())]);
 
         let total = allocator.free_chunks();
         let layout_one = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
@@ -588,7 +595,8 @@ mod tests {
         let mems: Vec<Vec<u8>> = (0..range_count)
             .map(|_| vec![0u8; 2 * DEFAULT_CHUNK_SIZE])
             .collect();
-        let ranges: Vec<(usize, usize)> = mems.iter()
+        let ranges: Vec<(usize, usize)> = mems
+            .iter()
             .map(|m| (m.as_ptr() as usize, m.len()))
             .collect();
 
@@ -603,10 +611,8 @@ mod tests {
         let mut memory = vec![0u8; 10 * chunk_size];
         let base = memory.as_mut_ptr() as usize;
 
-        let mut allocator = BitmapChunkAllocator::with_chunk_size(
-            chunk_size,
-            &[(base, memory.len())],
-        );
+        let mut allocator =
+            BitmapChunkAllocator::with_chunk_size(chunk_size, &[(base, memory.len())]);
 
         let layout = Layout::from_size_align(chunk_size + 1, 1).unwrap();
         let alloc = allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
@@ -622,10 +628,8 @@ mod tests {
         let mut memory = vec![0u8; 10 * chunk_size];
         let base = memory.as_mut_ptr() as usize;
 
-        let mut allocator = BitmapChunkAllocator::with_chunk_size(
-            chunk_size,
-            &[(base, memory.len())],
-        );
+        let mut allocator =
+            BitmapChunkAllocator::with_chunk_size(chunk_size, &[(base, memory.len())]);
 
         let layout_one = Layout::from_size_align(chunk_size, 1).unwrap();
         let alloc = allocator.allocate(layout_one, ChunkOwner::Kernel).unwrap();
@@ -642,10 +646,8 @@ mod tests {
         let mut memory = vec![0u8; 10 * chunk_size];
         let base = memory.as_mut_ptr() as usize;
 
-        let mut allocator = BitmapChunkAllocator::with_chunk_size(
-            chunk_size,
-            &[(base, memory.len())],
-        );
+        let mut allocator =
+            BitmapChunkAllocator::with_chunk_size(chunk_size, &[(base, memory.len())]);
 
         let layout = Layout::from_size_align(0, 1).unwrap();
         assert!(allocator.allocate(layout, ChunkOwner::Kernel).is_none());
@@ -657,10 +659,7 @@ mod tests {
         let mut memory = vec![0u8; 8 * custom_size];
         let base = memory.as_mut_ptr() as usize;
 
-        let allocator = BitmapChunkAllocator::with_chunk_size(
-            custom_size,
-            &[(base, memory.len())],
-        );
+        let allocator = BitmapChunkAllocator::with_chunk_size(custom_size, &[(base, memory.len())]);
 
         assert_eq!(allocator.chunk_size, custom_size);
         assert!(allocator.free_chunks() > 0);
@@ -673,10 +672,8 @@ mod tests {
         let mut memory = vec![0u8; 10 * chunk_size];
         let base = memory.as_mut_ptr() as usize;
 
-        let mut allocator = BitmapChunkAllocator::with_chunk_size(
-            chunk_size,
-            &[(base, memory.len())],
-        );
+        let mut allocator =
+            BitmapChunkAllocator::with_chunk_size(chunk_size, &[(base, memory.len())]);
 
         let layout = Layout::from_size_align(chunk_size, chunk_size).unwrap();
         let alloc = allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
@@ -690,10 +687,8 @@ mod tests {
         let mut memory = vec![0u8; 10 * chunk_size];
         let base = memory.as_mut_ptr() as usize;
 
-        let mut allocator = BitmapChunkAllocator::with_chunk_size(
-            chunk_size,
-            &[(base, memory.len())],
-        );
+        let mut allocator =
+            BitmapChunkAllocator::with_chunk_size(chunk_size, &[(base, memory.len())]);
 
         let layout = Layout::from_size_align(chunk_size, chunk_size * 2).unwrap();
         allocator.allocate(layout, ChunkOwner::Kernel);
@@ -761,10 +756,7 @@ mod tests {
         let base1 = mem1.as_mut_ptr() as usize;
         let base2 = mem2.as_mut_ptr() as usize;
 
-        let allocator = BitmapChunkAllocator::new(&[
-            (base1, mem1.len()),
-            (base2, mem2.len()),
-        ]);
+        let allocator = BitmapChunkAllocator::new(&[(base1, mem1.len()), (base2, mem2.len())]);
 
         let overhead = metadata_overhead(2, 11);
         let mem1_chunks = DEFAULT_CHUNK_SIZE / DEFAULT_CHUNK_SIZE;
@@ -779,10 +771,7 @@ mod tests {
         let base1 = mem1.as_mut_ptr() as usize;
         let base2 = mem2.as_mut_ptr() as usize;
 
-        let mut allocator = BitmapChunkAllocator::new(&[
-            (base1, mem1.len()),
-            (base2, mem2.len()),
-        ]);
+        let mut allocator = BitmapChunkAllocator::new(&[(base1, mem1.len()), (base2, mem2.len())]);
 
         let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
         let alloc = allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
@@ -793,7 +782,10 @@ mod tests {
     #[should_panic(expected = "no range large enough for metadata")]
     fn panics_when_no_range_large_enough_for_metadata() {
         let mems: Vec<Vec<u8>> = (0..4).map(|_| vec![0u8; DEFAULT_CHUNK_SIZE]).collect();
-        let ranges: Vec<(usize, usize)> = mems.iter().map(|m| (m.as_ptr() as usize, m.len())).collect();
+        let ranges: Vec<(usize, usize)> = mems
+            .iter()
+            .map(|m| (m.as_ptr() as usize, m.len()))
+            .collect();
         BitmapChunkAllocator::new(&ranges);
     }
 
@@ -823,7 +815,9 @@ mod tests {
 
         let chunk_allocator: &mut dyn ChunkAllocator = &mut allocator;
         let layout = Layout::from_size_align(DEFAULT_CHUNK_SIZE, 1).unwrap();
-        let alloc = chunk_allocator.allocate(layout, ChunkOwner::Kernel).unwrap();
+        let alloc = chunk_allocator
+            .allocate(layout, ChunkOwner::Kernel)
+            .unwrap();
         chunk_allocator.deallocate(alloc.ptr, alloc.chunk_count);
 
         assert_eq!(allocator.free_chunks(), total);

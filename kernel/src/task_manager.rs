@@ -1,6 +1,6 @@
-use collections::generational_arena::GenerationalArena;
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, TaskState, YieldReason};
+use collections::generational_arena::GenerationalArena;
 use core::ptr::null_mut;
 use system::future::FutureHandle;
 
@@ -31,7 +31,6 @@ impl TaskManager {
     pub(crate) fn remove_task(&mut self, handle: TaskHandle) {
         let _ = self.tasks.remove(handle);
     }
-    
 
     pub(crate) fn borrow_task_mut(&mut self, handle: TaskHandle) -> Result<&mut Task, Error> {
         match self.tasks.borrow_mut(handle) {
@@ -87,7 +86,11 @@ impl TaskManager {
         }
     }
 
-    pub(crate) fn set_completion_future(&mut self, handle: TaskHandle, future_handle: FutureHandle) {
+    pub(crate) fn set_completion_future(
+        &mut self,
+        handle: TaskHandle,
+        future_handle: FutureHandle,
+    ) {
         if let Ok(task) = self.tasks.borrow_mut(handle) {
             task.set_completion_future(future_handle);
         }

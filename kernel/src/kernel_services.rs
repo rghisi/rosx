@@ -38,7 +38,9 @@ pub(crate) fn init() {
 }
 
 pub(crate) fn services() -> &'static KernelServices {
-    KERNEL_SERVICES.get().expect("KernelServices not initialized")
+    KERNEL_SERVICES
+        .get()
+        .expect("KernelServices not initialized")
 }
 
 #[cfg(test)]
@@ -53,7 +55,10 @@ mod tests {
 
         let task = Task::new("test", 0x1000, 0);
         let handle = s.task_manager.borrow_mut().add_task(task).unwrap();
-        assert_eq!(s.task_manager.borrow().get_state(handle), crate::task::TaskState::Created);
+        assert_eq!(
+            s.task_manager.borrow().get_state(handle),
+            crate::task::TaskState::Created
+        );
 
         let future = alloc::boxed::Box::new(crate::future::TaskCompletionFuture::new(handle));
         let fh = s.future_registry.borrow_mut().register(future);

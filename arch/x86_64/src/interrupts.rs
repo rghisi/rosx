@@ -1,6 +1,7 @@
 use crate::cpu::syscall_handler_entry;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering::Relaxed;
+use kernel::kernel::kernel;
 use kernel::messages::HardwareInterrupt;
 use lazy_static::lazy_static;
 use pic8259::ChainedPics;
@@ -8,7 +9,6 @@ use spin::Mutex;
 use usrlib::println;
 use x86_64::instructions::port::Port;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
-use kernel::kernel::kernel;
 
 const PIC_1_OFFSET: u8 = 0x20;
 const PIC_2_OFFSET: u8 = 0x28;

@@ -1,5 +1,5 @@
-use usrlib::syscall::Syscall;
 use usrlib::println;
+use usrlib::syscall::Syscall;
 
 const CONTEXT_SWITCH_ITERATIONS: usize = 1000000;
 pub fn worker_context_switch() {
