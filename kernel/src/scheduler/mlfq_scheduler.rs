@@ -20,6 +20,12 @@ pub struct MlfqScheduler {
     remaining_quantum: usize,
 }
 
+impl Default for MlfqScheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MlfqScheduler {
     pub fn new() -> Self {
         MlfqScheduler {
@@ -40,9 +46,8 @@ impl MlfqScheduler {
     }
 
     pub(crate) fn push_task(&mut self, handle: TaskHandle) {
-        match services().task_manager.borrow().get_state(handle) {
-            Ready => self.queues[0].push_back(handle),
-            _ => (),
+        if services().task_manager.borrow().get_state(handle) == Ready {
+            self.queues[0].push_back(handle);
         }
     }
 
@@ -133,12 +138,12 @@ impl MlfqScheduler {
         while let Some(interrupt) = self.hw_interrupt_queue.pop_front() {
             match interrupt {
                 HardwareInterrupt::Keyboard { scancode } => {
-                    if scancode & 0x80 == 0 {
-                        if let Ok(key) = crate::keyboard::Key::from_scancode_set1(scancode) {
-                            let event = crate::keyboard::KeyboardEvent::from_key(key);
-                            if let Some(c) = event.char {
-                                crate::keyboard::push_key(c);
-                            }
+                    if scancode & 0x80 == 0
+                        && let Ok(key) = crate::keyboard::Key::from_scancode_set1(scancode)
+                    {
+                        let event = crate::keyboard::KeyboardEvent::from_key(key);
+                        if let Some(c) = event.char {
+                            crate::keyboard::push_key(c);
                         }
                     }
                 }
@@ -237,7 +242,7 @@ mod tests {
     static INIT: Once = Once::new();
 
     fn setup() {
-        INIT.call_once(|| init());
+        INIT.call_once(init);
     }
 
     fn create_ready_task(name: &'static str) -> TaskHandle {

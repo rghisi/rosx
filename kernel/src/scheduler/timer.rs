@@ -16,10 +16,7 @@ impl Timer {
 
     pub fn add_sleep(&mut self, now: u64, sleep: Duration, future_handle: FutureHandle) {
         let deadline = now + (sleep.as_millis() as u64);
-        self.next
-            .entry(deadline)
-            .or_insert_with(Vec::new)
-            .push(future_handle)
+        self.next.entry(deadline).or_default().push(future_handle)
     }
 
     pub fn pop_expired(&mut self, now: u64) -> Option<Vec<FutureHandle>> {

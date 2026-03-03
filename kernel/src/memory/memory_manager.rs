@@ -23,6 +23,12 @@ pub struct MemoryManager {
     memory_blocks: KernelCell<Option<MemoryBlocks>>,
 }
 
+impl Default for MemoryManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryManager {
     pub const fn new() -> Self {
         MemoryManager {

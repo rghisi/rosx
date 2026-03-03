@@ -69,17 +69,17 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     kprintln!("[KERNEL] Initializing");
     let mut kernel = Kernel::new(&KCONFIG);
     kernel.setup();
-    // kernel.schedule(FunctionTask::new("1", dummy::app::main));
-    // kernel.schedule(FunctionTask::new("2", dummy::app::main2));
-    // kernel.schedule(FunctionTask::new("3", dummy::app::main3));
-    // kernel.schedule(FunctionTask::new("4", dummy::app::main4));
-    let _ = kernel.schedule(FunctionTask::new(
+    // kernel.schedule(FunctionTask::create("1", dummy::app::main));
+    // kernel.schedule(FunctionTask::create("2", dummy::app::main2));
+    // kernel.schedule(FunctionTask::create("3", dummy::app::main3));
+    // kernel.schedule(FunctionTask::create("4", dummy::app::main4));
+    let _ = kernel.schedule(FunctionTask::create(
         "RandomServer",
         kernel::ipc::random_gen_server::main,
     ));
-    let _ = kernel.schedule(FunctionTask::new("Shell", shell::shell::main));
-    // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
-    // kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));
+    let _ = kernel.schedule(FunctionTask::create("Shell", shell::shell::main));
+    // kernel.schedule(FunctionTask::create("6", dummy::app::main_with_wait));
+    // kernel.schedule(FunctionTask::create("Test Suite", test_suite::app::main));
 
     kprintln!("[KERNEL] Starting");
     kernel.start();

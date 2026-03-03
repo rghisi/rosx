@@ -40,9 +40,8 @@ impl FifoScheduler {
     }
 
     pub(crate) fn push_task(&mut self, task_handle: TaskHandle) {
-        match services().task_manager.borrow().get_state(task_handle) {
-            Ready => self.user_tasks.push_back(task_handle),
-            _ => (),
+        if services().task_manager.borrow().get_state(task_handle) == Ready {
+            self.user_tasks.push_back(task_handle);
         }
     }
 
@@ -71,12 +70,12 @@ impl FifoScheduler {
         while let Some(hardware_interrupt) = self.hw_interrupt_queue.pop_front() {
             match hardware_interrupt {
                 HardwareInterrupt::Keyboard { scancode } => {
-                    if scancode & 0x80 == 0 {
-                        if let Ok(key) = crate::keyboard::Key::from_scancode_set1(scancode) {
-                            let event = crate::keyboard::KeyboardEvent::from_key(key);
-                            if let Some(c) = event.char {
-                                crate::keyboard::push_key(c);
-                            }
+                    if scancode & 0x80 == 0
+                        && let Ok(key) = crate::keyboard::Key::from_scancode_set1(scancode)
+                    {
+                        let event = crate::keyboard::KeyboardEvent::from_key(key);
+                        if let Some(c) = event.char {
+                            crate::keyboard::push_key(c);
                         }
                     }
                 }
@@ -208,7 +207,7 @@ mod tests {
     static INIT: Once = Once::new();
 
     fn setup() {
-        INIT.call_once(|| init());
+        INIT.call_once(init);
     }
 
     fn create_ready_task(name: &'static str) -> TaskHandle {

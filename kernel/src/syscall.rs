@@ -57,12 +57,12 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             crate::keyboard::pop_key().map_or(0, |c| c as usize)
         }
         Ok(SyscallNum::WaitFuture) => {
-            let handle = FutureHandle::unpack(arg1 as usize);
+            let handle = FutureHandle::unpack(arg1);
             let future = kernel().wait_future(handle).unwrap();
             Box::into_raw(Box::new(future)) as usize
         }
         Ok(SyscallNum::IsFutureCompleted) => {
-            let handle = FutureHandle::unpack(arg1 as usize);
+            let handle = FutureHandle::unpack(arg1);
             if kernel().is_future_completed(handle) {
                 1
             } else {

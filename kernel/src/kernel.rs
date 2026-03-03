@@ -39,7 +39,7 @@ impl Kernel {
         let elf_arch = kconfig.elf_arch;
         crate::kernel_services::init();
         let scheduler = (kconfig.scheduler_factory)();
-        let scheduler_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
+        let scheduler_task = Task::new("[K] Main Thread", main_thread_run as *const () as usize, 0);
         let scheduler_task_handler = services()
             .task_manager
             .borrow_mut()

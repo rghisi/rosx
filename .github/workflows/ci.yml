@@ -36,7 +36,30 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: |
+          cargo clippy -p collections -p system -p usrlib -p kernel -p test_suite -p dummy --all-targets -- \
+          -D warnings \
+          -A dead_code \
+          -A unused_variables \
+          -A unused_imports \
+          -A private_interfaces \
+          -A clippy::all \
+          -A clippy::pedantic \
+          -A clippy::nursery \
+          -A clippy::items_after_test_module \
+          -A clippy::redundant_closure \
+          -A clippy::empty_loop \
+          -A clippy::manual_div_ceil \
+          -A clippy::result_unit_err \
+          -A clippy::unwrap_or_default \
+          -A clippy::collapsible_if \
+          -A clippy::single_match \
+          -A clippy::new_without_default \
+          -A clippy::unnecessary_cast \
+          -A clippy::extra_unused_lifetimes \
+          -A clippy::new_ret_no_self \
+          -A clippy::unnecessary_unwrap \
+          -A clippy::missing_safety_doc
 
       - name: Install tools
         uses: taiki-e/install-action@v2

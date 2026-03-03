@@ -5,11 +5,11 @@ use usrlib::syscall::Syscall;
 pub fn main() {
     println!("=== RosX Test Suite Started ===");
 
-    Syscall::wait_future(Syscall::exec(allocation_test::run as usize));
+    Syscall::wait_future(Syscall::exec(allocation_test::run as *const () as usize));
     Syscall::wait_future(Syscall::exec(
-        context_switching::worker_context_switch as usize,
+        context_switching::worker_context_switch as *const () as usize,
     ));
-    Syscall::wait_future(Syscall::exec(worker_mixed_load as usize));
+    Syscall::wait_future(Syscall::exec(worker_mixed_load as *const () as usize));
 
     println!("=== Main Thread Finished ===");
 }
@@ -17,8 +17,8 @@ pub fn main() {
 pub fn worker_mixed_load() {
     println!("[MixWorker] Starting Mixed Load Test...");
 
-    let mem = Syscall::exec(allocation_test::run as usize);
-    let ctx = Syscall::exec(context_switching::worker_context_switch as usize);
+    let mem = Syscall::exec(allocation_test::run as *const () as usize);
+    let ctx = Syscall::exec(context_switching::worker_context_switch as *const () as usize);
 
     Syscall::wait_future(mem);
     Syscall::wait_future(ctx);
