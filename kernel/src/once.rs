@@ -27,12 +27,10 @@ impl<T> Once<T> {
     }
 
     pub fn call_once(&self, f: impl FnOnce() -> T) {
-        match self.state.compare_exchange(
-            UNINIT,
-            INITIALIZING,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
+        match self
+            .state
+            .compare_exchange(UNINIT, INITIALIZING, Ordering::AcqRel, Ordering::Acquire)
+        {
             Ok(_) => {
                 // Safety: we are the only thread that transitioned from UNINIT
                 // to INITIALIZING, so we have exclusive access to the value.

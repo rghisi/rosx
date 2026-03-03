@@ -7,7 +7,7 @@ extern crate alloc;
 extern crate system;
 extern crate usrlib;
 
-pub mod app;
-mod random;
 mod allocation_test;
+pub mod app;
 mod context_switching;
+mod random;

@@ -1,10 +1,10 @@
-use collections::generational_arena::Handle;
 use crate::cpu::Cpu;
-use crate::kernel::{kernel};
+use crate::elf::load_elf;
+use crate::kernel::kernel;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::boxed::Box;
+use collections::generational_arena::Handle;
 use core::fmt::{Display, Formatter};
-use crate::elf::load_elf;
 use system::future::FutureHandle;
 
 pub(crate) type TaskHandle = Handle;
@@ -58,11 +58,7 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new<'a>(
-        name: &'static str,
-        entry_point: usize,
-        entry_param: usize,
-    ) -> SharedTask {
+    pub fn new<'a>(name: &'static str, entry_point: usize, entry_param: usize) -> SharedTask {
         let mut task = Box::new(Task {
             name,
             state: Created,

@@ -50,7 +50,9 @@ impl MemoryManager {
 
     pub fn print_config(&self) {
         let memory_blocks = self.memory_blocks.borrow();
-        let memory_blocks = memory_blocks.as_ref().expect("MemoryManager not bootstrapped");
+        let memory_blocks = memory_blocks
+            .as_ref()
+            .expect("MemoryManager not bootstrapped");
         let mut total_size: usize = 0;
         for i in 0..memory_blocks.count {
             let block = &memory_blocks.blocks[i];
@@ -115,7 +117,7 @@ unsafe impl GlobalAlloc for MemoryManager {
 mod tests {
     use super::*;
     use crate::cpu::Cpu;
-    use crate::memory::{MemoryBlock, MAX_MEMORY_BLOCKS};
+    use crate::memory::{MAX_MEMORY_BLOCKS, MemoryBlock};
     use core::alloc::{GlobalAlloc, Layout};
 
     struct MockCpu;
@@ -124,10 +126,16 @@ mod tests {
         fn setup(&self) {}
         fn enable_interrupts(&self) {}
         fn disable_interrupts(&self) {}
-        fn are_interrupts_enabled(&self) -> bool { false }
-        fn initialize_stack(&self, _: usize, _: usize, _: usize, _: usize) -> usize { 0 }
+        fn are_interrupts_enabled(&self) -> bool {
+            false
+        }
+        fn initialize_stack(&self, _: usize, _: usize, _: usize, _: usize) -> usize {
+            0
+        }
         fn swap_context(&self, _: *mut usize, _: usize) {}
-        fn get_system_time(&self) -> u64 { 0 }
+        fn get_system_time(&self) -> u64 {
+            0
+        }
         fn halt(&self) {}
     }
 
@@ -138,7 +146,10 @@ mod tests {
         let blocks = MemoryBlocks {
             blocks: core::array::from_fn(|i| {
                 if i == 0 {
-                    MemoryBlock { start: memory.as_mut_ptr() as usize, size: memory.len() }
+                    MemoryBlock {
+                        start: memory.as_mut_ptr() as usize,
+                        size: memory.len(),
+                    }
                 } else {
                     MemoryBlock { start: 0, size: 0 }
                 }

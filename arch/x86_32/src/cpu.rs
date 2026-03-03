@@ -119,23 +119,23 @@ core::arch::global_asm!(
     ".global swap_context",
     "swap_context:",
     "    cli",
-    "    mov eax, [esp + 4]",   // store ptr — read BEFORE any pushes
-    "    mov ecx, [esp + 8]",   // load value — read BEFORE any pushes
+    "    mov eax, [esp + 4]", // store ptr — read BEFORE any pushes
+    "    mov ecx, [esp + 8]", // load value — read BEFORE any pushes
     "    test eax, eax",
-    "    jz 1f",                 // if null: abandon current context, skip save
+    "    jz 1f", // if null: abandon current context, skip save
     "    push ebp",
     "    push ebx",
     "    push esi",
     "    push edi",
-    "    mov [eax], esp",        // *store = esp (points to complete register frame)
+    "    mov [eax], esp", // *store = esp (points to complete register frame)
     "1:",
-    "    mov esp, ecx",          // switch to next task's stack
+    "    mov esp, ecx", // switch to next task's stack
     "    pop edi",
     "    pop esi",
     "    pop ebx",
     "    pop ebp",
     "    sti",
-    "    ret",                   // jump to next task's saved return address
+    "    ret", // jump to next task's saved return address
 );
 
 // int80_handler — raw entry point for `int 0x80` system calls.
@@ -158,15 +158,15 @@ core::arch::global_asm!(
     "    push ebp",
     "    push edi",
     "    push esi",
-    "    push edx",             // save arg3 (caller-saved in cdecl, but we preserve it)
-    "    push ecx",             // save arg2
-    "    push ebx",             // save arg1
-    "    push edx",             // cdecl arg3
-    "    push ecx",             // cdecl arg2
-    "    push ebx",             // cdecl arg1
-    "    push eax",             // cdecl num
+    "    push edx", // save arg3 (caller-saved in cdecl, but we preserve it)
+    "    push ecx", // save arg2
+    "    push ebx", // save arg1
+    "    push edx", // cdecl arg3
+    "    push ecx", // cdecl arg2
+    "    push ebx", // cdecl arg1
+    "    push eax", // cdecl num
     "    call syscall_handler", // result in eax
-    "    add esp, 16",          // discard 4 cdecl args
+    "    add esp, 16", // discard 4 cdecl args
     "    pop ebx",
     "    pop ecx",
     "    pop edx",

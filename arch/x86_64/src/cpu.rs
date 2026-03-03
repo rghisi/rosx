@@ -2,9 +2,9 @@ use crate::interrupts::SYSTEM_TIME_MS;
 use core::arch::asm;
 use core::sync::atomic::Ordering::Relaxed;
 use kernel::cpu::Cpu;
+use x86_64::VirtAddr;
 use x86_64::registers::model_specific::{Efer, EferFlags, LStar, SFMask, Star};
 use x86_64::structures::gdt::SegmentSelector;
-use x86_64::VirtAddr;
 
 pub struct X86_64 {}
 
@@ -62,7 +62,8 @@ impl Cpu for X86_64 {
     }
 
     fn are_interrupts_enabled(&self) -> bool {
-        x86_64::registers::rflags::read().contains(x86_64::registers::rflags::RFlags::INTERRUPT_FLAG)
+        x86_64::registers::rflags::read()
+            .contains(x86_64::registers::rflags::RFlags::INTERRUPT_FLAG)
     }
 
     fn initialize_stack(
@@ -74,7 +75,7 @@ impl Cpu for X86_64 {
     ) -> usize {
         unsafe {
             let mut sp = stack_pointer as *mut usize;
-            
+
             // Align stack pointer to 16 bytes for ABI compliance
             let sp_val = sp as usize;
             sp = (sp_val & !0xF) as *mut usize;

@@ -1,3 +1,5 @@
+use crate::future::TaskFuture;
+use crate::kernel::kernel;
 use crate::kernel_services::services;
 use crate::messages::HardwareInterrupt;
 use crate::scheduler::Scheduler;
@@ -5,8 +7,6 @@ use crate::task::TaskHandle;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::collections::VecDeque;
 use system::future::FutureHandle;
-use crate::future::TaskFuture;
-use crate::kernel::kernel;
 
 pub struct FifoScheduler {
     idle_task: Option<TaskHandle>,
@@ -91,19 +91,24 @@ impl FifoScheduler {
             Some(next_task) => next_task,
         };
 
-        services().task_manager
+        services()
+            .task_manager
             .borrow_mut()
             .set_state(next_task_handle, Running);
 
         let returned_task_handle = kernel().switch_to_task(next_task_handle);
 
-        let task_state = services().task_manager.borrow().get_state(returned_task_handle);
+        let task_state = services()
+            .task_manager
+            .borrow()
+            .get_state(returned_task_handle);
 
         match task_state {
             Created => {}
             Ready => {}
             Running => {
-                services().task_manager
+                services()
+                    .task_manager
                     .borrow_mut()
                     .set_state(returned_task_handle, Ready);
                 if returned_task_handle != self.idle_task.unwrap() {
@@ -115,7 +120,8 @@ impl FifoScheduler {
             Blocked => {}
             Terminated => {
                 self.cleanup_completion_future(returned_task_handle);
-                services().task_manager
+                services()
+                    .task_manager
                     .borrow_mut()
                     .remove_task(returned_task_handle);
             }
@@ -123,11 +129,21 @@ impl FifoScheduler {
     }
 
     fn cleanup_completion_future(&mut self, task_handle: TaskHandle) {
-        let completion_future = services().task_manager.borrow().get_completion_future(task_handle);
+        let completion_future = services()
+            .task_manager
+            .borrow()
+            .get_completion_future(task_handle);
         if let Some(future_handle) = completion_future {
-            let is_waited_on = self.blocked_tasks.iter().any(|tf| tf.future_handle == future_handle);
+            let is_waited_on = self
+                .blocked_tasks
+                .iter()
+                .any(|tf| tf.future_handle == future_handle);
             if !is_waited_on {
-                services().future_registry.borrow_mut().consume(future_handle).ok();
+                services()
+                    .future_registry
+                    .borrow_mut()
+                    .consume(future_handle)
+                    .ok();
             }
         }
     }
@@ -141,7 +157,8 @@ impl FifoScheduler {
         for _ in 0..self.blocked_tasks.len() {
             if let Some(task_future) = self.blocked_tasks.pop_front() {
                 if task_future.is_completed() {
-                    services().task_manager
+                    services()
+                        .task_manager
                         .borrow_mut()
                         .set_state(task_future.task_handle, Ready);
                     self.user_tasks.push_back(task_future.task_handle);
@@ -197,7 +214,10 @@ mod tests {
     fn create_ready_task(name: &'static str) -> TaskHandle {
         let task = Task::new(name, 0x1000, 0);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
-        services().task_manager.borrow_mut().set_state(handle, TaskState::Ready);
+        services()
+            .task_manager
+            .borrow_mut()
+            .set_state(handle, TaskState::Ready);
         handle
     }
 
@@ -209,13 +229,29 @@ mod tests {
         let task = Task::new("T", 0, 0);
         let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
         let future = Box::new(TaskCompletionFuture::new(task_handle));
-        let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
-        services().task_manager.borrow_mut().set_completion_future(task_handle, future_handle);
-        services().task_manager.borrow_mut().set_state(task_handle, TaskState::Terminated);
+        let future_handle = services()
+            .future_registry
+            .borrow_mut()
+            .register(future)
+            .unwrap();
+        services()
+            .task_manager
+            .borrow_mut()
+            .set_completion_future(task_handle, future_handle);
+        services()
+            .task_manager
+            .borrow_mut()
+            .set_state(task_handle, TaskState::Terminated);
 
         scheduler.cleanup_completion_future_for_test(task_handle);
 
-        assert!(services().future_registry.borrow_mut().get(future_handle).is_none());
+        assert!(
+            services()
+                .future_registry
+                .borrow_mut()
+                .get(future_handle)
+                .is_none()
+        );
     }
 
     #[test]
@@ -226,16 +262,32 @@ mod tests {
         let task = Task::new("T", 0, 0);
         let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
         let future = Box::new(TaskCompletionFuture::new(task_handle));
-        let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
-        services().task_manager.borrow_mut().set_completion_future(task_handle, future_handle);
+        let future_handle = services()
+            .future_registry
+            .borrow_mut()
+            .register(future)
+            .unwrap();
+        services()
+            .task_manager
+            .borrow_mut()
+            .set_completion_future(task_handle, future_handle);
 
         let waiter = create_ready_task("Waiter");
         scheduler.push_blocked(waiter, future_handle);
 
-        services().task_manager.borrow_mut().set_state(task_handle, TaskState::Terminated);
+        services()
+            .task_manager
+            .borrow_mut()
+            .set_state(task_handle, TaskState::Terminated);
 
         scheduler.cleanup_completion_future_for_test(task_handle);
 
-        assert!(services().future_registry.borrow_mut().get(future_handle).is_some());
+        assert!(
+            services()
+                .future_registry
+                .borrow_mut()
+                .get(future_handle)
+                .is_some()
+        );
     }
 }

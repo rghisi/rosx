@@ -1,28 +1,31 @@
-use core::alloc::{GlobalAlloc, Layout};
-use alloc::boxed::Box;
-use alloc::string::String;
+use crate::default_output::print;
 use crate::future::TimeFuture;
 use crate::kernel::kernel;
 use crate::kernel_services::services;
-use crate::default_output::print;
-use system::syscall_numbers::SyscallNum;
-use collections::generational_arena::HalfSize;
-use system::future::FutureHandle;
-use system::ipc::{IpcReplyFuture, IpcServerHandle};
-use system::ipc::IpcSendMessage;
 use crate::task::{new_elf_task, new_entrypoint_task};
+use alloc::boxed::Box;
+use alloc::string::String;
+use collections::generational_arena::HalfSize;
+use core::alloc::{GlobalAlloc, Layout};
+use system::future::FutureHandle;
+use system::ipc::IpcSendMessage;
+use system::ipc::{IpcReplyFuture, IpcServerHandle};
+use system::syscall_numbers::SyscallNum;
 
 #[cfg(not(test))]
 pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usize {
     match SyscallNum::try_from(num) {
         Ok(SyscallNum::Print) => {
-            let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(arg1 as *const u8, arg2)) };
+            let s = unsafe {
+                core::str::from_utf8_unchecked(core::slice::from_raw_parts(arg1 as *const u8, arg2))
+            };
             print(format_args!("{}", s));
             0
         }
         Ok(SyscallNum::Sleep) => {
             let future = Box::new(TimeFuture::new(arg1 as u64));
-            let handle = services().future_registry
+            let handle = services()
+                .future_registry
                 .borrow_mut()
                 .register(future)
                 .expect("Failed to register sleep future");
@@ -45,7 +48,8 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
                 return c as usize;
             }
             let future = Box::new(crate::keyboard::KeyboardFuture::new());
-            let handle = services().future_registry
+            let handle = services()
+                .future_registry
                 .borrow_mut()
                 .register(future)
                 .expect("Failed to register keyboard future");
@@ -59,20 +63,26 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::IsFutureCompleted) => {
             let handle = FutureHandle::unpack(arg1 as usize);
-            if kernel().is_future_completed(handle) { 1 } else { 0 }
+            if kernel().is_future_completed(handle) {
+                1
+            } else {
+                0
+            }
         }
         Ok(SyscallNum::Alloc) => {
-            let Ok(layout) = Layout::from_size_align(arg1, arg2) else { return 0 };
+            let Ok(layout) = Layout::from_size_align(arg1, arg2) else {
+                return 0;
+            };
             (unsafe { services().memory_manager.alloc(layout) }) as usize
         }
         Ok(SyscallNum::Dealloc) => {
-            let Ok(layout) = Layout::from_size_align(arg2, arg3) else { return 0 };
+            let Ok(layout) = Layout::from_size_align(arg2, arg3) else {
+                return 0;
+            };
             unsafe { services().memory_manager.dealloc(arg1 as *mut u8, layout) };
             0
         }
-        Ok(SyscallNum::TryReadChar) => {
-            crate::keyboard::pop_key().map_or(0, |c| c as usize)
-        }
+        Ok(SyscallNum::TryReadChar) => crate::keyboard::pop_key().map_or(0, |c| c as usize),
         Ok(SyscallNum::LoadElf) => {
             let elf_ptr = arg1;
             let elf_bytes: &[u8] = unsafe { *Box::from_raw(elf_ptr as *mut &[u8]) };
@@ -90,7 +100,10 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             let value = arg3 as u32;
             let ipc_server_handle = IpcServerHandle::new(arg1 as HalfSize, arg2 as HalfSize);
             let message = IpcSendMessage { value };
-            let future_handle = services().ipc_manager.borrow_mut().send(ipc_server_handle, message);
+            let future_handle = services()
+                .ipc_manager
+                .borrow_mut()
+                .send(ipc_server_handle, message);
             let future = kernel().wait_future(future_handle).unwrap();
             let ipc_reply_future = *future.as_any().downcast_ref::<IpcReplyFuture>().unwrap();
             Box::into_raw(Box::new(ipc_reply_future)) as usize

@@ -1,6 +1,6 @@
-use core::any::Any;
-use collections::generational_arena::Handle;
 use crate::future::Future;
+use collections::generational_arena::Handle;
+use core::any::Any;
 
 pub type IpcServerHandle = Handle;
 
@@ -11,7 +11,7 @@ pub enum IpcError {
 }
 
 pub struct IpcSendMessage {
-    pub value: u32
+    pub value: u32,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

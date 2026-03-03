@@ -6,7 +6,9 @@ pub fn main() {
     println!("=== RosX Test Suite Started ===");
 
     Syscall::wait_future(Syscall::exec(allocation_test::run as usize));
-    Syscall::wait_future(Syscall::exec(context_switching::worker_context_switch as usize));
+    Syscall::wait_future(Syscall::exec(
+        context_switching::worker_context_switch as usize,
+    ));
     Syscall::wait_future(Syscall::exec(worker_mixed_load as usize));
 
     println!("=== Main Thread Finished ===");
