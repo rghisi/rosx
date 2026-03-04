@@ -50,10 +50,17 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kernel::kprintln!("[x86] Bootstrapped");
 
+    kernel::kprintln!("[x86] Creating kernel...");
     let mut kernel = kernel::kernel::Kernel::new(&KCONFIG);
+
+    kernel::kprintln!("[x86] Calling setup...");
     kernel.setup();
+
+    kernel::kprintln!("[x86] Scheduling shell...");
     //let _ = kernel.schedule(kernel::task::FunctionTask::new("RandomServer", kernel::ipc::random_gen_server::main));
     let _ = kernel.schedule(kernel::task::FunctionTask::new("Shell", shell::shell::main));
+
+    kernel::kprintln!("[x86] Starting kernel...");
     kernel.start();
     panic!("[x86] kernel.start() returned");
 }
