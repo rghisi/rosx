@@ -173,6 +173,7 @@ pub fn new_elf_task(elf: &'static [u8]) -> SharedTask {
 pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
     let task_entry_point: fn() = unsafe { core::mem::transmute(entry_point) };
 
+    crate::kprintln!("[TASK] wrapper entered");
     kernel().execution_state.preemption_enabled = true;
 
     task_entry_point();
