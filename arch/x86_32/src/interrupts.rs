@@ -43,6 +43,17 @@ impl IdtEntry {
         Self { offset_low: 0, selector: 0, zero: 0, type_attr: 0, offset_high: 0 }
     }
 
+    fn interrupt_gate_ec(handler: extern "x86-interrupt" fn(InterruptStackFrame, u32)) -> Self {
+        let addr = handler as *const () as usize as u32;
+        Self {
+            offset_low: (addr & 0xFFFF) as u16,
+            selector: 0x08,
+            zero: 0,
+            type_attr: 0x8E,
+            offset_high: ((addr >> 16) & 0xFFFF) as u16,
+        }
+    }
+
     fn interrupt_gate(handler: extern "x86-interrupt" fn(InterruptStackFrame)) -> Self {
         let addr = handler as *const () as usize as u32;
         Self {
@@ -83,6 +94,7 @@ unsafe extern "C" {
 lazy_static! {
     static ref IDT: Idt = {
         let mut idt = Idt([IdtEntry::absent(); 256]);
+        idt.0[13] = IdtEntry::interrupt_gate_ec(general_protection_fault_handler);
         idt.0[PIC_MASTER_OFFSET as usize]     = IdtEntry::interrupt_gate(timer_interrupt_handler);
         idt.0[PIC_MASTER_OFFSET as usize + 1] = IdtEntry::interrupt_gate(keyboard_interrupt_handler);
         idt.0[0x80] = IdtEntry::trap_gate(int80_handler as *const () as u32);
@@ -154,7 +166,20 @@ pub struct InterruptStackFrame {
     eflags: u32,
 }
 
+#[repr(C)]
+pub struct InterruptStackFrameWithError {
+    error_code: u32,
+    eip: u32,
+    cs: u32,
+    eflags: u32,
+}
+
 // ── Handlers ──────────────────────────────────────────────────────────────────
+
+extern "x86-interrupt" fn general_protection_fault_handler(frame: InterruptStackFrame, error_code: u32) {
+    kernel::kprintln!("[#GP fault] eip={:#x} cs={:#x} err={:#x}", frame.eip, frame.cs, error_code);
+    loop {}
+}
 
 extern "x86-interrupt" fn timer_interrupt_handler(_frame: InterruptStackFrame) {
     SYSTEM_TIME_MS.fetch_add(MS_PER_TICK as u32, Relaxed);
