@@ -65,12 +65,12 @@ impl IdtEntry {
         }
     }
 
-    fn trap_gate(handler_addr: u32) -> Self {
+    fn interrupt_gate_raw(handler_addr: u32) -> Self {
         Self {
             offset_low: (handler_addr & 0xFFFF) as u16,
             selector: 0x08,
             zero: 0,
-            type_attr: 0x8F, // P=1, DPL=0, type=0xF (32-bit trap gate)
+            type_attr: 0x8E, // P=1, DPL=0, type=0xE (32-bit interrupt gate)
             offset_high: ((handler_addr >> 16) & 0xFFFF) as u16,
         }
     }
@@ -97,7 +97,7 @@ lazy_static! {
         idt.0[13] = IdtEntry::interrupt_gate_ec(general_protection_fault_handler);
         idt.0[PIC_MASTER_OFFSET as usize]     = IdtEntry::interrupt_gate(timer_interrupt_handler);
         idt.0[PIC_MASTER_OFFSET as usize + 1] = IdtEntry::interrupt_gate(keyboard_interrupt_handler);
-        idt.0[0x80] = IdtEntry::trap_gate(int80_handler as *const () as u32);
+        idt.0[0x80] = IdtEntry::interrupt_gate_raw(int80_handler as *const () as u32);
         idt
     };
 }

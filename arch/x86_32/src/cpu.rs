@@ -156,6 +156,10 @@ core::arch::global_asm!(
 core::arch::global_asm!(
     ".global int80_handler",
     "int80_handler:",
+    "    push eax",
+    "    mov eax, 0x4F48",           // 'H' with white-on-red attribute
+    "    mov word ptr [0xb8000], ax", // write directly to VGA col 0, row 0
+    "    pop eax",
     "    push ebp",
     "    push edi",
     "    push esi",
