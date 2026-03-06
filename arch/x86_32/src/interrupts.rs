@@ -113,6 +113,41 @@ pub fn init() {
         asm!("lidt [{0}]", in(reg) &ptr as *const IdtPtr as usize,
              options(nostack, readonly, preserves_flags));
     }
+
+    let mut loaded = IdtPtr { limit: 0, base: 0 };
+    unsafe {
+        asm!("sidt [{0}]", in(reg) &mut loaded as *mut IdtPtr as usize,
+             options(nostack, preserves_flags));
+    }
+    let (idtr_base, idtr_limit) = unsafe {(
+        core::ptr::read_unaligned(core::ptr::addr_of!(loaded.base)),
+        core::ptr::read_unaligned(core::ptr::addr_of!(loaded.limit)),
+    )};
+    kernel::kprintln!("[IDT] IDTR base={:#x} limit={:#x}", idtr_base, idtr_limit);
+
+    let e80 = &IDT.0[0x80] as *const IdtEntry;
+    let (lo80, hi80, sel80, attr80) = unsafe {(
+        core::ptr::read_unaligned(core::ptr::addr_of!((*e80).offset_low)),
+        core::ptr::read_unaligned(core::ptr::addr_of!((*e80).offset_high)),
+        core::ptr::read_unaligned(core::ptr::addr_of!((*e80).selector)),
+        core::ptr::read_unaligned(core::ptr::addr_of!((*e80).type_attr)),
+    )};
+    let reconstructed = (hi80 as u32) << 16 | lo80 as u32;
+    let handler_addr = unsafe { int80_handler as *const () as u32 };
+    kernel::kprintln!("[IDT] [0x80] handler_fn={:#x} entry_addr={:#x} sel={:#x} attr={:#x}",
+        handler_addr, reconstructed, sel80, attr80);
+
+    let e20 = &IDT.0[0x20] as *const IdtEntry;
+    let (lo20, hi20, sel20, attr20) = unsafe {(
+        core::ptr::read_unaligned(core::ptr::addr_of!((*e20).offset_low)),
+        core::ptr::read_unaligned(core::ptr::addr_of!((*e20).offset_high)),
+        core::ptr::read_unaligned(core::ptr::addr_of!((*e20).selector)),
+        core::ptr::read_unaligned(core::ptr::addr_of!((*e20).type_attr)),
+    )};
+    let timer_addr = (hi20 as u32) << 16 | lo20 as u32;
+    kernel::kprintln!("[IDT] [0x20] timer_addr={:#x} sel={:#x} attr={:#x}",
+        timer_addr, sel20, attr20);
+
     init_pic();
 }
 
