@@ -181,18 +181,21 @@ pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
     drop(probe);
 
     crate::kprintln!("[TASK] issuing direct int 0x80");
-    let result: usize;
-    unsafe {
-        core::arch::asm!(
-            "int 0x80",
-            inout("eax") 0usize => result,
-            in("ebx") 0usize,
-            in("ecx") 0usize,
-            in("edx") 0usize,
-            options(nostack),
-        );
+    #[cfg(target_arch = "x86")]
+    {
+        let result: usize;
+        unsafe {
+            core::arch::asm!(
+                "int 0x80",
+                inout("eax") 0usize => result,
+                in("ebx") 0usize,
+                in("ecx") 0usize,
+                in("edx") 0usize,
+                options(nostack),
+            );
+        }
+        crate::kprintln!("[TASK] after int 0x80, result={}", result);
     }
-    crate::kprintln!("[TASK] after int 0x80, result={}", result);
 
     task_entry_point();
 
