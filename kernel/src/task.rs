@@ -176,6 +176,10 @@ pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
     crate::kprintln!("[TASK] wrapper entered");
     kernel().execution_state.preemption_enabled = true;
 
+    let probe = Box::new(0xDEADBEEFu32);
+    crate::kprintln!("[TASK] alloc probe: {:#x}", *probe);
+    drop(probe);
+
     task_entry_point();
 
     kernel().terminate_and_yield();
