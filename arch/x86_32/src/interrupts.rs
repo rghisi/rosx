@@ -25,6 +25,9 @@ const MS_PER_TICK: u64 = 1_000 / TICK_RATE_HZ as u64;
 
 // ── IDT ───────────────────────────────────────────────────────────────────────
 
+// 32-bit protected-mode IDT entry (8 bytes).
+// Layout matches the IA-32 manual: two 16-bit offset halves surrounding the
+// segment selector, type/attribute byte, and a reserved zero byte.
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 struct IdtEntry {
@@ -44,7 +47,7 @@ impl IdtEntry {
         let addr = handler as *const () as usize as u32;
         Self {
             offset_low: (addr & 0xFFFF) as u16,
-            selector: 0x08,
+            selector: 0x08,  // GDT[1] — kernel code segment supplied by GRUB
             zero: 0,
             type_attr: 0x8E, // P=1, DPL=0, type=0xE (32-bit interrupt gate)
             offset_high: ((addr >> 16) & 0xFFFF) as u16,
