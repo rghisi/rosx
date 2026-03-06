@@ -173,29 +173,7 @@ pub fn new_elf_task(elf: &'static [u8]) -> SharedTask {
 pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
     let task_entry_point: fn() = unsafe { core::mem::transmute(entry_point) };
 
-    crate::kprintln!("[TASK] wrapper entered");
     kernel().execution_state.preemption_enabled = true;
-
-    let probe = Box::new(0xDEADBEEFu32);
-    crate::kprintln!("[TASK] alloc probe: {:#x}", *probe);
-    drop(probe);
-
-    crate::kprintln!("[TASK] issuing direct int 0x80");
-    #[cfg(target_arch = "x86")]
-    {
-        let result: usize;
-        unsafe {
-            core::arch::asm!(
-                "int 0x80",
-                inout("eax") 0usize => result,
-                in("ebx") 0usize,
-                in("ecx") 0usize,
-                in("edx") 0usize,
-                options(nostack),
-            );
-        }
-        crate::kprintln!("[TASK] after int 0x80, result={}", result);
-    }
 
     task_entry_point();
 

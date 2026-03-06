@@ -32,7 +32,6 @@ impl MlfqScheduler {
     }
 
     pub(crate) fn run(&mut self) {
-        crate::kprintln!("[SCHED] scheduler run() entered");
         loop {
             self.process_hardware_interrupts();
             self.poll_futures();

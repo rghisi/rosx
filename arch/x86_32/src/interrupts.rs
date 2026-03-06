@@ -25,9 +25,6 @@ const MS_PER_TICK: u64 = 1_000 / TICK_RATE_HZ as u64;
 
 // ── IDT ───────────────────────────────────────────────────────────────────────
 
-// 32-bit protected-mode IDT entry (8 bytes).
-// Layout matches the IA-32 manual: two 16-bit offset halves surrounding the
-// segment selector, type/attribute byte, and a reserved zero byte.
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 struct IdtEntry {
@@ -43,34 +40,23 @@ impl IdtEntry {
         Self { offset_low: 0, selector: 0, zero: 0, type_attr: 0, offset_high: 0 }
     }
 
-    fn interrupt_gate_ec(handler: extern "x86-interrupt" fn(InterruptStackFrame, u32)) -> Self {
-        let addr = handler as *const () as usize as u32;
-        Self {
-            offset_low: (addr & 0xFFFF) as u16,
-            selector: 0x08,
-            zero: 0,
-            type_attr: 0x8E,
-            offset_high: ((addr >> 16) & 0xFFFF) as u16,
-        }
-    }
-
     fn interrupt_gate(handler: extern "x86-interrupt" fn(InterruptStackFrame)) -> Self {
         let addr = handler as *const () as usize as u32;
         Self {
             offset_low: (addr & 0xFFFF) as u16,
-            selector: 0x08,  // GDT[1] — kernel code segment supplied by GRUB
+            selector: 0x08,
             zero: 0,
             type_attr: 0x8E, // P=1, DPL=0, type=0xE (32-bit interrupt gate)
             offset_high: ((addr >> 16) & 0xFFFF) as u16,
         }
     }
 
-    fn interrupt_gate_raw(handler_addr: u32) -> Self {
+    fn trap_gate_ring3(handler_addr: u32) -> Self {
         Self {
             offset_low: (handler_addr & 0xFFFF) as u16,
             selector: 0x08,
             zero: 0,
-            type_attr: 0x8E, // P=1, DPL=0, type=0xE (32-bit interrupt gate)
+            type_attr: 0xEF, // P=1, DPL=3, type=0xF (32-bit trap gate, callable from ring 3)
             offset_high: ((handler_addr >> 16) & 0xFFFF) as u16,
         }
     }
@@ -94,10 +80,9 @@ unsafe extern "C" {
 lazy_static! {
     static ref IDT: Idt = {
         let mut idt = Idt([IdtEntry::absent(); 256]);
-        idt.0[13] = IdtEntry::interrupt_gate_ec(general_protection_fault_handler);
         idt.0[PIC_MASTER_OFFSET as usize]     = IdtEntry::interrupt_gate(timer_interrupt_handler);
         idt.0[PIC_MASTER_OFFSET as usize + 1] = IdtEntry::interrupt_gate(keyboard_interrupt_handler);
-        idt.0[0x80] = IdtEntry::interrupt_gate_raw(int80_handler as *const () as u32);
+        idt.0[0x80] = IdtEntry::trap_gate_ring3(int80_handler as *const () as u32);
         idt
     };
 }
@@ -113,41 +98,6 @@ pub fn init() {
         asm!("lidt [{0}]", in(reg) &ptr as *const IdtPtr as usize,
              options(nostack, readonly, preserves_flags));
     }
-
-    let mut loaded = IdtPtr { limit: 0, base: 0 };
-    unsafe {
-        asm!("sidt [{0}]", in(reg) &mut loaded as *mut IdtPtr as usize,
-             options(nostack, preserves_flags));
-    }
-    let (idtr_base, idtr_limit) = unsafe {(
-        core::ptr::read_unaligned(core::ptr::addr_of!(loaded.base)),
-        core::ptr::read_unaligned(core::ptr::addr_of!(loaded.limit)),
-    )};
-    kernel::kprintln!("[IDT] IDTR base={:#x} limit={:#x}", idtr_base, idtr_limit);
-
-    let e80 = &IDT.0[0x80] as *const IdtEntry;
-    let (lo80, hi80, sel80, attr80) = unsafe {(
-        core::ptr::read_unaligned(core::ptr::addr_of!((*e80).offset_low)),
-        core::ptr::read_unaligned(core::ptr::addr_of!((*e80).offset_high)),
-        core::ptr::read_unaligned(core::ptr::addr_of!((*e80).selector)),
-        core::ptr::read_unaligned(core::ptr::addr_of!((*e80).type_attr)),
-    )};
-    let reconstructed = (hi80 as u32) << 16 | lo80 as u32;
-    let handler_addr = unsafe { int80_handler as *const () as u32 };
-    kernel::kprintln!("[IDT] [0x80] handler_fn={:#x} entry_addr={:#x} sel={:#x} attr={:#x}",
-        handler_addr, reconstructed, sel80, attr80);
-
-    let e20 = &IDT.0[0x20] as *const IdtEntry;
-    let (lo20, hi20, sel20, attr20) = unsafe {(
-        core::ptr::read_unaligned(core::ptr::addr_of!((*e20).offset_low)),
-        core::ptr::read_unaligned(core::ptr::addr_of!((*e20).offset_high)),
-        core::ptr::read_unaligned(core::ptr::addr_of!((*e20).selector)),
-        core::ptr::read_unaligned(core::ptr::addr_of!((*e20).type_attr)),
-    )};
-    let timer_addr = (hi20 as u32) << 16 | lo20 as u32;
-    kernel::kprintln!("[IDT] [0x20] timer_addr={:#x} sel={:#x} attr={:#x}",
-        timer_addr, sel20, attr20);
-
     init_pic();
 }
 
@@ -201,20 +151,7 @@ pub struct InterruptStackFrame {
     eflags: u32,
 }
 
-#[repr(C)]
-pub struct InterruptStackFrameWithError {
-    error_code: u32,
-    eip: u32,
-    cs: u32,
-    eflags: u32,
-}
-
 // ── Handlers ──────────────────────────────────────────────────────────────────
-
-extern "x86-interrupt" fn general_protection_fault_handler(frame: InterruptStackFrame, error_code: u32) {
-    kernel::kprintln!("[#GP fault] eip={:#x} cs={:#x} err={:#x}", frame.eip, frame.cs, error_code);
-    loop {}
-}
 
 extern "x86-interrupt" fn timer_interrupt_handler(_frame: InterruptStackFrame) {
     SYSTEM_TIME_MS.fetch_add(MS_PER_TICK as u32, Relaxed);
