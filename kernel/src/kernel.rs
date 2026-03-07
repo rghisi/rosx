@@ -22,6 +22,10 @@ use crate::kernel_cell::KernelCell;
 
 static KERNEL_PTR: KernelCell<*mut Kernel> = KernelCell::new(null_mut());
 
+pub fn kernel_is_ready() -> bool {
+    !KERNEL_PTR.borrow().is_null()
+}
+
 pub fn kernel() -> &'static mut Kernel {
     unsafe { &mut **KERNEL_PTR.borrow() }
 }

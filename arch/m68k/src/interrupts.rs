@@ -1,4 +1,4 @@
-use kernel::kernel::kernel;
+use kernel::kernel::{kernel, kernel_is_ready};
 use kernel::kernel_cell::KernelCell;
 
 pub static SYSTEM_TIME_MS: KernelCell<u32> = KernelCell::new(0);
@@ -82,7 +82,9 @@ fn rearm_timer() {
 extern "C" fn timer_interrupt_handler_rs() {
     *SYSTEM_TIME_MS.borrow_mut() += MS_PER_TICK;
     rearm_timer();
-    kernel().preempt();
+    if kernel_is_ready() {
+        kernel().preempt();
+    }
 }
 
 #[no_mangle]
