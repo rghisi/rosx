@@ -21,15 +21,15 @@ This must be verified in Phase 0 before anything else.
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 0 | Toolchain & QEMU verification | ✅ Done |
-| 1 | Crate skeleton & target JSON | ⬜ Pending |
-| 2 | Linker script & boot code | ⬜ Pending |
-| 3 | CPU trait (no context switch yet) | ⬜ Pending |
-| 4 | Context switching (`swap_context` assembly) | ⬜ Pending |
-| 5 | Exception handling & timer | ⬜ Pending |
-| 6 | Serial console output | ⬜ Pending |
-| 7 | Kernel bootstrap wire-up | ⬜ Pending |
-| 8 | ELF architecture support | ⬜ Pending |
-| 9 | End-to-end testing & bug fixing | ⬜ Pending |
+| 1 | Crate skeleton & target JSON | ✅ Done |
+| 2 | Linker script & boot code | ✅ Done |
+| 3 | CPU trait (no context switch yet) | ✅ Done |
+| 4 | Context switching (`swap_context` assembly) | ✅ Done |
+| 5 | Exception handling & timer | ✅ Done |
+| 6 | Serial console output | ✅ Done |
+| 7 | Kernel bootstrap wire-up | ✅ Done |
+| 8 | ELF architecture support | ✅ Done |
+| 9 | End-to-end testing & bug fixing | 🔄 In Progress |
 
 ---
 
@@ -152,7 +152,7 @@ qemu-system-m68k \
 
 ## Phase 1 — Crate Skeleton & Target Setup
 
-**Status:** ⬜ Pending
+**Status:** ✅ Done
 
 ### Directory structure (mirrors `arch/x86_32/`)
 
@@ -213,7 +213,7 @@ build-std-features = ["compiler-builtins-mem"]
 
 ## Phase 2 — Linker Script & Boot Code
 
-**Status:** ⬜ Pending
+**Status:** ✅ Done
 
 ### `linker.ld` (assuming RAM at 0x000000)
 
@@ -286,7 +286,7 @@ default_exception:
 
 ## Phase 3 — CPU Trait Implementation
 
-**Status:** ⬜ Pending
+**Status:** ✅ Done
 
 **Critical file:** `kernel/src/cpu.rs` — defines the `Cpu` trait to implement.
 
@@ -329,7 +329,7 @@ Stack layout (top = lowest address, grows down):
 
 ## Phase 4 — Context Switching
 
-**Status:** ⬜ Pending
+**Status:** ✅ Done
 
 Uses `MOVEM` — a single m68k instruction that saves/restores a list of registers atomically.
 This replaces the x86_32 sequence of individual `push`/`pop` instructions.
@@ -362,7 +362,7 @@ swap_context:
 
 ## Phase 5 — Exception Handling & Timer
 
-**Status:** ⬜ Pending
+**Status:** ✅ Done
 
 ### Interrupt architecture (m68k vs x86)
 
@@ -385,7 +385,7 @@ swap_context:
 
 ## Phase 6 — Serial Console Output
 
-**Status:** ⬜ Pending
+**Status:** ✅ Done
 
 No VGA on m68k. No port I/O. Replace `vga_buffer.rs` + `debug_console.rs` with a single `serial.rs` using MMIO UART.
 
@@ -411,7 +411,7 @@ UART MMIO base address confirmed in Phase 0.2. QEMU invocation: `-serial stdio`.
 
 ## Phase 7 — Kernel Bootstrap Wire-up
 
-**Status:** ⬜ Pending
+**Status:** ✅ Done
 
 Without Multiboot there is no memory map. **Hardcode** for QEMU (`-m 32M` → 32 MB RAM):
 
@@ -436,7 +436,7 @@ Follow `arch/x86_32/src/main.rs` exactly — only the memory-discovery and outpu
 
 ## Phase 8 — ELF Architecture Support
 
-**Status:** ⬜ Pending
+**Status:** ✅ Done
 
 m68k ELF: EM_68K = 4, big-endian (ELFDATA2MSB). Key relocation:
 
@@ -463,7 +463,16 @@ Reference: `arch/x86_32/src/elf_arch.rs` for the pattern.
 
 ## Phase 9 — Testing
 
-**Status:** ⬜ Pending
+**Status:** 🔄 In Progress
+
+### Current Blocker
+
+**Release build compiles and links successfully.** QEMU loads the binary and begins executing. The CPU reaches `kernel_main`, runs `bootstrap()`, and enters `Kernel::new()` — but crashes before any serial output appears.
+
+**Root cause (confirmed via QEMU `-d in_asm` trace):**
+The timer interrupt fires during `Kernel::new()` / `kernel.setup()` while the kernel struct is only partially initialised. The ISR calls `kernel().preempt()`, which dereferences `KERNEL_PTR` (set at the start of `setup()`), but then accesses struct fields (scheduler vtable pointer, etc.) that are not yet valid. The `preemption_enabled` guard check compares the wrong byte offset and does not branch to the early-return path, so execution falls through into a double-dereference of garbage, jumping to an out-of-bounds address (~0x48e7xxxx).
+
+**Fix needed:** Guard `timer_interrupt_handler_rs` so it is a no-op until the kernel is fully started (e.g., check `KERNEL_PTR` for null before calling `kernel().preempt()`).
 
 ### Build
 
