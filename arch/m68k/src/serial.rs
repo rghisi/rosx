@@ -12,10 +12,10 @@ impl GoldfishSerial {
 
 impl KernelOutput for GoldfishSerial {
     fn write_str(&self, s: &str) {
-        let reg = GOLDFISH_TTY_BASE as *mut u32;
+        let reg = GOLDFISH_TTY_BASE as *mut u8;
         for byte in s.bytes() {
             // SAFETY: Goldfish TTY MMIO address is fixed in the QEMU virt machine
-            unsafe { core::ptr::write_volatile(reg, byte as u32) };
+            unsafe { core::ptr::write_volatile(reg, byte) };
         }
     }
 }
