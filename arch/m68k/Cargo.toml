@@ -1,0 +1,22 @@
+[workspace]
+
+[package]
+name = "rosx-m68k"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+kernel = { path = "../../kernel" }
+
+[[bin]]
+name = "rosx-m68k"
+bench = false
+test = false
+
+[profile.dev]
+codegen-units = 1
+
+[profile.release]
+codegen-units = 1
+opt-level = "s"
+lto = true

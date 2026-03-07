@@ -75,7 +75,7 @@ impl Task {
         });
 
         unsafe {
-            let stack_pointer = task.stack.as_mut_ptr().add(task.stack.len()).addr();
+            let stack_pointer = task.stack.as_mut_ptr().add(task.stack.len()) as usize;
             task.set_stack_pointer(stack_pointer);
         }
 
