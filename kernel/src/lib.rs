@@ -3,7 +3,6 @@
 
 extern crate alloc;
 extern crate collections;
-extern crate lazy_static;
 extern crate system;
 
 pub mod cpu;
@@ -13,7 +12,7 @@ pub mod future;
 pub mod ipc;
 pub mod kconfig;
 pub mod kernel;
-pub(crate) mod kernel_cell;
+pub mod kernel_cell;
 pub(crate) mod kernel_services;
 mod keyboard;
 pub mod memory;

@@ -1,3 +1,5 @@
+cargo-features = ["edition2024"]
+
 [package]
 authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
 name = "collections"
