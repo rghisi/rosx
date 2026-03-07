@@ -20,7 +20,7 @@ This must be verified in Phase 0 before anything else.
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 0 | Toolchain & QEMU verification | ⬜ Pending |
+| 0 | Toolchain & QEMU verification | ✅ Done |
 | 1 | Crate skeleton & target JSON | ⬜ Pending |
 | 2 | Linker script & boot code | ⬜ Pending |
 | 3 | CPU trait (no context switch yet) | ⬜ Pending |
@@ -36,37 +36,117 @@ This must be verified in Phase 0 before anything else.
 ## Phase 0 — Toolchain & QEMU Verification
 
 **Goal:** Confirm the toolchain compiles m68k bare-metal Rust and QEMU can boot it.
-**Status:** ⬜ Pending
+**Status:** ✅ Done
 
-### 0.1 Rust/LLVM compilation check
+### 0.1 Rust/LLVM compilation — Results
 
-```bash
-rustup default nightly
+**Working toolchain:** `nightly-2024-04-01` (LLVM 18.1.2)
+
+Newer nightlies (LLVM 19+) crash with SIGSEGV in `SelectionDAGISel::CodeGenAndEmitDAG` because the m68k backend has no instruction selection patterns for `AtomicLoad`/`AtomicStore` (used by `compiler_builtins::mem::memcpy_element_unordered_atomic`). Fixed by `"max-atomic-width": 0` in target JSON.
+
+`rust-lld` (bundled) crashes with SIGILL on m68k ELF; system `ld.lld` (LLVM 18) crashes with SIGSEGV. **Must use `m68k-linux-gnu-ld` (GNU binutils).**
+
+**Final working target JSON (`rosx-m68k.json`):**
+```json
+{
+    "llvm-target": "m68k-unknown-none",
+    "data-layout": "E-m:e-p:32:16:32-i8:8:8-i16:16:16-i32:16:32-n8:16:32-a:0:16-S16",
+    "arch": "m68k",
+    "target-endian": "big",
+    "target-pointer-width": "32",
+    "target-c-int-width": "32",
+    "os": "none",
+    "executables": true,
+    "linker-flavor": "gnu",
+    "linker": "m68k-linux-gnu-ld",
+    "panic-strategy": "abort",
+    "cpu": "M68000",
+    "features": "-isa-68881,-isa-68882",
+    "max-atomic-width": 0
+}
 ```
 
-- Write a minimal `#![no_std]` + `#![no_main]` crate with an infinite loop.
-- Create a draft `rosx-m68k.json` target spec.
-- Compile with `cargo build -Z build-std=core,compiler_builtins`.
-- Verify `core` and `compiler_builtins` build cleanly for m68k.
-- Verify `asm!` with m68k register names (`%d0`, `%a0`, `%sr`) works.
+**`.cargo/config.toml`:**
+```toml
+[build]
+target = "path/to/rosx-m68k.json"
 
-**Known risk:** 68000 has no Compare-And-Swap instruction. LLVM must emit interrupt-safe sequences for `AtomicU32`. If it can't, kernel atomics must be replaced with interrupt-disable + plain loads/stores in arch-specific code.
-
-### 0.2 QEMU machine discovery
-
-```bash
-qemu-system-m68k -machine virt -m 32M -cpu m68000 -nographic -monitor stdio
+[unstable]
+build-std = ["core", "compiler_builtins"]
+build-std-features = []
 ```
 
-In QEMU monitor: `info mtree` — confirm where RAM is mapped.
+**Required nightly feature flags in `main.rs`:**
+```rust
+#![feature(asm_experimental_arch)]
+#![feature(asm_const)]
+```
 
-- **If RAM at 0x00000000:** 68000 without VBR works. Proceed as planned.
-- **If RAM elsewhere (e.g. 0x40000000):** Switch to `-cpu m68010` and use VBR to relocate the vector table.
+**LLVM m68k inline asm limitations (important for Phase 3):**
+- `#` is the comment character in LLVM's m68k inline asm parser — `ori.w #0x0700, %sr` does NOT work
+- Pre/post-decrement addressing `-(sp)` / `(sp)+` not supported
+- `sr` / `%sr` not recognised as the Status Register
+- **Workaround A:** Raw `.short` bytes in `asm!` for SR and MOVEM:
+  ```rust
+  asm!(".short 0x007C, 0x0700", options(nomem, nostack)); // ORI.W #0x0700, SR
+  asm!(".short 0x027C, 0xF8FF", options(nomem, nostack)); // ANDI.W #0xF8FF, SR
+  asm!(".short 0x40C0", out("d0") sr, options(nomem, nostack)); // MOVE.W SR, D0
+  asm!(".short 0x48E7, 0x3F3E", options(nostack));  // MOVEM.L D2-D7/A2-A6, -(SP)
+  asm!(".short 0x4CDF, 0x7CFC", options(nostack));  // MOVEM.L (SP)+, D2-D7/A2-A6
+  ```
+- **Workaround B (preferred):** Put boot/context-switch assembly in `.S` files compiled by `m68k-linux-gnu-as` (full AT&T syntax support). This is how x86_32 handles its assembly too.
 
-Also identify:
-- Timer MMIO address (likely GOLDFISH timer)
-- Interrupt controller MMIO address
-- UART serial MMIO address
+**AtomicU32 / kernel atomics:** With `max-atomic-width: 0`, Rust atomics on m68k will use interrupt-disable sequences (correct for single-core). The kernel's `AtomicU32` uses in `interrupts.rs` (`SYSTEM_TIME_MS`) will still compile but require interrupt masking — acceptable.
+
+### 0.2 QEMU machine discovery — Results
+
+**Machine:** `qemu-system-m68k -machine virt -cpu m68000`
+**Confirmed:** RAM starts at **0x00000000** — 68000 without VBR works. ✅
+
+**Verified by booting a minimal kernel that printed `ROSX` to serial.**
+
+**QEMU virt machine memory map:**
+
+| Device | Base Address | Size | CPU IRQ |
+|--------|-------------|------|---------|
+| RAM | 0x00000000 | up to 32 MB | — |
+| Goldfish PIC #0 | 0xff000000 | 0x1000 | → CPU IRQ #1 |
+| Goldfish PIC #1 | 0xff001000 | 0x1000 | → CPU IRQ #2 |
+| Goldfish PIC #2 | 0xff002000 | 0x1000 | → CPU IRQ #3 |
+| Goldfish PIC #3 | 0xff003000 | 0x1000 | → CPU IRQ #4 |
+| Goldfish PIC #4 | 0xff004000 | 0x1000 | → CPU IRQ #5 |
+| Goldfish PIC #5 | 0xff005000 | 0x1000 | → CPU IRQ #6 |
+| Goldfish RTC #1 (timer) | 0xff006000 | 0x1000 | PIC #5 IRQ #1 → CPU IRQ #6 |
+| Goldfish RTC #2 | 0xff007000 | 0x1000 | PIC #5 IRQ #2 → CPU IRQ #6 |
+| Goldfish TTY (UART) | 0xff008000 | 0x1000 | PIC #0 IRQ #32 → CPU IRQ #1 |
+| Virt controller | 0xff009000 | 0x1000 | PIC #0 IRQ #1 → CPU IRQ #1 |
+
+**UART (Goldfish TTY at 0xff008000):**
+- Write a byte: write 32-bit value to offset 0x00 (REG_PUT_CHAR) — verified working
+
+**Timer (Goldfish RTC at 0xff006000):**
+- No periodic mode. Must re-arm after each interrupt:
+  1. Enable IRQ: write 1 to offset 0x10 (RTC_IRQ_ENABLED)
+  2. Set alarm: write next expiry time (nanoseconds) to 0x08/0x0c (RTC_ALARM_LOW/HIGH) then 0x08 triggers arming
+  3. On interrupt: read `0x00` (RTC_TIME_LOW) to latch current time, clear interrupt by writing to 0x1c (RTC_CLEAR_INTERRUPT), re-arm
+
+**PIC (Goldfish PIC at 0xff000000 + n*0x1000):**
+- Enable interrupt source: write bitmask to offset 0x10 (REG_ENABLE)
+- Read pending: read offset 0x04 (REG_IRQ_PENDING)
+- Acknowledge: write bitmask to offset 0x0c (REG_DISABLE), then re-enable via REG_ENABLE
+
+**QEMU run command (confirmed working):**
+```bash
+qemu-system-m68k \
+  -machine virt \
+  -cpu m68000 \
+  -m 32M \
+  -kernel target/rosx-m68k/debug/rosx-m68k \
+  -nographic \
+  -monitor none \
+  -serial stdio \
+  -no-reboot
+```
 
 ---
 
