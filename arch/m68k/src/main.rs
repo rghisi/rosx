@@ -13,6 +13,9 @@ core::arch::global_asm!(
     ".section .text",
     ".global _start",
     "_start:",
+    "move.w #0x2700, %sr",
+    "move.l #0xff008000, %a0",
+    "move.l #33, (%a0)",
     "lea stack_top, %sp",
     "jsr kernel_main",
     "1: bra 1b"
@@ -52,6 +55,12 @@ fn panic(info: &PanicInfo) -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
+    // Direct print for debugging
+    let tty_ptr = 0xff008000 as *mut u32;
+    for &b in b"DEBUG: kernel_main reached\n" {
+        unsafe { core::ptr::write_volatile(tty_ptr, b as u32); }
+    }
+
     // 1. Setup memory blocks
     let mut memory_blocks = MemoryBlocks {
         blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),

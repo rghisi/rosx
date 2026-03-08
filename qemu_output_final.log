@@ -1,0 +1,4 @@
+!DEBUG: kernel_main reached
+**
+ERROR:system/cpus.c:504:qemu_mutex_lock_iothread_impl: assertion failed: (!qemu_mutex_iothread_locked())
+Bail out! ERROR:system/cpus.c:504:qemu_mutex_lock_iothread_impl: assertion failed: (!qemu_mutex_iothread_locked())
