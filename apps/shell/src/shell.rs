@@ -25,6 +25,15 @@ static CONWAY_ELF: &[u8] = include_bytes!("../../../apps/conway/target/rosx-user
 #[cfg(target_arch = "x86")]
 static CONWAY_ELF: &[u8] = include_bytes!("../../../apps/conway/target/rosx-i686-user/release/conway");
 
+#[cfg(target_arch = "m68k")]
+static PI_ELF: &[u8] = &[];
+#[cfg(target_arch = "m68k")]
+static SNAKE_ELF: &[u8] = &[];
+#[cfg(target_arch = "m68k")]
+static TETRIS_ELF: &[u8] = &[];
+#[cfg(target_arch = "m68k")]
+static CONWAY_ELF: &[u8] = &[];
+
 static PROMPT: &str = "\x1B[32mrose>\x1B[m ";
 
 lazy_static! {

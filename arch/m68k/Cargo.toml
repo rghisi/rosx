@@ -1,0 +1,23 @@
+[package]
+name = "rosx-m68k"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+system = { path = "../../system" }
+kernel = { path = "../../kernel" }
+usrlib = { path = "../../usrlib" }
+shell = { path = "../../apps/shell"}
+
+volatile = "0.2.6"
+spin = "0.10.0"
+
+[dependencies.lazy_static]
+version = "1.0"
+features = ["spin_no_std"]
+
+[[bin]]
+name = "rosx-m68k"
+path = "src/main.rs"
+bench = false
+test = false
