@@ -7,6 +7,7 @@ mod cpu;
 mod debug_console;
 mod elf_arch;
 mod interrupts;
+mod pci;
 mod vga_buffer;
 mod terminal_fonts;
 mod framebuffer;
