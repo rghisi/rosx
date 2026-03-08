@@ -1,7 +1,22 @@
 #![no_std]
 #![no_main]
+#![feature(asm_experimental_arch)]
 
 extern crate alloc;
+
+core::arch::global_asm!(
+    ".section .bss",
+    ".align 16",
+    "stack_bottom:",
+    ".skip 16384",
+    "stack_top:",
+    ".section .text",
+    ".global _start",
+    "_start:",
+    "lea stack_top, %sp",
+    "jsr kernel_main",
+    "1: bra 1b"
+);
 
 pub mod goldfish_tty;
 pub mod cpu;
