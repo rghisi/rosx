@@ -55,12 +55,6 @@ fn panic(info: &PanicInfo) -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
-    // Direct print for debugging
-    let tty_ptr = 0xff008000 as *mut u32;
-    for &b in b"DEBUG: kernel_main reached\n" {
-        unsafe { core::ptr::write_volatile(tty_ptr, b as u32); }
-    }
-
     // 1. Setup memory blocks
     let mut memory_blocks = MemoryBlocks {
         blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),
@@ -82,6 +76,11 @@ pub extern "C" fn kernel_main() -> ! {
 
     // 2. Bootstrap kernel
     kernel::kernel::bootstrap(&memory_blocks, &SERIAL);
+
+    let tty_ptr = 0xff008000 as *mut u32;
+    for &b in b"DEBUG: bootstrap done\n" {
+        unsafe { core::ptr::write_volatile(tty_ptr, b as u32); }
+    }
 
     kprintln!("[M68K] Hello, Motorola 68040!");
 
