@@ -1,26 +1,26 @@
+use crate::ipc::ipc_server::IpcServerConnection;
+use crate::kernel::kernel;
+use crate::kernel_services::services;
+use crate::task::TaskHandle;
 use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
 use collections::generational_arena::GenerationalArena;
-use system::future::{ Future, FutureHandle };
+use system::future::{Future, FutureHandle};
 use system::ipc::IpcError::ServerNotFound;
 use system::ipc::{IpcError, IpcReply, IpcReplyFuture, IpcSendMessage, IpcServerHandle};
-use crate::ipc::ipc_server::IpcServerConnection;
-use crate::kernel::kernel;
-use crate::kernel_services::services;
-use crate::task::TaskHandle;
 
 pub(crate) struct IpcReceiveMessage {
     pub value: u32,
     pub sender: TaskHandle,
-    pub future: FutureHandle
+    pub future: FutureHandle,
 }
 
 pub(crate) struct IpcReplyMessage {
     pub value: u32,
     pub destination: TaskHandle,
-    pub future: FutureHandle
+    pub future: FutureHandle,
 }
 
 type Mailbox = VecDeque<IpcReceiveMessage>;
@@ -32,7 +32,6 @@ pub(crate) struct IpcManager {
 }
 
 impl IpcManager {
-
     pub(crate) fn new() -> IpcManager {
         IpcManager {
             bindings: GenerationalArena::new(),
@@ -51,7 +50,7 @@ impl IpcManager {
 
     pub(crate) fn register(&mut self, service: &str) -> Result<IpcServerHandle, IpcError> {
         if self.registry.contains_key(service) {
-           return Err(IpcError::ServerCannotBeAdded);
+            return Err(IpcError::ServerCannotBeAdded);
         }
 
         let binding = IpcServerConnection::new(String::from(service));
@@ -62,11 +61,19 @@ impl IpcManager {
         Ok(handle)
     }
 
-    pub(crate) fn send(&mut self, handle: IpcServerHandle, message: IpcSendMessage) -> FutureHandle {
+    pub(crate) fn send(
+        &mut self,
+        handle: IpcServerHandle,
+        message: IpcSendMessage,
+    ) -> FutureHandle {
         let sender = kernel().execution_state.current_task.unwrap();
         let mailbox = self.mailboxes.get_mut(handle.index as usize).unwrap();
         let future = Box::new(IpcReplyFuture { reply: None });
-        let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
+        let future_handle = services()
+            .future_registry
+            .borrow_mut()
+            .register(future)
+            .unwrap();
         let receive_message = IpcReceiveMessage {
             value: message.value,
             sender,
@@ -89,8 +96,12 @@ impl IpcManager {
     pub(crate) fn reply(&self, reply: IpcReplyMessage) {
         let future_handle = reply.future;
         let reply_message = IpcReply { value: reply.value };
-        let future = Box::new(IpcReplyFuture { reply: Some(reply_message) });
-        let _ = services().future_registry.borrow_mut().replace(future_handle, future);
+        let future = Box::new(IpcReplyFuture {
+            reply: Some(reply_message),
+        });
+        let _ = services()
+            .future_registry
+            .borrow_mut()
+            .replace(future_handle, future);
     }
-
 }

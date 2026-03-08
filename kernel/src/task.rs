@@ -1,10 +1,10 @@
-use collections::generational_arena::Handle;
 use crate::cpu::Cpu;
-use crate::kernel::{kernel};
+use crate::elf::load_elf;
+use crate::kernel::kernel;
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::boxed::Box;
+use collections::generational_arena::Handle;
 use core::fmt::{Display, Formatter};
-use crate::elf::load_elf;
 use system::future::FutureHandle;
 
 pub(crate) type TaskHandle = Handle;
@@ -58,11 +58,7 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new<'a>(
-        name: &'static str,
-        entry_point: usize,
-        entry_param: usize,
-    ) -> SharedTask {
+    pub fn new(name: &'static str, entry_point: usize, entry_param: usize) -> SharedTask {
         let mut task = Box::new(Task {
             name,
             state: Created,
@@ -143,14 +139,14 @@ impl Task {
 pub struct FunctionTask {}
 
 impl FunctionTask {
-    pub fn new(name: &'static str, job: fn()) -> SharedTask {
-        Task::new(name, task_wrapper as usize, job as usize)
+    pub fn create(name: &'static str, job: fn()) -> SharedTask {
+        Task::new(name, task_wrapper as *const () as usize, job as usize)
     }
 }
 
 pub fn idle_task_factory(cpu: &'static dyn Cpu) -> Box<Task> {
     let cpu_ptr = Box::into_raw(Box::new(cpu)) as usize;
-    Task::new("[K] Idle", idle_entry as usize, cpu_ptr)
+    Task::new("[K] Idle", idle_entry as *const () as usize, cpu_ptr)
 }
 
 extern "C" fn idle_entry(cpu_ptr: usize) {
@@ -162,12 +158,12 @@ extern "C" fn idle_entry(cpu_ptr: usize) {
 }
 
 pub fn new_entrypoint_task(entrypoint: usize) -> SharedTask {
-    Task::new("EPT", task_wrapper as usize, entrypoint)
+    Task::new("EPT", task_wrapper as *const () as usize, entrypoint)
 }
 
 pub fn new_elf_task(elf: &'static [u8]) -> SharedTask {
     let elf_ptr = Box::into_raw(Box::new(elf)) as usize;
-    Task::new("ELF", elf_task_wrapper as usize, elf_ptr)
+    Task::new("ELF", elf_task_wrapper as *const () as usize, elf_ptr)
 }
 
 pub(crate) extern "C" fn task_wrapper(entry_point: usize) {

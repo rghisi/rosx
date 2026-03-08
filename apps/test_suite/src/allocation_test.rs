@@ -1,7 +1,7 @@
-use alloc::vec::Vec;
-use alloc::boxed::Box;
-use usrlib::println;
 use crate::random::SimpleRng;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use usrlib::println;
 
 pub struct DataBlock {
     pub magic: usize,
@@ -15,21 +15,26 @@ impl DataBlock {
         for i in 0..size {
             data.push((id as u8).wrapping_add(i as u8));
         }
-        DataBlock {
-            magic,
-            id,
-            data,
-        }
+        DataBlock { magic, id, data }
     }
 
     pub fn verify(&self, expected_magic: usize) -> bool {
         if self.magic != expected_magic {
-            println!("Memory Corruption: Magic number mismatch for block {}! Expected: {:x}, Found: {:x}", self.id, expected_magic, self.magic);
+            println!(
+                "Memory Corruption: Magic number mismatch for block {}! Expected: {:x}, Found: {:x}",
+                self.id, expected_magic, self.magic
+            );
             return false;
         }
         for (i, &val) in self.data.iter().enumerate() {
             if val != (self.id as u8).wrapping_add(i as u8) {
-                println!("Memory Corruption: Data mismatch for block {} at index {}! Expected: {}, Found: {}", self.id, i, (self.id as u8).wrapping_add(i as u8), val);
+                println!(
+                    "Memory Corruption: Data mismatch for block {} at index {}! Expected: {}, Found: {}",
+                    self.id,
+                    i,
+                    (self.id as u8).wrapping_add(i as u8),
+                    val
+                );
                 return false;
             }
         }
@@ -72,7 +77,10 @@ pub fn run() {
 
             // Immediate verification
             if !block.verify(magic) {
-                println!("\n[MemWorker] [FAIL] Immediate verification failed for block {} (size {})", id, size);
+                println!(
+                    "\n[MemWorker] [FAIL] Immediate verification failed for block {} (size {})",
+                    id, size
+                );
                 return;
             }
 
@@ -84,24 +92,42 @@ pub fn run() {
 
             // Verify integrity before dropping
             if !block.verify(expected_magic) {
-                println!("\n[MemWorker] [FAIL] Integrity check failed during mixed test for block {} (size {})", block.id, block.data.len());
+                println!(
+                    "\n[MemWorker] [FAIL] Integrity check failed during mixed test for block {} (size {})",
+                    block.id,
+                    block.data.len()
+                );
                 return;
             }
         }
 
         if i > 0 && i % 50 == 0 {
-            println!("[MemWorker] Progress: {}/{} - {}MB", i, TOTAL_OPERATIONS, allocated / 1024 / 1024);
+            println!(
+                "[MemWorker] Progress: {}/{} - {}MB",
+                i,
+                TOTAL_OPERATIONS,
+                allocated / 1024 / 1024
+            );
             allocated = 0;
         }
     }
 
-    println!("[MemWorker] Finalizing: verifying remaining {} allocations...", allocations.len());
+    println!(
+        "[MemWorker] Finalizing: verifying remaining {} allocations...",
+        allocations.len()
+    );
     for (block, magic) in allocations {
         if !block.verify(magic) {
-            println!("[MemWorker] [FAIL] Final verification failed for block {}", block.id);
+            println!(
+                "[MemWorker] [FAIL] Final verification failed for block {}",
+                block.id
+            );
             return;
         }
     }
 
-    println!("[MemWorker] [PASS] Allocation/Deallocation Stress Test Completed Successfully ({})", total_allocs_performed);
+    println!(
+        "[MemWorker] [PASS] Allocation/Deallocation Stress Test Completed Successfully ({})",
+        total_allocs_performed
+    );
 }

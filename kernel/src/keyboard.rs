@@ -1,9 +1,9 @@
-use system::future::Future;
 use crate::kernel_cell::KernelCell;
 use alloc::collections::VecDeque;
 use alloc::fmt::{Display, Formatter};
 use core::any::Any;
 use lazy_static::lazy_static;
+use system::future::Future;
 
 lazy_static! {
     static ref KEYBOARD_BUFFER: KernelCell<VecDeque<char>> = KernelCell::new(VecDeque::new());

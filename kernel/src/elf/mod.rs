@@ -4,7 +4,9 @@ pub(crate) mod structs;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
-use structs::{Elf32Dyn, Elf32Header, Elf32Phdr, Elf32Rel, Elf64Dyn, Elf64Header, Elf64Phdr, Elf64Rela};
+use structs::{
+    Elf32Dyn, Elf32Header, Elf32Phdr, Elf32Rel, Elf64Dyn, Elf64Header, Elf64Phdr, Elf64Rela,
+};
 
 pub use arch::ElfArch;
 
@@ -153,15 +155,17 @@ fn load_elf32(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError> {
     Ok(Image { image, entry })
 }
 
-fn apply_relocations64(image: &[u8], base: usize, dynamic_phdr: &Elf64Phdr, elf_arch: &dyn ElfArch) {
+fn apply_relocations64(
+    image: &[u8],
+    base: usize,
+    dynamic_phdr: &Elf64Phdr,
+    elf_arch: &dyn ElfArch,
+) {
     let dyn_start = dynamic_phdr.p_vaddr as usize;
     let dyn_count = dynamic_phdr.p_memsz as usize / mem::size_of::<Elf64Dyn>();
 
     let dyns = unsafe {
-        core::slice::from_raw_parts(
-            image.as_ptr().add(dyn_start) as *const Elf64Dyn,
-            dyn_count,
-        )
+        core::slice::from_raw_parts(image.as_ptr().add(dyn_start) as *const Elf64Dyn, dyn_count)
     };
 
     let mut rela_offset: Option<u64> = None;
@@ -193,15 +197,17 @@ fn apply_relocations64(image: &[u8], base: usize, dynamic_phdr: &Elf64Phdr, elf_
     }
 }
 
-fn apply_relocations32(image: &[u8], base: usize, dynamic_phdr: &Elf32Phdr, elf_arch: &dyn ElfArch) {
+fn apply_relocations32(
+    image: &[u8],
+    base: usize,
+    dynamic_phdr: &Elf32Phdr,
+    elf_arch: &dyn ElfArch,
+) {
     let dyn_start = dynamic_phdr.p_vaddr as usize;
     let dyn_count = dynamic_phdr.p_memsz as usize / mem::size_of::<Elf32Dyn>();
 
     let dyns = unsafe {
-        core::slice::from_raw_parts(
-            image.as_ptr().add(dyn_start) as *const Elf32Dyn,
-            dyn_count,
-        )
+        core::slice::from_raw_parts(image.as_ptr().add(dyn_start) as *const Elf32Dyn, dyn_count)
     };
 
     let mut rel_offset: Option<u32> = None;
@@ -239,8 +245,8 @@ fn apply_relocations32(image: &[u8], base: usize, dynamic_phdr: &Elf32Phdr, elf_
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::structs::*;
+    use super::*;
     use std::sync::Mutex;
 
     struct MockElfArch {
@@ -249,7 +255,9 @@ mod tests {
 
     impl MockElfArch {
         fn new() -> Self {
-            Self { calls: Mutex::new(Vec::new()) }
+            Self {
+                calls: Mutex::new(Vec::new()),
+            }
         }
 
         fn calls(&self) -> Vec<(usize, usize, u64, i64)> {
@@ -259,7 +267,10 @@ mod tests {
 
     impl ElfArch for MockElfArch {
         fn apply_relocation(&self, base: usize, offset: usize, info: u64, addend: i64) {
-            self.calls.lock().unwrap().push((base, offset, info, addend));
+            self.calls
+                .lock()
+                .unwrap()
+                .push((base, offset, info, addend));
         }
     }
 
@@ -276,7 +287,12 @@ mod tests {
         let mut buf = vec![0u8; total];
 
         let header = Elf64Header {
-            e_ident: { let mut id = [0u8; 16]; id[..4].copy_from_slice(&ELF_MAGIC); id[4] = 2; id },
+            e_ident: {
+                let mut id = [0u8; 16];
+                id[..4].copy_from_slice(&ELF_MAGIC);
+                id[4] = 2;
+                id
+            },
             e_type: 2,
             e_machine: 0x3E,
             e_version: 1,
@@ -325,7 +341,12 @@ mod tests {
         let mut buf = vec![0u8; total];
 
         let header = Elf64Header {
-            e_ident: { let mut id = [0u8; 16]; id[..4].copy_from_slice(&ELF_MAGIC); id[4] = 2; id },
+            e_ident: {
+                let mut id = [0u8; 16];
+                id[..4].copy_from_slice(&ELF_MAGIC);
+                id[4] = 2;
+                id
+            },
             e_type: 2,
             e_machine: 0x3E,
             e_version: 1,
@@ -365,10 +386,36 @@ mod tests {
             write_at(&mut buf, 0, header);
             write_at(&mut buf, load_phdr_at, load_phdr);
             write_at(&mut buf, dyn_phdr_at, dyn_phdr);
-            write_at(&mut buf, dyn_data_at, Elf64Dyn { d_tag: DT_RELA, d_val: rela_data_at as u64 });
-            write_at(&mut buf, dyn_data_at + dyn_size, Elf64Dyn { d_tag: DT_RELASZ, d_val: rela_size as u64 });
-            write_at(&mut buf, dyn_data_at + 2 * dyn_size, Elf64Dyn { d_tag: 0, d_val: 0 });
-            write_at(&mut buf, rela_data_at, Elf64Rela { r_offset, r_info, r_addend });
+            write_at(
+                &mut buf,
+                dyn_data_at,
+                Elf64Dyn {
+                    d_tag: DT_RELA,
+                    d_val: rela_data_at as u64,
+                },
+            );
+            write_at(
+                &mut buf,
+                dyn_data_at + dyn_size,
+                Elf64Dyn {
+                    d_tag: DT_RELASZ,
+                    d_val: rela_size as u64,
+                },
+            );
+            write_at(
+                &mut buf,
+                dyn_data_at + 2 * dyn_size,
+                Elf64Dyn { d_tag: 0, d_val: 0 },
+            );
+            write_at(
+                &mut buf,
+                rela_data_at,
+                Elf64Rela {
+                    r_offset,
+                    r_info,
+                    r_addend,
+                },
+            );
         }
 
         buf
@@ -378,7 +425,10 @@ mod tests {
     fn rejects_too_small() {
         let mock = MockElfArch::new();
         assert!(matches!(load_elf(&[], &mock), Err(ElfError::TooSmall)));
-        assert!(matches!(load_elf(&[0u8; 10], &mock), Err(ElfError::TooSmall)));
+        assert!(matches!(
+            load_elf(&[0u8; 10], &mock),
+            Err(ElfError::TooSmall)
+        ));
     }
 
     #[test]
@@ -394,7 +444,12 @@ mod tests {
         let header_size = mem::size_of::<Elf64Header>();
         let mut buf = vec![0u8; header_size];
         let header = Elf64Header {
-            e_ident: { let mut id = [0u8; 16]; id[..4].copy_from_slice(&ELF_MAGIC); id[4] = 2; id },
+            e_ident: {
+                let mut id = [0u8; 16];
+                id[..4].copy_from_slice(&ELF_MAGIC);
+                id[4] = 2;
+                id
+            },
             e_type: 2,
             e_machine: 0x3E,
             e_version: 1,
@@ -409,8 +464,13 @@ mod tests {
             e_shnum: 0,
             e_shstrndx: 0,
         };
-        unsafe { write_at(&mut buf, 0, header); }
-        assert!(matches!(load_elf(&buf, &mock), Err(ElfError::NoLoadSegments)));
+        unsafe {
+            write_at(&mut buf, 0, header);
+        }
+        assert!(matches!(
+            load_elf(&buf, &mock),
+            Err(ElfError::NoLoadSegments)
+        ));
     }
 
     #[test]
@@ -451,7 +511,10 @@ mod tests {
         let mut buf = vec![0u8; mem::size_of::<Elf64Header>()];
         buf[..4].copy_from_slice(&ELF_MAGIC);
         buf[4] = 0; // ELFCLASSNONE
-        assert!(matches!(load_elf(&buf, &mock), Err(ElfError::UnsupportedClass)));
+        assert!(matches!(
+            load_elf(&buf, &mock),
+            Err(ElfError::UnsupportedClass)
+        ));
     }
 
     fn build_elf32_minimal(entry_vaddr: u32) -> Vec<u8> {
@@ -461,7 +524,12 @@ mod tests {
         let mut buf = vec![0u8; total];
 
         let header = Elf32Header {
-            e_ident: { let mut id = [0u8; 16]; id[..4].copy_from_slice(&ELF_MAGIC); id[4] = 1; id },
+            e_ident: {
+                let mut id = [0u8; 16];
+                id[..4].copy_from_slice(&ELF_MAGIC);
+                id[4] = 1;
+                id
+            },
             e_type: 2,
             e_machine: 3,
             e_version: 1,
@@ -509,7 +577,12 @@ mod tests {
         let mut buf = vec![0u8; total];
 
         let header = Elf32Header {
-            e_ident: { let mut id = [0u8; 16]; id[..4].copy_from_slice(&ELF_MAGIC); id[4] = 1; id },
+            e_ident: {
+                let mut id = [0u8; 16];
+                id[..4].copy_from_slice(&ELF_MAGIC);
+                id[4] = 1;
+                id
+            },
             e_type: 2,
             e_machine: 3,
             e_version: 1,
@@ -549,9 +622,27 @@ mod tests {
             write_at(&mut buf, 0, header);
             write_at(&mut buf, load_phdr_at, load_phdr);
             write_at(&mut buf, dyn_phdr_at, dyn_phdr);
-            write_at(&mut buf, dyn_data_at,              Elf32Dyn { d_tag: 17, d_val: rel_data_at as u32 }); // DT_REL
-            write_at(&mut buf, dyn_data_at + dyn_size,   Elf32Dyn { d_tag: 18, d_val: rel_size as u32 });    // DT_RELSZ
-            write_at(&mut buf, dyn_data_at + 2 * dyn_size, Elf32Dyn { d_tag: 0, d_val: 0 });
+            write_at(
+                &mut buf,
+                dyn_data_at,
+                Elf32Dyn {
+                    d_tag: 17,
+                    d_val: rel_data_at as u32,
+                },
+            ); // DT_REL
+            write_at(
+                &mut buf,
+                dyn_data_at + dyn_size,
+                Elf32Dyn {
+                    d_tag: 18,
+                    d_val: rel_size as u32,
+                },
+            ); // DT_RELSZ
+            write_at(
+                &mut buf,
+                dyn_data_at + 2 * dyn_size,
+                Elf32Dyn { d_tag: 0, d_val: 0 },
+            );
             write_at(&mut buf, rel_data_at, Elf32Rel { r_offset, r_info });
             write_at(&mut buf, r_offset as usize, implicit_addend);
         }

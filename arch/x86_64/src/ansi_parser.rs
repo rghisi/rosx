@@ -110,18 +110,26 @@ impl AnsiParser {
                             self.params[self.param_idx] = self.current_param;
                             self.param_idx += 1;
                         }
-                        
+
                         if self.param_idx == 0 {
-                             self.push_command(AnsiCommand::ResetAttributes);
+                            self.push_command(AnsiCommand::ResetAttributes);
                         } else {
                             for i in 0..self.param_idx {
                                 let param = self.params[i];
                                 match param {
                                     0 => self.push_command(AnsiCommand::ResetAttributes),
-                                    30..=37 => self.push_command(AnsiCommand::SetForeground(self.ansi_color(param - 30))),
-                                    40..=47 => self.push_command(AnsiCommand::SetBackground(self.ansi_color(param - 40))),
-                                    90..=97 => self.push_command(AnsiCommand::SetForeground(self.ansi_bright_color(param - 90))),
-                                    100..=107 => self.push_command(AnsiCommand::SetBackground(self.ansi_bright_color(param - 100))),
+                                    30..=37 => self.push_command(AnsiCommand::SetForeground(
+                                        self.ansi_color(param - 30),
+                                    )),
+                                    40..=47 => self.push_command(AnsiCommand::SetBackground(
+                                        self.ansi_color(param - 40),
+                                    )),
+                                    90..=97 => self.push_command(AnsiCommand::SetForeground(
+                                        self.ansi_bright_color(param - 90),
+                                    )),
+                                    100..=107 => self.push_command(AnsiCommand::SetBackground(
+                                        self.ansi_bright_color(param - 100),
+                                    )),
                                     _ => {}
                                 }
                             }
@@ -134,8 +142,16 @@ impl AnsiParser {
                             self.params[self.param_idx] = self.current_param;
                             self.param_idx += 1;
                         }
-                        let row = if self.param_idx > 0 { self.params[0].saturating_sub(1) as usize } else { 0 };
-                        let col = if self.param_idx > 1 { self.params[1].saturating_sub(1) as usize } else { 0 };
+                        let row = if self.param_idx > 0 {
+                            self.params[0].saturating_sub(1) as usize
+                        } else {
+                            0
+                        };
+                        let col = if self.param_idx > 1 {
+                            self.params[1].saturating_sub(1) as usize
+                        } else {
+                            0
+                        };
                         self.push_command(AnsiCommand::SetCursorPos { row, col });
                         self.state = AnsiState::Normal;
                     }

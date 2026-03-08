@@ -3,22 +3,22 @@ use crate::default_output::{KernelOutput, setup_default_output};
 use crate::elf::ElfArch;
 use crate::future::TaskCompletionFuture;
 use crate::kconfig::KConfig;
+use crate::kernel_cell::KernelCell;
 use crate::kernel_services::services;
 use crate::kprintln;
+#[cfg(not(test))]
+use crate::memory::MemoryBlocks;
+#[cfg(not(test))]
+use crate::memory::memory_manager::MEMORY_MANAGER;
 use crate::messages::HardwareInterrupt;
 use crate::scheduler::Scheduler;
 use crate::state::{ExecutionContext, ExecutionState};
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, YieldReason};
 use alloc::boxed::Box;
-use core::ptr::null_mut;
 use collections::generational_arena::Error;
-use system::future::{Future, FutureHandle };
-#[cfg(not(test))]
-use crate::memory::memory_manager::MEMORY_MANAGER;
-#[cfg(not(test))]
-use crate::memory::MemoryBlocks;
-use crate::kernel_cell::KernelCell;
+use core::ptr::null_mut;
+use system::future::{Future, FutureHandle};
 
 static KERNEL_PTR: KernelCell<*mut Kernel> = KernelCell::new(null_mut());
 
@@ -39,7 +39,7 @@ impl Kernel {
         let elf_arch = kconfig.elf_arch;
         crate::kernel_services::init();
         let scheduler = (kconfig.scheduler_factory)();
-        let scheduler_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
+        let scheduler_task = Task::new("[K] Main Thread", main_thread_run as *const () as usize, 0);
         let scheduler_task_handler = services()
             .task_manager
             .borrow_mut()
@@ -109,7 +109,10 @@ impl Kernel {
                 let future = Box::new(TaskCompletionFuture::new(task_handle));
                 let future_handle = services().future_registry.borrow_mut().register(future);
                 if let Some(fh) = future_handle {
-                    services().task_manager.borrow_mut().set_completion_future(task_handle, fh);
+                    services()
+                        .task_manager
+                        .borrow_mut()
+                        .set_completion_future(task_handle, fh);
                 }
                 self.schedule_task(task_handle);
                 future_handle
@@ -129,7 +132,10 @@ impl Kernel {
         self.execution_state.preemption_enabled = prev;
     }
 
-    pub fn wait_future(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
+    pub fn wait_future(
+        &mut self,
+        handle: FutureHandle,
+    ) -> Result<Box<dyn Future + Send + Sync>, Error> {
         self.execution_state.block_current_task();
         let task_handle = self.execution_state.current_task();
         self.scheduler.push_blocked(task_handle, handle);
@@ -139,12 +145,19 @@ impl Kernel {
     }
 
     pub fn is_future_completed(&self, handle: FutureHandle) -> bool {
-        services().future_registry.borrow_mut().get(handle).unwrap_or(true)
+        services()
+            .future_registry
+            .borrow_mut()
+            .get(handle)
+            .unwrap_or(true)
     }
 
     pub fn task_yield(&mut self) {
         if let Some(task_handle) = self.execution_state.current_task {
-            services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Voluntary);
+            services()
+                .task_manager
+                .borrow_mut()
+                .set_yield_reason(task_handle, YieldReason::Voluntary);
         }
         self.execution_state.switch_to_scheduler();
     }
@@ -152,7 +165,10 @@ impl Kernel {
     pub fn preempt(&mut self) {
         if self.execution_state.preemption_enabled && self.scheduler.should_preempt() {
             if let Some(task_handle) = self.execution_state.current_task {
-                services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
+                services()
+                    .task_manager
+                    .borrow_mut()
+                    .set_yield_reason(task_handle, YieldReason::Preempted);
             }
             self.execution_state.switch_to_scheduler();
         }
@@ -182,7 +198,10 @@ impl Kernel {
 
     fn schedule_task(&mut self, task_handle: TaskHandle) {
         {
-            let result = services().task_manager.borrow_mut().borrow_task_mut(task_handle);
+            let result = services()
+                .task_manager
+                .borrow_mut()
+                .borrow_task_mut(task_handle);
             match result {
                 Ok(task) => {
                     self.cpu.initialize_task(task);
@@ -194,14 +213,10 @@ impl Kernel {
         }
         self.scheduler.push_task(task_handle);
     }
-
 }
 
 #[cfg(not(test))]
-pub fn bootstrap(
-    memory_blocks: &MemoryBlocks,
-    default_output: &'static dyn KernelOutput,
-) {
+pub fn bootstrap(memory_blocks: &MemoryBlocks, default_output: &'static dyn KernelOutput) {
     setup_default_output(default_output);
     MEMORY_MANAGER.bootstrap(memory_blocks);
     MEMORY_MANAGER.print_config();

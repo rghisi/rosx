@@ -4,11 +4,10 @@ use core::time::Duration;
 use system::future::FutureHandle;
 
 pub(crate) struct Timer {
-    next: BTreeMap<u64, Vec<FutureHandle>>
+    next: BTreeMap<u64, Vec<FutureHandle>>,
 }
 
 impl Timer {
-
     pub fn new() -> Self {
         Timer {
             next: BTreeMap::new(),
@@ -17,21 +16,25 @@ impl Timer {
 
     pub fn add_sleep(&mut self, now: u64, sleep: Duration, future_handle: FutureHandle) {
         let deadline = now + (sleep.as_millis() as u64);
-        self.next.entry(deadline).or_insert_with(Vec::new).push(future_handle)
+        self.next.entry(deadline).or_default().push(future_handle)
     }
 
     pub fn pop_expired(&mut self, now: u64) -> Option<Vec<FutureHandle>> {
         let remaining = self.next.split_off(&(now + 1));
         let expired = core::mem::replace(&mut self.next, remaining);
         let handles: Vec<FutureHandle> = expired.into_values().flatten().collect();
-        if handles.is_empty() { None } else { Some(handles) }
+        if handles.is_empty() {
+            None
+        } else {
+            Some(handles)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use collections::generational_arena::{Handle, HalfSize};
+    use collections::generational_arena::{HalfSize, Handle};
 
     fn handle(index: HalfSize) -> FutureHandle {
         Handle::new(index, 0)

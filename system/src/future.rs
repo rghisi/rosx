@@ -1,5 +1,5 @@
-use core::any::Any;
 use collections::generational_arena::Handle;
+use core::any::Any;
 
 pub type FutureHandle = Handle;
 

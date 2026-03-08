@@ -11,7 +11,7 @@ env:
 
 jobs:
   test:
-    name: Unit Tests
+    name: Unit Tests & Quality
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,7 +19,7 @@ jobs:
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@nightly
         with:
-          components: rust-src
+          components: rust-src, llvm-tools-preview, rustfmt, clippy, miri
 
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -32,11 +32,59 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-test-
 
-      - name: Test collections
-        run: cargo test -p collections
+      - name: Check formatting
+        run: cargo fmt --all --check
 
-      - name: Test kernel
-        run: cargo test -p kernel -- --test-threads=1
+      - name: Clippy
+        run: |
+          cargo clippy -p collections -p system -p usrlib -p kernel -p test_suite -p dummy --all-targets -- \
+          -D warnings \
+          -A dead_code \
+          -A unused_variables \
+          -A unused_imports \
+          -A private_interfaces \
+          -A clippy::all \
+          -A clippy::pedantic \
+          -A clippy::nursery \
+          -A clippy::items_after_test_module \
+          -A clippy::redundant_closure \
+          -A clippy::empty_loop \
+          -A clippy::manual_div_ceil \
+          -A clippy::result_unit_err \
+          -A clippy::unwrap_or_default \
+          -A clippy::collapsible_if \
+          -A clippy::single_match \
+          -A clippy::new_without_default \
+          -A clippy::unnecessary_cast \
+          -A clippy::extra_unused_lifetimes \
+          -A clippy::new_ret_no_self \
+          -A clippy::unnecessary_unwrap \
+          -A clippy::missing_safety_doc
+
+      - name: Install tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov,cargo-audit
+
+      - name: Dependency audit
+        run: cargo audit
+
+      - name: Miri (collections)
+        run: cargo miri test -p collections
+
+      - name: Run tests with coverage
+        run: cargo llvm-cov -p collections -p system -p usrlib -p kernel --html --output-dir coverage-report -- --test-threads=1
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage-report/
+
+      - name: Generate coverage summary
+        run: |
+          echo "## Test Coverage Summary" >> $GITHUB_STEP_SUMMARY
+          cargo llvm-cov -p collections -p system -p usrlib -p kernel --text >> $GITHUB_STEP_SUMMARY
 
   build:
     name: Build Kernel (x86_64)
@@ -151,11 +199,42 @@ jobs:
           path: target/rosx-i686/release/rosx-x86_32.img
           if-no-files-found: error
 
+  deploy-coverage:
+    name: Deploy Coverage Report
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage-report
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: coverage-report
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
   release:
     name: Create Release
     needs: [test, build, build-x86_32]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
     steps:
@@ -175,10 +254,17 @@ jobs:
         with:
           name: rosx-x86_32
 
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage-report
+
       - name: Compress artifacts
         run: |
           gzip -9 rosx-x86_64.img
           gzip -9 rosx-x86_32.img
+          tar -czf coverage-report.tar.gz -C coverage-report .
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -188,3 +274,4 @@ jobs:
           files: |
             rosx-x86_64.img.gz
             rosx-x86_32.img.gz
+            coverage-report.tar.gz

@@ -2,12 +2,12 @@ pub mod fifo_scheduler;
 pub mod mlfq_scheduler;
 mod timer;
 
-use alloc::boxed::Box;
-use system::future::FutureHandle;
 use crate::messages::HardwareInterrupt;
 use crate::scheduler::fifo_scheduler::FifoScheduler;
 use crate::scheduler::mlfq_scheduler::MlfqScheduler;
 use crate::task::TaskHandle;
+use alloc::boxed::Box;
+use system::future::FutureHandle;
 
 pub trait Scheduler {
     fn run(&mut self);

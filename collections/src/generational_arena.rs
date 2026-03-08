@@ -46,6 +46,12 @@ pub struct GenerationalArena<T, const S: usize> {
     free_slots: VecDeque<HalfSize>,
 }
 
+impl<T, const S: usize> Default for GenerationalArena<T, S> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T, const S: usize> GenerationalArena<T, S> {
     pub fn new() -> Self {
         assert!(S > 0, "S must be greater than zero");
@@ -57,7 +63,11 @@ impl<T, const S: usize> GenerationalArena<T, S> {
             generations.push(0);
             free_slots.push_back(slot as HalfSize);
         }
-        Self { items, generations, free_slots }
+        Self {
+            items,
+            generations,
+            free_slots,
+        }
     }
 
     pub fn add(&mut self, item: T) -> Result<Handle, Error> {
@@ -111,7 +121,7 @@ impl<T, const S: usize> GenerationalArena<T, S> {
 #[cfg(test)]
 mod tests {
     extern crate std;
-    use crate::generational_arena::{Error, GenerationalArena, Handle, HalfSize};
+    use crate::generational_arena::{Error, GenerationalArena, HalfSize, Handle};
     use std::string::String;
     use std::string::ToString;
     use std::vec;

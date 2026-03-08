@@ -126,8 +126,8 @@ mod tests {
         bytes[0..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
         bytes[4] = 1; // EI_CLASS = 32-bit
         bytes[24..28].copy_from_slice(&0xDEAD_BEEFu32.to_le_bytes()); // e_entry
-        bytes[28..32].copy_from_slice(&0x34u32.to_le_bytes());         // e_phoff (= 52, header size)
-        bytes[44..46].copy_from_slice(&1u16.to_le_bytes());            // e_phnum
+        bytes[28..32].copy_from_slice(&0x34u32.to_le_bytes()); // e_phoff (= 52, header size)
+        bytes[44..46].copy_from_slice(&1u16.to_le_bytes()); // e_phnum
 
         let header = unsafe { &*(bytes.as_ptr() as *const Elf32Header) };
         assert_eq!(&header.e_ident[..4], &[0x7f, b'E', b'L', b'F']);
@@ -141,8 +141,8 @@ mod tests {
     fn elf32_phdr_fields_read_correctly_from_bytes() {
         let mut storage = Aligned([0u8; 32]);
         let bytes = &mut storage.0;
-        bytes[0..4].copy_from_slice(&1u32.to_le_bytes());       // p_type = PT_LOAD
-        bytes[4..8].copy_from_slice(&0x1000u32.to_le_bytes());  // p_offset
+        bytes[0..4].copy_from_slice(&1u32.to_le_bytes()); // p_type = PT_LOAD
+        bytes[4..8].copy_from_slice(&0x1000u32.to_le_bytes()); // p_offset
         bytes[8..12].copy_from_slice(&0x8000u32.to_le_bytes()); // p_vaddr
         bytes[16..20].copy_from_slice(&0x200u32.to_le_bytes()); // p_filesz
         bytes[20..24].copy_from_slice(&0x400u32.to_le_bytes()); // p_memsz
@@ -160,7 +160,7 @@ mod tests {
         let mut storage = Aligned([0u8; 8]);
         let bytes = &mut storage.0;
         bytes[0..4].copy_from_slice(&0x1234u32.to_le_bytes()); // r_offset
-        bytes[4..8].copy_from_slice(&0x08u32.to_le_bytes());   // r_info (type 8 = R_386_RELATIVE)
+        bytes[4..8].copy_from_slice(&0x08u32.to_le_bytes()); // r_info (type 8 = R_386_RELATIVE)
 
         let rel = unsafe { &*(bytes.as_ptr() as *const Elf32Rel) };
         assert_eq!(rel.r_offset, 0x1234);

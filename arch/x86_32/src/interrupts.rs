@@ -40,14 +40,20 @@ struct IdtEntry {
 
 impl IdtEntry {
     const fn absent() -> Self {
-        Self { offset_low: 0, selector: 0, zero: 0, type_attr: 0, offset_high: 0 }
+        Self {
+            offset_low: 0,
+            selector: 0,
+            zero: 0,
+            type_attr: 0,
+            offset_high: 0,
+        }
     }
 
     fn interrupt_gate(handler: extern "x86-interrupt" fn(InterruptStackFrame)) -> Self {
         let addr = handler as *const () as usize as u32;
         Self {
             offset_low: (addr & 0xFFFF) as u16,
-            selector: 0x08,  // GDT[1] — kernel code segment supplied by GRUB
+            selector: 0x08, // GDT[1] — kernel code segment supplied by GRUB
             zero: 0,
             type_attr: 0x8E, // P=1, DPL=0, type=0xE (32-bit interrupt gate)
             offset_high: ((addr >> 16) & 0xFFFF) as u16,
@@ -83,8 +89,9 @@ unsafe extern "C" {
 lazy_static! {
     static ref IDT: Idt = {
         let mut idt = Idt([IdtEntry::absent(); 256]);
-        idt.0[PIC_MASTER_OFFSET as usize]     = IdtEntry::interrupt_gate(timer_interrupt_handler);
-        idt.0[PIC_MASTER_OFFSET as usize + 1] = IdtEntry::interrupt_gate(keyboard_interrupt_handler);
+        idt.0[PIC_MASTER_OFFSET as usize] = IdtEntry::interrupt_gate(timer_interrupt_handler);
+        idt.0[PIC_MASTER_OFFSET as usize + 1] =
+            IdtEntry::interrupt_gate(keyboard_interrupt_handler);
         idt.0[0x80] = IdtEntry::trap_gate_ring3(int80_handler as *const () as u32);
         idt
     };
@@ -108,19 +115,19 @@ fn init_pic() {
     unsafe {
         // ICW1 — begin initialisation (cascade mode, ICW4 required)
         outb(PIC_MASTER_CMD, 0x11);
-        outb(PIC_SLAVE_CMD,  0x11);
+        outb(PIC_SLAVE_CMD, 0x11);
         // ICW2 — interrupt vector offsets
         outb(PIC_MASTER_DATA, PIC_MASTER_OFFSET);
-        outb(PIC_SLAVE_DATA,  PIC_SLAVE_OFFSET);
+        outb(PIC_SLAVE_DATA, PIC_SLAVE_OFFSET);
         // ICW3 — cascade wiring (slave on IRQ2)
         outb(PIC_MASTER_DATA, 0x04);
-        outb(PIC_SLAVE_DATA,  0x02);
+        outb(PIC_SLAVE_DATA, 0x02);
         // ICW4 — 8086/88 mode
         outb(PIC_MASTER_DATA, 0x01);
-        outb(PIC_SLAVE_DATA,  0x01);
+        outb(PIC_SLAVE_DATA, 0x01);
         // Mask all IRQs; unmask selectively via enable_timer / enable_keyboard
         outb(PIC_MASTER_DATA, 0xFF);
-        outb(PIC_SLAVE_DATA,  0xFF);
+        outb(PIC_SLAVE_DATA, 0xFF);
     }
 }
 

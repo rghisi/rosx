@@ -3,30 +3,30 @@
 #![feature(abi_x86_interrupt)]
 
 extern crate alloc;
+mod ansi_parser;
 mod cpu;
 mod debug_console;
 mod elf_arch;
-mod interrupts;
-mod vga_buffer;
-mod terminal_fonts;
 mod framebuffer;
-mod ansi_parser;
+mod interrupts;
+mod terminal_fonts;
+mod vga_buffer;
 
 use crate::cpu::X86_64;
 use crate::debug_console::QemuDebugConsole;
 use crate::elf_arch::X86_64ElfArch;
 use crate::framebuffer::FramebufferOutput;
-use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
 use bootloader_api::config::Mapping;
+use bootloader_api::{BootInfo, BootloaderConfig, entry_point};
 use core::panic::PanicInfo;
-use kernel::memory::{MemoryBlock, MemoryBlocks};
 use kernel::default_output::MultiplexOutput;
 use kernel::kconfig::KConfig;
 use kernel::kernel::Kernel;
-use kernel::scheduler;
 use kernel::kprintln;
+use kernel::memory::{MemoryBlock, MemoryBlocks};
 use kernel::panic::handle_panic;
-use kernel::task::{FunctionTask};
+use kernel::scheduler;
+use kernel::task::FunctionTask;
 
 static FB_OUTPUT: FramebufferOutput = FramebufferOutput;
 pub static QEMU_OUTPUT: QemuDebugConsole = QemuDebugConsole;
@@ -61,20 +61,25 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         framebuffer::init(fb.buffer_mut().as_mut_ptr() as u64, fb.info());
     }
     let phys_offset = boot_info.physical_memory_offset.into_option().unwrap();
-    unsafe { cpu::clear_nx_bits(phys_offset); }
+    unsafe {
+        cpu::clear_nx_bits(phys_offset);
+    }
     let memory_blocks = build_memory_blocks(boot_info, phys_offset);
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kprintln!("[KERNEL] Initializing");
     let mut kernel = Kernel::new(&KCONFIG);
     kernel.setup();
-    // kernel.schedule(FunctionTask::new("1", dummy::app::main));
-    // kernel.schedule(FunctionTask::new("2", dummy::app::main2));
-    // kernel.schedule(FunctionTask::new("3", dummy::app::main3));
-    // kernel.schedule(FunctionTask::new("4", dummy::app::main4));
-    let _ = kernel.schedule(FunctionTask::new("RandomServer", kernel::ipc::random_gen_server::main));
-    let _ = kernel.schedule(FunctionTask::new("Shell", shell::shell::main));
-    // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
-    // kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));
+    // kernel.schedule(FunctionTask::create("1", dummy::app::main));
+    // kernel.schedule(FunctionTask::create("2", dummy::app::main2));
+    // kernel.schedule(FunctionTask::create("3", dummy::app::main3));
+    // kernel.schedule(FunctionTask::create("4", dummy::app::main4));
+    let _ = kernel.schedule(FunctionTask::create(
+        "RandomServer",
+        kernel::ipc::random_gen_server::main,
+    ));
+    let _ = kernel.schedule(FunctionTask::create("Shell", shell::shell::main));
+    // kernel.schedule(FunctionTask::create("6", dummy::app::main_with_wait));
+    // kernel.schedule(FunctionTask::create("Test Suite", test_suite::app::main));
 
     kprintln!("[KERNEL] Starting");
     kernel.start();

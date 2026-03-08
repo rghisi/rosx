@@ -3,6 +3,6 @@
 extern crate alloc;
 extern crate system;
 
-pub mod out;
 pub mod arch;
+pub mod out;
 pub mod syscall;
