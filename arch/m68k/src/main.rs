@@ -37,12 +37,7 @@ fn panic(info: &PanicInfo) -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
-    // 1. Initialize output
-    kernel::default_output::setup_default_output(&SERIAL);
-
-    kprintln!("[M68K] Hello, Motorola 68040!");
-
-    // 2. Setup memory blocks
+    // 1. Setup memory blocks
     let mut memory_blocks = MemoryBlocks {
         blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),
         count: 0,
@@ -61,10 +56,12 @@ pub extern "C" fn kernel_main() -> ! {
     };
     memory_blocks.count = 1;
 
-    // 3. Bootstrap kernel
+    // 2. Bootstrap kernel
     kernel::kernel::bootstrap(&memory_blocks, &SERIAL);
 
-    // 4. Initialize and start kernel
+    kprintln!("[M68K] Hello, Motorola 68040!");
+
+    // 3. Initialize and start kernel
     let mut kernel = Kernel::new(&KCONFIG);
     kernel.setup();
 
