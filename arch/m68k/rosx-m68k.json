@@ -1,0 +1,18 @@
+{
+  "arch": "m68k",
+  "cpu": "M68040",
+  "data-layout": "E-m:e-p:32:16:32-i8:8:8-i16:16:16-i32:16:32-n8:16:32-a:0:16-S16",
+  "linker": "m68k-linux-gnu-ld",
+  "linker-flavor": "gnu-cc",
+  "llvm-target": "m68k",
+  "panic-strategy": "abort",
+  "relocation-model": "static",
+  "target-endian": "big",
+  "target-pointer-width": 32,
+  "executables": true,
+  "os": "none",
+  "target-c-int-width": 32,
+  "pre-link-args": {
+    "gnu-cc": ["-Tarch/m68k/linker.ld"]
+  }
+}

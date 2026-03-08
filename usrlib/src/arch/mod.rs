@@ -6,4 +6,8 @@ mod implementation;
 #[path = "x86_32.rs"]
 mod implementation;
 
+#[cfg(target_arch = "m68k")]
+#[path = "m68k.rs"]
+mod implementation;
+
 pub use implementation::raw_syscall;

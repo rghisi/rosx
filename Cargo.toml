@@ -6,6 +6,7 @@ members = [
     "usrlib",
     "arch/x86_64",
     "arch/x86_32",
+    "arch/m68k",
     "apps/shell",
     "apps/dummy",
 ]
