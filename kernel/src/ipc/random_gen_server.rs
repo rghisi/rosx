@@ -1,8 +1,6 @@
-use crate::future::TimeFuture;
 use crate::ipc::ipc_manager::IpcReplyMessage;
 use crate::kernel::kernel;
 use crate::kernel_services::services;
-use alloc::boxed::Box;
 use crate::kprintln;
 
 struct RandomGeneratorServer {
@@ -21,28 +19,18 @@ impl RandomGeneratorServer {
             .register("RANDOM")
             .unwrap();
         loop {
-            if let Some(message) = services().ipc_manager.borrow_mut().receive(biding) {
+            let handle = services().ipc_manager.borrow_mut().wait_receive(biding);
+            let future = kernel().wait_future(handle).unwrap();
+            let rf = future.as_any().downcast_ref::<system::ipc::IpcReceiveFuture>().unwrap();
+            if let Some(message) = rf.message {
                 let value = self.next();
                 let reply = IpcReplyMessage {
                     value,
-                    destination: message.sender,
                     future: message.future,
                 };
                 services().ipc_manager.borrow_mut().reply(reply);
-            } else {
-                Self::sleep();
             }
         }
-    }
-
-    fn sleep() {
-        let future = Box::new(TimeFuture::new(20));
-        let handle = services()
-            .future_registry
-            .borrow_mut()
-            .register(future)
-            .expect("Failed to register sleep future");
-        let _ = kernel().wait_future(handle);
     }
 
     fn next(&mut self) -> u32 {

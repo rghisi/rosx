@@ -1,7 +1,5 @@
 use core::alloc::{GlobalAlloc, Layout};
 use alloc::boxed::Box;
-use alloc::string::String;
-use crate::future::TimeFuture;
 use crate::kernel::kernel;
 use crate::kernel_services::services;
 use crate::default_output::print;
@@ -21,7 +19,7 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             0
         }
         Ok(SyscallNum::Sleep) => {
-            let future = Box::new(TimeFuture::new(arg1 as u64));
+            let future = Box::new(crate::future::TimeFuture::new(arg1 as u64));
             let handle = services().future_registry
                 .borrow_mut()
                 .register(future)
@@ -49,8 +47,10 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
                 .borrow_mut()
                 .register(future)
                 .expect("Failed to register keyboard future");
-            let _ = kernel().wait_future(handle);
-            crate::keyboard::pop_key().map_or(0, |c| c as usize)
+            crate::keyboard::set_keyboard_future(handle);
+            let future = kernel().wait_future(handle).unwrap();
+            let kf = future.as_any().downcast_ref::<crate::keyboard::KeyboardFuture>().unwrap();
+            kf.char.map_or(0, |c| c as usize)
         }
         Ok(SyscallNum::WaitFuture) => {
             let handle = FutureHandle::unpack(arg1 as usize);
@@ -92,8 +92,8 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             let message = IpcSendMessage { value };
             let future_handle = services().ipc_manager.borrow_mut().send(ipc_server_handle, message);
             let future = kernel().wait_future(future_handle).unwrap();
-            let ipc_reply_future = *future.as_any().downcast_ref::<IpcReplyFuture>().unwrap();
-            Box::into_raw(Box::new(ipc_reply_future)) as usize
+            let ipc_reply_future = future.as_any().downcast_ref::<IpcReplyFuture>().unwrap();
+            Box::into_raw(Box::new(*ipc_reply_future)) as usize
         }
         Err(_) => 0,
     }

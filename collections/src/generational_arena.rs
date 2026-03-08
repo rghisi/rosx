@@ -10,7 +10,7 @@ pub type HalfSize = u8;
 
 const HALF_BITS: usize = core::mem::size_of::<HalfSize>() * 8;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Handle {
     pub index: HalfSize,
     pub generation: HalfSize,

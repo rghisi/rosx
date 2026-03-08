@@ -20,6 +20,40 @@ pub struct IpcReply {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct IpcReceiveMessage {
+    pub value: u32,
+    pub sender: Handle,
+    pub future: Handle,
+}
+
+pub struct IpcReceiveFuture {
+    pub message: Option<IpcReceiveMessage>,
+}
+
+impl IpcReceiveFuture {
+    pub fn new() -> Self {
+        Self { message: None }
+    }
+}
+
+impl Future for IpcReceiveFuture {
+    fn is_completed(&self) -> bool {
+        self.message.is_some()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn complete(&mut self) {
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct IpcReplyFuture {
     pub reply: Option<IpcReply>,
 }
@@ -37,5 +71,12 @@ impl Future for IpcReplyFuture {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn complete(&mut self) {
     }
 }
