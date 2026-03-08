@@ -8,6 +8,7 @@ mod debug_console;
 mod elf_arch;
 mod interrupts;
 mod pci;
+mod rtl8139;
 mod vga_buffer;
 mod terminal_fonts;
 mod framebuffer;
