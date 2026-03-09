@@ -1,3 +1,5 @@
+cargo-features = ["edition2024"]
+
 [workspace]
 members = [
     "collections",
@@ -10,12 +12,13 @@ members = [
     "apps/dummy",
 ]
 exclude = [
+    "arch/m68k",
     "apps/hello_elf",
     "apps/snake",
     "apps/tetris",
     "apps/conway",
 ]
-resolver = "3"
+resolver = "2"
 
 [workspace.package]
 edition = "2024"

@@ -1,18 +1,17 @@
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicU8, Ordering};
 
 const UNINIT: u8 = 0;
 const INITIALIZING: u8 = 1;
 const READY: u8 = 2;
 
 pub struct Once<T> {
-    state: AtomicU8,
+    state: crate::kernel_cell::KernelCell<u8>,
     value: UnsafeCell<MaybeUninit<T>>,
 }
 
 // Safety: Once<T> guarantees that the inner value is only written once (during
-// call_once) and all subsequent access is read-only. The AtomicU8 state field
+// call_once) and all subsequent access is read-only. The KernelCell state field
 // provides the synchronization barrier. T must be Send (safe to transfer
 // between threads) and Sync (safe to share references).
 unsafe impl<T: Send + Sync> Sync for Once<T> {}
@@ -21,32 +20,25 @@ unsafe impl<T: Send> Send for Once<T> {}
 impl<T> Once<T> {
     pub const fn new() -> Self {
         Self {
-            state: AtomicU8::new(UNINIT),
+            state: crate::kernel_cell::KernelCell::new(UNINIT),
             value: UnsafeCell::new(MaybeUninit::uninit()),
         }
     }
 
     pub fn call_once(&self, f: impl FnOnce() -> T) {
-        match self.state.compare_exchange(
-            UNINIT,
-            INITIALIZING,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => {
-                // Safety: we are the only thread that transitioned from UNINIT
-                // to INITIALIZING, so we have exclusive access to the value.
-                unsafe {
-                    (*self.value.get()).write(f());
-                }
-                self.state.store(READY, Ordering::Release);
-            }
-            Err(_) => panic!("Once::call_once called more than once"),
+        let state = self.state.borrow_mut();
+        if *state != UNINIT {
+            panic!("Once::call_once called more than once");
         }
+        *state = INITIALIZING;
+        // Safety: we just set state to INITIALIZING exclusively, so we have
+        // exclusive access to the value.
+        unsafe { (*self.value.get()).write(f()) };
+        *state = READY;
     }
 
     pub fn get(&self) -> Option<&T> {
-        if self.state.load(Ordering::Acquire) == READY {
+        if *self.state.borrow() == READY {
             // Safety: state is READY, meaning call_once completed and wrote a
             // valid T. No further mutation occurs, so a shared reference is safe.
             Some(unsafe { (*self.value.get()).assume_init_ref() })

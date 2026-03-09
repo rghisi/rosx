@@ -1,0 +1,17 @@
+{
+    "llvm-target": "m68k-unknown-none",
+    "data-layout": "E-m:e-p:32:16:32-i8:8:8-i16:16:16-i32:16:32-n8:16:32-a:0:16-S16",
+    "arch": "m68k",
+    "target-endian": "big",
+    "target-pointer-width": "32",
+    "target-c-int-width": "32",
+    "os": "none",
+    "executables": true,
+    "linker-flavor": "gnu",
+    "linker": "m68k-linux-gnu-ld",
+    "panic-strategy": "abort",
+    "cpu": "M68000",
+    "features": "-isa-68881,-isa-68882",
+    "max-atomic-width": 0,
+    "relocation-model": "static"
+}

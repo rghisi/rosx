@@ -11,7 +11,7 @@ pub fn handle_panic(info: &PanicInfo) -> ! {
             location.column()
         );
     }
-    kprintln!("Message: {}", info.message());
+    kprintln!("Message: {}", info);
     kprintln!("System halted.");
     loop {}
 }

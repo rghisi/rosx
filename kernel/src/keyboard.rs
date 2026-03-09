@@ -3,18 +3,23 @@ use crate::kernel_cell::KernelCell;
 use alloc::collections::VecDeque;
 use alloc::fmt::{Display, Formatter};
 use core::any::Any;
-use lazy_static::lazy_static;
 
-lazy_static! {
-    static ref KEYBOARD_BUFFER: KernelCell<VecDeque<char>> = KernelCell::new(VecDeque::new());
+static KEYBOARD_BUFFER: KernelCell<Option<VecDeque<char>>> = KernelCell::new(None);
+
+fn with_buffer<R>(f: impl FnOnce(&mut VecDeque<char>) -> R) -> R {
+    let buf = KEYBOARD_BUFFER.borrow_mut();
+    if buf.is_none() {
+        *buf = Some(VecDeque::new());
+    }
+    f(buf.as_mut().unwrap())
 }
 
 pub fn push_key(c: char) {
-    KEYBOARD_BUFFER.borrow_mut().push_back(c);
+    with_buffer(|b| b.push_back(c));
 }
 
 pub fn pop_key() -> Option<char> {
-    KEYBOARD_BUFFER.borrow_mut().pop_front()
+    with_buffer(|b| b.pop_front())
 }
 
 pub struct KeyboardFuture {}
@@ -27,7 +32,7 @@ impl KeyboardFuture {
 
 impl Future for KeyboardFuture {
     fn is_completed(&self) -> bool {
-        !KEYBOARD_BUFFER.borrow_mut().is_empty()
+        with_buffer(|b| !b.is_empty())
     }
 
     fn as_any(&self) -> &dyn Any {

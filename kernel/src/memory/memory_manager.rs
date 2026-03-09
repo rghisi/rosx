@@ -1,6 +1,5 @@
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::cpu::Cpu;
 use crate::kernel_cell::KernelCell;
@@ -17,8 +16,8 @@ pub fn alloc_error_handler(layout: Layout) -> ! {
 
 pub struct MemoryManager {
     allocator: KernelCell<Option<FreeListAllocator>>,
-    used: AtomicUsize,
-    is_setup: AtomicBool,
+    used: KernelCell<usize>,
+    is_setup: KernelCell<bool>,
     cpu: KernelCell<Option<&'static dyn Cpu>>,
     memory_blocks: KernelCell<Option<MemoryBlocks>>,
 }
@@ -27,8 +26,8 @@ impl MemoryManager {
     pub const fn new() -> Self {
         MemoryManager {
             allocator: KernelCell::new(None),
-            used: AtomicUsize::new(0),
-            is_setup: AtomicBool::new(false),
+            used: KernelCell::new(0),
+            is_setup: KernelCell::new(false),
             cpu: KernelCell::new(None),
             memory_blocks: KernelCell::new(None),
         }
@@ -41,11 +40,11 @@ impl MemoryManager {
 
     pub fn setup(&self, cpu: &'static dyn Cpu) {
         *self.cpu.borrow_mut() = Some(cpu);
-        self.is_setup.store(true, Ordering::SeqCst);
+        *self.is_setup.borrow_mut() = true;
     }
 
     pub fn used(&self) -> usize {
-        self.used.load(Ordering::Relaxed)
+        *self.used.borrow()
     }
 
     pub fn print_config(&self) {
@@ -69,12 +68,12 @@ impl MemoryManager {
 
 unsafe impl GlobalAlloc for MemoryManager {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
+        let interrupts_enabled = *self.is_setup.borrow()
             && self.cpu.borrow().unwrap().are_interrupts_enabled();
         if interrupts_enabled {
             self.cpu.borrow().unwrap().disable_interrupts();
         }
-        self.used.fetch_add(layout.size(), Ordering::Relaxed);
+        *self.used.borrow_mut() += layout.size();
         let result = unsafe {
             self.allocator
                 .borrow_mut()
@@ -92,7 +91,7 @@ unsafe impl GlobalAlloc for MemoryManager {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
+        let interrupts_enabled = *self.is_setup.borrow()
             && self.cpu.borrow().unwrap().are_interrupts_enabled();
         if interrupts_enabled {
             self.cpu.borrow().unwrap().disable_interrupts();
@@ -104,7 +103,7 @@ unsafe impl GlobalAlloc for MemoryManager {
                 .expect("MemoryManager not bootstrapped")
                 .deallocate(ptr)
         };
-        self.used.fetch_sub(layout.size(), Ordering::Relaxed);
+        *self.used.borrow_mut() -= layout.size();
         if interrupts_enabled {
             self.cpu.borrow().unwrap().enable_interrupts();
         }
