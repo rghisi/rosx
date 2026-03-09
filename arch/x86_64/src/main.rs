@@ -7,6 +7,8 @@ mod cpu;
 mod debug_console;
 mod elf_arch;
 mod interrupts;
+mod pci;
+mod rtl8139;
 mod vga_buffer;
 mod terminal_fonts;
 mod framebuffer;
@@ -75,6 +77,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let _ = kernel.schedule(FunctionTask::new("Shell", shell::shell::main));
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
     // kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));
+
+    match pci::find_device(0x10EC, 0x8139) {
+        Some(dev) => kprintln!("[RTL8139] Found at IRQ {}", dev.irq_line),
+        None => kprintln!("[RTL8139] Not found"),
+    }
 
     kprintln!("[KERNEL] Starting");
     kernel.start();
