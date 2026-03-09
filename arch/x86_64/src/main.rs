@@ -78,6 +78,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
     // kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));
 
+    match pci::find_device(0x10EC, 0x8139) {
+        Some(dev) => kprintln!("[RTL8139] Found at IRQ {}", dev.irq_line),
+        None => kprintln!("[RTL8139] Not found"),
+    }
+
     kprintln!("[KERNEL] Starting");
     kernel.start();
     panic!("[KERNEL] Crashed spectacularly, should never reached here.");
