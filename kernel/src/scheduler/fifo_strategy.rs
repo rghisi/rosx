@@ -21,11 +21,11 @@ impl FifoStrategy {
 }
 
 impl SchedulingAlgorithm for FifoStrategy {
-    fn pick_next(&mut self) -> Option<(TaskHandle, usize)> {
-        self.ready_queue.pop_front().map(|h| (h, 0))
+    fn pick_next(&mut self) -> Option<TaskHandle> {
+        self.ready_queue.pop_front()
     }
 
-    fn record_yield(&mut self, _handle: TaskHandle, _current_priority: usize, _yield_reason: YieldReason) {
+    fn record_yield(&mut self, _handle: TaskHandle, _yield_reason: YieldReason) {
     }
 
     fn requeue_after_run(&mut self, handle: TaskHandle) {
@@ -40,7 +40,7 @@ impl SchedulingAlgorithm for FifoStrategy {
         true
     }
 
-    fn on_task_start(&mut self, _priority: usize) {
+    fn on_task_start(&mut self, _handle: TaskHandle) {
     }
 }
 
@@ -73,8 +73,8 @@ mod tests {
         strategy.push_ready(h1);
         strategy.push_ready(h2);
 
-        assert_eq!(strategy.pick_next(), Some((h1, 0)));
-        assert_eq!(strategy.pick_next(), Some((h2, 0)));
+        assert_eq!(strategy.pick_next(), Some(h1));
+        assert_eq!(strategy.pick_next(), Some(h2));
     }
 
     #[test]
@@ -88,9 +88,9 @@ mod tests {
         strategy.push_ready(h1);
         strategy.push_ready(h2);
 
-        assert_eq!(strategy.pick_next(), Some((h3, 0)));
-        assert_eq!(strategy.pick_next(), Some((h1, 0)));
-        assert_eq!(strategy.pick_next(), Some((h2, 0)));
+        assert_eq!(strategy.pick_next(), Some(h3));
+        assert_eq!(strategy.pick_next(), Some(h1));
+        assert_eq!(strategy.pick_next(), Some(h2));
         assert!(strategy.pick_next().is_none());
     }
 
@@ -101,10 +101,10 @@ mod tests {
 
         strategy.push_ready(h);
         let picked = strategy.pick_next().unwrap();
-        assert_eq!(picked.0, h);
+        assert_eq!(picked, h);
 
         strategy.requeue_after_run(h);
-        assert_eq!(strategy.pick_next(), Some((h, 0)));
+        assert_eq!(strategy.pick_next(), Some(h));
         assert!(strategy.pick_next().is_none());
     }
 
@@ -119,9 +119,8 @@ mod tests {
     #[test]
     fn on_task_start_is_noop() {
         let mut strategy = FifoStrategy::new();
-        strategy.on_task_start(0);
-        strategy.on_task_start(1);
-        strategy.on_task_start(2);
+        strategy.on_task_start(make_handle(1, 0));
+        strategy.on_task_start(make_handle(2, 0));
         assert!(strategy.pick_next().is_none());
     }
 
@@ -129,8 +128,8 @@ mod tests {
     fn record_yield_is_noop() {
         let mut strategy = FifoStrategy::new();
         let h = make_handle(1, 0);
-        strategy.record_yield(h, 0, YieldReason::Voluntary);
-        strategy.record_yield(h, 1, YieldReason::Preempted);
+        strategy.record_yield(h, YieldReason::Voluntary);
+        strategy.record_yield(h, YieldReason::Preempted);
         assert!(strategy.pick_next().is_none());
     }
 
@@ -145,13 +144,13 @@ mod tests {
         strategy.push_ready(h2);
 
         let picked = strategy.pick_next().unwrap();
-        assert_eq!(picked.0, h1);
+        assert_eq!(picked, h1);
         strategy.requeue_after_run(h1);
 
         strategy.push_ready(h3);
 
-        assert_eq!(strategy.pick_next(), Some((h2, 0)));
-        assert_eq!(strategy.pick_next(), Some((h1, 0)));
-        assert_eq!(strategy.pick_next(), Some((h3, 0)));
+        assert_eq!(strategy.pick_next(), Some(h2));
+        assert_eq!(strategy.pick_next(), Some(h1));
+        assert_eq!(strategy.pick_next(), Some(h3));
     }
 }

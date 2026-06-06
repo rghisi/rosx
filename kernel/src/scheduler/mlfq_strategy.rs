@@ -15,6 +15,7 @@ struct YieldInfo {
 pub struct MlfqStrategy {
     queues: [VecDeque<TaskHandle>; NUM_QUEUES],
     remaining_quantum: usize,
+    current_priority: usize,
     yield_info: BTreeMap<TaskHandle, YieldInfo>,
 }
 
@@ -29,6 +30,7 @@ impl MlfqStrategy {
         MlfqStrategy {
             queues: [VecDeque::new(), VecDeque::new(), VecDeque::new()],
             remaining_quantum: 0,
+            current_priority: 0,
             yield_info: BTreeMap::new(),
         }
     }
@@ -43,19 +45,20 @@ impl MlfqStrategy {
 }
 
 impl SchedulingAlgorithm for MlfqStrategy {
-    fn pick_next(&mut self) -> Option<(TaskHandle, usize)> {
+    fn pick_next(&mut self) -> Option<TaskHandle> {
         for (priority, queue) in self.queues.iter_mut().enumerate() {
             if let Some(handle) = queue.pop_front() {
-                return Some((handle, priority));
+                self.current_priority = priority;
+                return Some(handle);
             }
         }
         None
     }
 
-    fn record_yield(&mut self, handle: TaskHandle, current_priority: usize, yield_reason: YieldReason) {
+    fn record_yield(&mut self, handle: TaskHandle, yield_reason: YieldReason) {
         self.yield_info.insert(handle, YieldInfo {
             yield_reason,
-            priority: current_priority,
+            priority: self.current_priority,
         });
     }
 
@@ -77,8 +80,8 @@ impl SchedulingAlgorithm for MlfqStrategy {
         self.remaining_quantum == 0
     }
 
-    fn on_task_start(&mut self, priority: usize) {
-        self.remaining_quantum = QUANTA[priority];
+    fn on_task_start(&mut self, _handle: TaskHandle) {
+        self.remaining_quantum = QUANTA[self.current_priority];
     }
 }
 
@@ -134,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    fn pick_next_returns_queue_index_as_priority() {
+    fn pick_next_tracks_current_priority() {
         let mut strategy = MlfqStrategy::new();
         let h0 = make_handle(1, 0);
         let h1 = make_handle(2, 0);
@@ -144,17 +147,17 @@ mod tests {
         strategy.queues[1].push_back(h1);
         strategy.queues[2].push_back(h2);
 
-        let (picked, priority) = strategy.pick_next().unwrap();
+        let picked = strategy.pick_next().unwrap();
         assert_eq!(picked, h0);
-        assert_eq!(priority, 0);
+        assert_eq!(strategy.current_priority, 0);
 
-        let (picked, priority) = strategy.pick_next().unwrap();
+        let picked = strategy.pick_next().unwrap();
         assert_eq!(picked, h1);
-        assert_eq!(priority, 1);
+        assert_eq!(strategy.current_priority, 1);
 
-        let (picked, priority) = strategy.pick_next().unwrap();
+        let picked = strategy.pick_next().unwrap();
         assert_eq!(picked, h2);
-        assert_eq!(priority, 2);
+        assert_eq!(strategy.current_priority, 2);
     }
 
     // === push_ready tests ===
@@ -199,9 +202,9 @@ mod tests {
         strategy.queues[1].push_back(h_queue1);
 
         // Queue 0 is highest priority, so h_queue0 is picked first
-        let (picked, priority) = strategy.pick_next().unwrap();
+        let picked = strategy.pick_next().unwrap();
         assert_eq!(picked, h_queue0);
-        assert_eq!(priority, 0);
+        assert_eq!(strategy.current_priority, 0);
     }
 
     #[test]
@@ -216,9 +219,12 @@ mod tests {
         strategy.queues[2].push_back(h2);
 
         // Queue 0 is highest priority
-        assert_eq!(strategy.pick_next(), Some((h0, 0)));
-        assert_eq!(strategy.pick_next(), Some((h1, 1)));
-        assert_eq!(strategy.pick_next(), Some((h2, 2)));
+        assert_eq!(strategy.pick_next(), Some(h0));
+        assert_eq!(strategy.current_priority, 0);
+        assert_eq!(strategy.pick_next(), Some(h1));
+        assert_eq!(strategy.current_priority, 1);
+        assert_eq!(strategy.pick_next(), Some(h2));
+        assert_eq!(strategy.current_priority, 2);
         assert!(strategy.pick_next().is_none());
     }
 
@@ -231,11 +237,12 @@ mod tests {
     // === record_yield tests ===
 
     #[test]
-    fn record_yield_stores_yield_reason_and_priority() {
+    fn record_yield_stores_yield_reason_and_current_priority() {
         let mut strategy = MlfqStrategy::new();
         let h = make_handle(1, 0);
 
-        strategy.record_yield(h, 1, YieldReason::Voluntary);
+        strategy.current_priority = 1;
+        strategy.record_yield(h, YieldReason::Voluntary);
 
         let info = strategy.yield_info.get(&h).unwrap();
         assert_eq!(info.yield_reason, YieldReason::Voluntary);
@@ -247,8 +254,10 @@ mod tests {
         let mut strategy = MlfqStrategy::new();
         let h = make_handle(1, 0);
 
-        strategy.record_yield(h, 0, YieldReason::Voluntary);
-        strategy.record_yield(h, 2, YieldReason::Preempted);
+        strategy.current_priority = 0;
+        strategy.record_yield(h, YieldReason::Voluntary);
+        strategy.current_priority = 2;
+        strategy.record_yield(h, YieldReason::Preempted);
 
         let info = strategy.yield_info.get(&h).unwrap();
         assert_eq!(info.yield_reason, YieldReason::Preempted);
@@ -263,8 +272,8 @@ mod tests {
         let h = make_handle(1, 0);
 
         strategy.push_ready(h);
-        let (picked, priority) = strategy.pick_next().unwrap();
-        strategy.record_yield(picked, priority, YieldReason::Voluntary);
+        let picked = strategy.pick_next().unwrap();
+        strategy.record_yield(picked, YieldReason::Voluntary);
         strategy.requeue_after_run(picked);
 
         assert_eq!(strategy.queues[0].len(), 1);
@@ -278,8 +287,8 @@ mod tests {
         let h = make_handle(1, 0);
 
         strategy.push_ready(h);
-        let (picked, priority) = strategy.pick_next().unwrap();
-        strategy.record_yield(picked, priority, YieldReason::Preempted);
+        let picked = strategy.pick_next().unwrap();
+        strategy.record_yield(picked, YieldReason::Preempted);
         strategy.requeue_after_run(picked);
 
         assert_eq!(strategy.queues[0].len(), 0);
@@ -294,9 +303,9 @@ mod tests {
 
         // Push directly to queue 2 (lowest priority)
         strategy.queues[2].push_back(h);
-        let (picked, priority) = strategy.pick_next().unwrap();
-        assert_eq!(priority, 2);
-        strategy.record_yield(picked, priority, YieldReason::Preempted);
+        let picked = strategy.pick_next().unwrap();
+        assert_eq!(strategy.current_priority, 2);
+        strategy.record_yield(picked, YieldReason::Preempted);
         strategy.requeue_after_run(picked);
 
         // Should stay at lowest priority (queue 2)
@@ -311,8 +320,8 @@ mod tests {
         let h = make_handle(1, 0);
 
         strategy.push_ready(h);
-        let (picked, _priority) = strategy.pick_next().unwrap();
-        strategy.record_yield(picked, 0, YieldReason::Preempted);
+        let picked = strategy.pick_next().unwrap();
+        strategy.record_yield(picked, YieldReason::Preempted);
         strategy.requeue_after_run(picked);
 
         assert!(!strategy.yield_info.contains_key(&h));
@@ -375,27 +384,25 @@ mod tests {
     // === on_task_start tests ===
 
     #[test]
-    fn on_task_start_resets_quantum_for_priority_0() {
+    fn on_task_start_resets_quantum_based_on_current_priority() {
         let mut strategy = MlfqStrategy::new();
         strategy.remaining_quantum = 0;
-        strategy.on_task_start(0);
+        strategy.current_priority = 0;
+        strategy.on_task_start(make_handle(1, 0));
         assert_eq!(strategy.remaining_quantum, QUANTA[0]);
     }
 
     #[test]
-    fn on_task_start_resets_quantum_for_priority_1() {
+    fn on_task_start_resets_quantum_for_different_priorities() {
         let mut strategy = MlfqStrategy::new();
-        strategy.remaining_quantum = 0;
-        strategy.on_task_start(1);
-        assert_eq!(strategy.remaining_quantum, QUANTA[1]);
-    }
+        let h = make_handle(1, 0);
 
-    #[test]
-    fn on_task_start_resets_quantum_for_priority_2() {
-        let mut strategy = MlfqStrategy::new();
-        strategy.remaining_quantum = 0;
-        strategy.on_task_start(2);
-        assert_eq!(strategy.remaining_quantum, QUANTA[2]);
+        for (priority, &quantum) in QUANTA.iter().enumerate() {
+            strategy.remaining_quantum = 0;
+            strategy.current_priority = priority;
+            strategy.on_task_start(h);
+            assert_eq!(strategy.remaining_quantum, quantum, "priority {priority}");
+        }
     }
 
     // === full lifecycle tests ===
@@ -406,13 +413,13 @@ mod tests {
         let h = make_handle(1, 0);
 
         strategy.push_ready(h);
-        let (picked, priority) = strategy.pick_next().unwrap();
-        strategy.record_yield(picked, priority, YieldReason::Preempted);
+        let picked = strategy.pick_next().unwrap();
+        strategy.record_yield(picked, YieldReason::Preempted);
         strategy.requeue_after_run(picked);
 
         assert_eq!(strategy.queues[1].len(), 1);
         let requeued = strategy.pick_next().unwrap();
-        assert_eq!(requeued.0, h);
+        assert_eq!(requeued, h);
     }
 
     #[test]
@@ -421,15 +428,15 @@ mod tests {
         let h = make_handle(1, 0);
 
         strategy.push_ready(h);
-        let (picked, priority) = strategy.pick_next().unwrap();
-        assert_eq!(priority, 0);
-        strategy.record_yield(picked, priority, YieldReason::Voluntary);
+        let picked = strategy.pick_next().unwrap();
+        assert_eq!(strategy.current_priority, 0);
+        strategy.record_yield(picked, YieldReason::Voluntary);
         strategy.requeue_after_run(picked);
 
         // Voluntary yield keeps the same priority (queue 0)
         assert_eq!(strategy.queues[0].len(), 1);
         let requeued = strategy.pick_next().unwrap();
-        assert_eq!(requeued.0, h);
+        assert_eq!(requeued, h);
     }
 
     #[test]
@@ -442,23 +449,23 @@ mod tests {
         strategy.push_ready(h2);
 
         // Pick h1 at priority 0, preempt it -> demotes to queue 1
-        let (picked, priority) = strategy.pick_next().unwrap();
+        let picked = strategy.pick_next().unwrap();
         assert_eq!(picked, h1);
-        assert_eq!(priority, 0);
-        strategy.record_yield(picked, priority, YieldReason::Preempted);
+        assert_eq!(strategy.current_priority, 0);
+        strategy.record_yield(picked, YieldReason::Preempted);
         strategy.requeue_after_run(picked);
 
         // h2 is still in queue 0, h1 is in queue 1
         // Next pick should be h2 (higher priority queue)
-        let (picked, priority) = strategy.pick_next().unwrap();
+        let picked = strategy.pick_next().unwrap();
         assert_eq!(picked, h2);
-        assert_eq!(priority, 0);
-        strategy.record_yield(picked, priority, YieldReason::Voluntary);
+        assert_eq!(strategy.current_priority, 0);
+        strategy.record_yield(picked, YieldReason::Voluntary);
         strategy.requeue_after_run(picked);
 
         // Now h1 is in queue 1, h2 is in queue 0
         // Next pick should be h2 again (queue 0 > queue 1)
         let picked = strategy.pick_next().unwrap();
-        assert_eq!(picked.0, h2);
+        assert_eq!(picked, h2);
     }
 }
