@@ -2,6 +2,7 @@ pub mod algorithm;
 pub mod fifo_scheduler;
 pub mod fifo_strategy;
 pub mod mlfq_scheduler;
+pub mod mlfq_strategy;
 mod timer;
 
 use alloc::boxed::Box;
