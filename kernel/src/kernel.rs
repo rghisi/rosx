@@ -133,6 +133,7 @@ impl Kernel {
     pub fn wait_future(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
         self.execution_state.block_current_task();
         let task_handle = self.execution_state.current_task();
+        services().future_registry.borrow_mut().register_waiter(handle, task_handle);
         self.scheduler.push_blocked(task_handle, handle);
         self.execution_state.switch_to_scheduler();
 
