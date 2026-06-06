@@ -83,6 +83,15 @@ impl SchedulingAlgorithm for MlfqStrategy {
     fn on_task_start(&mut self, _handle: TaskHandle) {
         self.remaining_quantum = QUANTA[self.current_priority];
     }
+
+    fn on_task_terminate(&mut self, handle: TaskHandle) {
+        for queue in &mut self.queues {
+            if let Some(pos) = queue.iter().position(|&h| h == handle) {
+                queue.remove(pos);
+            }
+        }
+        self.yield_info.remove(&handle);
+    }
 }
 
 #[cfg(test)]
@@ -467,5 +476,43 @@ mod tests {
         // Next pick should be h2 again (queue 0 > queue 1)
         let picked = strategy.pick_next().unwrap();
         assert_eq!(picked, h2);
+    }
+
+    #[test]
+    fn on_task_terminate_removes_handle_from_all_queues_and_yield_info() {
+        let mut strategy = MlfqStrategy::new();
+        let h1 = make_handle(1, 0);
+        let h2 = make_handle(2, 0);
+
+        strategy.push_ready(h1);
+        strategy.push_ready(h2);
+
+        // Pick h1, record yield (keep it in yield_info — don't requeue yet)
+        let picked = strategy.pick_next().unwrap();
+        assert_eq!(picked, h1);
+        strategy.record_yield(picked, YieldReason::Preempted);
+
+        // Push h1 directly into queue 1 to simulate a demoted task
+        strategy.queues[1].push_back(h1);
+
+        assert_eq!(strategy.queues[0].len(), 1); // h2
+        assert_eq!(strategy.queues[1].len(), 1); // h1
+        assert!(strategy.yield_info.contains_key(&h1));
+
+        // Terminate h1
+        strategy.on_task_terminate(h1);
+
+        assert_eq!(strategy.queues[0].len(), 1);  // h2 remains
+        assert_eq!(strategy.queues[1].len(), 0);  // h1 removed
+        assert!(!strategy.yield_info.contains_key(&h1));
+        assert_eq!(strategy.pick_next(), Some(h2));
+    }
+
+    #[test]
+    fn on_task_terminate_on_nonexistent_handle_is_noop() {
+        let mut strategy = MlfqStrategy::new();
+        let h = make_handle(99, 0);
+        strategy.on_task_terminate(h); // should not panic
+        assert!(strategy.pick_next().is_none());
     }
 }

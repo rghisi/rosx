@@ -19,4 +19,8 @@ pub trait SchedulingAlgorithm {
 
     /// Called when a task is about to start running (e.g., reset quantum in MLFQ).
     fn on_task_start(&mut self, handle: TaskHandle);
+
+    /// Called when a task has terminated and is being removed. Allows the
+    /// algorithm to clean up any internal state associated with that handle.
+    fn on_task_terminate(&mut self, _handle: TaskHandle) {}
 }

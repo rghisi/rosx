@@ -66,6 +66,12 @@ impl SchedulerEngine {
         self.algorithm.should_preempt()
     }
 
+    fn handle_termination(&mut self, handle: TaskHandle) {
+        self.algorithm.on_task_terminate(handle);
+        self.cleanup_completion_future(handle);
+        services().task_manager.borrow_mut().remove_task(handle);
+    }
+
     fn run_next_task(&mut self) {
         let next_handle = match self.algorithm.pick_next() {
             Some(handle) => handle,
@@ -81,8 +87,7 @@ impl SchedulerEngine {
                         }
                     }
                     TaskState::Terminated => {
-                        self.cleanup_completion_future(returned);
-                        services().task_manager.borrow_mut().remove_task(returned);
+                        self.handle_termination(returned);
                     }
                     _ => {}
                 }
@@ -109,8 +114,7 @@ impl SchedulerEngine {
             }
             TaskState::Blocked => {}
             TaskState::Terminated => {
-                self.cleanup_completion_future(returned_handle);
-                services().task_manager.borrow_mut().remove_task(returned_handle);
+                self.handle_termination(returned_handle);
             }
         }
     }
@@ -209,6 +213,7 @@ mod tests {
         pushed_ready: Rc<RefCell<Vec<TaskHandle>>>,
         yielded: Rc<RefCell<Vec<(TaskHandle, YieldReason)>>>,
         on_task_start_called: Rc<RefCell<Vec<TaskHandle>>>,
+        terminated: Rc<RefCell<Vec<TaskHandle>>>,
     }
 
     impl FakeAlgorithm {
@@ -220,6 +225,7 @@ mod tests {
                 pushed_ready: Rc::new(RefCell::new(Vec::new())),
                 yielded: Rc::new(RefCell::new(Vec::new())),
                 on_task_start_called: Rc::new(RefCell::new(Vec::new())),
+                terminated: Rc::new(RefCell::new(Vec::new())),
             }
         }
 
@@ -237,6 +243,10 @@ mod tests {
 
         fn take_on_task_start(&self) -> Vec<TaskHandle> {
             self.on_task_start_called.borrow_mut().drain(..).collect()
+        }
+
+        fn take_terminated(&self) -> Vec<TaskHandle> {
+            self.terminated.borrow_mut().drain(..).collect()
         }
     }
 
@@ -263,6 +273,10 @@ mod tests {
 
         fn on_task_start(&mut self, handle: TaskHandle) {
             self.on_task_start_called.borrow_mut().push(handle);
+        }
+
+        fn on_task_terminate(&mut self, handle: TaskHandle) {
+            self.terminated.borrow_mut().push(handle);
         }
     }
 
@@ -497,5 +511,36 @@ mod tests {
         fake.push_ready(h2);
 
         assert_eq!(fake.take_pushed_ready(), vec![h1, h2]);
+    }
+
+    #[test]
+    fn handle_termination_calls_on_task_terminate_on_algorithm() {
+        setup();
+        let fake = FakeAlgorithm::new();
+        let mut engine = SchedulerEngine::new(fake.clone());
+
+        let task = Task::new("T", 0x1000, 0);
+        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+
+        engine.handle_termination(handle);
+
+        assert_eq!(fake.take_terminated(), vec![handle]);
+    }
+
+    #[test]
+    fn handle_termination_removes_task_from_manager() {
+        setup();
+        let fake = FakeAlgorithm::new();
+        let mut engine = SchedulerEngine::new(fake.clone());
+
+        let task = Task::new("T", 0x1000, 0);
+        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+
+        assert_ne!(services().task_manager.borrow().get_state(handle), KS::Terminated);
+
+        engine.handle_termination(handle);
+
+        // After removal, get_state returns Terminated (task not in arena)
+        assert_eq!(services().task_manager.borrow().get_state(handle), KS::Terminated);
     }
 }

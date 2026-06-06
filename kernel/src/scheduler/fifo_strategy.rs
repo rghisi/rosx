@@ -42,6 +42,12 @@ impl SchedulingAlgorithm for FifoStrategy {
 
     fn on_task_start(&mut self, _handle: TaskHandle) {
     }
+
+    fn on_task_terminate(&mut self, handle: TaskHandle) {
+        if let Some(pos) = self.ready_queue.iter().position(|&h| h == handle) {
+            self.ready_queue.remove(pos);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -130,6 +136,29 @@ mod tests {
         let h = make_handle(1, 0);
         strategy.record_yield(h, YieldReason::Voluntary);
         strategy.record_yield(h, YieldReason::Preempted);
+        assert!(strategy.pick_next().is_none());
+    }
+
+    #[test]
+    fn on_task_terminate_removes_handle_from_queue() {
+        let mut strategy = FifoStrategy::new();
+        let h1 = make_handle(1, 0);
+        let h2 = make_handle(2, 0);
+
+        strategy.push_ready(h1);
+        strategy.push_ready(h2);
+        assert_eq!(strategy.ready_queue.len(), 2);
+
+        strategy.on_task_terminate(h1);
+        assert_eq!(strategy.ready_queue.len(), 1);
+        assert_eq!(strategy.pick_next(), Some(h2));
+    }
+
+    #[test]
+    fn on_task_terminate_on_nonexistent_handle_is_noop() {
+        let mut strategy = FifoStrategy::new();
+        let h = make_handle(99, 0);
+        strategy.on_task_terminate(h); // should not panic
         assert!(strategy.pick_next().is_none());
     }
 
