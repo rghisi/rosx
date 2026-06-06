@@ -104,7 +104,7 @@ Write a test in `kernel/src/future.rs` that:
 
 ---
 
-### Step 2: Wire Up TaskCompletionFuture Notifications
+### Step 2: Wire Up TaskCompletionFuture Notifications - [DONE]
 
 **Files:** `kernel/src/task_manager.rs`, `kernel/src/kernel.rs`
 

@@ -171,6 +171,10 @@ impl Kernel {
                 .task_manager
                 .borrow_mut()
                 .set_state(task_handle, Terminated);
+            if let Some(completion_handle) =
+                services().task_manager.borrow().get_completion_future(task_handle) {
+                    services().future_registry.borrow_mut().notify(completion_handle);
+                }
             self.execution_state.current_task = Some(task_handle);
         }
         self.execution_state.switch_to_scheduler();
