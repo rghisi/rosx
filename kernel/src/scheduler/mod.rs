@@ -1,5 +1,6 @@
 pub mod algorithm;
 pub mod fifo_scheduler;
+pub mod fifo_strategy;
 pub mod mlfq_scheduler;
 mod timer;
 
