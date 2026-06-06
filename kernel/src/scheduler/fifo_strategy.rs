@@ -21,8 +21,8 @@ impl FifoStrategy {
 }
 
 impl SchedulingAlgorithm for FifoStrategy {
-    fn pick_next(&mut self) -> Option<TaskHandle> {
-        self.ready_queue.pop_front()
+    fn pick_next(&mut self) -> Option<(TaskHandle, usize)> {
+        self.ready_queue.pop_front().map(|h| (h, 0))
     }
 
     fn record_yield(&mut self, _handle: TaskHandle, _current_priority: usize, _yield_reason: YieldReason) {
@@ -73,8 +73,8 @@ mod tests {
         strategy.push_ready(h1);
         strategy.push_ready(h2);
 
-        assert_eq!(strategy.pick_next(), Some(h1));
-        assert_eq!(strategy.pick_next(), Some(h2));
+        assert_eq!(strategy.pick_next(), Some((h1, 0)));
+        assert_eq!(strategy.pick_next(), Some((h2, 0)));
     }
 
     #[test]
@@ -88,9 +88,9 @@ mod tests {
         strategy.push_ready(h1);
         strategy.push_ready(h2);
 
-        assert_eq!(strategy.pick_next(), Some(h3));
-        assert_eq!(strategy.pick_next(), Some(h1));
-        assert_eq!(strategy.pick_next(), Some(h2));
+        assert_eq!(strategy.pick_next(), Some((h3, 0)));
+        assert_eq!(strategy.pick_next(), Some((h1, 0)));
+        assert_eq!(strategy.pick_next(), Some((h2, 0)));
         assert!(strategy.pick_next().is_none());
     }
 
@@ -101,10 +101,10 @@ mod tests {
 
         strategy.push_ready(h);
         let picked = strategy.pick_next().unwrap();
-        assert_eq!(picked, h);
+        assert_eq!(picked.0, h);
 
         strategy.requeue_after_run(h);
-        assert_eq!(strategy.pick_next(), Some(h));
+        assert_eq!(strategy.pick_next(), Some((h, 0)));
         assert!(strategy.pick_next().is_none());
     }
 
@@ -145,13 +145,13 @@ mod tests {
         strategy.push_ready(h2);
 
         let picked = strategy.pick_next().unwrap();
-        assert_eq!(picked, h1);
+        assert_eq!(picked.0, h1);
         strategy.requeue_after_run(h1);
 
         strategy.push_ready(h3);
 
-        assert_eq!(strategy.pick_next(), Some(h2));
-        assert_eq!(strategy.pick_next(), Some(h1));
-        assert_eq!(strategy.pick_next(), Some(h3));
+        assert_eq!(strategy.pick_next(), Some((h2, 0)));
+        assert_eq!(strategy.pick_next(), Some((h1, 0)));
+        assert_eq!(strategy.pick_next(), Some((h3, 0)));
     }
 }

@@ -1,8 +1,8 @@
 use crate::task::{TaskHandle, YieldReason};
 
 pub trait SchedulingAlgorithm {
-    /// Pick the next task to run. Returns None if no user tasks are ready.
-    fn pick_next(&mut self) -> Option<TaskHandle>;
+    /// Pick the next task to run. Returns (handle, priority) or None if no user tasks are ready.
+    fn pick_next(&mut self) -> Option<(TaskHandle, usize)>;
 
     /// Record how a task yielded so the strategy can decide requeue placement.
     fn record_yield(&mut self, handle: TaskHandle, current_priority: usize, yield_reason: YieldReason);
