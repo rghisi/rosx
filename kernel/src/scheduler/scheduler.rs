@@ -9,16 +9,16 @@ use system::future::FutureHandle;
 use crate::future::TaskFuture;
 use crate::kernel::kernel;
 
-pub struct SchedulerEngine {
+pub struct Scheduler {
     algorithm: Box<dyn SchedulingAlgorithm>,
     blocked_tasks: VecDeque<TaskFuture>,
     hw_interrupt_queue: VecDeque<HardwareInterrupt>,
     idle_task: Option<TaskHandle>,
 }
 
-impl SchedulerEngine {
+impl Scheduler {
     pub fn new(algorithm: impl SchedulingAlgorithm + 'static) -> Self {
-        SchedulerEngine {
+        Scheduler {
             algorithm: Box::new(algorithm),
             blocked_tasks: VecDeque::with_capacity(5),
             hw_interrupt_queue: VecDeque::with_capacity(5),
@@ -267,7 +267,7 @@ mod tests {
     fn push_task_calls_push_ready_for_ready_tasks() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = SchedulerEngine::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone());
 
         let h = create_ready_task("T");
         engine.push_task(h);
@@ -279,7 +279,7 @@ mod tests {
     fn run_next_task_calls_algorithm_methods_in_order() {
         setup();
         let mut fake = FakeAlgorithm::new();
-        let mut engine = SchedulerEngine::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone());
 
         let h = create_ready_task("T");
         fake.next = Some(h);
@@ -295,7 +295,7 @@ mod tests {
     fn push_task_does_not_call_push_ready_for_non_ready_tasks() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = SchedulerEngine::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone());
 
         let task = Task::new("T", 0x1000, 0);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
@@ -312,7 +312,7 @@ mod tests {
     fn push_blocked_adds_task_to_blocked_queue() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = SchedulerEngine::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone());
 
         let waiter = create_ready_task("Waiter");
         let waited_on = create_ready_task("WaitedOn");
@@ -330,7 +330,7 @@ mod tests {
     fn push_hardware_interrupt_adds_to_queue() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = SchedulerEngine::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone());
 
         engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1C });
 
@@ -343,7 +343,7 @@ mod tests {
     fn set_idle_task_succeeds_on_first_call() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = SchedulerEngine::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone());
 
         let idle = create_ready_task("Idle");
         let result = engine.set_idle_task(idle);
@@ -355,7 +355,7 @@ mod tests {
     fn set_idle_task_fails_on_second_call() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = SchedulerEngine::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone());
 
         let idle1 = create_ready_task("Idle1");
         let idle2 = create_ready_task("Idle2");
@@ -370,7 +370,7 @@ mod tests {
     fn should_preempt_forwards_to_algorithm() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = SchedulerEngine::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone());
 
         *fake.should_preempt_result.borrow_mut() = true;
         assert!(engine.should_preempt());
@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn orphaned_completion_future_is_preserved_until_cleanup() {
         setup();
-        let _engine = SchedulerEngine::new(FakeAlgorithm::new());
+        let _engine = Scheduler::new(FakeAlgorithm::new());
 
         let task = Task::new("T", 0, 0);
         let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
@@ -401,7 +401,7 @@ mod tests {
     fn waited_on_completion_future_is_preserved_when_task_terminated() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = SchedulerEngine::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone());
 
         let task = Task::new("T", 0, 0);
         let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
@@ -491,7 +491,7 @@ mod tests {
     fn handle_termination_calls_on_task_terminate_on_algorithm() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = SchedulerEngine::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone());
 
         let task = Task::new("T", 0x1000, 0);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
@@ -505,7 +505,7 @@ mod tests {
     fn handle_termination_removes_task_from_manager() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = SchedulerEngine::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone());
 
         let task = Task::new("T", 0x1000, 0);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();

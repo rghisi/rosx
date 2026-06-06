@@ -6,7 +6,7 @@ use crate::kconfig::KConfig;
 use crate::kernel_services::services;
 use crate::kprintln;
 use crate::messages::HardwareInterrupt;
-use crate::scheduler::SchedulerEngine;
+use crate::scheduler::Scheduler;
 
 use crate::state::{ExecutionContext, ExecutionState};
 use crate::task::TaskState::Terminated;
@@ -30,7 +30,7 @@ pub fn kernel() -> &'static mut Kernel {
 pub struct Kernel {
     cpu: &'static dyn Cpu,
     pub(crate) elf_arch: &'static dyn ElfArch,
-    scheduler: SchedulerEngine,
+    scheduler: Scheduler,
     pub(crate) execution_state: ExecutionState,
 }
 
