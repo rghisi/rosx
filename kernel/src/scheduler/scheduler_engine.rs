@@ -160,32 +160,6 @@ impl SchedulerEngine {
     }
 }
 
-impl crate::scheduler::Scheduler for SchedulerEngine {
-    fn run(&mut self) {
-        SchedulerEngine::run(self);
-    }
-
-    fn push_task(&mut self, handle: TaskHandle) {
-        SchedulerEngine::push_task(self, handle);
-    }
-
-    fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle) {
-        SchedulerEngine::push_blocked(self, task_handle, future_handle);
-    }
-
-    fn push_hardware_interrupt(&mut self, interrupt: HardwareInterrupt) {
-        SchedulerEngine::push_hardware_interrupt(self, interrupt);
-    }
-
-    fn set_idle_task(&mut self, handle: TaskHandle) -> Result<(), ()> {
-        SchedulerEngine::set_idle_task(self, handle)
-    }
-
-    fn should_preempt(&mut self) -> bool {
-        SchedulerEngine::should_preempt(self)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
