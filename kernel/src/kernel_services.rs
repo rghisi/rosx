@@ -3,6 +3,8 @@ use crate::ipc::ipc_manager::IpcManager;
 use crate::kernel_cell::KernelCell;
 use crate::memory::memory_manager::{MEMORY_MANAGER, MemoryManager};
 use crate::once::Once;
+use crate::scheduler::fifo_strategy::FifoStrategy;
+use crate::scheduler::Scheduler;
 use crate::scheduler::TimerManager;
 use crate::task_manager::TaskManager;
 
@@ -11,6 +13,7 @@ pub(crate) struct KernelServices {
     pub(crate) future_registry: KernelCell<FutureRegistry>,
     pub(crate) ipc_manager: KernelCell<IpcManager>,
     pub(crate) timer_manager: KernelCell<TimerManager>,
+    pub(crate) scheduler: KernelCell<Scheduler>,
     pub(crate) memory_manager: &'static MemoryManager,
 }
 
@@ -23,6 +26,7 @@ pub(crate) fn init() {
         future_registry: KernelCell::new(FutureRegistry::new()),
         ipc_manager: KernelCell::new(IpcManager::new()),
         timer_manager: KernelCell::new(TimerManager::new()),
+        scheduler: KernelCell::new(Scheduler::new(FifoStrategy::new())),
         memory_manager: &MEMORY_MANAGER,
     });
 
@@ -35,6 +39,7 @@ pub(crate) fn init() {
                 future_registry: KernelCell::new(FutureRegistry::new()),
                 ipc_manager: KernelCell::new(IpcManager::new()),
                 timer_manager: KernelCell::new(TimerManager::new()),
+                scheduler: KernelCell::new(Scheduler::new(FifoStrategy::new())),
                 memory_manager: &MEMORY_MANAGER,
             });
         });

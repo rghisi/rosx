@@ -191,7 +191,7 @@ Write a test that:
 
 ---
 
-### Step 6: Remove Polling Infrastructure — The Grand Cleanup
+### Step 6: Remove Polling Infrastructure — The Grand Cleanup - [DONE]
 
 **Files:** `kernel/src/scheduler/scheduler.rs`, `kernel/src/future.rs`
 

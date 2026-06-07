@@ -1,17 +1,15 @@
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
+use alloc::vec::Vec;
 use crate::kernel_services::services;
 use crate::task::YieldReason;
 use crate::messages::HardwareInterrupt;
 use crate::scheduler::algorithm::SchedulingAlgorithm;
 use crate::task::{TaskHandle, TaskState};
-use system::future::FutureHandle;
-use crate::future::TaskFuture;
 use crate::kernel::kernel;
 
 pub struct Scheduler {
-    algorithm: Box<dyn SchedulingAlgorithm>,
-    blocked_tasks: VecDeque<TaskFuture>,
+    algorithm: Box<dyn SchedulingAlgorithm + Send>,
     hw_interrupt_queue: VecDeque<HardwareInterrupt>,
     idle_task: Option<TaskHandle>,
 }
@@ -20,7 +18,6 @@ impl Scheduler {
     pub fn new(algorithm: impl SchedulingAlgorithm + 'static) -> Self {
         Scheduler {
             algorithm: Box::new(algorithm),
-            blocked_tasks: VecDeque::with_capacity(5),
             hw_interrupt_queue: VecDeque::with_capacity(5),
             idle_task: None,
         }
@@ -29,7 +26,7 @@ impl Scheduler {
     pub fn run(&mut self) {
         loop {
             self.process_hardware_interrupts();
-            self.poll_futures();
+            self.process_timer_notifications();
             self.run_next_task();
         }
     }
@@ -41,12 +38,11 @@ impl Scheduler {
         }
     }
 
-    pub fn push_blocked(&mut self, task_handle: TaskHandle, future_handle: FutureHandle) {
-        let task_future = TaskFuture {
-            task_handle,
-            future_handle,
-        };
-        self.blocked_tasks.push_back(task_future);
+    pub fn wake_tasks(&mut self, handles: Vec<TaskHandle>) {
+        for handle in handles {
+            services().task_manager.borrow_mut().set_state(handle, TaskState::Ready);
+            self.algorithm.push_ready(handle);
+        }
     }
 
     pub fn push_hardware_interrupt(&mut self, interrupt: HardwareInterrupt) {
@@ -68,7 +64,6 @@ impl Scheduler {
 
     fn handle_termination(&mut self, handle: TaskHandle) {
         self.algorithm.on_task_terminate(handle);
-        self.cleanup_completion_future(handle);
         services().task_manager.borrow_mut().remove_task(handle);
     }
 
@@ -136,32 +131,12 @@ impl Scheduler {
         }
     }
 
-    fn poll_futures(&mut self) {
-        for _ in 0..self.blocked_tasks.len() {
-            if let Some(task_future) = self.blocked_tasks.pop_front() {
-                if task_future.is_completed() {
-                    services().task_manager.borrow_mut().set_state(task_future.task_handle, TaskState::Ready);
-                    self.algorithm.push_ready(task_future.task_handle);
-                } else {
-                    self.blocked_tasks.push_back(task_future);
-                }
-            }
-        }
-
+    fn process_timer_notifications(&mut self) {
+        use crate::kernel::kernel;
         let now = kernel().get_system_time();
         if let Some(handles) = services().timer_manager.borrow_mut().pop_expired(now) {
             for handle in handles {
                 services().future_registry.borrow_mut().notify(handle);
-            }
-        }
-    }
-
-    fn cleanup_completion_future(&mut self, task_handle: TaskHandle) {
-        let completion_future = services().task_manager.borrow().get_completion_future(task_handle);
-        if let Some(future_handle) = completion_future {
-            let is_waited_on = self.blocked_tasks.iter().any(|tf| tf.future_handle == future_handle);
-            if !is_waited_on {
-                services().future_registry.borrow_mut().consume(future_handle).ok();
             }
         }
     }
@@ -171,13 +146,10 @@ impl Scheduler {
 mod tests {
     use super::*;
     use crate::task::YieldReason;
-    use crate::future::TaskCompletionFuture;
     use collections::generational_arena::Handle;
     use crate::kernel_services::{init, services};
     use crate::task::{Task, TaskState as KS};
-    use alloc::boxed::Box;
-    use std::rc::Rc;
-    use std::cell::RefCell;
+    use std::sync::{Arc, Mutex};
     use std::sync::Once;
 
     static INIT: Once = Once::new();
@@ -189,45 +161,45 @@ mod tests {
     #[derive(Clone)]
     struct FakeAlgorithm {
         next: Option<TaskHandle>,
-        should_preempt_result: Rc<RefCell<bool>>,
-        requeued: Rc<RefCell<Vec<TaskHandle>>>,
-        pushed_ready: Rc<RefCell<Vec<TaskHandle>>>,
-        yielded: Rc<RefCell<Vec<(TaskHandle, YieldReason)>>>,
-        on_task_start_called: Rc<RefCell<Vec<TaskHandle>>>,
-        terminated: Rc<RefCell<Vec<TaskHandle>>>,
+        should_preempt_result: Arc<Mutex<bool>>,
+        requeued: Arc<Mutex<Vec<TaskHandle>>>,
+        pushed_ready: Arc<Mutex<Vec<TaskHandle>>>,
+        yielded: Arc<Mutex<Vec<(TaskHandle, YieldReason)>>>,
+        on_task_start_called: Arc<Mutex<Vec<TaskHandle>>>,
+        terminated: Arc<Mutex<Vec<TaskHandle>>>,
     }
 
     impl FakeAlgorithm {
         fn new() -> Self {
             FakeAlgorithm {
                 next: None,
-                should_preempt_result: Rc::new(RefCell::new(false)),
-                requeued: Rc::new(RefCell::new(Vec::new())),
-                pushed_ready: Rc::new(RefCell::new(Vec::new())),
-                yielded: Rc::new(RefCell::new(Vec::new())),
-                on_task_start_called: Rc::new(RefCell::new(Vec::new())),
-                terminated: Rc::new(RefCell::new(Vec::new())),
+                should_preempt_result: Arc::new(Mutex::new(false)),
+                requeued: Arc::new(Mutex::new(Vec::new())),
+                pushed_ready: Arc::new(Mutex::new(Vec::new())),
+                yielded: Arc::new(Mutex::new(Vec::new())),
+                on_task_start_called: Arc::new(Mutex::new(Vec::new())),
+                terminated: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
         fn take_requeued(&self) -> Vec<TaskHandle> {
-            self.requeued.borrow_mut().drain(..).collect()
+            self.requeued.lock().unwrap().drain(..).collect()
         }
 
         fn take_pushed_ready(&self) -> Vec<TaskHandle> {
-            self.pushed_ready.borrow_mut().drain(..).collect()
+            self.pushed_ready.lock().unwrap().drain(..).collect()
         }
 
         fn take_yielded(&self) -> Vec<(TaskHandle, YieldReason)> {
-            self.yielded.borrow_mut().drain(..).collect()
+            self.yielded.lock().unwrap().drain(..).collect()
         }
 
         fn take_on_task_start(&self) -> Vec<TaskHandle> {
-            self.on_task_start_called.borrow_mut().drain(..).collect()
+            self.on_task_start_called.lock().unwrap().drain(..).collect()
         }
 
         fn take_terminated(&self) -> Vec<TaskHandle> {
-            self.terminated.borrow_mut().drain(..).collect()
+            self.terminated.lock().unwrap().drain(..).collect()
         }
     }
 
@@ -237,27 +209,27 @@ mod tests {
         }
 
         fn record_yield(&mut self, handle: TaskHandle, yield_reason: YieldReason) {
-            self.yielded.borrow_mut().push((handle, yield_reason));
+            self.yielded.lock().unwrap().push((handle, yield_reason));
         }
 
         fn requeue_after_run(&mut self, handle: TaskHandle) {
-            self.requeued.borrow_mut().push(handle);
+            self.requeued.lock().unwrap().push(handle);
         }
 
         fn push_ready(&mut self, handle: TaskHandle) {
-            self.pushed_ready.borrow_mut().push(handle);
+            self.pushed_ready.lock().unwrap().push(handle);
         }
 
         fn should_preempt(&mut self) -> bool {
-            *self.should_preempt_result.borrow()
+            *self.should_preempt_result.lock().unwrap()
         }
 
         fn on_task_start(&mut self, handle: TaskHandle) {
-            self.on_task_start_called.borrow_mut().push(handle);
+            self.on_task_start_called.lock().unwrap().push(handle);
         }
 
         fn on_task_terminate(&mut self, handle: TaskHandle) {
-            self.terminated.borrow_mut().push(handle);
+            self.terminated.lock().unwrap().push(handle);
         }
     }
 
@@ -313,24 +285,6 @@ mod tests {
         assert!(fake.take_pushed_ready().is_empty());
     }
 
-    // === push_blocked tests ===
-
-    #[test]
-    fn push_blocked_adds_task_to_blocked_queue() {
-        setup();
-        let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone());
-
-        let waiter = create_ready_task("Waiter");
-        let waited_on = create_ready_task("WaitedOn");
-        let future = Box::new(TaskCompletionFuture::new(waited_on));
-        let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
-
-        engine.push_blocked(waiter, future_handle);
-
-        assert_eq!(fake.take_pushed_ready().len(), 0);
-    }
-
     // === push_hardware_interrupt tests ===
 
     #[test]
@@ -379,49 +333,11 @@ mod tests {
         let fake = FakeAlgorithm::new();
         let mut engine = Scheduler::new(fake.clone());
 
-        *fake.should_preempt_result.borrow_mut() = true;
+        *fake.should_preempt_result.lock().unwrap() = true;
         assert!(engine.should_preempt());
 
-        *fake.should_preempt_result.borrow_mut() = false;
+        *fake.should_preempt_result.lock().unwrap() = false;
         assert!(!engine.should_preempt());
-    }
-
-    // === cleanup_completion_future tests ===
-
-    #[test]
-    fn orphaned_completion_future_is_preserved_until_cleanup() {
-        setup();
-        let _engine = Scheduler::new(FakeAlgorithm::new());
-
-        let task = Task::new("T", 0, 0);
-        let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
-        let future = Box::new(TaskCompletionFuture::new(task_handle));
-        let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
-        services().task_manager.borrow_mut().set_completion_future(task_handle, future_handle);
-        services().task_manager.borrow_mut().set_state(task_handle, KS::Terminated);
-
-        // The future should still exist until cleanup runs via engine's run loop
-        assert!(services().future_registry.borrow_mut().get(future_handle).is_some());
-    }
-
-    #[test]
-    fn waited_on_completion_future_is_preserved_when_task_terminated() {
-        setup();
-        let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone());
-
-        let task = Task::new("T", 0, 0);
-        let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
-        let future = Box::new(TaskCompletionFuture::new(task_handle));
-        let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
-
-        let waiter = create_ready_task("Waiter");
-        engine.push_blocked(waiter, future_handle);
-
-        services().task_manager.borrow_mut().set_state(task_handle, KS::Terminated);
-
-        // The future should still be in the registry since a task is waiting on it
-        assert!(services().future_registry.borrow_mut().get(future_handle).is_some());
     }
 
     // === FakeAlgorithm internal state tests ===

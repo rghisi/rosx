@@ -1,6 +1,6 @@
 use crate::task::{TaskHandle, YieldReason};
 
-pub trait SchedulingAlgorithm {
+pub trait SchedulingAlgorithm: Send {
     /// Pick the next task to run. Returns the handle or None if no user tasks are ready.
     fn pick_next(&mut self) -> Option<TaskHandle>;
 

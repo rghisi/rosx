@@ -104,8 +104,9 @@ impl FutureRegistry {
         self.arena.replace(handle, future)
     }
 
-    pub fn notify(&mut self, handle: FutureHandle) -> Vec<TaskHandle> {
-        self.waiters.remove(&handle).unwrap_or_default()
+    pub fn notify(&mut self, handle: FutureHandle) {
+        let waiters = self.waiters.remove(&handle).unwrap_or_default();
+        services().scheduler.borrow_mut().wake_tasks(waiters);
     }
 
 }
@@ -113,6 +114,16 @@ impl FutureRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel_services::{init as init_services, services};
+    use crate::task::Task;
+    use crate::task::TaskState;
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    fn setup() {
+        INIT.call_once(|| init_services());
+    }
 
     struct DummyFuture;
     impl Future for DummyFuture {
@@ -124,58 +135,40 @@ mod tests {
         }
     }
 
-    fn make_registry() -> FutureRegistry {
-        FutureRegistry::new()
+    #[test]
+    fn notify_moves_waiters_to_ready() {
+        setup();
+
+        let task = Task::new("T", 0x1000, 0);
+        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+        services().task_manager.borrow_mut().set_state(handle, TaskState::Blocked);
+
+        let future_handle = services().future_registry.borrow_mut().register(Box::new(DummyFuture)).unwrap();
+        services().future_registry.borrow_mut().register_waiter(future_handle, handle);
+
+        services().future_registry.borrow_mut().notify(future_handle);
+
+        assert_eq!(services().task_manager.borrow().get_state(handle), TaskState::Ready);
     }
 
     #[test]
-    fn notify_wakes_registered_waiters() {
-        let mut registry = make_registry();
+    fn notify_does_not_double_wake() {
+        setup();
 
-        let future_handle = registry.register(Box::new(DummyFuture)).unwrap();
-        registry.register_waiter(future_handle, TaskHandle::new(1, 0));
+        let task = Task::new("T", 0x1000, 0);
+        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+        services().task_manager.borrow_mut().set_state(handle, TaskState::Blocked);
 
-        let woken = registry.notify(future_handle);
+        let future_handle = services().future_registry.borrow_mut().register(Box::new(DummyFuture)).unwrap();
+        services().future_registry.borrow_mut().register_waiter(future_handle, handle);
 
-        assert_eq!(woken, vec![TaskHandle::new(1, 0)]);
-    }
+        // First notify moves task to Ready
+        services().future_registry.borrow_mut().notify(future_handle);
+        assert_eq!(services().task_manager.borrow().get_state(handle), TaskState::Ready);
 
-    #[test]
-    fn notify_returns_empty_when_no_waiters() {
-        let mut registry = make_registry();
-
-        let future_handle = registry.register(Box::new(DummyFuture)).unwrap();
-        let woken = registry.notify(future_handle);
-
-        assert!(woken.is_empty());
-    }
-
-    #[test]
-    fn notify_removes_waiters_from_map() {
-        let mut registry = make_registry();
-
-        let future_handle = registry.register(Box::new(DummyFuture)).unwrap();
-        registry.register_waiter(future_handle, TaskHandle::new(2, 0));
-
-        let woken_first = registry.notify(future_handle);
-        assert_eq!(woken_first.len(), 1);
-        assert_eq!(woken_first[0], TaskHandle::new(2, 0));
-
-        let woken_second = registry.notify(future_handle);
-        assert!(woken_second.is_empty());
-    }
-
-    #[test]
-    fn notify_notifies_waiter_on_future() {
-        let mut registry = make_registry();
-
-        let future_handle = registry.register(Box::new(DummyFuture)).unwrap();
-        registry.register_waiter(future_handle, TaskHandle::new(3, 0));
-
-        let woken = registry.notify(future_handle);
-
-        assert_eq!(woken.len(), 1);
-        assert_eq!(woken[0], TaskHandle::new(3, 0));
+        // Second notify does nothing (no waiters left)
+        services().future_registry.borrow_mut().notify(future_handle);
+        assert_eq!(services().task_manager.borrow().get_state(handle), TaskState::Ready);
     }
 }
 
