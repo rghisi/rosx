@@ -91,6 +91,7 @@ impl IpcManager {
         let reply_message = IpcReply { value: reply.value };
         let future = Box::new(IpcReplyFuture { reply: Some(reply_message) });
         let _ = services().future_registry.borrow_mut().replace(future_handle, future);
+        services().future_registry.borrow_mut().notify(future_handle);
     }
 
 }

@@ -148,7 +148,7 @@ Write a test that:
 
 ---
 
-### Step 4: Wire Up IpcReplyFuture Notifications
+### Step 4: Wire Up IpcReplyFuture Notifications - [DONE]
 
 **Files:** `kernel/src/ipc/ipc_manager.rs`
 
