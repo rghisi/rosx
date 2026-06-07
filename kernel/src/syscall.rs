@@ -80,6 +80,11 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             let result = services().ipc_manager.borrow_mut().connect(service);
             Box::into_raw(Box::new(result)) as usize
         }
+        Ok(SyscallNum::IpcDisconnect) => {
+            let connection_handle = IpcConnectionHandle::new(arg1 as HalfSize, arg2 as HalfSize);
+            let result = services().ipc_manager.borrow_mut().disconnect(connection_handle);
+            0usize
+        }
         Ok(SyscallNum::IpcSend) => {
             let value = arg3;
             let connection_handle = IpcConnectionHandle::new(arg1 as HalfSize, arg2 as HalfSize);
@@ -87,12 +92,12 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
                 data: value,
                 connection_handle
             };
-            let result = services().ipc_manager.borrow_mut().send(message);
+            let result = services().ipc_manager.borrow_mut().send_to_server(message);
             Box::into_raw(Box::new(result)) as usize
         }
         Ok(SyscallNum::IpcReceive) => {
             let connection_handle = IpcConnectionHandle::new(arg1 as HalfSize, arg2 as HalfSize);
-            let result = services().ipc_manager.borrow_mut().receive(connection_handle);
+            let result = services().ipc_manager.borrow_mut().receive_from_server(connection_handle);
             Box::into_raw(Box::new(result)) as usize
         }
         Err(_) => 0,

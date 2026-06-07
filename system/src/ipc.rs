@@ -16,12 +16,14 @@ pub enum IpcBindingError {
 #[derive(Debug)]
 pub enum IpcSendError {
     ConnectionNotFound,
+    ConnectionCongested
 }
 
 impl Display for IpcSendError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
             IpcSendError::ConnectionNotFound =>  write!(f, "Connection not found"),
+            IpcSendError::ConnectionCongested => write!(f, "Connection congested"),
         }
     }
 }

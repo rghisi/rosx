@@ -18,13 +18,13 @@ impl RandomGeneratorServer {
             .borrow_mut()
             .bind_service("RANDOM") {
             loop {
-                if let Ok(received_message) = services().ipc_manager.borrow_mut().receive_from_binding(binding) {
+                if let Ok(received_message) = services().ipc_manager.borrow_mut().receive_from_all_clients(binding) {
                     let value = self.next() as usize;
                     let reply_message = IpcMessage {
                         data: value,
                         connection_handle: received_message.connection_handle,
                     };
-                    let _ = services().ipc_manager.borrow_mut().reply(reply_message);
+                    let _ = services().ipc_manager.borrow_mut().send_to_client(reply_message);
                 } else {
                     Self::sleep();
                 }

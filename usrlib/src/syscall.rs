@@ -72,6 +72,10 @@ impl Syscall {
         unsafe { *Box::from_raw(result as *mut Result<IpcConnectionHandle, IpcConnectionError>) }
     }
 
+    pub fn ipc_disconnect(connection_handle: IpcConnectionHandle) {
+        arch::raw_syscall(SyscallNum::IpcDisconnect as usize, connection_handle.index as usize, connection_handle.generation as usize, 0usize);
+    }
+
     pub fn ipc_send(connection_handle: IpcConnectionHandle, value: usize) -> Result<(), IpcSendError> {
         let result_pointer = arch::raw_syscall(SyscallNum::IpcSend as usize, connection_handle.index as usize, connection_handle.generation as usize, value);
         unsafe { *Box::from_raw(result_pointer as *mut Result<(), IpcSendError>) }

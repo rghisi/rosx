@@ -1,20 +1,30 @@
 use alloc::collections::VecDeque;
-use system::ipc::IpcMessage;
+use collections::generational_arena::Handle;
+use system::ipc::{IpcConnectionError, IpcMessage};
+use crate::ipc::mailbox::MailboxError::OutOfSpace;
 
 pub(crate) struct Mailbox {
     queue: VecDeque<IpcMessage>
+}
+
+pub(crate) enum MailboxError {
+    OutOfSpace,
 }
 
 impl Mailbox {
 
     pub fn new() -> Mailbox {
         Mailbox {
-            queue: VecDeque::new()
+            queue: VecDeque::with_capacity(10)
         }
     }
 
-    pub fn push_back(&mut self, message: IpcMessage) {
+    pub fn push_back(&mut self, message: IpcMessage) -> Result<(), MailboxError> {
+        if self.queue.capacity() == 0 {
+            return Err(OutOfSpace);
+        }
        self.queue.push_back(message);
+        Ok(())
     }
 
     pub fn is_empty(&self) -> bool {

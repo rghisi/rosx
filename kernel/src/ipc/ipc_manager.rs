@@ -83,12 +83,21 @@ impl IpcManager {
         }
     }
 
-    pub(crate) fn send(&mut self, message: IpcMessage) -> Result<(), IpcSendError> {
+    pub(crate) fn disconnect(&mut self, connection_handle: IpcConnectionHandle) {
+        let client_mailbox_handle = self.connections.borrow(connection_handle).unwrap().client_mailbox;
+        let _ = self.connections.remove(connection_handle);
+        let _ = self.mailboxes.remove(client_mailbox_handle);
+    }
+
+    pub(crate) fn send_to_server(&mut self, message: IpcMessage) -> Result<(), IpcSendError> {
         let connection_handle = message.connection_handle;
         if let Ok(connection) = self.connections.borrow(connection_handle) {
             if let Ok(mailbox) = self.mailboxes.borrow_mut(connection.server_mailbox) {
-                mailbox.push_back(message);
-                Ok(())
+                if let Ok(sent) = mailbox.push_back(message) {
+                    Ok(())
+                } else {
+                    Err(IpcSendError::ConnectionCongested)
+                }
             } else {
                 Err(IpcSendError::ConnectionNotFound)
             }
@@ -97,12 +106,15 @@ impl IpcManager {
         }
     }
 
-    pub(crate) fn reply(&mut self, message: IpcMessage) -> Result<(), IpcSendError> {
+    pub(crate) fn send_to_client(&mut self, message: IpcMessage) -> Result<(), IpcSendError> {
         let connection_handle = message.connection_handle;
         if let Ok(connection) = self.connections.borrow(connection_handle) {
             if let Ok(mailbox) = self.mailboxes.borrow_mut(connection.client_mailbox) {
-                mailbox.push_back(message);
-                Ok(())
+                if let Ok(sent) = mailbox.push_back(message) {
+                    Ok(())
+                } else {
+                    Err(IpcSendError::ConnectionCongested)
+                }
             } else {
                 Err(IpcSendError::ConnectionNotFound)
             }
@@ -111,7 +123,7 @@ impl IpcManager {
         }
     }
 
-    pub(crate) fn receive_from_binding(&mut self, server_binding_handle: IpcBindingHandle) -> Result<IpcMessage, IpcReceiveError> {
+    pub(crate) fn receive_from_all_clients(&mut self, server_binding_handle: IpcBindingHandle) -> Result<IpcMessage, IpcReceiveError> {
         if let Ok(server_binding) = self.bindings.borrow(server_binding_handle) {
             let server_mailbox_handle = server_binding.mailbox_handle;
             if let Ok(server_mailbox) =self.mailboxes.borrow_mut(server_mailbox_handle) {
@@ -128,7 +140,7 @@ impl IpcManager {
         }
     }
 
-    pub(crate) fn receive(&mut self, connection_handle: IpcConnectionHandle) -> Result<IpcMessage, IpcReceiveError> {
+    pub(crate) fn receive_from_server(&mut self, connection_handle: IpcConnectionHandle) -> Result<IpcMessage, IpcReceiveError> {
         if let Ok(connection) = self.connections.borrow(connection_handle) {
             if let Ok(client_mailbox) = self.mailboxes.borrow_mut(connection.client_mailbox) {
                 if let Some(message) = client_mailbox.pop_front() {
