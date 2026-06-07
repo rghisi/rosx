@@ -1,34 +1,37 @@
-use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::String;
-use alloc::vec::Vec;
-use collections::generational_arena::GenerationalArena;
-use system::future::{ Future, FutureHandle };
-use system::ipc::IpcError::ServerNotFound;
-use system::ipc::{IpcError, IpcReply, IpcReplyFuture, IpcSendMessage, IpcServerHandle};
-use crate::ipc::ipc_server::IpcServerConnection;
-use crate::kernel::kernel;
-use crate::kernel_services::services;
-use crate::task::TaskHandle;
+use collections::generational_arena::{GenerationalArena, Handle};
+use system::ipc::{IpcConnectionError, IpcMessage, IpcSendError, IpcConnectionHandle, IpcBindingError, IpcReceiveError};
+use crate::ipc::mailbox::Mailbox;
 
-pub(crate) struct IpcReceiveMessage {
-    pub value: u32,
-    pub sender: TaskHandle,
-    pub future: FutureHandle
+struct IpcServerBinding {
+    pub service: String,
+    pub mailbox_handle: MailboxHandle
 }
 
-pub(crate) struct IpcReplyMessage {
-    pub value: u32,
-    pub destination: TaskHandle,
-    pub future: FutureHandle
+impl IpcServerBinding {
+
+    pub(crate) fn new(service: String, mailbox_handle: MailboxHandle) -> IpcServerBinding {
+        IpcServerBinding {
+            service,
+            mailbox_handle
+        }
+    }
 }
 
-type Mailbox = VecDeque<IpcReceiveMessage>;
+type IpcBindingHandle = Handle;
+type MailboxHandle = Handle;
+
+struct IpcConnection {
+    server_mailbox: MailboxHandle,
+    client_mailbox: MailboxHandle,
+}
 
 pub(crate) struct IpcManager {
-    bindings: GenerationalArena<IpcServerConnection, 256>,
-    mailboxes: Vec<Mailbox>,
-    registry: BTreeMap<String, IpcServerHandle>,
+    bindings: GenerationalArena<IpcServerBinding, 256>,
+    mailboxes: GenerationalArena<Mailbox, 256>,
+    connections: GenerationalArena<IpcConnection, 256>,
+    registry: BTreeMap<String, IpcBindingHandle>,
 }
 
 impl IpcManager {
@@ -36,61 +39,120 @@ impl IpcManager {
     pub(crate) fn new() -> IpcManager {
         IpcManager {
             bindings: GenerationalArena::new(),
-            mailboxes: Vec::new(),
+            mailboxes: GenerationalArena::new(),
+            connections: GenerationalArena::new(),
             registry: BTreeMap::new(),
         }
     }
 
-    pub(crate) fn find(&self, service: &str) -> Result<IpcServerHandle, IpcError> {
-        if let Some(handle) = self.registry.get(service) {
-            Ok(*handle)
-        } else {
-            Err(ServerNotFound)
-        }
-    }
-
-    pub(crate) fn register(&mut self, service: &str) -> Result<IpcServerHandle, IpcError> {
+    pub(crate) fn bind_service(&mut self, service: &str) -> Result<IpcBindingHandle, IpcBindingError> {
         if self.registry.contains_key(service) {
-           return Err(IpcError::ServerCannotBeAdded);
+           return Err(IpcBindingError::AlreadyBound);
         }
 
-        let binding = IpcServerConnection::new(String::from(service));
-        let handle = self.bindings.add(binding).unwrap();
-        self.mailboxes.insert(handle.index as usize, Mailbox::new());
-        self.registry.insert(String::from(service), handle);
+        let mailbox_handle = self.mailboxes.add(Mailbox::new()).unwrap();
+        let binding = IpcServerBinding::new(String::from(service), mailbox_handle);
+        let binding_handle = self.bindings.add(binding).unwrap();
+        self.registry.insert(String::from(service), binding_handle);
 
-        Ok(handle)
+        Ok(binding_handle)
     }
 
-    pub(crate) fn send(&mut self, handle: IpcServerHandle, message: IpcSendMessage) -> FutureHandle {
-        let sender = kernel().execution_state.current_task.unwrap();
-        let mailbox = self.mailboxes.get_mut(handle.index as usize).unwrap();
-        let future = Box::new(IpcReplyFuture { reply: None });
-        let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
-        let receive_message = IpcReceiveMessage {
-            value: message.value,
-            sender,
-            future: future_handle,
-        };
-        mailbox.push_back(receive_message);
-
-        future_handle
-    }
-
-    pub(crate) fn receive(&mut self, handle: IpcServerHandle) -> Option<IpcReceiveMessage> {
-        let mailbox = self.mailboxes.get_mut(handle.index as usize).unwrap();
-        if mailbox.is_empty() {
-            None
+    pub(crate) fn connect(&mut self, service: &str) -> Result<IpcConnectionHandle, IpcConnectionError> {
+        if let Some(binding_handler) = self.registry.get(service).copied() {
+            if let Ok(server_biding) = self.bindings.borrow(binding_handler) {
+                if let Ok(client_mailbox_handle) = self.mailboxes.add(Mailbox::new()) {
+                    let server_mailbox_handle = server_biding.mailbox_handle;
+                    let connection = IpcConnection {
+                        server_mailbox: server_mailbox_handle,
+                        client_mailbox: client_mailbox_handle
+                    };
+                    if let Ok(connection_handle) = self.connections.add(connection) {
+                        Ok(connection_handle)
+                    } else {
+                        Err(IpcConnectionError::ConnectionCannotBeEstablished)
+                    }
+                } else {
+                    Err(IpcConnectionError::ConnectionCannotBeEstablished)
+                }
+            } else {
+                Err(IpcConnectionError::ServerNotFound)
+            }
         } else {
-            mailbox.pop_front()
+            Err(IpcConnectionError::ServerNotFound)
         }
     }
 
-    pub(crate) fn reply(&self, reply: IpcReplyMessage) {
-        let future_handle = reply.future;
-        let reply_message = IpcReply { value: reply.value };
-        let future = Box::new(IpcReplyFuture { reply: Some(reply_message) });
-        let _ = services().future_registry.borrow_mut().replace(future_handle, future);
+    pub(crate) fn disconnect(&mut self, connection_handle: IpcConnectionHandle) {
+        let client_mailbox_handle = self.connections.borrow(connection_handle).unwrap().client_mailbox;
+        let _ = self.connections.remove(connection_handle);
+        let _ = self.mailboxes.remove(client_mailbox_handle);
     }
 
+    pub(crate) fn send_to_server(&mut self, message: IpcMessage) -> Result<(), IpcSendError> {
+        let connection_handle = message.connection_handle;
+        if let Ok(connection) = self.connections.borrow(connection_handle) {
+            if let Ok(mailbox) = self.mailboxes.borrow_mut(connection.server_mailbox) {
+                if let Ok(sent) = mailbox.push_back(message) {
+                    Ok(())
+                } else {
+                    Err(IpcSendError::ConnectionCongested)
+                }
+            } else {
+                Err(IpcSendError::ConnectionNotFound)
+            }
+        } else {
+            Err(IpcSendError::ConnectionNotFound)
+        }
+    }
+
+    pub(crate) fn send_to_client(&mut self, message: IpcMessage) -> Result<(), IpcSendError> {
+        let connection_handle = message.connection_handle;
+        if let Ok(connection) = self.connections.borrow(connection_handle) {
+            if let Ok(mailbox) = self.mailboxes.borrow_mut(connection.client_mailbox) {
+                if let Ok(sent) = mailbox.push_back(message) {
+                    Ok(())
+                } else {
+                    Err(IpcSendError::ConnectionCongested)
+                }
+            } else {
+                Err(IpcSendError::ConnectionNotFound)
+            }
+        } else {
+            Err(IpcSendError::ConnectionNotFound)
+        }
+    }
+
+    pub(crate) fn receive_from_all_clients(&mut self, server_binding_handle: IpcBindingHandle) -> Result<IpcMessage, IpcReceiveError> {
+        if let Ok(server_binding) = self.bindings.borrow(server_binding_handle) {
+            let server_mailbox_handle = server_binding.mailbox_handle;
+            if let Ok(server_mailbox) =self.mailboxes.borrow_mut(server_mailbox_handle) {
+                if let Some(message) = server_mailbox.pop_front() {
+                    Ok(message)
+                } else {
+                    Err(IpcReceiveError::NoMessagesAvailable)
+                }
+            } else {
+                Err(IpcReceiveError::ConnectionNotFound)
+            }
+        } else {
+            Err(IpcReceiveError::ConnectionNotFound)
+        }
+    }
+
+    pub(crate) fn receive_from_server(&mut self, connection_handle: IpcConnectionHandle) -> Result<IpcMessage, IpcReceiveError> {
+        if let Ok(connection) = self.connections.borrow(connection_handle) {
+            if let Ok(client_mailbox) = self.mailboxes.borrow_mut(connection.client_mailbox) {
+                if let Some(message) = client_mailbox.pop_front() {
+                    Ok(message)
+                } else {
+                    Err(IpcReceiveError::NoMessagesAvailable)
+                }
+            } else {
+                Err(IpcReceiveError::ConnectionNotFound)
+            }
+        } else {
+            Err(IpcReceiveError::ConnectionNotFound)
+        }
+    }
 }

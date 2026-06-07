@@ -1,10 +1,9 @@
 use alloc::boxed::Box;
-use alloc::string::String;
 use core::fmt;
 use system::syscall_numbers::SyscallNum;
 use system::future::FutureHandle;
 use system::future::Future;
-use system::ipc::{IpcError, IpcReplyFuture, IpcServerHandle};
+use system::ipc::{IpcConnectionError, IpcSendError, IpcConnectionHandle, IpcReceiveError, IpcMessage};
 use crate::arch;
 
 pub struct Syscall {}
@@ -67,15 +66,24 @@ impl Syscall {
         arch::raw_syscall(SyscallNum::Dealloc as usize, ptr as usize, size, align);
     }
 
-    pub fn ipc_find(service: &str) -> Result<IpcServerHandle, IpcError> {
+    pub fn ipc_connect(service: &str) -> Result<IpcConnectionHandle, IpcConnectionError> {
         let boxed = Box::into_raw(Box::new(service)) as usize;
-        let result = arch::raw_syscall(SyscallNum::IpcFind as usize, boxed, 0, 0);
-        unsafe { *Box::from_raw(result as *mut Result<IpcServerHandle, IpcError>) }
+        let result = arch::raw_syscall(SyscallNum::IpcConnect as usize, boxed, 0, 0);
+        unsafe { *Box::from_raw(result as *mut Result<IpcConnectionHandle, IpcConnectionError>) }
     }
 
-    pub fn ipc_send(handle: IpcServerHandle, value: u32) -> IpcReplyFuture {
-        let result = arch::raw_syscall(SyscallNum::IpcSend as usize, handle.index as usize, handle.generation as usize, value as usize);
-        unsafe { *Box::from_raw(result as *mut IpcReplyFuture) }
+    pub fn ipc_disconnect(connection_handle: IpcConnectionHandle) {
+        arch::raw_syscall(SyscallNum::IpcDisconnect as usize, connection_handle.index as usize, connection_handle.generation as usize, 0usize);
+    }
+
+    pub fn ipc_send(connection_handle: IpcConnectionHandle, value: usize) -> Result<(), IpcSendError> {
+        let result_pointer = arch::raw_syscall(SyscallNum::IpcSend as usize, connection_handle.index as usize, connection_handle.generation as usize, value);
+        unsafe { *Box::from_raw(result_pointer as *mut Result<(), IpcSendError>) }
+    }
+
+    pub fn ipc_receive(connection_handle: IpcConnectionHandle) -> Result<IpcMessage, IpcReceiveError> {
+        let result_pointer = arch::raw_syscall(SyscallNum::IpcReceive as usize, connection_handle.index as usize, connection_handle.generation as usize, 0usize);
+        unsafe { *Box::from_raw(result_pointer as *mut Result<IpcMessage, IpcReceiveError>) }
     }
 }
 

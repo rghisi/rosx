@@ -1,5 +1,6 @@
-use system::future::Future;
+use system::future::{Future, FutureHandle};
 use crate::kernel_cell::KernelCell;
+use crate::kernel_services::services;
 use alloc::collections::VecDeque;
 use alloc::fmt::{Display, Formatter};
 use core::any::Any;
@@ -9,8 +10,20 @@ lazy_static! {
     static ref KEYBOARD_BUFFER: KernelCell<VecDeque<char>> = KernelCell::new(VecDeque::new());
 }
 
+static KEYBOARD_WAITER_HANDLE: KernelCell<Option<FutureHandle>> = KernelCell::new(None);
+
+pub fn register_future_handle(handle: FutureHandle) {
+    KEYBOARD_WAITER_HANDLE.borrow_mut().replace(handle);
+}
+
 pub fn push_key(c: char) {
+    let was_empty = KEYBOARD_BUFFER.borrow().is_empty();
     KEYBOARD_BUFFER.borrow_mut().push_back(c);
+    if was_empty {
+        if let Some(handle) = KEYBOARD_WAITER_HANDLE.borrow().as_ref() {
+            services().future_registry.borrow_mut().notify(*handle);
+        }
+    }
 }
 
 pub fn pop_key() -> Option<char> {

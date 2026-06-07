@@ -1,22 +1,27 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use core::time::Duration;
 use system::future::FutureHandle;
+use crate::kernel_services::services;
 
-pub(crate) struct Timer {
-    next: BTreeMap<u64, Vec<FutureHandle>>
+pub struct TimerManager {
+    next: BTreeMap<u64, Vec<FutureHandle>>,
 }
 
-impl Timer {
+impl Default for TimerManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
+impl TimerManager {
     pub fn new() -> Self {
-        Timer {
+        TimerManager {
             next: BTreeMap::new(),
         }
     }
 
-    pub fn add_sleep(&mut self, now: u64, sleep: Duration, future_handle: FutureHandle) {
-        let deadline = now + (sleep.as_millis() as u64);
+    pub fn add_sleep(&mut self, now: u64, millis: u64, future_handle: FutureHandle) {
+        let deadline = now + millis;
         self.next.entry(deadline).or_insert_with(Vec::new).push(future_handle)
     }
 
@@ -39,46 +44,46 @@ mod tests {
 
     #[test]
     fn pop_expired_returns_none_when_empty() {
-        let mut timer = Timer::new();
+        let mut timer = TimerManager::new();
         assert!(timer.pop_expired(100).is_none());
     }
 
     #[test]
     fn pop_expired_returns_none_when_no_entries_are_due() {
-        let mut timer = Timer::new();
-        timer.add_sleep(0, Duration::from_millis(50), handle(1));
+        let mut timer = TimerManager::new();
+        timer.add_sleep(0, 50, handle(1));
         assert!(timer.pop_expired(49).is_none());
     }
 
     #[test]
     fn pop_expired_returns_handle_exactly_at_deadline() {
-        let mut timer = Timer::new();
-        timer.add_sleep(0, Duration::from_millis(50), handle(1));
+        let mut timer = TimerManager::new();
+        timer.add_sleep(0, 50, handle(1));
         let expired = timer.pop_expired(50);
         assert_eq!(expired, Some(alloc::vec![handle(1)]));
     }
 
     #[test]
     fn pop_expired_returns_handle_past_deadline() {
-        let mut timer = Timer::new();
-        timer.add_sleep(0, Duration::from_millis(10), handle(1));
+        let mut timer = TimerManager::new();
+        timer.add_sleep(0, 10, handle(1));
         let expired = timer.pop_expired(100);
         assert_eq!(expired, Some(alloc::vec![handle(1)]));
     }
 
     #[test]
     fn pop_expired_removes_returned_handles_from_timer() {
-        let mut timer = Timer::new();
-        timer.add_sleep(0, Duration::from_millis(10), handle(1));
+        let mut timer = TimerManager::new();
+        timer.add_sleep(0, 10, handle(1));
         timer.pop_expired(100);
         assert!(timer.pop_expired(100).is_none());
     }
 
     #[test]
     fn pop_expired_preserves_future_handles() {
-        let mut timer = Timer::new();
-        timer.add_sleep(0, Duration::from_millis(10), handle(1));
-        timer.add_sleep(0, Duration::from_millis(100), handle(2));
+        let mut timer = TimerManager::new();
+        timer.add_sleep(0, 10, handle(1));
+        timer.add_sleep(0, 100, handle(2));
         timer.pop_expired(50);
         let still_pending = timer.pop_expired(200);
         assert_eq!(still_pending, Some(alloc::vec![handle(2)]));
@@ -86,9 +91,9 @@ mod tests {
 
     #[test]
     fn pop_expired_flattens_multiple_handles_at_same_deadline() {
-        let mut timer = Timer::new();
-        timer.add_sleep(0, Duration::from_millis(10), handle(1));
-        timer.add_sleep(0, Duration::from_millis(10), handle(2));
+        let mut timer = TimerManager::new();
+        timer.add_sleep(0, 10, handle(1));
+        timer.add_sleep(0, 10, handle(2));
         let mut expired = timer.pop_expired(10).unwrap();
         expired.sort_by_key(|h| h.index);
         assert_eq!(expired, alloc::vec![handle(1), handle(2)]);
@@ -96,9 +101,9 @@ mod tests {
 
     #[test]
     fn pop_expired_flattens_handles_across_multiple_deadlines() {
-        let mut timer = Timer::new();
-        timer.add_sleep(0, Duration::from_millis(10), handle(1));
-        timer.add_sleep(0, Duration::from_millis(20), handle(2));
+        let mut timer = TimerManager::new();
+        timer.add_sleep(0, 10, handle(1));
+        timer.add_sleep(0, 20, handle(2));
         let mut expired = timer.pop_expired(20).unwrap();
         expired.sort_by_key(|h| h.index);
         assert_eq!(expired, alloc::vec![handle(1), handle(2)]);
@@ -106,8 +111,8 @@ mod tests {
 
     #[test]
     fn add_sleep_uses_now_as_base_for_deadline() {
-        let mut timer = Timer::new();
-        timer.add_sleep(1000, Duration::from_millis(50), handle(1));
+        let mut timer = TimerManager::new();
+        timer.add_sleep(1000, 50, handle(1));
         assert!(timer.pop_expired(1049).is_none());
         assert_eq!(timer.pop_expired(1050), Some(alloc::vec![handle(1)]));
     }

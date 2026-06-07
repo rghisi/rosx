@@ -24,4 +24,10 @@ impl<T> KernelCell<T> {
         compiler_fence(Ordering::SeqCst);
         unsafe { &mut *self.data.get() }
     }
+
+    #[allow(clippy::mut_from_ref)]
+    pub(crate) fn replace(&self, value: T) {
+        compiler_fence(Ordering::SeqCst);
+        unsafe { *self.data.get() = value };
+    }
 }

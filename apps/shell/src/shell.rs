@@ -127,14 +127,29 @@ fn sleep() {
 }
 
 fn random() {
-    let result = Syscall::ipc_find("RANDOM");
-    if let Ok(handle) = result {
-        println!("RANDOM Server: {} {}", handle.index, handle.generation);
-        for i in 1..100 {
-            let random = Syscall::ipc_send(handle, 0);
-            println!("RANDOM Value: {}", random.reply.unwrap().value);
+    for i in 1..260 {
+        let ipc_connection_result = Syscall::ipc_connect("RANDOM");
+        if let Ok(ipc_connection) = ipc_connection_result {
+            println!("RANDOM Server: {} {}", ipc_connection.index, ipc_connection.generation);
+            for i in 1..2 {
+                match Syscall::ipc_send(ipc_connection, 123456) {
+                    Ok(result) => {
+                        println!("RANDOM Value requested");
+                        Syscall::sleep(100);
+                        if let Ok(received) = Syscall::ipc_receive(ipc_connection) {
+                            println!("RANDOM Value: {}", received.data);
+                        } else {
+                            println!("RANDOM Value not received");
+                        }
+                    },
+                    Err(result) => {
+                        println!("RANDOM Failed to send: {}", result);
+                    }
+                }
+            }
+            Syscall::ipc_disconnect(ipc_connection);
+        } else {
+            println!("Connection failed");;
         }
-    } else {
-        println!("Find failed");;
     }
 }

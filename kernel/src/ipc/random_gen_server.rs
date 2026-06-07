@@ -1,8 +1,6 @@
-use crate::future::TimeFuture;
-use crate::ipc::ipc_manager::IpcReplyMessage;
 use crate::kernel::kernel;
 use crate::kernel_services::services;
-use alloc::boxed::Box;
+use system::ipc::IpcMessage;
 use crate::kprintln;
 
 struct RandomGeneratorServer {
@@ -15,34 +13,27 @@ impl RandomGeneratorServer {
     }
 
     pub fn run(&mut self) {
-        let biding = services()
+        if let Ok(binding) = services()
             .ipc_manager
             .borrow_mut()
-            .register("RANDOM")
-            .unwrap();
-        loop {
-            if let Some(message) = services().ipc_manager.borrow_mut().receive(biding) {
-                let value = self.next();
-                let reply = IpcReplyMessage {
-                    value,
-                    destination: message.sender,
-                    future: message.future,
-                };
-                services().ipc_manager.borrow_mut().reply(reply);
-            } else {
-                Self::sleep();
+            .bind_service("RANDOM") {
+            loop {
+                if let Ok(received_message) = services().ipc_manager.borrow_mut().receive_from_all_clients(binding) {
+                    let value = self.next() as usize;
+                    let reply_message = IpcMessage {
+                        data: value,
+                        connection_handle: received_message.connection_handle,
+                    };
+                    let _ = services().ipc_manager.borrow_mut().send_to_client(reply_message);
+                } else {
+                    Self::sleep();
+                }
             }
         }
     }
 
     fn sleep() {
-        let future = Box::new(TimeFuture::new(20));
-        let handle = services()
-            .future_registry
-            .borrow_mut()
-            .register(future)
-            .expect("Failed to register sleep future");
-        let _ = kernel().wait_future(handle);
+        kernel().sleep(20);
     }
 
     fn next(&mut self) -> u32 {
