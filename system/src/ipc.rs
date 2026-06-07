@@ -1,41 +1,48 @@
-use core::any::Any;
+use core::fmt::{Display, Formatter};
 use collections::generational_arena::Handle;
-use crate::future::Future;
 
-pub type IpcServerHandle = Handle;
+pub type IpcConnectionHandle = Handle;
 
 #[derive(Debug)]
-pub enum IpcError {
-    ServerCannotBeAdded,
+pub enum IpcConnectionError {
     ServerNotFound,
+    ConnectionCannotBeEstablished,
 }
 
-pub struct IpcSendMessage {
-    pub value: u32
+pub enum IpcBindingError {
+    AlreadyBound,
+}
+
+#[derive(Debug)]
+pub enum IpcSendError {
+    ConnectionNotFound,
+}
+
+impl Display for IpcSendError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            IpcSendError::ConnectionNotFound =>  write!(f, "Connection not found"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum IpcReceiveError {
+    ConnectionNotFound,
+    NoMessagesAvailable
+}
+
+impl Display for IpcReceiveError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            IpcReceiveError::ConnectionNotFound => write!(f, "Connection not found"),
+            IpcReceiveError::NoMessagesAvailable => write!(f, "No messages available"),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct IpcReply {
-    pub value: u32,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct IpcReplyFuture {
-    pub reply: Option<IpcReply>,
-}
-
-impl IpcReplyFuture {
-    pub fn complete(&mut self, reply: IpcReply) {
-        self.reply.replace(reply);
-    }
-}
-
-impl Future for IpcReplyFuture {
-    fn is_completed(&self) -> bool {
-        self.reply.is_some()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+pub struct IpcMessage {
+    pub data: usize,
+    pub connection_handle: IpcConnectionHandle,
 }

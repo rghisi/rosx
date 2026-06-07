@@ -12,8 +12,9 @@ pub enum SyscallNum {
     Dealloc = 8,
     TryReadChar = 9,
     LoadElf = 10,
-    IpcFind = 11,
+    IpcConnect = 11,
     IpcSend = 12,
+    IpcReceive = 13,
 }
 
 impl TryFrom<usize> for SyscallNum {
@@ -32,8 +33,9 @@ impl TryFrom<usize> for SyscallNum {
             8 => Ok(Self::Dealloc),
             9 => Ok(Self::TryReadChar),
             10 => Ok(Self::LoadElf),
-            11 => Ok(Self::IpcFind),
+            11 => Ok(Self::IpcConnect),
             12 => Ok(Self::IpcSend),
+            13 => Ok(Self::IpcReceive),
             _ => Err(()),
         }
     }

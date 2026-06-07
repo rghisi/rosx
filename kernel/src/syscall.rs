@@ -6,8 +6,7 @@ use crate::default_output::print;
 use system::syscall_numbers::SyscallNum;
 use collections::generational_arena::HalfSize;
 use system::future::FutureHandle;
-use system::ipc::{IpcReplyFuture, IpcServerHandle};
-use system::ipc::IpcSendMessage;
+use system::ipc::{IpcMessage, IpcConnectionHandle};
 use crate::task::{new_elf_task, new_entrypoint_task};
 
 #[cfg(not(test))]
@@ -76,19 +75,25 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
                 None => u64::MAX as usize,
             }
         }
-        Ok(SyscallNum::IpcFind) => {
+        Ok(SyscallNum::IpcConnect) => {
             let service: &str = unsafe { *Box::from_raw(arg1 as *mut &str) };
-            let result = services().ipc_manager.borrow().find(service);
+            let result = services().ipc_manager.borrow_mut().connect(service);
             Box::into_raw(Box::new(result)) as usize
         }
         Ok(SyscallNum::IpcSend) => {
-            let value = arg3 as u32;
-            let ipc_server_handle = IpcServerHandle::new(arg1 as HalfSize, arg2 as HalfSize);
-            let message = IpcSendMessage { value };
-            let future_handle = services().ipc_manager.borrow_mut().send(ipc_server_handle, message);
-            let future = kernel().wait_future(future_handle).unwrap();
-            let ipc_reply_future = *future.as_any().downcast_ref::<IpcReplyFuture>().unwrap();
-            Box::into_raw(Box::new(ipc_reply_future)) as usize
+            let value = arg3;
+            let connection_handle = IpcConnectionHandle::new(arg1 as HalfSize, arg2 as HalfSize);
+            let message = IpcMessage {
+                data: value,
+                connection_handle
+            };
+            let result = services().ipc_manager.borrow_mut().send(message);
+            Box::into_raw(Box::new(result)) as usize
+        }
+        Ok(SyscallNum::IpcReceive) => {
+            let connection_handle = IpcConnectionHandle::new(arg1 as HalfSize, arg2 as HalfSize);
+            let result = services().ipc_manager.borrow_mut().receive(connection_handle);
+            Box::into_raw(Box::new(result)) as usize
         }
         Err(_) => 0,
     }
