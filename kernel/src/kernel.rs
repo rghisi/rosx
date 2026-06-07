@@ -1,7 +1,7 @@
 use crate::cpu::Cpu;
 use crate::default_output::{KernelOutput, setup_default_output};
 use crate::elf::ElfArch;
-use crate::future::TaskCompletionFuture;
+use crate::future::{TaskCompletionFuture, TimeFuture};
 use crate::kconfig::KConfig;
 use crate::kernel_services::services;
 use crate::kprintln;
@@ -128,6 +128,20 @@ impl Kernel {
         self.execution_state.preemption_enabled = false;
         self.scheduler.push_hardware_interrupt(hardware_interrupt);
         self.execution_state.preemption_enabled = prev;
+    }
+    
+    pub fn sleep(&mut self, millis: u64) {
+        let future = Box::new(TimeFuture::new(millis));
+        let handle = services().future_registry
+            .borrow_mut()
+            .register(future)
+            .expect("Failed to register sleep future");
+        services().timer_manager.borrow_mut().add_sleep(
+            kernel().get_system_time(),
+            millis,
+            handle,
+        );
+        let _ = self.wait_future(handle);
     }
 
     pub fn wait_future(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {

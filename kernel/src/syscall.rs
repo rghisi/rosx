@@ -1,7 +1,5 @@
 use core::alloc::{GlobalAlloc, Layout};
 use alloc::boxed::Box;
-use alloc::string::String;
-use crate::future::TimeFuture;
 use crate::kernel::kernel;
 use crate::kernel_services::services;
 use crate::default_output::print;
@@ -21,12 +19,8 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             0
         }
         Ok(SyscallNum::Sleep) => {
-            let future = Box::new(TimeFuture::new(arg1 as u64));
-            let handle = services().future_registry
-                .borrow_mut()
-                .register(future)
-                .expect("Failed to register sleep future");
-            let _ = kernel().wait_future(handle);
+            let millis = arg1 as u64;
+            kernel().sleep(millis);
             0
         }
         Ok(SyscallNum::Exec) => {

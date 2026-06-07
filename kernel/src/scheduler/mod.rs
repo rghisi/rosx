@@ -2,12 +2,13 @@ pub mod algorithm;
 pub mod fifo_strategy;
 pub mod mlfq_strategy;
 mod scheduler;
-mod timer;
+pub mod timer;
 
 use alloc::boxed::Box;
 
 pub use algorithm::SchedulingAlgorithm;
 pub use scheduler::Scheduler;
+pub use timer::TimerManager;
 
 pub type SchedulerFactory = fn() -> Box<Scheduler>;
 

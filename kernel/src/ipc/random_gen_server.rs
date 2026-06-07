@@ -36,13 +36,7 @@ impl RandomGeneratorServer {
     }
 
     fn sleep() {
-        let future = Box::new(TimeFuture::new(20));
-        let handle = services()
-            .future_registry
-            .borrow_mut()
-            .register(future)
-            .expect("Failed to register sleep future");
-        let _ = kernel().wait_future(handle);
+        kernel().sleep(20);
     }
 
     fn next(&mut self) -> u32 {

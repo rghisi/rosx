@@ -147,6 +147,13 @@ impl Scheduler {
                 }
             }
         }
+
+        let now = kernel().get_system_time();
+        if let Some(handles) = services().timer_manager.borrow_mut().pop_expired(now) {
+            for handle in handles {
+                services().future_registry.borrow_mut().notify(handle);
+            }
+        }
     }
 
     fn cleanup_completion_future(&mut self, task_handle: TaskHandle) {

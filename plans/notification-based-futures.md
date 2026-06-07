@@ -168,7 +168,7 @@ Write a test that:
 
 ---
 
-### Step 5: Integrate Timer Module — Notification-Based Sleep
+### Step 5: Integrate Timer Module — Notification-Based Sleep - [DONE]
 
 **Files:** `kernel/src/scheduler/timer.rs`, `kernel/src/kernel.rs`, `kernel/src/scheduler/scheduler.rs`
 
