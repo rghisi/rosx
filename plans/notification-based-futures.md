@@ -126,7 +126,7 @@ Write a test that:
 
 ---
 
-### Step 3: Wire Up KeyboardFuture Notifications
+### Step 3: Wire Up KeyboardFuture Notifications - [DONE]
 
 **Files:** `kernel/src/keyboard.rs`
 

@@ -49,6 +49,7 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
                 .borrow_mut()
                 .register(future)
                 .expect("Failed to register keyboard future");
+            crate::keyboard::register_future_handle(handle);
             let _ = kernel().wait_future(handle);
             crate::keyboard::pop_key().map_or(0, |c| c as usize)
         }
