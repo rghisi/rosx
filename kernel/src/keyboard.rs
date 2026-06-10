@@ -1,5 +1,5 @@
 use alloc::boxed::Box;
-use system::future::{Future, FutureHandle};
+use system::future::{Future, FutureHandle, FutureResult};
 use crate::kernel_cell::KernelCell;
 use crate::kernel_services::services;
 use alloc::collections::VecDeque;
@@ -42,6 +42,10 @@ impl KeyboardFuture {
 impl Future for KeyboardFuture {
     fn is_completed(&self) -> bool {
         !KEYBOARD_BUFFER.borrow_mut().is_empty()
+    }
+
+    fn into_result(self: Box<Self>) -> FutureResult {
+        FutureResult::Void
     }
 
     fn as_any(&self) -> &dyn Any {

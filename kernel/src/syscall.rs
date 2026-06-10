@@ -6,7 +6,8 @@ use crate::default_output::print;
 use system::syscall_numbers::SyscallNum;
 use collections::generational_arena::HalfSize;
 use system::future::FutureHandle;
-use system::ipc::{IpcMessage, IpcConnectionHandle};
+use system::ipc::{IpcMessage, IpcConnectionHandle, IpcBindingHandle};
+use system::future::FutureResult;
 use crate::task::{new_elf_task, new_entrypoint_task};
 
 #[cfg(not(test))]
@@ -49,7 +50,8 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         Ok(SyscallNum::WaitFuture) => {
             let handle = FutureHandle::unpack(arg1 as usize);
             let future = kernel().wait_future(handle).unwrap();
-            Box::into_raw(Box::new(future)) as usize
+            let result: FutureResult = future.into_result();
+            Box::into_raw(Box::new(result)) as usize
         }
         Ok(SyscallNum::IsFutureCompleted) => {
             let handle = FutureHandle::unpack(arg1 as usize);
@@ -98,6 +100,21 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         Ok(SyscallNum::IpcReceive) => {
             let connection_handle = IpcConnectionHandle::new(arg1 as HalfSize, arg2 as HalfSize);
             services().ipc_manager.borrow_mut().receive_from_server_async(connection_handle).pack()
+        }
+        Ok(SyscallNum::IpcBind) => {
+            let service: &str = unsafe { *Box::from_raw(arg1 as *mut &str) };
+            let result = services().ipc_manager.borrow_mut().bind_service(service);
+            Box::into_raw(Box::new(result)) as usize
+        }
+        Ok(SyscallNum::IpcReceiveFromClient) => {
+            let binding_handle = IpcBindingHandle::new(arg1 as HalfSize, arg2 as HalfSize);
+            services().ipc_manager.borrow_mut().receive_from_all_clients_async(binding_handle).pack()
+        }
+        Ok(SyscallNum::IpcSendToClient) => {
+            let connection_handle = IpcConnectionHandle::new(arg1 as HalfSize, arg2 as HalfSize);
+            let message = IpcMessage { data: arg3, connection_handle };
+            let result = services().ipc_manager.borrow_mut().send_to_client(message);
+            Box::into_raw(Box::new(result)) as usize
         }
         Err(_) => 0,
     }

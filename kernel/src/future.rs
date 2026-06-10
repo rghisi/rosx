@@ -2,8 +2,7 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::any::Any;
-use system::future::FutureHandle;
-use system::future::Future;
+use system::future::{Future, FutureHandle, FutureResult};
 use collections::generational_arena::{Error, GenerationalArena};
 use crate::kernel::kernel;
 use crate::kernel_services::services;
@@ -23,6 +22,10 @@ impl TimeFuture {
 impl Future for TimeFuture {
     fn is_completed(&self) -> bool {
         kernel().get_system_time() > self.completion_timestamp
+    }
+
+    fn into_result(self: Box<Self>) -> FutureResult {
+        FutureResult::Void
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -51,6 +54,10 @@ impl TaskCompletionFuture {
 impl Future for TaskCompletionFuture {
     fn is_completed(&self) -> bool {
         services().task_manager.borrow().get_state(self.task_handle) == crate::task::TaskState::Terminated
+    }
+
+    fn into_result(self: Box<Self>) -> FutureResult {
+        FutureResult::Void
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -149,6 +156,9 @@ mod tests {
     impl Future for DummyFuture {
         fn is_completed(&self) -> bool {
             false
+        }
+        fn into_result(self: Box<Self>) -> FutureResult {
+            FutureResult::Void
         }
         fn as_any(&self) -> &dyn Any {
             self

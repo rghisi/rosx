@@ -2,6 +2,7 @@ use core::fmt::{Display, Formatter};
 use collections::generational_arena::Handle;
 
 pub type IpcConnectionHandle = Handle;
+pub type IpcBindingHandle = Handle;
 
 #[derive(Debug)]
 pub enum IpcConnectionError {
@@ -53,7 +54,7 @@ pub struct IpcMessage {
 
 use alloc::boxed::Box;
 use core::any::Any;
-use crate::future::Future;
+use crate::future::{Future, FutureResult};
 
 pub struct IpcMessageFuture {
     message: Option<IpcMessage>,
@@ -88,6 +89,10 @@ impl IpcMessageFuture {
 impl Future for IpcMessageFuture {
     fn is_completed(&self) -> bool {
         self.message.is_some() || self.error.is_some()
+    }
+
+    fn into_result(self: Box<Self>) -> FutureResult {
+        FutureResult::IpcMessage(self.result())
     }
 
     fn as_any(&self) -> &dyn Any {
