@@ -2,8 +2,7 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::any::Any;
-use system::future::FutureHandle;
-use system::future::Future;
+use system::future::{Future, FutureHandle, FutureResult};
 use collections::generational_arena::{Error, GenerationalArena};
 use crate::kernel::kernel;
 use crate::kernel_services::services;
@@ -25,7 +24,19 @@ impl Future for TimeFuture {
         kernel().get_system_time() > self.completion_timestamp
     }
 
+    fn into_result(self: Box<Self>) -> FutureResult {
+        FutureResult::Void
+    }
+
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
         self
     }
 }
@@ -45,7 +56,19 @@ impl Future for TaskCompletionFuture {
         services().task_manager.borrow().get_state(self.task_handle) == crate::task::TaskState::Terminated
     }
 
+    fn into_result(self: Box<Self>) -> FutureResult {
+        FutureResult::Void
+    }
+
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
         self
     }
 }
@@ -100,6 +123,10 @@ impl FutureRegistry {
         self.arena.remove(handle)
     }
 
+    pub fn borrow_mut(&mut self, handle: FutureHandle) -> Result<&mut Box<dyn Future + Send + Sync>, Error> {
+        self.arena.borrow_mut(handle)
+    }
+
     pub fn replace(&mut self, handle: FutureHandle, future: Box<dyn Future + Send + Sync>) -> Result<FutureHandle, Error> {
         self.arena.replace(handle, future)
     }
@@ -130,7 +157,16 @@ mod tests {
         fn is_completed(&self) -> bool {
             false
         }
+        fn into_result(self: Box<Self>) -> FutureResult {
+            FutureResult::Void
+        }
         fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+        fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
             self
         }
     }
