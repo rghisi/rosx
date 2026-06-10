@@ -3,7 +3,7 @@ use core::fmt;
 use system::syscall_numbers::SyscallNum;
 use system::future::FutureHandle;
 use system::future::Future;
-use system::ipc::{IpcConnectionError, IpcSendError, IpcConnectionHandle, IpcReceiveError, IpcMessage};
+use system::ipc::{IpcConnectionError, IpcSendError, IpcConnectionHandle, IpcReceiveError, IpcMessage, ReceiveOutcome, IpcMessageFuture};
 use crate::arch;
 
 pub struct Syscall {}
@@ -81,9 +81,9 @@ impl Syscall {
         unsafe { *Box::from_raw(result_pointer as *mut Result<(), IpcSendError>) }
     }
 
-    pub fn ipc_receive(connection_handle: IpcConnectionHandle) -> Result<IpcMessage, IpcReceiveError> {
+    pub fn ipc_receive(connection_handle: IpcConnectionHandle) -> Result<IpcMessageFuture, IpcReceiveError> {
         let result_pointer = arch::raw_syscall(SyscallNum::IpcReceive as usize, connection_handle.index as usize, connection_handle.generation as usize, 0usize);
-        unsafe { *Box::from_raw(result_pointer as *mut Result<IpcMessage, IpcReceiveError>) }
+        unsafe { *Box::from_raw(result_pointer as *mut Result<IpcMessageFuture, IpcReceiveError>) }
     }
 }
 

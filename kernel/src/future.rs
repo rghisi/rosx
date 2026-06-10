@@ -28,6 +28,10 @@ impl Future for TimeFuture {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 pub struct TaskCompletionFuture {
@@ -46,6 +50,10 @@ impl Future for TaskCompletionFuture {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 }
@@ -100,6 +108,10 @@ impl FutureRegistry {
         self.arena.remove(handle)
     }
 
+    pub fn borrow_mut(&mut self, handle: FutureHandle) -> Result<&mut Box<dyn Future + Send + Sync>, Error> {
+        self.arena.borrow_mut(handle)
+    }
+
     pub fn replace(&mut self, handle: FutureHandle, future: Box<dyn Future + Send + Sync>) -> Result<FutureHandle, Error> {
         self.arena.replace(handle, future)
     }
@@ -131,6 +143,9 @@ mod tests {
             false
         }
         fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn Any {
             self
         }
     }

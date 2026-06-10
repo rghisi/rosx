@@ -3,6 +3,7 @@ use usrlib::syscall::Syscall;
 use alloc::string::String;
 use alloc::collections::BTreeMap;
 use lazy_static::lazy_static;
+use system::ipc::IpcMessageFuture;
 use crate::command::Command;
 
 #[cfg(target_arch = "x86_64")]
@@ -135,8 +136,15 @@ fn random() {
                 match Syscall::ipc_send(ipc_connection, 123456) {
                     Ok(result) => {
                         println!("RANDOM Value requested");
-                        Syscall::sleep(100);
-                        if let Ok(received) = Syscall::ipc_receive(ipc_connection) {
+                        if let Ok(mut future) = Syscall::ipc_receive(ipc_connection) {
+                            let received = if let Some(msg) = future.get_message() {
+                                msg
+                            } else {
+                                let fh = future.get_handle().unwrap();
+                                let mut completed_future_box = Syscall::wait_future(fh);
+                                let completed_future = completed_future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
+                                completed_future.get_message().unwrap()
+                            };
                             println!("RANDOM Value: {}", received.data);
                         } else {
                             println!("RANDOM Value not received");

@@ -1,6 +1,6 @@
 use crate::kernel::kernel;
 use crate::kernel_services::services;
-use system::ipc::IpcMessage;
+use system::ipc::{IpcMessage, ReceiveOutcome, IpcMessageFuture};
 use crate::kprintln;
 
 struct RandomGeneratorServer {
@@ -18,22 +18,34 @@ impl RandomGeneratorServer {
             .borrow_mut()
             .bind_service("RANDOM") {
             loop {
-                if let Ok(received_message) = services().ipc_manager.borrow_mut().receive_from_all_clients(binding) {
-                    let value = self.next() as usize;
-                    let reply_message = IpcMessage {
-                        data: value,
-                        connection_handle: received_message.connection_handle,
-                    };
-                    let _ = services().ipc_manager.borrow_mut().send_to_client(reply_message);
-                } else {
-                    Self::sleep();
+                let outcome = services().ipc_manager.borrow_mut().receive_from_all_clients_async(binding);
+                match outcome {
+                    Ok(ReceiveOutcome::Ready(msg)) => {
+                        self.process_message(msg);
+                    }
+                    Ok(ReceiveOutcome::Pending(fh)) => {
+                        let future = kernel().wait_future(fh).unwrap();
+                        if let Some(ipc_future) = future.as_any().downcast_ref::<IpcMessageFuture>() {
+                            if let Some(msg) = ipc_future.get_message() {
+                                self.process_message(msg);
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        kernel().sleep(10);
+                    }
                 }
             }
         }
     }
 
-    fn sleep() {
-        kernel().sleep(20);
+    fn process_message(&mut self, received_message: IpcMessage) {
+        let value = self.next() as usize;
+        let reply_message = IpcMessage {
+            data: value,
+            connection_handle: received_message.connection_handle,
+        };
+        let _ = services().ipc_manager.borrow_mut().send_to_client(reply_message);
     }
 
     fn next(&mut self) -> u32 {

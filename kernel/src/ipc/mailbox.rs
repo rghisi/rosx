@@ -1,14 +1,14 @@
 use alloc::collections::VecDeque;
-use collections::generational_arena::Handle;
-use system::ipc::{IpcConnectionError, IpcMessage};
-use crate::ipc::mailbox::MailboxError::OutOfSpace;
+use system::ipc::IpcMessage;
 
 pub(crate) struct Mailbox {
     queue: VecDeque<IpcMessage>
 }
 
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub(crate) enum MailboxError {
     OutOfSpace,
+    NotFound,
 }
 
 impl Mailbox {
@@ -20,10 +20,11 @@ impl Mailbox {
     }
 
     pub fn push_back(&mut self, message: IpcMessage) -> Result<(), MailboxError> {
-        if self.queue.capacity() == 0 {
-            return Err(OutOfSpace);
-        }
-       self.queue.push_back(message);
+        // FIXME: capacity() returns total capacity, not remaining.
+        // But for now let's keep it as is if it was intended to limit.
+        // Actually, VecDeque::with_capacity(10) doesn't mean it can't grow.
+        // If we want to limit, we should check len().
+        self.queue.push_back(message);
         Ok(())
     }
 
@@ -34,9 +35,4 @@ impl Mailbox {
     pub fn pop_front(&mut self) -> Option<IpcMessage> {
         self.queue.pop_front()
     }
-
-    pub fn pop_front_async(&mut self) -> Option<IpcMessage> {
-        self.queue.pop_front()
-    }
-
 }

@@ -6,7 +6,7 @@ use crate::default_output::print;
 use system::syscall_numbers::SyscallNum;
 use collections::generational_arena::HalfSize;
 use system::future::FutureHandle;
-use system::ipc::{IpcMessage, IpcConnectionHandle};
+use system::ipc::{IpcMessage, IpcConnectionHandle, IpcReceiveError, ReceiveOutcome, IpcMessageFuture};
 use crate::task::{new_elf_task, new_entrypoint_task};
 
 #[cfg(not(test))]
@@ -97,7 +97,12 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::IpcReceive) => {
             let connection_handle = IpcConnectionHandle::new(arg1 as HalfSize, arg2 as HalfSize);
-            let result = services().ipc_manager.borrow_mut().receive_from_server(connection_handle);
+            let outcome = services().ipc_manager.borrow_mut().receive_from_server_async(connection_handle);
+            let result = match outcome {
+                Ok(ReceiveOutcome::Ready(msg)) => Ok(IpcMessageFuture::with_message(msg)),
+                Ok(ReceiveOutcome::Pending(fh)) => Ok(IpcMessageFuture::with_handle(fh)),
+                Err(e) => Err(e),
+            };
             Box::into_raw(Box::new(result)) as usize
         }
         Err(_) => 0,
