@@ -28,10 +28,11 @@ impl Display for IpcSendError {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum IpcReceiveError {
     ConnectionNotFound,
-    NoMessagesAvailable
+    NoMessagesAvailable,
+    MailboxNotAvailable,
 }
 
 impl Display for IpcReceiveError {
@@ -39,6 +40,7 @@ impl Display for IpcReceiveError {
         match self {
             IpcReceiveError::ConnectionNotFound => write!(f, "Connection not found"),
             IpcReceiveError::NoMessagesAvailable => write!(f, "No messages available"),
+            IpcReceiveError::MailboxNotAvailable => write!(f, "Mailbox not available"),
         }
     }
 }
@@ -52,28 +54,27 @@ pub struct IpcMessage {
 use core::any::Any;
 use crate::future::{Future, FutureHandle};
 
-#[derive(Debug, PartialEq)]
-pub enum ReceiveOutcome {
-    Ready(IpcMessage),
-    Pending(Handle),
-}
-
 pub struct IpcMessageFuture {
     message: Option<IpcMessage>,
     handle: Option<FutureHandle>,
+    error: Option<IpcReceiveError>,
 }
 
 impl IpcMessageFuture {
     pub fn new() -> Self {
-        Self { message: None, handle: None }
+        Self { message: None, handle: None, error: None }
     }
 
     pub fn with_message(message: IpcMessage) -> Self {
-        Self { message: Some(message), handle: None }
+        Self { message: Some(message), handle: None, error: None }
     }
 
     pub fn with_handle(handle: FutureHandle) -> Self {
-        Self { message: None, handle: Some(handle) }
+        Self { message: None, handle: Some(handle), error: None }
+    }
+
+    pub fn with_error(error: IpcReceiveError) -> Self {
+        Self { message: None, handle: None, error: Some(error) }
     }
 
     pub fn complete(&mut self, message: IpcMessage) {
@@ -87,11 +88,18 @@ impl IpcMessageFuture {
     pub fn get_handle(&self) -> Option<FutureHandle> {
         self.handle
     }
+
+    pub fn result(&self) -> Result<IpcMessage, IpcReceiveError> {
+        if let Some(err) = self.error.clone() {
+            return Err(err);
+        }
+        self.message.ok_or(IpcReceiveError::NoMessagesAvailable)
+    }
 }
 
 impl Future for IpcMessageFuture {
     fn is_completed(&self) -> bool {
-        self.message.is_some()
+        self.message.is_some() || self.error.is_some()
     }
 
     fn as_any(&self) -> &dyn Any {

@@ -1,6 +1,6 @@
 use crate::kernel::kernel;
 use crate::kernel_services::services;
-use system::ipc::{IpcMessage, ReceiveOutcome, IpcMessageFuture};
+use system::ipc::{IpcMessage, IpcMessageFuture};
 use crate::kprintln;
 
 struct RandomGeneratorServer {
@@ -18,22 +18,18 @@ impl RandomGeneratorServer {
             .borrow_mut()
             .bind_service("RANDOM") {
             loop {
-                let outcome = services().ipc_manager.borrow_mut().receive_from_all_clients_async(binding);
-                match outcome {
-                    Ok(ReceiveOutcome::Ready(msg)) => {
-                        self.process_message(msg);
-                    }
-                    Ok(ReceiveOutcome::Pending(fh)) => {
-                        let future = kernel().wait_future(fh).unwrap();
-                        if let Some(ipc_future) = future.as_any().downcast_ref::<IpcMessageFuture>() {
-                            if let Some(msg) = ipc_future.get_message() {
-                                self.process_message(msg);
-                            }
-                        }
-                    }
-                    Err(_) => {
-                        kernel().sleep(10);
-                    }
+                let future = services().ipc_manager.borrow_mut().receive_from_all_clients_async(binding);
+                let msg = if let Ok(msg) = future.result() {
+                    Some(msg)
+                } else if let Some(fh) = future.get_handle() {
+                    kernel().wait_future(fh).unwrap()
+                        .as_any().downcast_ref::<IpcMessageFuture>()
+                        .and_then(|f| f.result().ok())
+                } else {
+                    None
+                };
+                if let Some(msg) = msg {
+                    self.process_message(msg);
                 }
             }
         }
