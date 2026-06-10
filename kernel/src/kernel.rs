@@ -151,6 +151,10 @@ impl Kernel {
         services().future_registry.borrow_mut().consume(handle)
     }
 
+    pub fn wait<T: Future + Send + Sync + 'static>(&mut self, handle: FutureHandle) -> Option<Box<T>> {
+        self.wait_future(handle).ok()?.into_any().downcast::<T>().ok()
+    }
+
     pub fn is_future_completed(&self, handle: FutureHandle) -> bool {
         services().future_registry.borrow_mut().get(handle).unwrap_or(true)
     }

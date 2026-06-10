@@ -3,7 +3,7 @@ use core::fmt;
 use system::syscall_numbers::SyscallNum;
 use system::future::FutureHandle;
 use system::future::Future;
-use system::ipc::{IpcConnectionError, IpcSendError, IpcConnectionHandle, IpcMessageFuture};
+use system::ipc::{IpcConnectionError, IpcSendError, IpcConnectionHandle};
 use crate::arch;
 
 pub struct Syscall {}
@@ -30,8 +30,11 @@ impl Syscall {
 
     pub fn wait_future(handle: FutureHandle) -> Box<dyn Future + Send + Sync> {
         let result = arch::raw_syscall(SyscallNum::WaitFuture as usize, handle.pack(), 0, 0);
-        let r: Box<dyn Future + Send + Sync> = unsafe { *Box::from_raw(result as *mut Box<dyn Future + Send + Sync>) };
-        r
+        unsafe { *Box::from_raw(result as *mut Box<dyn Future + Send + Sync>) }
+    }
+
+    pub fn wait<T: Future + Send + Sync + 'static>(handle: FutureHandle) -> Option<Box<T>> {
+        Self::wait_future(handle).into_any().downcast::<T>().ok()
     }
 
     pub fn is_future_completed(handle: FutureHandle) -> bool {
@@ -81,9 +84,9 @@ impl Syscall {
         unsafe { *Box::from_raw(result_pointer as *mut Result<(), IpcSendError>) }
     }
 
-    pub fn ipc_receive(connection_handle: IpcConnectionHandle) -> IpcMessageFuture {
-        let result_pointer = arch::raw_syscall(SyscallNum::IpcReceive as usize, connection_handle.index as usize, connection_handle.generation as usize, 0usize);
-        unsafe { *Box::from_raw(result_pointer as *mut IpcMessageFuture) }
+    pub fn ipc_receive(connection_handle: IpcConnectionHandle) -> FutureHandle {
+        let raw = arch::raw_syscall(SyscallNum::IpcReceive as usize, connection_handle.index as usize, connection_handle.generation as usize, 0usize);
+        FutureHandle::unpack(raw)
     }
 }
 

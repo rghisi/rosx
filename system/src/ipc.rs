@@ -51,42 +51,30 @@ pub struct IpcMessage {
     pub connection_handle: IpcConnectionHandle,
 }
 
+use alloc::boxed::Box;
 use core::any::Any;
-use crate::future::{Future, FutureHandle};
+use crate::future::Future;
 
 pub struct IpcMessageFuture {
     message: Option<IpcMessage>,
-    handle: Option<FutureHandle>,
     error: Option<IpcReceiveError>,
 }
 
 impl IpcMessageFuture {
     pub fn new() -> Self {
-        Self { message: None, handle: None, error: None }
+        Self { message: None, error: None }
     }
 
     pub fn with_message(message: IpcMessage) -> Self {
-        Self { message: Some(message), handle: None, error: None }
-    }
-
-    pub fn with_handle(handle: FutureHandle) -> Self {
-        Self { message: None, handle: Some(handle), error: None }
+        Self { message: Some(message), error: None }
     }
 
     pub fn with_error(error: IpcReceiveError) -> Self {
-        Self { message: None, handle: None, error: Some(error) }
+        Self { message: None, error: Some(error) }
     }
 
     pub fn complete(&mut self, message: IpcMessage) {
         self.message = Some(message);
-    }
-
-    pub fn get_message(&self) -> Option<IpcMessage> {
-        self.message
-    }
-
-    pub fn get_handle(&self) -> Option<FutureHandle> {
-        self.handle
     }
 
     pub fn result(&self) -> Result<IpcMessage, IpcReceiveError> {
@@ -107,6 +95,10 @@ impl Future for IpcMessageFuture {
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
         self
     }
 }

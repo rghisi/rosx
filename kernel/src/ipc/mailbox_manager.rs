@@ -4,6 +4,7 @@ use collections::generational_arena::{GenerationalArena, Handle};
 use system::future::FutureHandle;
 use system::ipc::{IpcMessage, IpcMessageFuture, IpcReceiveError};
 use crate::ipc::mailbox::Mailbox;
+use alloc::boxed::Box;
 use crate::kernel_services::services;
 
 pub(crate) type MailboxHandle = Handle;
@@ -37,18 +38,20 @@ impl MailboxManager {
         }
     }
 
-    pub(crate) fn pop_front_async(&mut self, handle: MailboxHandle) -> IpcMessageFuture {
+    pub(crate) fn pop_front_async(&mut self, handle: MailboxHandle) -> FutureHandle {
         if let Ok(mailbox) = self.mailboxes.borrow_mut(handle) {
             if let Some(msg) = mailbox.pop_front() {
-                IpcMessageFuture::with_message(msg)
+                services().future_registry.borrow_mut()
+                    .register(Box::new(IpcMessageFuture::with_message(msg))).unwrap()
             } else {
-                let future = alloc::boxed::Box::new(IpcMessageFuture::new());
-                let future_handle = services().future_registry.borrow_mut().register(future).unwrap();
-                self.waiters.entry(handle).or_default().push(future_handle);
-                IpcMessageFuture::with_handle(future_handle)
+                let fh = services().future_registry.borrow_mut()
+                    .register(Box::new(IpcMessageFuture::new())).unwrap();
+                self.waiters.entry(handle).or_default().push(fh);
+                fh
             }
         } else {
-            IpcMessageFuture::with_error(IpcReceiveError::MailboxNotAvailable)
+            services().future_registry.borrow_mut()
+                .register(Box::new(IpcMessageFuture::with_error(IpcReceiveError::MailboxNotAvailable))).unwrap()
         }
     }
 
@@ -105,7 +108,7 @@ mod tests {
         };
         future.complete(msg);
         assert!(future.is_completed());
-        assert_eq!(future.get_message().unwrap().data, 123);
+        assert_eq!(future.result().unwrap().data, 123);
     }
 
     #[test]
@@ -115,22 +118,20 @@ mod tests {
         let handle = manager.create();
         
         // Case 1: Empty mailbox -> Pending
-        let future = manager.pop_front_async(handle);
-        assert!(future.get_message().is_none());
-        let fh = future.get_handle().expect("Expected pending future handle");
+        let fh = manager.pop_front_async(handle);
         
         // Case 2: Data pushed -> Waiter notified
         let msg = IpcMessage {
             connection_handle: Handle::new(1, 1),
             data: 456,
         };
-        manager.push_back(handle, msg).unwrap();
-        
+        manager.push_back(handle, msg);
+
         // Verify that the future now has the message
         let mut registry = services().future_registry.borrow_mut();
         let future_box = registry.borrow_mut(fh).unwrap();
         let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
-        assert_eq!(ipc_future.get_message().unwrap().data, 456);
+        assert_eq!(ipc_future.result().unwrap().data, 456);
     }
 
     #[test]
@@ -145,8 +146,7 @@ mod tests {
         services().task_manager.borrow_mut().set_state(task_handle, crate::task::TaskState::Blocked);
         
         // 2. pop_front_async to get a future
-        let future_handle = manager.pop_front_async(handle)
-            .get_handle().expect("Expected pending future handle");
+        let future_handle = manager.pop_front_async(handle);
         
         // 3. Register task as waiter for that future
         services().future_registry.borrow_mut().register_waiter(future_handle, task_handle);
@@ -156,8 +156,8 @@ mod tests {
             connection_handle: Handle::new(1, 1),
             data: 789,
         };
-        manager.push_back(handle, msg).unwrap();
-        
+        manager.push_back(handle, msg);
+
         assert_eq!(services().task_manager.borrow().get_state(task_handle), crate::task::TaskState::Ready);
     }
 }

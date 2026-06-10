@@ -32,6 +32,10 @@ impl Future for TimeFuture {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
+        self
+    }
 }
 
 pub struct TaskCompletionFuture {
@@ -54,6 +58,10 @@ impl Future for TaskCompletionFuture {
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
         self
     }
 }
@@ -146,6 +154,9 @@ mod tests {
             self
         }
         fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+        fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
             self
         }
     }

@@ -3,6 +3,7 @@ use crate::kernel_services::services;
 use system::ipc::{IpcMessage, IpcMessageFuture};
 use crate::kprintln;
 
+
 struct RandomGeneratorServer {
     state: u32,
 }
@@ -18,16 +19,9 @@ impl RandomGeneratorServer {
             .borrow_mut()
             .bind_service("RANDOM") {
             loop {
-                let future = services().ipc_manager.borrow_mut().receive_from_all_clients_async(binding);
-                let msg = if let Ok(msg) = future.result() {
-                    Some(msg)
-                } else if let Some(fh) = future.get_handle() {
-                    kernel().wait_future(fh).unwrap()
-                        .as_any().downcast_ref::<IpcMessageFuture>()
-                        .and_then(|f| f.result().ok())
-                } else {
-                    None
-                };
+                let fh = services().ipc_manager.borrow_mut().receive_from_all_clients_async(binding);
+                let msg = kernel().wait::<IpcMessageFuture>(fh)
+                    .and_then(|f| f.result().ok());
                 if let Some(msg) = msg {
                     self.process_message(msg);
                 }

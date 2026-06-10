@@ -136,16 +136,9 @@ fn random() {
                 match Syscall::ipc_send(ipc_connection, 123456) {
                     Ok(result) => {
                         println!("RANDOM Value requested");
-                        let future = Syscall::ipc_receive(ipc_connection);
-                        let msg = if let Ok(msg) = future.result() {
-                            Some(msg)
-                        } else if let Some(fh) = future.get_handle() {
-                            let completed = Syscall::wait_future(fh);
-                            completed.as_any().downcast_ref::<IpcMessageFuture>()
-                                .and_then(|f| f.result().ok())
-                        } else {
-                            None
-                        };
+                        let fh = Syscall::ipc_receive(ipc_connection);
+                        let msg = Syscall::wait::<IpcMessageFuture>(fh)
+                            .and_then(|f| f.result().ok());
                         if let Some(received) = msg {
                             println!("RANDOM Value: {}", received.data);
                         } else {

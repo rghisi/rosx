@@ -2,7 +2,9 @@ use alloc::collections::{BTreeMap};
 use alloc::string::String;
 use collections::generational_arena::{GenerationalArena, Handle};
 use system::ipc::{IpcConnectionError, IpcMessage, IpcSendError, IpcConnectionHandle, IpcBindingError, IpcReceiveError, IpcMessageFuture};
+use system::future::FutureHandle;
 use crate::ipc::mailbox_manager::{MailboxManager, MailboxHandle};
+use crate::kernel_services::services;
 
 struct IpcServerBinding {
     pub service: String,
@@ -105,20 +107,22 @@ impl IpcManager {
         }
     }
 
-    pub(crate) fn receive_from_all_clients_async(&mut self, server_binding_handle: IpcBindingHandle) -> IpcMessageFuture {
+    pub(crate) fn receive_from_all_clients_async(&mut self, server_binding_handle: IpcBindingHandle) -> FutureHandle {
         if let Ok(server_binding) = self.bindings.borrow(server_binding_handle) {
             let server_mailbox_handle = server_binding.mailbox_handle;
             self.mailbox_manager.pop_front_async(server_mailbox_handle)
         } else {
-            IpcMessageFuture::with_error(IpcReceiveError::ConnectionNotFound)
+            services().future_registry.borrow_mut()
+                .register(alloc::boxed::Box::new(IpcMessageFuture::with_error(IpcReceiveError::ConnectionNotFound))).unwrap()
         }
     }
 
-    pub(crate) fn receive_from_server_async(&mut self, connection_handle: IpcConnectionHandle) -> IpcMessageFuture {
+    pub(crate) fn receive_from_server_async(&mut self, connection_handle: IpcConnectionHandle) -> FutureHandle {
         if let Ok(connection) = self.connections.borrow(connection_handle) {
             self.mailbox_manager.pop_front_async(connection.client_mailbox)
         } else {
-            IpcMessageFuture::with_error(IpcReceiveError::ConnectionNotFound)
+            services().future_registry.borrow_mut()
+                .register(alloc::boxed::Box::new(IpcMessageFuture::with_error(IpcReceiveError::ConnectionNotFound))).unwrap()
         }
     }
 }

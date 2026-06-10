@@ -97,8 +97,7 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::IpcReceive) => {
             let connection_handle = IpcConnectionHandle::new(arg1 as HalfSize, arg2 as HalfSize);
-            let future = services().ipc_manager.borrow_mut().receive_from_server_async(connection_handle);
-            Box::into_raw(Box::new(future)) as usize
+            services().ipc_manager.borrow_mut().receive_from_server_async(connection_handle).pack()
         }
         Err(_) => 0,
     }

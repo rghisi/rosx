@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use system::future::{Future, FutureHandle};
 use crate::kernel_cell::KernelCell;
 use crate::kernel_services::services;
@@ -48,6 +49,10 @@ impl Future for KeyboardFuture {
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
         self
     }
 }
