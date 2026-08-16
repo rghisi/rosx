@@ -93,7 +93,7 @@ cargo test -p collections  # generational_arena
    - Interrupts currently disabled during critical sections
 
 5. **Testing:**
-   - **Write unit tests for all kernel modules** (see `kernel/src/simple_scheduler.rs` as example)
+   - **Write unit tests for all kernel modules** (see `kernel/src/scheduler/mlfq_strategy.rs` as example)
    - Unit tests should be comprehensive and test edge cases
    - Use `#[cfg(test)]` modules within each file
    - Integration testing: Use dummy tasks for scheduler/task testing
@@ -129,15 +129,13 @@ cargo test -p collections  # generational_arena
 - `task/` + `task_manager/` — task lifecycle, context switch, preemption.
 
 **Documentation & Comments:**
-- **CRITICAL: Minimal documentation - code is the source of truth**
-- **CRITICAL: NO code comments unless explicitly requested**
-- Code should be self-explanatory through:
+- **CRITICAL: No comments, ever** — the code is the source of truth; make it self-explanatory
+- Self-explain through:
   - Clear function names
   - Descriptive variable names
   - Well-structured logic
   - Type signatures that document intent
-- Exception: Assembly code should have comments explaining register usage and calling conventions
-- Focus on writing readable code rather than explaining it with comments
+- Exception: Assembly code must have comments (register usage, calling conventions)
 
 **General Style:**
 - Follow standard Rust conventions
@@ -193,14 +191,9 @@ This is the MOST CRITICAL guideline for working on RosX:
 ### Other Critical Guidelines
 
 - **CRITICAL: Minimize `unsafe` usage** - Use Rust's safe abstractions whenever possible; `unsafe` only when truly unavoidable
-- **CRITICAL: Hardware abstraction required** - All platform-specific code must go through HAL traits (like `Cpu` trait), never directly in kernel code
-- **CRITICAL: Pluggable architecture** - Schedulers and memory managers must be configurable at bootstrap, not hardcoded
-- **CRITICAL: Zero external dependencies in kernel/** - Only `core`, `alloc`, `compiler_builtins` allowed
-- **CRITICAL: No code comments unless requested** - Write self-explanatory code with clear names instead
-- **CRITICAL: Write unit tests** - All kernel modules should have comprehensive unit tests (see `simple_scheduler.rs` example)
+- **CRITICAL: Hardware abstraction required** - All platform-specific code must go through HAL traits (like `Cpu`), never directly in kernel code
+- **CRITICAL: kernel/ is `no_std`** - std is forbidden; dependencies are limited to the workspace crates `collections` + `system` and `lazy_static`. No other third-party crates.
+- **CRITICAL: No comments, ever** - Write self-explanatory code with clear names instead
+- **CRITICAL: Write unit tests** - All kernel modules should have comprehensive unit tests (see `kernel/src/scheduler/mlfq_strategy.rs` as a reference)
 - Multi-platform support is a goal - keep kernel code portable and platform-agnostic
-- Assembly should be minimal and well-documented (exception to no-comments rule)
-- The project is in active refactoring - check the refactoring doc before context switching work
-- Task finalization is currently broken - don't assume it works
-- Build and test after significant changes
-- When adding subsystems (schedulers, memory managers, etc.), design them as pluggable trait implementations
+- Build and test after significant changes (`cargo test -p kernel`)
