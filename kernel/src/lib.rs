@@ -48,3 +48,7 @@ pub(crate) trait ForNotifyingFutures: Send + Sync {
 pub trait ForCompletingExpiredTimers: Send + Sync {
     fn complete_timer_future(&self, handle: FutureHandle);
 }
+
+pub trait ForSwitchingTaskContext: Send + Sync {
+    fn switch_to_task(&self, handle: TaskHandle) -> TaskHandle;
+}

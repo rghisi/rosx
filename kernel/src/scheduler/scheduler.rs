@@ -8,6 +8,7 @@ use crate::scheduler::algorithm::SchedulingAlgorithm;
 use crate::task::{TaskHandle, TaskState};
 use crate::kernel::kernel;
 use crate::ForCompletingExpiredTimers;
+use crate::ForSwitchingTaskContext;
 
 struct NoopTimerHandler;
 impl ForCompletingExpiredTimers for NoopTimerHandler {
@@ -16,8 +17,16 @@ impl ForCompletingExpiredTimers for NoopTimerHandler {
 
 static NOOP_TIMER_HANDLER: NoopTimerHandler = NoopTimerHandler;
 
+struct NoopContextSwitcher;
+impl ForSwitchingTaskContext for NoopContextSwitcher {
+    fn switch_to_task(&self, handle: TaskHandle) -> TaskHandle { handle }
+}
+
+static NOOP_CONTEXT_SWITCHER: NoopContextSwitcher = NoopContextSwitcher;
+
 pub struct Scheduler {
     algorithm: Box<dyn SchedulingAlgorithm + Send>,
+    context_switcher: &'static dyn ForSwitchingTaskContext,
     hw_interrupt_queue: VecDeque<HardwareInterrupt>,
     idle_task: Option<TaskHandle>,
     timer_handler: &'static dyn ForCompletingExpiredTimers,
@@ -25,20 +34,24 @@ pub struct Scheduler {
 
 impl Scheduler {
     pub fn new(algorithm: impl SchedulingAlgorithm + 'static) -> Self {
-        Scheduler {
-            algorithm: Box::new(algorithm),
-            hw_interrupt_queue: VecDeque::with_capacity(5),
-            idle_task: None,
-            timer_handler: &NOOP_TIMER_HANDLER,
-        }
+        Scheduler::new_with_context_switcher(algorithm, &NOOP_CONTEXT_SWITCHER, &NOOP_TIMER_HANDLER)
     }
 
     pub fn new_with_timer_handler(
         algorithm: impl SchedulingAlgorithm + 'static,
         timer_handler: &'static dyn ForCompletingExpiredTimers,
     ) -> Self {
+        Scheduler::new_with_context_switcher(algorithm, &NOOP_CONTEXT_SWITCHER, timer_handler)
+    }
+
+    pub fn new_with_context_switcher(
+        algorithm: impl SchedulingAlgorithm + 'static,
+        context_switcher: &'static dyn ForSwitchingTaskContext,
+        timer_handler: &'static dyn ForCompletingExpiredTimers,
+    ) -> Self {
         Scheduler {
             algorithm: Box::new(algorithm),
+            context_switcher,
             hw_interrupt_queue: VecDeque::with_capacity(5),
             idle_task: None,
             timer_handler,
@@ -95,7 +108,7 @@ impl Scheduler {
             None => {
                 let idle = self.idle_task.unwrap();
                 services().task_manager.borrow_mut().set_state(idle, TaskState::Running);
-                let returned = kernel().switch_to_task(idle);
+                let returned = self.context_switcher.switch_to_task(idle);
                 let task_state = services().task_manager.borrow().get_state(returned);
                 match task_state {
                     TaskState::Running => {
@@ -114,7 +127,7 @@ impl Scheduler {
 
         self.algorithm.on_task_start(next_handle);
         services().task_manager.borrow_mut().set_state(next_handle, TaskState::Running);
-        let returned_handle = kernel().switch_to_task(next_handle);
+        let returned_handle = self.context_switcher.switch_to_task(next_handle);
 
         let task_state = services().task_manager.borrow().get_state(returned_handle);
         match task_state {

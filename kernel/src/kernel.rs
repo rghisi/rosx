@@ -10,6 +10,7 @@ use crate::messages::HardwareInterrupt;
 use crate::state::{ExecutionContext, ExecutionState};
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, YieldReason};
+use crate::ForSwitchingTaskContext;
 use alloc::boxed::Box;
 use core::ptr::null_mut;
 use collections::generational_arena::Error;
@@ -21,6 +22,15 @@ use crate::memory::MemoryBlocks;
 use crate::kernel_cell::KernelCell;
 
 static KERNEL_PTR: KernelCell<*mut Kernel> = KernelCell::new(null_mut());
+
+struct KernelContextSwitcher;
+static KERNEL_CONTEXT_SWITCHER: KernelContextSwitcher = KernelContextSwitcher;
+
+impl ForSwitchingTaskContext for KernelContextSwitcher {
+    fn switch_to_task(&self, handle: TaskHandle) -> TaskHandle {
+        kernel().execution_state.switch_to_task(handle)
+    }
+}
 
 pub fn kernel() -> &'static mut Kernel {
     unsafe { &mut **KERNEL_PTR.borrow() }
@@ -37,8 +47,6 @@ impl Kernel {
         let cpu = kconfig.cpu;
         let elf_arch = kconfig.elf_arch;
         crate::kernel_services::init();
-        let scheduler = (kconfig.scheduler_factory)(services().timer_handler);
-        services().scheduler.replace(*scheduler);
         let scheduler_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
         let scheduler_task_handler = services()
             .task_manager
@@ -51,6 +59,9 @@ impl Kernel {
             .borrow_task_mut(scheduler_task_handler)
             .unwrap()
             .prepare_entry(cpu);
+
+        let scheduler = (kconfig.scheduler_factory)(&KERNEL_CONTEXT_SWITCHER, services().timer_handler);
+        services().scheduler.replace(*scheduler);
 
         Kernel {
             cpu,

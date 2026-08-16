@@ -6,26 +6,27 @@ pub mod timer;
 
 use alloc::boxed::Box;
 use crate::ForCompletingExpiredTimers;
+use crate::ForSwitchingTaskContext;
 
 pub use algorithm::SchedulingAlgorithm;
 pub use scheduler::Scheduler;
 pub use timer::TimerManager;
 
-pub type SchedulerFactory = fn(&'static dyn ForCompletingExpiredTimers) -> Box<Scheduler>;
+pub type SchedulerFactory = fn(&'static dyn ForSwitchingTaskContext, &'static dyn ForCompletingExpiredTimers) -> Box<Scheduler>;
 
-pub fn mfq_scheduler(timer_handler: &'static dyn ForCompletingExpiredTimers) -> Box<Scheduler> {
-    Box::new(Scheduler::new_with_timer_handler(mlfq_strategy::MlfqStrategy::new(), timer_handler))
+pub fn mfq_scheduler(ctx: &'static dyn ForSwitchingTaskContext, timer: &'static dyn ForCompletingExpiredTimers) -> Box<Scheduler> {
+    Box::new(Scheduler::new_with_context_switcher(mlfq_strategy::MlfqStrategy::new(), ctx, timer))
 }
 
-pub fn fifo_scheduler(timer_handler: &'static dyn ForCompletingExpiredTimers) -> Box<Scheduler> {
-    Box::new(Scheduler::new_with_timer_handler(fifo_strategy::FifoStrategy::new(), timer_handler))
+pub fn fifo_scheduler(ctx: &'static dyn ForSwitchingTaskContext, timer: &'static dyn ForCompletingExpiredTimers) -> Box<Scheduler> {
+    Box::new(Scheduler::new_with_context_switcher(fifo_strategy::FifoStrategy::new(), ctx, timer))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::kernel_services::{init, services};
-    use crate::task::{Task, TaskState};
+    use crate::task::{Task, TaskHandle, TaskState};
     use std::sync::Once;
 
     static INIT: Once = Once::new();
@@ -34,11 +35,17 @@ mod tests {
         INIT.call_once(|| init());
     }
 
+    struct TestContextSwitcher;
+    impl ForSwitchingTaskContext for TestContextSwitcher {
+        fn switch_to_task(&self, handle: TaskHandle) -> TaskHandle { handle }
+    }
+    static TEST_CTX: TestContextSwitcher = TestContextSwitcher;
+
     #[test]
     fn fifo_scheduler_factory_produces_functional_scheduler() {
         setup();
         let handler = services().timer_handler;
-        let mut scheduler = *fifo_scheduler(handler);
+        let mut scheduler = *fifo_scheduler(&TEST_CTX, handler);
 
         let task = Task::new("T", 0x1000, 0);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
@@ -52,7 +59,7 @@ mod tests {
     fn mfq_scheduler_factory_produces_functional_scheduler() {
         setup();
         let handler = services().timer_handler;
-        let mut scheduler = *mfq_scheduler(handler);
+        let mut scheduler = *mfq_scheduler(&TEST_CTX, handler);
 
         let task = Task::new("T", 0x1000, 0);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
