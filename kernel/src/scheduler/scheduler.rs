@@ -75,8 +75,10 @@ impl Scheduler {
 
     pub fn wake_tasks(&mut self, handles: Vec<TaskHandle>) {
         for handle in handles {
-            services().task_manager.borrow_mut().set_state(handle, TaskState::Ready);
-            self.algorithm.push_ready(handle);
+            if services().task_manager.borrow().get_state(handle) != TaskState::Terminated {
+                services().task_manager.borrow_mut().set_state(handle, TaskState::Ready);
+                self.algorithm.push_ready(handle);
+            }
         }
     }
 
@@ -98,6 +100,9 @@ impl Scheduler {
     }
 
     fn handle_termination(&mut self, handle: TaskHandle) {
+        if self.idle_task == Some(handle) {
+            self.idle_task = None;
+        }
         self.algorithm.on_task_terminate(handle);
         services().task_manager.borrow_mut().remove_task(handle);
     }
@@ -606,5 +611,41 @@ mod tests {
         *ret.lock().unwrap() = Some(idle_handle);
 
         engine.run_next_task();
+    }
+
+    // === edge case: wake_tasks with terminated task ===
+
+    #[test]
+    fn wake_tasks_should_not_resurrect_terminated_task() {
+        setup();
+        let mut fake = FakeAlgorithm::new();
+        let (ctx, _calls, _ret) = make_ctx();
+        let mut engine = Scheduler::new_with_context_switcher(fake.clone(), ctx, &NOOP_TIMER_HANDLER);
+
+        let task = Task::new("T", 0x1000, 0);
+        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+        services().task_manager.borrow_mut().set_state(handle, KS::Terminated);
+
+        engine.wake_tasks(vec![handle]);
+
+        assert_eq!(services().task_manager.borrow().get_state(handle), KS::Terminated);
+    }
+
+    // === edge case: idle task termination leaves stale handle ===
+
+    #[test]
+    fn handle_termination_of_idle_task_should_clear_idle_handle() {
+        setup();
+        let mut fake = FakeAlgorithm::new();
+        let (ctx, _calls, _ret) = make_ctx();
+        let mut engine = Scheduler::new_with_context_switcher(fake, ctx, &NOOP_TIMER_HANDLER);
+
+        let idle_handle = create_running_task("Idle");
+        engine.set_idle_task(idle_handle).unwrap();
+
+        engine.handle_termination(idle_handle);
+
+        let result = engine.set_idle_task(create_running_task("NewIdle"));
+        assert!(result.is_ok());
     }
 }
