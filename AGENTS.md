@@ -1,7 +1,7 @@
 # RosX - Agent Context Document
 
-> **Last Updated:** 2025-10-12
-> **Purpose:** Quick context recovery for AI coding assistants working on RosX
+> **Last Updated:** 2026-08-16
+> **Purpose:** Compact, always-accurate context for AI coding agents working on RosX.
 
 ---
 
@@ -11,53 +11,35 @@
 
 ### Key Characteristics
 - **Language:** Rust (with minimal assembly for architecture-specific code)
-- **Target Platforms:**
-  - **x86_64** (current - chosen for readily available infrastructure)
-  - **x86_32** (next - to run on older PCs)
-  - **ARM** (future)
-  - **RISC-V** (future)
-  - **m68k** (future)
-  - Microcontrollers (future)
-- **Scope:** Full-featured OS with networking, task scheduling, interrupt handling
+- **Target Platforms (status):**
+  - **x86_64** — bootstrap platform, complete.
+  - **x86_32** — complete (Multiboot2/GRUB, `arch/x86_32/`).
+  - **ARM, RISC-V, m68k** — future (no `arch/` dirs exist yet; m68k is feasibility-stage only).
+- **Scope:** Full-featured OS — scheduling, interrupts, IPC, ELF user-space; networking is a goal, not yet implemented.
 - **Project Type:** Learning/hobby project with practical goals
 
-**Platform Strategy:** x86_64 is NOT the primary focus - it's just the starting point due to tooling availability. Multi-platform support is a core design goal, not an afterthought. All kernel code must remain portable.
+**Platform Strategy:** x86_64 is the starting point due to tooling, not the focus — keep `kernel/` portable.
 
 ---
 
 ## Project Structure
 
 ```
-rosx/
-├── arch/                    # Architecture-specific implementations
-│   ├── x86_64/             # Current implementation (bootstrap platform)
-│   │   ├── src/
-│   │   │   ├── context_switching.S      # Assembly context switch code
-│   │   │   ├── process_initialization.S # Task initialization assembly
-│   │   │   ├── interrupts.rs            # IDT, PIC, interrupt handlers
-│   │   │   ├── cpu.rs                   # CPU trait implementation
-│   │   │   └── main.rs                  # Architecture entry point
-│   │   ├── .cargo/config.toml          # Build config (custom target)
-│   │   └── Cargo.toml
-│   ├── arm/                # ARM port (future)
-│   ├── riscv/              # RISC-V port (future)
-│   └── m68k/               # m68k port (future)
-│
-├── kernel/                 # Platform-agnostic kernel code
-│   ├── src/
-│   │   ├── kernel.rs       # Main kernel struct, task_yield()
-│   │   ├── task.rs         # Task structure and management
-│   │   ├── main_thread.rs  # Main scheduler thread
-│   │   ├── scheduler.rs    # Scheduler trait
-│   │   ├── simple_scheduler.rs  # Basic round-robin scheduler
-│   │   ├── function_task.rs     # Function-based tasks
-│   │   └── cpu.rs          # CPU trait definition
-│   └── Cargo.toml
-│
-├── docs/                   # Documentation
-├── DEVELOPMENT_LOG.md      # Session-based development history
-├── INTERRUPT_DRIVEN_CONTEXT_SWITCH_REFACTORING.md  # Current refactoring plan
-└── Cargo.toml             # Workspace configuration
+rosx/                        # Cargo workspace (edition 2024, nightly)
+├── kernel/                  # Platform-agnostic core (see submodules below)
+│    scheduler/ (SchedulingAlgorithm: MLFQ + FIFO)
+│    memory/   (global allocator; FreeList + BitmapChunk)
+│    elf/ ipc/ (mailbox) future/ syscall/ keyboard/ task*  cpu (HAL trait)  kconfig
+├── system/      # Abstractions: Future, syscall numbers, IPC types
+├── collections/ # generational_arena
+├── usrlib/      # User-space libc: syscall, out, arch/{x86_64,x86_32}
+├── arch/
+│    x86_64/        # entry, cpu, interrupts, framebuffer, terminal_fonts, *.S (global_asm)
+│    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
+│    x86_64-runner/ # standalone: BiosBoot → QEMU (NOT bootimage)
+└── apps/
+     [workspace members]  shell, dummy
+     [excluded ELF apps]  hello_elf, random_gen_server, snake, tetris, conway
 ```
 
 ---
