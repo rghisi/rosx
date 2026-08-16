@@ -141,12 +141,16 @@ The x86_32 platform runs on older 32-bit processors.
    cargo run
    ```
 
-### Building All Platforms
+### Testing
 
-Use the workspace to build the kernel and in-workspace apps:
 ```bash
-cargo build --workspace
+cargo test -p collections
+cargo test -p kernel -- --test-threads=1
 ```
+
+### More detail
+
+The commands above are enough to get a boot. For the full flow — the custom runner and disk-image creation, the standalone user-space ELF apps, and the x86_32 bootable ISO — see **[AGENTS.md](AGENTS.md) → *Build & Run***.
 
 ## Development
 
@@ -185,7 +189,7 @@ rosx/
 
 - **Incremental Development:** Make small, testable changes; verify each step
 - **Hardware Abstraction:** All platform-specific code must use traits (HAL pattern)
-- **Zero External Dependencies:** Kernel code uses only `core`, `alloc`, and `compiler_builtins`
+- **`no_std` kernel:** std is forbidden; dependencies are limited to `collections`, `system`, and `lazy_static`
 - **Unit Tests:** Write comprehensive tests for all kernel modules
 - **No Comments in Code:** Write self-explanatory code with clear names; exceptions for assembly
 
