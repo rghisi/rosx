@@ -45,6 +45,6 @@ pub(crate) trait ForNotifyingFutures: Send + Sync {
 }
 
 /// Port: complete and notify a timer-expired future.
-pub(crate) trait ForCompletingExpiredTimers: Send + Sync {
+pub trait ForCompletingExpiredTimers: Send + Sync {
     fn complete_timer_future(&self, handle: FutureHandle);
 }

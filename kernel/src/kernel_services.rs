@@ -70,6 +70,7 @@ pub(crate) struct KernelServices {
     pub(crate) timer_manager: &'static KernelCell<TimerManager>,
     pub(crate) scheduler: &'static KernelCell<Scheduler>,
     pub(crate) memory_manager: &'static MemoryManager,
+    pub(crate) timer_handler: &'static dyn ForCompletingExpiredTimers,
 }
 
 static KERNEL_SERVICES: Once<KernelServices> = Once::new();
@@ -97,9 +98,6 @@ pub(crate) fn init() {
         let timer_manager = Box::leak(Box::new(KernelCell::new(TimerManager::new())));
         let ipc_manager = Box::leak(Box::new(KernelCell::new(IpcManager::new_with_notifier(notifier))));
 
-        // Replace placeholder scheduler with the final one (with timer handler)
-        scheduler_cell.replace(Scheduler::new_with_timer_handler(FifoStrategy::new(), timer_handler));
-
         KernelServices {
             task_manager,
             future_registry,
@@ -107,6 +105,7 @@ pub(crate) fn init() {
             timer_manager,
             scheduler: scheduler_cell,
             memory_manager: &MEMORY_MANAGER,
+            timer_handler,
         }
     };
 

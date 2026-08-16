@@ -37,7 +37,7 @@ impl Kernel {
         let cpu = kconfig.cpu;
         let elf_arch = kconfig.elf_arch;
         crate::kernel_services::init();
-        let scheduler = (kconfig.scheduler_factory)();
+        let scheduler = (kconfig.scheduler_factory)(services().timer_handler);
         services().scheduler.replace(*scheduler);
         let scheduler_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
         let scheduler_task_handler = services()
