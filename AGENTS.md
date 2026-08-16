@@ -113,17 +113,20 @@ cargo test -p collections  # generational_arena
 
 **Hardware Abstraction:**
 - **All hardware-specific routines MUST be abstracted from the kernel**
-- Use Hardware Abstraction Layer (HAL) pattern - see `Cpu` trait as example
+- Use Hardware Abstraction Layer (HAL) pattern - see the `Cpu` trait as the reference example
 - Kernel code in `kernel/` should be completely platform-agnostic
 - Platform-specific implementations go in `arch/[platform]/`
-- Use traits to define hardware interfaces (like `Cpu`, `Scheduler`, `Runnable`)
+- Key HAL traits: `Cpu` (`kernel/src/cpu.rs`), `ElfArch` (`kernel/src/elf/arch.rs`)
 
 **Pluggable Architecture:**
-- **Schedulers must be pluggable** - Configurable during kernel bootstrapping, not hardcoded
-- **Memory managers must be pluggable** - Selectable during bootstrapping phase
-- Use trait-based design to allow multiple implementations
-- Configuration happens at boot time, not compile time (where feasible)
-- Goal: Easy experimentation with different strategies for different use cases
+- **Scheduling is pluggable (implemented):** the strategy is a `SchedulingAlgorithm` (MLFQ + FIFO) chosen at boot via `scheduler_factory` in `KConfig` (`kernel/src/kconfig.rs`).
+- **Memory is NOT pluggable (yet):** a single static `global_allocator` (`MemoryManager` → `FreeListAllocator`) is active; a `BitmapChunkAllocator` exists but is not wired in. Making the allocator selectable is a stated **low-priority goal**.
+- Prefer trait-based design so subsystems can be swapped at boot time, not compile time.
+
+**Kernel Subsystems (current invariants):**
+- `future/` + `ipc/` — **notification-driven** futures (time, task-completion, keyboard) and a mailbox IPC manager (bind/connect/send/receive); no polling on the preemption cycle.
+- `elf/` — loads standalone user-space ELF binaries into tasks (`new_elf_task`).
+- `task/` + `task_manager/` — task lifecycle, context switch, preemption.
 
 **Documentation & Comments:**
 - **CRITICAL: Minimal documentation - code is the source of truth**
