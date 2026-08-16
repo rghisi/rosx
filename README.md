@@ -109,7 +109,7 @@ The x86_64 platform is the current bootstrap target.
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/your-repo/rosx.git
+   git clone https://github.com/rghisi/rosx.git
    cd rosx
    ```
 
@@ -135,14 +135,15 @@ The x86_32 platform runs on older 32-bit processors.
    cargo build
    ```
 
-2. **Run in QEMU:**
+2. **Run:**
    ```bash
-   qemu-system-i386 -kernel target/i686-unknown-none/debug/rosx-x86
+   cd arch/x86_32
+   cargo run
    ```
 
 ### Building All Platforms
 
-Use the workspace to build all platforms:
+Use the workspace to build the kernel and in-workspace apps:
 ```bash
 cargo build --workspace
 ```
