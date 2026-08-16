@@ -45,13 +45,12 @@ impl Kernel {
             .borrow_mut()
             .add_task(scheduler_task)
             .unwrap();
-        cpu.initialize_task(
-            services()
-                .task_manager
-                .borrow_mut()
-                .borrow_task_mut(scheduler_task_handler)
-                .unwrap(),
-        );
+        services()
+            .task_manager
+            .borrow_mut()
+            .borrow_task_mut(scheduler_task_handler)
+            .unwrap()
+            .prepare_entry(cpu);
 
         Kernel {
             cpu,
@@ -77,13 +76,12 @@ impl Kernel {
             .borrow_mut()
             .add_task(idle_task)
             .unwrap();
-        self.cpu.initialize_task(
-            services()
-                .task_manager
-                .borrow_mut()
-                .borrow_task_mut(task_handle)
-                .unwrap(),
-        );
+        services()
+            .task_manager
+            .borrow_mut()
+            .borrow_task_mut(task_handle)
+            .unwrap()
+            .prepare_entry(self.cpu);
         let _ = services().scheduler.borrow_mut().set_idle_task(task_handle);
     }
 
@@ -207,7 +205,7 @@ impl Kernel {
             let result = services().task_manager.borrow_mut().borrow_task_mut(task_handle);
             match result {
                 Ok(task) => {
-                    self.cpu.initialize_task(task);
+                    task.prepare_entry(self.cpu);
                 }
                 Err(_) => {
                     panic!("Not able to schedule task");
