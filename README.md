@@ -13,13 +13,12 @@ RosX is a multi-platform operating system written in Rust from scratch. It is de
 - **Multi-platform Architecture:** Clean separation between platform-agnostic kernel and architecture-specific code
 - **Preemptive Multitasking:** MLFQ scheduler with interrupt-driven task switching
 - **ELF Binary Support:** Loads both 32-bit and 64-bit ELF binaries with relocation support
-- **Hardware Abstraction:** Well-defined traits for CPU, schedulers, and memory management
+- **Hardware Abstraction:** Well-defined traits for CPU and ELF architecture
 
 ### Known Issues
 
-- **Task Finalization:** Tasks that complete may not be properly removed from the scheduler (see DEVELOPMENT_LOG.md for details)
-- **Memory Management:** Basic buddy system allocator in place; more advanced features pending
-- **Networking:** TCP/IP stack under development; foundational IPC infrastructure exists
+- **Memory Management:** Free-list allocator is active; a bitmap-chunk allocator exists but is not yet wired in
+- **Networking:** A goal, not yet implemented; mailbox IPC infrastructure is in place
 
 ## Goals
 
@@ -36,10 +35,10 @@ RosX emphasizes a clean separation between platform-independent logic and archit
 Platform-agnostic code that forms the core OS functionality:
 - **Scheduler:** Pluggable scheduler trait with MLFQ and FIFO implementations
 - **Task Management:** Task structures, state machine, and context management
-- **Memory Management:** Buddy allocator and bitmap-based chunk allocator
-- **IPC Infrastructure:** Message-passing system (under development)
+- **Memory Management:** Free-list allocator (active) and bitmap-chunk allocator (not yet wired in)
+- **IPC Infrastructure:** Mailbox-based message passing (bind/connect/send/receive)
 - **ELF Loader:** Supports both 32-bit and 64-bit ELF binaries
-- **Hardware Abstraction:** Traits for CPU, memory managers, and other subsystems
+- **Hardware Abstraction:** Traits for CPU, ELF architecture, and other subsystems
 
 ### Architecture Layer (`arch/`)
 Platform-specific implementations that provide hardware support:
@@ -50,20 +49,19 @@ Platform-specific implementations that provide hardware support:
 ### Hardware Abstraction Layer (HAL)
 The kernel interacts with hardware through well-defined traits:
 - **`Cpu` trait:** Provides `setup()`, `enable_interrupts()`, `disable_interrupts()`, and task initialization
-- **`Scheduler` trait:** Pluggable scheduling strategies selected at boot time
 - **`ElfArch` trait:** Architecture-specific ELF relocation handling
 
 ### Pluggable Subsystems
 Core components are designed to be interchangeable:
 - **Schedulers:** MLFQ (current), FIFO, and future algorithms can be swapped via configuration
-- **Memory Managers:** Buddy allocator with pluggable chunk allocators
-- **Console Output:** VGA text mode and framebuffer support selectable at compile time
+- **Memory:** Free-list global allocator (active); a pluggable allocator is a low-priority goal
+- **Console Output:** Multiplexed output (framebuffer + QEMU debug console)
 
 ### Memory Management
 The system utilizes:
-- **Buddy System Allocator:** For physical memory management
-- **Bitmap-based Chunk Allocator:** For efficient small allocation
-- **No External Dependencies:** Pure `core`/`alloc` implementation for kernel code
+- **Free-list Allocator:** Active global allocator for kernel memory
+- **Bitmap-chunk Allocator:** Present, not yet wired in
+- **`no_std`:** std is forbidden; dependencies limited to `collections`, `system`, `lazy_static`
 
 ## Current State
 
@@ -197,14 +195,12 @@ See `AGENTS.md` for detailed development guidelines and coding standards.
 
 ## Releases
 
-Ready-to-use binary images are available in the [Releases](https://github.com/your-repo/rosx/releases) section of the GitHub repository. You can download these and run them directly in QEMU.
+Ready-to-use binary images are available in the [Releases](https://github.com/rghisi/rosx/releases) section of the GitHub repository. You can download these and run them directly in QEMU.
 
 ## Documentation
 
-- **`AGENTS.md`** - Detailed development guidelines and coding standards
-- **`DEVELOPMENT_LOG.md`** - Session-based development history and recent changes
-- **`INTERRUPT_DRIVEN_CONTEXT_SWITCH_REFACTORING.md`** - Technical deep-dive on context switching
-- **`X86_32_PORT_PLAN.md`** - 32-bit x86 port implementation details
+- **`AGENTS.md`** - Detailed development guidelines, coding standards, and the full build/test/run flow
+- **`plans/`** - In-flight design notes (e.g. `notification-based-futures.md`)
 
 ## Contributing
 
@@ -219,4 +215,4 @@ For major changes, please open an issue first to discuss what you would like to 
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License.
