@@ -7,11 +7,20 @@ use crate::messages::HardwareInterrupt;
 use crate::scheduler::algorithm::SchedulingAlgorithm;
 use crate::task::{TaskHandle, TaskState};
 use crate::kernel::kernel;
+use crate::ForCompletingExpiredTimers;
+
+struct NoopTimerHandler;
+impl ForCompletingExpiredTimers for NoopTimerHandler {
+    fn complete_timer_future(&self, _handle: system::future::FutureHandle) {}
+}
+
+static NOOP_TIMER_HANDLER: NoopTimerHandler = NoopTimerHandler;
 
 pub struct Scheduler {
     algorithm: Box<dyn SchedulingAlgorithm + Send>,
     hw_interrupt_queue: VecDeque<HardwareInterrupt>,
     idle_task: Option<TaskHandle>,
+    timer_handler: &'static dyn ForCompletingExpiredTimers,
 }
 
 impl Scheduler {
@@ -20,6 +29,19 @@ impl Scheduler {
             algorithm: Box::new(algorithm),
             hw_interrupt_queue: VecDeque::with_capacity(5),
             idle_task: None,
+            timer_handler: &NOOP_TIMER_HANDLER,
+        }
+    }
+
+    pub fn new_with_timer_handler(
+        algorithm: impl SchedulingAlgorithm + 'static,
+        timer_handler: &'static dyn ForCompletingExpiredTimers,
+    ) -> Self {
+        Scheduler {
+            algorithm: Box::new(algorithm),
+            hw_interrupt_queue: VecDeque::with_capacity(5),
+            idle_task: None,
+            timer_handler,
         }
     }
 
@@ -136,10 +158,7 @@ impl Scheduler {
         let now = kernel().get_system_time();
         if let Some(handles) = services().timer_manager.borrow_mut().pop_expired(now) {
             for handle in handles {
-                if let Ok(future) = services().future_registry.borrow_mut().borrow_mut(handle) {
-                    future.complete();
-                }
-                services().future_registry.borrow_mut().notify(handle);
+                self.timer_handler.complete_timer_future(handle);
             }
         }
     }

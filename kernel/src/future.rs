@@ -4,8 +4,9 @@ use alloc::vec::Vec;
 use core::any::Any;
 use system::future::{Future, FutureHandle, FutureResult};
 use collections::generational_arena::{Error, GenerationalArena};
-use crate::kernel_services::services;
 use crate::task::TaskHandle;
+use crate::kernel_services::services;
+use crate::ForWakingTasks;
 
 pub struct TimeFuture {
     completed: bool,
@@ -88,7 +89,15 @@ impl TaskFuture {
 pub struct FutureRegistry {
     arena: GenerationalArena<Box<dyn Future + Send + Sync>, 1024>,
     waiters: BTreeMap<FutureHandle, Vec<TaskHandle>>,
+    wake_controller: &'static dyn ForWakingTasks,
 }
+
+struct NoopWakeController;
+impl ForWakingTasks for NoopWakeController {
+    fn wake_tasks(&self, _handles: Vec<TaskHandle>) {}
+}
+
+static DEFAULT_WAKE_CONTROLLER: NoopWakeController = NoopWakeController;
 
 impl Default for FutureRegistry {
     fn default() -> Self {
@@ -101,6 +110,15 @@ impl FutureRegistry {
         Self {
             arena: GenerationalArena::new(),
             waiters: BTreeMap::new(),
+            wake_controller: &DEFAULT_WAKE_CONTROLLER,
+        }
+    }
+
+    pub fn new_with_wake_controller(wake_controller: &'static dyn ForWakingTasks) -> Self {
+        Self {
+            arena: GenerationalArena::new(),
+            waiters: BTreeMap::new(),
+            wake_controller,
         }
     }
 
@@ -134,7 +152,7 @@ impl FutureRegistry {
 
     pub fn notify(&mut self, handle: FutureHandle) {
         let waiters = self.waiters.remove(&handle).unwrap_or_default();
-        services().scheduler.borrow_mut().wake_tasks(waiters);
+        self.wake_controller.wake_tasks(waiters);
     }
 
 }
