@@ -46,26 +46,30 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 
 ## Build & Run
 
-### Build Command
+Canonical recipes: `.github/workflows/ci.yml` (build + test) and `build-artifacts.yml` (disk images).
+
+### x86_64
 ```bash
 cd arch/x86_64
-cargo build
+cargo build              # kernel -> target/rosx/debug/rosx   (add --release to match CI)
+cargo run                # run.sh -> arch/x86_64-runner -> BiosBoot disk image -> QEMU
 ```
+- `cargo run` uses the **custom runner** (`.cargo/config.toml` → `./run.sh`), which invokes `arch/x86_64-runner` to make a BIOS disk image with the `bootloader` crate's `BiosBoot`, then starts `qemu-system-x86_64`. **Not bootimage.**
+- Target spec: `arch/x86_64/rosx.json` — bare-metal `no_std`, `build-std` = core/alloc/compiler_builtins.
+- User-space ELF apps (hello_elf, random_gen_server, snake, tetris, conway) build separately with `--target rosx-user.json` (PIC/PIE), then get embedded into the kernel via `include_bytes!`.
 
-### Run with Bootloader
+### x86_32
 ```bash
-cd arch/x86_64
-cargo run  # Uses bootimage runner configured in .cargo/config.toml
+cd arch/x86_32
+cargo build              # kernel (Multiboot2, boot.S)
+bash build-image.sh      # GRUB bootable image (needs grub-mkrescue, xorriso, mtools)
 ```
 
-**Testing Workflow:**
-- **Manual:** QEMU run for manual testing (fast iteration)
-- **Automated:** Run unit tests in host arch
-
-### Custom Target
-- Target spec: `arch/x86_64/rosx.json`
-- Bare metal (no_std)
-- Builds core, alloc, compiler_builtins from source
+### Unit tests (run on host)
+```bash
+cargo test -p kernel       # ~149 tests: scheduler, memory, elf, ipc, future
+cargo test -p collections  # generational_arena
+```
 
 ## Development Guidelines
 
@@ -141,9 +145,9 @@ cargo run  # Uses bootimage runner configured in .cargo/config.toml
 ---
 
 ### Build Issues?
-- Check that custom target exists: `arch/x86_64/rosx.json`
-- Verify rust-src component: `rustup component add rust-src`
-- Bootimage installed: `cargo install bootimage`
+- Toolchain: `rust-toolchain.toml` pins **nightly** with the `rust-src` component (`rustup component add rust-src`).
+- Custom targets: `arch/x86_64/rosx.json` (+ `rosx-user.json`), `arch/x86_32/rosx-i686.json` (+ `rosx-i686-user.json`).
+- No bootimage — the disk image comes from `arch/x86_64-runner` (the `bootloader` crate). To build it standalone: `cargo run --manifest-path arch/x86_64-runner/Cargo.toml -- <kernel-binary> x86_64 --no-run`.
 
 ---
 
