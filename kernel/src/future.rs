@@ -4,24 +4,25 @@ use alloc::vec::Vec;
 use core::any::Any;
 use system::future::{Future, FutureHandle, FutureResult};
 use collections::generational_arena::{Error, GenerationalArena};
-use crate::kernel::kernel;
 use crate::kernel_services::services;
 use crate::task::TaskHandle;
 
 pub struct TimeFuture {
-    completion_timestamp: u64,
+    completed: bool,
 }
 
 impl TimeFuture {
-    pub fn new(ms: u64) -> TimeFuture {
-        TimeFuture {
-            completion_timestamp: kernel().get_system_time() + ms,
-        }
+    pub fn new() -> TimeFuture {
+        TimeFuture { completed: false }
     }
 }
 impl Future for TimeFuture {
     fn is_completed(&self) -> bool {
-        kernel().get_system_time() > self.completion_timestamp
+        self.completed
+    }
+
+    fn complete(&mut self) {
+        self.completed = true;
     }
 
     fn into_result(self: Box<Self>) -> FutureResult {
@@ -205,6 +206,66 @@ mod tests {
         // Second notify does nothing (no waiters left)
         services().future_registry.borrow_mut().notify(future_handle);
         assert_eq!(services().task_manager.borrow().get_state(handle), TaskState::Ready);
+    }
+
+    // === TimeFuture tests ===
+
+    #[test]
+    fn time_future_starts_not_completed() {
+        let future = TimeFuture::new();
+        assert!(!future.is_completed());
+    }
+
+    #[test]
+    fn time_future_complete_flips_flag() {
+        let mut future = TimeFuture::new();
+        future.complete();
+        assert!(future.is_completed());
+    }
+
+    #[test]
+    fn time_future_multiple_completes_are_idempotent() {
+        let mut future = TimeFuture::new();
+        future.complete();
+        future.complete();
+        future.complete();
+        assert!(future.is_completed());
+    }
+
+    #[test]
+    fn future_registry_can_complete_time_future_via_trait() {
+        setup();
+
+        let mut registry = FutureRegistry::new();
+        let time_future = Box::new(TimeFuture::new());
+        let handle = registry.register(time_future).unwrap();
+
+        assert!(!registry.get(handle).unwrap());
+
+        // Complete through the trait object (simulates timer firing)
+        if let Ok(future) = registry.borrow_mut(handle) {
+            future.complete();
+        }
+
+        assert!(registry.get(handle).unwrap());
+    }
+
+    #[test]
+    fn complete_default_noop_does_not_affect_other_futures() {
+        setup();
+
+        let mut registry = FutureRegistry::new();
+        let dummy = Box::new(DummyFuture);
+        let handle = registry.register(dummy).unwrap();
+
+        assert!(!registry.get(handle).unwrap());
+
+        // Calling complete() on a non-TimeFuture is a no-op
+        if let Ok(future) = registry.borrow_mut(handle) {
+            future.complete();
+        }
+
+        assert!(!registry.get(handle).unwrap());
     }
 }
 

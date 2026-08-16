@@ -136,6 +136,9 @@ impl Scheduler {
         let now = kernel().get_system_time();
         if let Some(handles) = services().timer_manager.borrow_mut().pop_expired(now) {
             for handle in handles {
+                if let Ok(future) = services().future_registry.borrow_mut().borrow_mut(handle) {
+                    future.complete();
+                }
                 services().future_registry.borrow_mut().notify(handle);
             }
         }

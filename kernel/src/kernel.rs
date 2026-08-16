@@ -129,7 +129,7 @@ impl Kernel {
     }
     
     pub fn sleep(&mut self, millis: u64) {
-        let future = Box::new(TimeFuture::new(millis));
+        let future = Box::new(TimeFuture::new());
         let handle = services().future_registry
             .borrow_mut()
             .register(future)
