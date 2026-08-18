@@ -8,9 +8,11 @@ use crate::kprintln;
 use crate::messages::HardwareInterrupt;
 
 use crate::state::{ExecutionContext, ExecutionState};
+use crate::task::TaskState;
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, YieldReason};
 use crate::ForSwitchingTaskContext;
+use crate::SwitchOutcome;
 use alloc::boxed::Box;
 use core::ptr::null_mut;
 use collections::generational_arena::Error;
@@ -27,8 +29,17 @@ struct KernelContextSwitcher;
 static KERNEL_CONTEXT_SWITCHER: KernelContextSwitcher = KernelContextSwitcher;
 
 impl ForSwitchingTaskContext for KernelContextSwitcher {
-    fn switch_to_task(&self, handle: TaskHandle) -> TaskHandle {
-        kernel().execution_state.switch_to_task(handle)
+    fn switch_to_task(&self, handle: TaskHandle) -> SwitchOutcome {
+        let returned = kernel().execution_state.switch_to_task(handle);
+        match services().task_manager.borrow().get_state(returned) {
+            TaskState::Running => {
+                let reason = services().task_manager.borrow().get_yield_reason(returned).unwrap_or(YieldReason::Voluntary);
+                SwitchOutcome::Yielded(returned, reason)
+            }
+            TaskState::Blocked => SwitchOutcome::Blocked(returned),
+            TaskState::Terminated => SwitchOutcome::Terminated(returned),
+            _ => SwitchOutcome::Unchanged(returned),
+        }
     }
 }
 

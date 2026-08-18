@@ -2,13 +2,13 @@ use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use crate::kernel_services::services;
-use crate::task::YieldReason;
 use crate::messages::HardwareInterrupt;
 use crate::scheduler::algorithm::SchedulingAlgorithm;
 use crate::task::{TaskHandle, TaskState};
 use crate::kernel::kernel;
 use crate::ForCompletingExpiredTimers;
 use crate::ForSwitchingTaskContext;
+use crate::SwitchOutcome;
 
 struct NoopTimerHandler;
 impl ForCompletingExpiredTimers for NoopTimerHandler {
@@ -19,7 +19,7 @@ static NOOP_TIMER_HANDLER: NoopTimerHandler = NoopTimerHandler;
 
 struct NoopContextSwitcher;
 impl ForSwitchingTaskContext for NoopContextSwitcher {
-    fn switch_to_task(&self, handle: TaskHandle) -> TaskHandle { handle }
+    fn switch_to_task(&self, handle: TaskHandle) -> SwitchOutcome { SwitchOutcome::Unchanged(handle) }
 }
 
 static NOOP_CONTEXT_SWITCHER: NoopContextSwitcher = NoopContextSwitcher;
@@ -113,18 +113,16 @@ impl Scheduler {
             None => {
                 let idle = self.idle_task.unwrap();
                 services().task_manager.borrow_mut().set_state(idle, TaskState::Running);
-                let returned = self.context_switcher.switch_to_task(idle);
-                let task_state = services().task_manager.borrow().get_state(returned);
-                match task_state {
-                    TaskState::Running => {
+                match self.context_switcher.switch_to_task(idle) {
+                    SwitchOutcome::Yielded(returned, _) => {
                         if Some(returned) == self.idle_task {
                             self.idle_task = Some(returned);
                         }
                     }
-                    TaskState::Terminated => {
+                    SwitchOutcome::Terminated(returned) => {
                         self.handle_termination(returned);
                     }
-                    _ => {}
+                    SwitchOutcome::Blocked(_) | SwitchOutcome::Unchanged(_) => {}
                 }
                 return;
             }
@@ -132,25 +130,21 @@ impl Scheduler {
 
         self.algorithm.on_task_start(next_handle);
         services().task_manager.borrow_mut().set_state(next_handle, TaskState::Running);
-        let returned_handle = self.context_switcher.switch_to_task(next_handle);
-
-        let task_state = services().task_manager.borrow().get_state(returned_handle);
-        match task_state {
-            TaskState::Created | TaskState::Ready => {}
-            TaskState::Running => {
+        match self.context_switcher.switch_to_task(next_handle) {
+            SwitchOutcome::Yielded(returned_handle, yield_reason) => {
                 services().task_manager.borrow_mut().set_state(returned_handle, TaskState::Ready);
                 if Some(returned_handle) != self.idle_task {
-                    let yield_reason = services().task_manager.borrow().get_yield_reason(returned_handle).unwrap_or(YieldReason::Voluntary);
                     self.algorithm.record_yield(returned_handle, yield_reason);
                     self.algorithm.requeue_after_run(returned_handle);
                 } else {
                     self.idle_task = Some(returned_handle);
                 }
             }
-            TaskState::Blocked => {}
-            TaskState::Terminated => {
+            SwitchOutcome::Blocked(_) => {}
+            SwitchOutcome::Terminated(returned_handle) => {
                 self.handle_termination(returned_handle);
             }
+            SwitchOutcome::Unchanged(_) => {}
         }
     }
 
@@ -200,17 +194,17 @@ mod tests {
 
     struct FakeContextSwitcher {
         calls: Arc<Mutex<Vec<TaskHandle>>>,
-        return_handle: Arc<Mutex<Option<TaskHandle>>>,
+        outcome: Arc<Mutex<Option<SwitchOutcome>>>,
     }
 
     impl FakeContextSwitcher {
-        fn new() -> (Self, Arc<Mutex<Vec<TaskHandle>>>, Arc<Mutex<Option<TaskHandle>>>) {
+        fn new() -> (Self, Arc<Mutex<Vec<TaskHandle>>>, Arc<Mutex<Option<SwitchOutcome>>>) {
             let calls = Arc::new(Mutex::new(Vec::new()));
-            let return_handle = Arc::new(Mutex::new(None));
+            let outcome = Arc::new(Mutex::new(None));
             (
-                FakeContextSwitcher { calls: calls.clone(), return_handle: return_handle.clone() },
+                FakeContextSwitcher { calls: calls.clone(), outcome: outcome.clone() },
                 calls,
-                return_handle,
+                outcome,
             )
         }
 
@@ -220,9 +214,9 @@ mod tests {
     }
 
     impl ForSwitchingTaskContext for FakeContextSwitcher {
-        fn switch_to_task(&self, handle: TaskHandle) -> TaskHandle {
+        fn switch_to_task(&self, handle: TaskHandle) -> SwitchOutcome {
             self.calls.lock().unwrap().push(handle);
-            self.return_handle.lock().unwrap().unwrap_or(handle)
+            self.outcome.lock().unwrap().clone().unwrap_or(SwitchOutcome::Yielded(handle, YieldReason::Voluntary))
         }
     }
 
@@ -517,10 +511,10 @@ mod tests {
         handle
     }
 
-    fn make_ctx() -> (&'static FakeContextSwitcher, Arc<Mutex<Vec<TaskHandle>>>, Arc<Mutex<Option<TaskHandle>>>) {
-        let (ctx, calls, ret) = FakeContextSwitcher::new();
+    fn make_ctx() -> (&'static FakeContextSwitcher, Arc<Mutex<Vec<TaskHandle>>>, Arc<Mutex<Option<SwitchOutcome>>>) {
+        let (ctx, calls, outcome) = FakeContextSwitcher::new();
         let leaked = Box::leak(Box::new(ctx));
-        (leaked, calls, ret)
+        (leaked, calls, outcome)
     }
 
     #[test]
@@ -543,44 +537,51 @@ mod tests {
     fn run_next_task_requeues_task_returned_in_running_state() {
         setup();
         let mut fake = FakeAlgorithm::new();
-        let (ctx, _calls, ret) = make_ctx();
+        let (ctx, _calls, outcome) = make_ctx();
 
         let task_handle = create_running_task("T");
         fake.next = Some(task_handle);
-        let mut engine = Scheduler::new_with_context_switcher(fake, ctx, &NOOP_TIMER_HANDLER);
-        *ret.lock().unwrap() = Some(task_handle);
+        let mut engine = Scheduler::new_with_context_switcher(fake.clone(), ctx, &NOOP_TIMER_HANDLER);
+        *outcome.lock().unwrap() = Some(SwitchOutcome::Yielded(task_handle, YieldReason::Voluntary));
 
         engine.run_next_task();
+
+        assert_eq!(fake.take_requeued(), vec![task_handle]);
+        assert_eq!(fake.take_yielded(), vec![(task_handle, YieldReason::Voluntary)]);
     }
 
     #[test]
     fn run_next_task_does_not_requeue_task_returned_in_blocked_state() {
         setup();
         let mut fake = FakeAlgorithm::new();
-        let (ctx, _calls, ret) = make_ctx();
+        let (ctx, _calls, outcome) = make_ctx();
 
         let task_handle = create_running_task("T");
         services().task_manager.borrow_mut().set_state(task_handle, KS::Blocked);
         fake.next = Some(task_handle);
-        let mut engine = Scheduler::new_with_context_switcher(fake, ctx, &NOOP_TIMER_HANDLER);
-        *ret.lock().unwrap() = Some(task_handle);
+        let mut engine = Scheduler::new_with_context_switcher(fake.clone(), ctx, &NOOP_TIMER_HANDLER);
+        *outcome.lock().unwrap() = Some(SwitchOutcome::Blocked(task_handle));
 
         engine.run_next_task();
+
+        assert!(fake.take_requeued().is_empty());
     }
 
     #[test]
     fn run_next_task_terminates_task_returned_in_terminated_state() {
         setup();
         let mut fake = FakeAlgorithm::new();
-        let (ctx, _calls, ret) = make_ctx();
+        let (ctx, _calls, outcome) = make_ctx();
 
         let task_handle = create_running_task("T");
         services().task_manager.borrow_mut().set_state(task_handle, KS::Terminated);
         fake.next = Some(task_handle);
-        let mut engine = Scheduler::new_with_context_switcher(fake, ctx, &NOOP_TIMER_HANDLER);
-        *ret.lock().unwrap() = Some(task_handle);
+        let mut engine = Scheduler::new_with_context_switcher(fake.clone(), ctx, &NOOP_TIMER_HANDLER);
+        *outcome.lock().unwrap() = Some(SwitchOutcome::Terminated(task_handle));
 
         engine.run_next_task();
+
+        assert_eq!(fake.take_terminated(), vec![task_handle]);
     }
 
     #[test]
@@ -602,13 +603,13 @@ mod tests {
     #[test]
     fn run_next_task_updates_idle_handle_when_idle_returns_running() {
         setup();
-        let mut fake = FakeAlgorithm::new();
-        let (ctx, _calls, ret) = make_ctx();
+        let fake = FakeAlgorithm::new();
+        let (ctx, _calls, outcome) = make_ctx();
 
         let idle_handle = create_running_task("Idle");
-        let mut engine = Scheduler::new_with_context_switcher(fake, ctx, &NOOP_TIMER_HANDLER);
+        let mut engine = Scheduler::new_with_context_switcher(fake.clone(), ctx, &NOOP_TIMER_HANDLER);
         engine.set_idle_task(idle_handle).unwrap();
-        *ret.lock().unwrap() = Some(idle_handle);
+        *outcome.lock().unwrap() = Some(SwitchOutcome::Yielded(idle_handle, YieldReason::Voluntary));
 
         engine.run_next_task();
     }

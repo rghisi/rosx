@@ -26,6 +26,7 @@ pub fn fifo_scheduler(ctx: &'static dyn ForSwitchingTaskContext, timer: &'static
 mod tests {
     use super::*;
     use crate::kernel_services::{init, services};
+    use crate::SwitchOutcome;
     use crate::task::{Task, TaskHandle, TaskState};
     use std::sync::Once;
 
@@ -37,7 +38,7 @@ mod tests {
 
     struct TestContextSwitcher;
     impl ForSwitchingTaskContext for TestContextSwitcher {
-        fn switch_to_task(&self, handle: TaskHandle) -> TaskHandle { handle }
+        fn switch_to_task(&self, handle: TaskHandle) -> SwitchOutcome { SwitchOutcome::Unchanged(handle) }
     }
     static TEST_CTX: TestContextSwitcher = TestContextSwitcher;
 

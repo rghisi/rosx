@@ -10,7 +10,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use system::future::{Future, FutureHandle};
 use system::ipc::IpcMessage;
-use crate::task::TaskHandle;
+use crate::task::{TaskHandle, YieldReason};
 
 pub mod cpu;
 pub mod default_output;
@@ -49,6 +49,14 @@ pub trait ForCompletingExpiredTimers: Send + Sync {
     fn complete_timer_future(&self, handle: FutureHandle);
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SwitchOutcome {
+    Yielded(TaskHandle, YieldReason),
+    Blocked(TaskHandle),
+    Terminated(TaskHandle),
+    Unchanged(TaskHandle),
+}
+
 pub trait ForSwitchingTaskContext: Send + Sync {
-    fn switch_to_task(&self, handle: TaskHandle) -> TaskHandle;
+    fn switch_to_task(&self, handle: TaskHandle) -> SwitchOutcome;
 }
