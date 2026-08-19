@@ -60,3 +60,13 @@ pub enum SwitchOutcome {
 pub trait ForSwitchingTaskContext: Send + Sync {
     fn switch_to_task(&self, handle: TaskHandle) -> SwitchOutcome;
 }
+
+/// Port: read the current system time.
+pub trait ForReadingSystemTime: Send + Sync {
+    fn now(&self) -> u64;
+}
+
+/// Port: pop the timer futures that have expired at `now`.
+pub trait ForExpiringTimers: Send + Sync {
+    fn pop_expired(&self, now: u64) -> Option<Vec<FutureHandle>>;
+}

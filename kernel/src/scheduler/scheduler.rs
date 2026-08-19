@@ -5,8 +5,9 @@ use crate::kernel_services::services;
 use crate::messages::HardwareInterrupt;
 use crate::scheduler::algorithm::SchedulingAlgorithm;
 use crate::task::{TaskHandle, TaskState};
-use crate::kernel::kernel;
 use crate::ForCompletingExpiredTimers;
+use crate::ForExpiringTimers;
+use crate::ForReadingSystemTime;
 use crate::ForSwitchingTaskContext;
 use crate::SwitchOutcome;
 
@@ -16,6 +17,18 @@ impl ForCompletingExpiredTimers for NoopTimerHandler {
 }
 
 static NOOP_TIMER_HANDLER: NoopTimerHandler = NoopTimerHandler;
+
+struct NoopTimeSource;
+impl ForReadingSystemTime for NoopTimeSource {
+    fn now(&self) -> u64 { 0 }
+}
+static NOOP_TIME_SOURCE: NoopTimeSource = NoopTimeSource;
+
+struct NoopTimerExpiry;
+impl ForExpiringTimers for NoopTimerExpiry {
+    fn pop_expired(&self, _now: u64) -> Option<Vec<system::future::FutureHandle>> { None }
+}
+static NOOP_TIMER_EXPIRY: NoopTimerExpiry = NoopTimerExpiry;
 
 struct NoopContextSwitcher;
 impl ForSwitchingTaskContext for NoopContextSwitcher {
@@ -30,18 +43,20 @@ pub struct Scheduler {
     hw_interrupt_queue: VecDeque<HardwareInterrupt>,
     idle_task: Option<TaskHandle>,
     timer_handler: &'static dyn ForCompletingExpiredTimers,
+    time_source: &'static dyn ForReadingSystemTime,
+    timer_expiry: &'static dyn ForExpiringTimers,
 }
 
 impl Scheduler {
     pub fn new(algorithm: impl SchedulingAlgorithm + 'static) -> Self {
-        Scheduler::new_with_context_switcher(algorithm, &NOOP_CONTEXT_SWITCHER, &NOOP_TIMER_HANDLER)
+        Scheduler::new_full(algorithm, &NOOP_CONTEXT_SWITCHER, &NOOP_TIMER_HANDLER, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY)
     }
 
     pub fn new_with_timer_handler(
         algorithm: impl SchedulingAlgorithm + 'static,
         timer_handler: &'static dyn ForCompletingExpiredTimers,
     ) -> Self {
-        Scheduler::new_with_context_switcher(algorithm, &NOOP_CONTEXT_SWITCHER, timer_handler)
+        Scheduler::new_full(algorithm, &NOOP_CONTEXT_SWITCHER, timer_handler, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY)
     }
 
     pub fn new_with_context_switcher(
@@ -49,12 +64,24 @@ impl Scheduler {
         context_switcher: &'static dyn ForSwitchingTaskContext,
         timer_handler: &'static dyn ForCompletingExpiredTimers,
     ) -> Self {
+        Scheduler::new_full(algorithm, context_switcher, timer_handler, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY)
+    }
+
+    pub fn new_full(
+        algorithm: impl SchedulingAlgorithm + 'static,
+        context_switcher: &'static dyn ForSwitchingTaskContext,
+        timer_handler: &'static dyn ForCompletingExpiredTimers,
+        time_source: &'static dyn ForReadingSystemTime,
+        timer_expiry: &'static dyn ForExpiringTimers,
+    ) -> Self {
         Scheduler {
             algorithm: Box::new(algorithm),
             context_switcher,
             hw_interrupt_queue: VecDeque::with_capacity(5),
             idle_task: None,
             timer_handler,
+            time_source,
+            timer_expiry,
         }
     }
 
@@ -166,9 +193,8 @@ impl Scheduler {
     }
 
     fn process_timer_notifications(&mut self) {
-        use crate::kernel::kernel;
-        let now = kernel().get_system_time();
-        if let Some(handles) = services().timer_manager.borrow_mut().pop_expired(now) {
+        let now = self.time_source.now();
+        if let Some(handles) = self.timer_expiry.pop_expired(now) {
             for handle in handles {
                 self.timer_handler.complete_timer_future(handle);
             }
@@ -185,6 +211,7 @@ mod tests {
     use crate::task::{Task, TaskState as KS};
     use std::sync::{Arc, Mutex};
     use std::sync::Once;
+    use system::future::FutureHandle;
 
     static INIT: Once = Once::new();
 
@@ -648,5 +675,67 @@ mod tests {
 
         let result = engine.set_idle_task(create_running_task("NewIdle"));
         assert!(result.is_ok());
+    }
+
+    struct FakeTimeSource {
+        now: u64,
+    }
+    impl ForReadingSystemTime for FakeTimeSource {
+        fn now(&self) -> u64 {
+            self.now
+        }
+    }
+
+    struct FakeExpiry {
+        handles: Option<Vec<FutureHandle>>,
+    }
+    impl ForExpiringTimers for FakeExpiry {
+        fn pop_expired(&self, _now: u64) -> Option<Vec<FutureHandle>> {
+            self.handles.clone()
+        }
+    }
+
+    struct RecordingTimerHandler {
+        completed: Arc<Mutex<Vec<FutureHandle>>>,
+    }
+    impl ForCompletingExpiredTimers for RecordingTimerHandler {
+        fn complete_timer_future(&self, handle: FutureHandle) {
+            self.completed.lock().unwrap().push(handle);
+        }
+    }
+
+    #[test]
+    fn process_timer_notifications_completes_expired_futures() {
+        setup();
+        let fake = FakeAlgorithm::new();
+        let (ctx, _calls, _outcome) = make_ctx();
+
+        let fh = Handle::new(1, 0);
+        let time = Box::leak(Box::new(FakeTimeSource { now: 100 }));
+        let expiry = Box::leak(Box::new(FakeExpiry { handles: Some(vec![fh]) }));
+        let completed = Arc::new(Mutex::new(Vec::new()));
+        let handler = Box::leak(Box::new(RecordingTimerHandler { completed: completed.clone() }));
+
+        let mut engine = Scheduler::new_full(fake, ctx, handler, time, expiry);
+        engine.process_timer_notifications();
+
+        assert_eq!(*completed.lock().unwrap(), vec![fh]);
+    }
+
+    #[test]
+    fn process_timer_notifications_is_noop_when_nothing_expired() {
+        setup();
+        let fake = FakeAlgorithm::new();
+        let (ctx, _calls, _outcome) = make_ctx();
+
+        let time = Box::leak(Box::new(FakeTimeSource { now: 0 }));
+        let expiry = Box::leak(Box::new(FakeExpiry { handles: None }));
+        let completed = Arc::new(Mutex::new(Vec::new()));
+        let handler = Box::leak(Box::new(RecordingTimerHandler { completed: completed.clone() }));
+
+        let mut engine = Scheduler::new_full(fake, ctx, handler, time, expiry);
+        engine.process_timer_notifications();
+
+        assert!(completed.lock().unwrap().is_empty());
     }
 }
