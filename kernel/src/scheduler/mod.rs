@@ -15,11 +15,23 @@ pub use timer::TimerManager;
 pub type SchedulerFactory = fn(&'static dyn ForSwitchingTaskContext, &'static dyn ForCompletingExpiredTimers) -> Box<Scheduler>;
 
 pub fn mfq_scheduler(ctx: &'static dyn ForSwitchingTaskContext, timer: &'static dyn ForCompletingExpiredTimers) -> Box<Scheduler> {
-    Box::new(Scheduler::new_with_context_switcher(mlfq_strategy::MlfqStrategy::new(), ctx, timer))
+    Box::new(Scheduler::new_full(
+        mlfq_strategy::MlfqStrategy::new(),
+        ctx,
+        timer,
+        &crate::kernel::KERNEL_TIME_SOURCE,
+        &crate::kernel::KERNEL_TIMER_EXPIRY,
+    ))
 }
 
 pub fn fifo_scheduler(ctx: &'static dyn ForSwitchingTaskContext, timer: &'static dyn ForCompletingExpiredTimers) -> Box<Scheduler> {
-    Box::new(Scheduler::new_with_context_switcher(fifo_strategy::FifoStrategy::new(), ctx, timer))
+    Box::new(Scheduler::new_full(
+        fifo_strategy::FifoStrategy::new(),
+        ctx,
+        timer,
+        &crate::kernel::KERNEL_TIME_SOURCE,
+        &crate::kernel::KERNEL_TIMER_EXPIRY,
+    ))
 }
 
 #[cfg(test)]

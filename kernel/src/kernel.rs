@@ -11,6 +11,8 @@ use crate::state::{ExecutionContext, ExecutionState};
 use crate::task::TaskState;
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, YieldReason};
+use crate::ForExpiringTimers;
+use crate::ForReadingSystemTime;
 use crate::ForSwitchingTaskContext;
 use crate::SwitchOutcome;
 use alloc::boxed::Box;
@@ -40,6 +42,24 @@ impl ForSwitchingTaskContext for KernelContextSwitcher {
             TaskState::Terminated => SwitchOutcome::Terminated(returned),
             _ => SwitchOutcome::Unchanged(returned),
         }
+    }
+}
+
+pub(crate) struct KernelTimeSource;
+pub(crate) static KERNEL_TIME_SOURCE: KernelTimeSource = KernelTimeSource;
+
+impl ForReadingSystemTime for KernelTimeSource {
+    fn now(&self) -> u64 {
+        kernel().get_system_time()
+    }
+}
+
+pub(crate) struct KernelTimerExpiry;
+pub(crate) static KERNEL_TIMER_EXPIRY: KernelTimerExpiry = KernelTimerExpiry;
+
+impl ForExpiringTimers for KernelTimerExpiry {
+    fn pop_expired(&self, now: u64) -> Option<alloc::vec::Vec<system::future::FutureHandle>> {
+        services().timer_manager.borrow_mut().pop_expired(now)
     }
 }
 
