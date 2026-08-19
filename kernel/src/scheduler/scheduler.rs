@@ -7,6 +7,7 @@ use crate::scheduler::algorithm::SchedulingAlgorithm;
 use crate::task::{TaskHandle, TaskState};
 use crate::ForCompletingExpiredTimers;
 use crate::ForExpiringTimers;
+use crate::ForHandlingHardwareInterrupts;
 use crate::ForReadingSystemTime;
 use crate::ForSwitchingTaskContext;
 use crate::SwitchOutcome;
@@ -30,6 +31,12 @@ impl ForExpiringTimers for NoopTimerExpiry {
 }
 static NOOP_TIMER_EXPIRY: NoopTimerExpiry = NoopTimerExpiry;
 
+struct NoopInterruptHandler;
+impl ForHandlingHardwareInterrupts for NoopInterruptHandler {
+    fn handle(&self, _interrupt: HardwareInterrupt) {}
+}
+static NOOP_INTERRUPT_HANDLER: NoopInterruptHandler = NoopInterruptHandler;
+
 struct NoopContextSwitcher;
 impl ForSwitchingTaskContext for NoopContextSwitcher {
     fn switch_to_task(&self, handle: TaskHandle) -> SwitchOutcome { SwitchOutcome::Unchanged(handle) }
@@ -45,18 +52,19 @@ pub struct Scheduler {
     timer_handler: &'static dyn ForCompletingExpiredTimers,
     time_source: &'static dyn ForReadingSystemTime,
     timer_expiry: &'static dyn ForExpiringTimers,
+    interrupt_handler: &'static dyn ForHandlingHardwareInterrupts,
 }
 
 impl Scheduler {
     pub fn new(algorithm: impl SchedulingAlgorithm + 'static) -> Self {
-        Scheduler::new_full(algorithm, &NOOP_CONTEXT_SWITCHER, &NOOP_TIMER_HANDLER, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY)
+        Scheduler::new_full(algorithm, &NOOP_CONTEXT_SWITCHER, &NOOP_TIMER_HANDLER, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER)
     }
 
     pub fn new_with_timer_handler(
         algorithm: impl SchedulingAlgorithm + 'static,
         timer_handler: &'static dyn ForCompletingExpiredTimers,
     ) -> Self {
-        Scheduler::new_full(algorithm, &NOOP_CONTEXT_SWITCHER, timer_handler, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY)
+        Scheduler::new_full(algorithm, &NOOP_CONTEXT_SWITCHER, timer_handler, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER)
     }
 
     pub fn new_with_context_switcher(
@@ -64,7 +72,7 @@ impl Scheduler {
         context_switcher: &'static dyn ForSwitchingTaskContext,
         timer_handler: &'static dyn ForCompletingExpiredTimers,
     ) -> Self {
-        Scheduler::new_full(algorithm, context_switcher, timer_handler, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY)
+        Scheduler::new_full(algorithm, context_switcher, timer_handler, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER)
     }
 
     pub fn new_full(
@@ -73,6 +81,7 @@ impl Scheduler {
         timer_handler: &'static dyn ForCompletingExpiredTimers,
         time_source: &'static dyn ForReadingSystemTime,
         timer_expiry: &'static dyn ForExpiringTimers,
+        interrupt_handler: &'static dyn ForHandlingHardwareInterrupts,
     ) -> Self {
         Scheduler {
             algorithm: Box::new(algorithm),
@@ -82,6 +91,7 @@ impl Scheduler {
             timer_handler,
             time_source,
             timer_expiry,
+            interrupt_handler,
         }
     }
 
@@ -176,19 +186,8 @@ impl Scheduler {
     }
 
     fn process_hardware_interrupts(&mut self) {
-        while let Some(hardware_interrupt) = self.hw_interrupt_queue.pop_front() {
-            match hardware_interrupt {
-                HardwareInterrupt::Keyboard { scancode } => {
-                    if scancode & 0x80 == 0 {
-                        if let Ok(key) = crate::keyboard::Key::from_scancode_set1(scancode) {
-                            let event = crate::keyboard::KeyboardEvent::from_key(key);
-                            if let Some(c) = event.char {
-                                crate::keyboard::push_key(c);
-                            }
-                        }
-                    }
-                }
-            };
+        while let Some(interrupt) = self.hw_interrupt_queue.pop_front() {
+            self.interrupt_handler.handle(interrupt);
         }
     }
 
@@ -704,6 +703,17 @@ mod tests {
         }
     }
 
+    struct RecordingInterruptHandler {
+        handled: Arc<Mutex<Vec<u8>>>,
+    }
+    impl ForHandlingHardwareInterrupts for RecordingInterruptHandler {
+        fn handle(&self, interrupt: HardwareInterrupt) {
+            if let HardwareInterrupt::Keyboard { scancode } = interrupt {
+                self.handled.lock().unwrap().push(scancode);
+            }
+        }
+    }
+
     #[test]
     fn process_timer_notifications_completes_expired_futures() {
         setup();
@@ -716,7 +726,7 @@ mod tests {
         let completed = Arc::new(Mutex::new(Vec::new()));
         let handler = Box::leak(Box::new(RecordingTimerHandler { completed: completed.clone() }));
 
-        let mut engine = Scheduler::new_full(fake, ctx, handler, time, expiry);
+        let mut engine = Scheduler::new_full(fake, ctx, handler, time, expiry, &NOOP_INTERRUPT_HANDLER);
         engine.process_timer_notifications();
 
         assert_eq!(*completed.lock().unwrap(), vec![fh]);
@@ -733,9 +743,27 @@ mod tests {
         let completed = Arc::new(Mutex::new(Vec::new()));
         let handler = Box::leak(Box::new(RecordingTimerHandler { completed: completed.clone() }));
 
-        let mut engine = Scheduler::new_full(fake, ctx, handler, time, expiry);
+        let mut engine = Scheduler::new_full(fake, ctx, handler, time, expiry, &NOOP_INTERRUPT_HANDLER);
         engine.process_timer_notifications();
 
         assert!(completed.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn process_hardware_interrupts_delegates_to_handler() {
+        setup();
+        let fake = FakeAlgorithm::new();
+        let (ctx, _calls, _outcome) = make_ctx();
+
+        let time = Box::leak(Box::new(FakeTimeSource { now: 0 }));
+        let expiry = Box::leak(Box::new(FakeExpiry { handles: None }));
+        let handled = Arc::new(Mutex::new(Vec::new()));
+        let ints = Box::leak(Box::new(RecordingInterruptHandler { handled: handled.clone() }));
+
+        let mut engine = Scheduler::new_full(fake, ctx, &NOOP_TIMER_HANDLER, time, expiry, ints);
+        engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1C });
+        engine.process_hardware_interrupts();
+
+        assert_eq!(*handled.lock().unwrap(), vec![0x1C]);
     }
 }

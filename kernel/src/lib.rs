@@ -10,6 +10,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use system::future::{Future, FutureHandle};
 use system::ipc::IpcMessage;
+use crate::messages::HardwareInterrupt;
 use crate::task::{TaskHandle, YieldReason};
 
 pub mod cpu;
@@ -69,4 +70,9 @@ pub trait ForReadingSystemTime: Send + Sync {
 /// Port: pop the timer futures that have expired at `now`.
 pub trait ForExpiringTimers: Send + Sync {
     fn pop_expired(&self, now: u64) -> Option<Vec<FutureHandle>>;
+}
+
+/// Port: deliver a hardware interrupt to its subsystem (e.g. keyboard).
+pub trait ForHandlingHardwareInterrupts: Send + Sync {
+    fn handle(&self, interrupt: HardwareInterrupt);
 }

@@ -12,6 +12,7 @@ use crate::task::TaskState;
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, YieldReason};
 use crate::ForExpiringTimers;
+use crate::ForHandlingHardwareInterrupts;
 use crate::ForReadingSystemTime;
 use crate::ForSwitchingTaskContext;
 use crate::SwitchOutcome;
@@ -60,6 +61,26 @@ pub(crate) static KERNEL_TIMER_EXPIRY: KernelTimerExpiry = KernelTimerExpiry;
 impl ForExpiringTimers for KernelTimerExpiry {
     fn pop_expired(&self, now: u64) -> Option<alloc::vec::Vec<system::future::FutureHandle>> {
         services().timer_manager.borrow_mut().pop_expired(now)
+    }
+}
+
+pub(crate) struct KernelInterruptHandler;
+pub(crate) static KERNEL_INTERRUPT_HANDLER: KernelInterruptHandler = KernelInterruptHandler;
+
+impl ForHandlingHardwareInterrupts for KernelInterruptHandler {
+    fn handle(&self, interrupt: HardwareInterrupt) {
+        match interrupt {
+            HardwareInterrupt::Keyboard { scancode } => {
+                if scancode & 0x80 == 0 {
+                    if let Ok(key) = crate::keyboard::Key::from_scancode_set1(scancode) {
+                        let event = crate::keyboard::KeyboardEvent::from_key(key);
+                        if let Some(c) = event.char {
+                            crate::keyboard::push_key(c);
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
