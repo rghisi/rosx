@@ -61,13 +61,6 @@ impl Scheduler {
         Scheduler::new_full(algorithm, &NOOP_CONTEXT_SWITCHER, &NOOP_TIMER_HANDLER, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER)
     }
 
-    pub fn new_with_timer_handler(
-        algorithm: impl SchedulingAlgorithm + 'static,
-        timer_handler: &'static dyn ForCompletingExpiredTimers,
-    ) -> Self {
-        Scheduler::new_full(algorithm, &NOOP_CONTEXT_SWITCHER, timer_handler, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER)
-    }
-
     pub fn new_with_context_switcher(
         algorithm: impl SchedulingAlgorithm + 'static,
         context_switcher: &'static dyn ForSwitchingTaskContext,
