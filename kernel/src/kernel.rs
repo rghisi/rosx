@@ -13,6 +13,7 @@ use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, YieldReason};
 use crate::ForExpiringTimers;
 use crate::ForHandlingHardwareInterrupts;
+use crate::ForManagingTasks;
 use crate::ForReadingSystemTime;
 use crate::ForSwitchingTaskContext;
 use crate::SwitchOutcome;
@@ -81,6 +82,21 @@ impl ForHandlingHardwareInterrupts for KernelInterruptHandler {
                 }
             }
         }
+    }
+}
+
+pub(crate) struct KernelTaskManager;
+pub(crate) static KERNEL_TASK_MANAGER: KernelTaskManager = KernelTaskManager;
+
+impl ForManagingTasks for KernelTaskManager {
+    fn get_state(&self, handle: TaskHandle) -> TaskState {
+        services().task_manager.borrow().get_state(handle)
+    }
+    fn set_state(&self, handle: TaskHandle, state: TaskState) {
+        services().task_manager.borrow_mut().set_state(handle, state)
+    }
+    fn remove_task(&self, handle: TaskHandle) {
+        services().task_manager.borrow_mut().remove_task(handle)
     }
 }
 

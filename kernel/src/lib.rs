@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 use system::future::{Future, FutureHandle};
 use system::ipc::IpcMessage;
 use crate::messages::HardwareInterrupt;
-use crate::task::{TaskHandle, YieldReason};
+use crate::task::{TaskHandle, TaskState, YieldReason};
 
 pub mod cpu;
 pub mod default_output;
@@ -75,4 +75,11 @@ pub trait ForExpiringTimers: Send + Sync {
 /// Port: deliver a hardware interrupt to its subsystem (e.g. keyboard).
 pub trait ForHandlingHardwareInterrupts: Send + Sync {
     fn handle(&self, interrupt: HardwareInterrupt);
+}
+
+/// Port: manage task states and lifecycle.
+pub trait ForManagingTasks: Send + Sync {
+    fn get_state(&self, handle: TaskHandle) -> TaskState;
+    fn set_state(&self, handle: TaskHandle, state: TaskState);
+    fn remove_task(&self, handle: TaskHandle);
 }

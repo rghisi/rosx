@@ -17,7 +17,7 @@ pub enum YieldReason {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) enum TaskState {
+pub enum TaskState {
     Created,
     Ready,
     Running,

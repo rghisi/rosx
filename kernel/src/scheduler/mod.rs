@@ -22,6 +22,7 @@ pub fn mfq_scheduler(ctx: &'static dyn ForSwitchingTaskContext, timer: &'static 
         &crate::kernel::KERNEL_TIME_SOURCE,
         &crate::kernel::KERNEL_TIMER_EXPIRY,
         &crate::kernel::KERNEL_INTERRUPT_HANDLER,
+        &crate::kernel::KERNEL_TASK_MANAGER,
     ))
 }
 
@@ -33,6 +34,7 @@ pub fn fifo_scheduler(ctx: &'static dyn ForSwitchingTaskContext, timer: &'static
         &crate::kernel::KERNEL_TIME_SOURCE,
         &crate::kernel::KERNEL_TIMER_EXPIRY,
         &crate::kernel::KERNEL_INTERRUPT_HANDLER,
+        &crate::kernel::KERNEL_TASK_MANAGER,
     ))
 }
 

@@ -1,13 +1,13 @@
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use crate::kernel_services::services;
 use crate::messages::HardwareInterrupt;
 use crate::scheduler::algorithm::SchedulingAlgorithm;
 use crate::task::{TaskHandle, TaskState};
 use crate::ForCompletingExpiredTimers;
 use crate::ForExpiringTimers;
 use crate::ForHandlingHardwareInterrupts;
+use crate::ForManagingTasks;
 use crate::ForReadingSystemTime;
 use crate::ForSwitchingTaskContext;
 use crate::SwitchOutcome;
@@ -53,18 +53,19 @@ pub struct Scheduler {
     time_source: &'static dyn ForReadingSystemTime,
     timer_expiry: &'static dyn ForExpiringTimers,
     interrupt_handler: &'static dyn ForHandlingHardwareInterrupts,
+    tasks: &'static dyn ForManagingTasks,
 }
 
 impl Scheduler {
     pub fn new(algorithm: impl SchedulingAlgorithm + 'static) -> Self {
-        Scheduler::new_full(algorithm, &NOOP_CONTEXT_SWITCHER, &NOOP_TIMER_HANDLER, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER)
+        Scheduler::new_full(algorithm, &NOOP_CONTEXT_SWITCHER, &NOOP_TIMER_HANDLER, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER)
     }
 
     pub fn new_with_timer_handler(
         algorithm: impl SchedulingAlgorithm + 'static,
         timer_handler: &'static dyn ForCompletingExpiredTimers,
     ) -> Self {
-        Scheduler::new_full(algorithm, &NOOP_CONTEXT_SWITCHER, timer_handler, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER)
+        Scheduler::new_full(algorithm, &NOOP_CONTEXT_SWITCHER, timer_handler, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER)
     }
 
     pub fn new_with_context_switcher(
@@ -72,7 +73,7 @@ impl Scheduler {
         context_switcher: &'static dyn ForSwitchingTaskContext,
         timer_handler: &'static dyn ForCompletingExpiredTimers,
     ) -> Self {
-        Scheduler::new_full(algorithm, context_switcher, timer_handler, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER)
+        Scheduler::new_full(algorithm, context_switcher, timer_handler, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER)
     }
 
     pub fn new_full(
@@ -82,6 +83,7 @@ impl Scheduler {
         time_source: &'static dyn ForReadingSystemTime,
         timer_expiry: &'static dyn ForExpiringTimers,
         interrupt_handler: &'static dyn ForHandlingHardwareInterrupts,
+        tasks: &'static dyn ForManagingTasks,
     ) -> Self {
         Scheduler {
             algorithm: Box::new(algorithm),
@@ -92,6 +94,7 @@ impl Scheduler {
             time_source,
             timer_expiry,
             interrupt_handler,
+            tasks,
         }
     }
 
@@ -104,7 +107,7 @@ impl Scheduler {
     }
 
     pub fn push_task(&mut self, handle: TaskHandle) {
-        match services().task_manager.borrow().get_state(handle) {
+        match self.tasks.get_state(handle) {
             TaskState::Ready => self.algorithm.push_ready(handle),
             _ => {}
         }
@@ -112,8 +115,8 @@ impl Scheduler {
 
     pub fn wake_tasks(&mut self, handles: Vec<TaskHandle>) {
         for handle in handles {
-            if services().task_manager.borrow().get_state(handle) != TaskState::Terminated {
-                services().task_manager.borrow_mut().set_state(handle, TaskState::Ready);
+            if self.tasks.get_state(handle) != TaskState::Terminated {
+                self.tasks.set_state(handle, TaskState::Ready);
                 self.algorithm.push_ready(handle);
             }
         }
@@ -141,7 +144,7 @@ impl Scheduler {
             self.idle_task = None;
         }
         self.algorithm.on_task_terminate(handle);
-        services().task_manager.borrow_mut().remove_task(handle);
+        self.tasks.remove_task(handle);
     }
 
     fn run_next_task(&mut self) {
@@ -149,7 +152,7 @@ impl Scheduler {
             Some(handle) => handle,
             None => {
                 let idle = self.idle_task.unwrap();
-                services().task_manager.borrow_mut().set_state(idle, TaskState::Running);
+                self.tasks.set_state(idle, TaskState::Running);
                 match self.context_switcher.switch_to_task(idle) {
                     SwitchOutcome::Yielded(returned, _) => {
                         if Some(returned) == self.idle_task {
@@ -166,10 +169,10 @@ impl Scheduler {
         };
 
         self.algorithm.on_task_start(next_handle);
-        services().task_manager.borrow_mut().set_state(next_handle, TaskState::Running);
+        self.tasks.set_state(next_handle, TaskState::Running);
         match self.context_switcher.switch_to_task(next_handle) {
             SwitchOutcome::Yielded(returned_handle, yield_reason) => {
-                services().task_manager.borrow_mut().set_state(returned_handle, TaskState::Ready);
+                self.tasks.set_state(returned_handle, TaskState::Ready);
                 if Some(returned_handle) != self.idle_task {
                     self.algorithm.record_yield(returned_handle, yield_reason);
                     self.algorithm.requeue_after_run(returned_handle);
@@ -726,7 +729,7 @@ mod tests {
         let completed = Arc::new(Mutex::new(Vec::new()));
         let handler = Box::leak(Box::new(RecordingTimerHandler { completed: completed.clone() }));
 
-        let mut engine = Scheduler::new_full(fake, ctx, handler, time, expiry, &NOOP_INTERRUPT_HANDLER);
+        let mut engine = Scheduler::new_full(fake, ctx, handler, time, expiry, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER);
         engine.process_timer_notifications();
 
         assert_eq!(*completed.lock().unwrap(), vec![fh]);
@@ -743,7 +746,7 @@ mod tests {
         let completed = Arc::new(Mutex::new(Vec::new()));
         let handler = Box::leak(Box::new(RecordingTimerHandler { completed: completed.clone() }));
 
-        let mut engine = Scheduler::new_full(fake, ctx, handler, time, expiry, &NOOP_INTERRUPT_HANDLER);
+        let mut engine = Scheduler::new_full(fake, ctx, handler, time, expiry, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER);
         engine.process_timer_notifications();
 
         assert!(completed.lock().unwrap().is_empty());
@@ -760,7 +763,7 @@ mod tests {
         let handled = Arc::new(Mutex::new(Vec::new()));
         let ints = Box::leak(Box::new(RecordingInterruptHandler { handled: handled.clone() }));
 
-        let mut engine = Scheduler::new_full(fake, ctx, &NOOP_TIMER_HANDLER, time, expiry, ints);
+        let mut engine = Scheduler::new_full(fake, ctx, &NOOP_TIMER_HANDLER, time, expiry, ints, &crate::kernel::KERNEL_TASK_MANAGER);
         engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1C });
         engine.process_hardware_interrupts();
 
