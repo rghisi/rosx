@@ -1,6 +1,5 @@
 use crate::future::FutureRegistry;
 use crate::ipc::ipc_manager::IpcManager;
-use crate::ipc::mailbox_manager::MailboxManager;
 use crate::kernel_cell::KernelCell;
 use crate::memory::memory_manager::{MEMORY_MANAGER, MemoryManager};
 use crate::once::Once;
