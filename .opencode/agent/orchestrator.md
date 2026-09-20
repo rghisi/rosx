@@ -1,7 +1,7 @@
 ---
 description: Coordinates a development task (a plan file path, or a free-form task). For free-form tasks it confirms the step list with the user, then dispatches one step at a time to worker, verifier, reviewer and committer subagents and tracks progress in a per-task PROGRESS file.
 mode: primary
-model: lemonade/Qwen3.8-27B-UD-Q4_K_XL
+model: lemonade/Qwen3.6-35B-A3B-UD-Q8_K_XL
 steps: 200
 permission:
   task: allow

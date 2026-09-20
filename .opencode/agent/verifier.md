@@ -1,7 +1,7 @@
 ---
 description: Read-only verifier for one step of a development task. Runs the step's build and test commands and reports pass or fail. Does not edit or commit.
 mode: subagent
-model: lemonade/Qwen3.8-27B-UD-Q4_K_XL
+model: lemonade/Qwen3.6-35B-A3B-UD-Q8_K_XL
 steps: 20
 permission:
   read: allow

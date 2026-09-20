@@ -1,7 +1,7 @@
 ---
 description: Read-only reviewer for one step of a development task. Reviews the diff against the step's constraints and the project conventions and approves or rejects. Does not edit or commit.
 mode: subagent
-model: lemonade/Qwen3.8-27B-UD-Q4_K_XL
+model: lemonade/Qwen3.6-35B-A3B-UD-Q8_K_XL
 steps: 20
 permission:
   read: allow

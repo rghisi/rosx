@@ -1,7 +1,7 @@
 ---
 description: Commits one already-approved step. Stages the listed files and runs git commit. Never edits files, never pushes.
 mode: subagent
-model: lemonade/Qwen3.8-27B-UD-Q4_K_XL
+model: lemonade/Qwen3.6-35B-A3B-UD-Q8_K_XL
 steps: 10
 permission:
   read: allow
