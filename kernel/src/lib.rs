@@ -83,3 +83,13 @@ pub trait ForManagingTasks: Send + Sync {
     fn set_state(&self, handle: TaskHandle, state: TaskState);
     fn remove_task(&self, handle: TaskHandle);
 }
+
+/// Noop implementation of `ForManagingTasks` for use in constructors that need a default task manager.
+pub struct NoopTaskManager;
+impl ForManagingTasks for NoopTaskManager {
+    fn get_state(&self, _handle: TaskHandle) -> TaskState { TaskState::Created }
+    fn set_state(&self, _handle: TaskHandle, _state: TaskState) {}
+    fn remove_task(&self, _handle: TaskHandle) {}
+}
+
+pub static NOOP_TASK_MANAGER: NoopTaskManager = NoopTaskManager;

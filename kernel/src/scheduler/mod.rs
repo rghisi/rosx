@@ -11,6 +11,8 @@ use crate::ForSwitchingTaskContext;
 pub use algorithm::SchedulingAlgorithm;
 pub use scheduler::Scheduler;
 pub use timer::TimerManager;
+pub(crate) use crate::NoopTaskManager;
+pub(crate) use crate::NOOP_TASK_MANAGER;
 
 pub type SchedulerFactory = fn(&'static dyn ForSwitchingTaskContext, &'static dyn ForCompletingExpiredTimers) -> Box<Scheduler>;
 
@@ -91,5 +93,92 @@ mod tests {
         setup();
         let handler = services().timer_handler;
         let _ = &*handler;
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod fakes {
+    use super::*;
+    use crate::task::{TaskHandle, TaskState, YieldReason};
+    use crate::{ForManagingTasks, SwitchOutcome};
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    pub struct FakeTaskManager {
+        state: Arc<Mutex<BTreeMap<TaskHandle, TaskState>>>,
+    }
+
+    impl FakeTaskManager {
+        pub fn new() -> Self {
+            FakeTaskManager {
+                state: Arc::new(Mutex::new(BTreeMap::new())),
+            }
+        }
+
+        pub fn set_state(&self, handle: TaskHandle, state: TaskState) {
+            self.state.lock().unwrap().insert(handle, state);
+        }
+
+        pub fn get_state(&self, handle: TaskHandle) -> TaskState {
+            self.state.lock().unwrap().get(&handle).copied().unwrap_or(TaskState::Terminated)
+        }
+
+        pub fn add_task(&self, handle: TaskHandle) {
+            self.state.lock().unwrap().entry(handle).or_insert(TaskState::Created);
+        }
+
+        pub fn remove_task(&self, handle: TaskHandle) {
+            self.state.lock().unwrap().remove(&handle);
+        }
+    }
+
+    impl Default for FakeTaskManager {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl ForManagingTasks for FakeTaskManager {
+        fn get_state(&self, handle: TaskHandle) -> TaskState {
+            self.state.lock().unwrap().get(&handle).copied().unwrap_or(TaskState::Terminated)
+        }
+
+        fn set_state(&self, handle: TaskHandle, state: TaskState) {
+            if self.state.lock().unwrap().contains_key(&handle) {
+                self.state.lock().unwrap().insert(handle, state);
+            }
+        }
+
+        fn remove_task(&self, handle: TaskHandle) {
+            self.state.lock().unwrap().remove(&handle);
+        }
+    }
+
+    pub struct RecordingContextSwitcher {
+        pub calls: Arc<Mutex<Vec<TaskHandle>>>,
+        pub outcome: Arc<Mutex<Option<SwitchOutcome>>>,
+    }
+
+    impl RecordingContextSwitcher {
+        pub fn new() -> (Self, Arc<Mutex<Vec<TaskHandle>>>, Arc<Mutex<Option<SwitchOutcome>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let outcome = Arc::new(Mutex::new(None));
+            (
+                RecordingContextSwitcher { calls: calls.clone(), outcome: outcome.clone() },
+                calls,
+                outcome,
+            )
+        }
+
+        pub fn take_calls(&self) -> Vec<TaskHandle> {
+            self.calls.lock().unwrap().drain(..).collect()
+        }
+    }
+
+    impl ForSwitchingTaskContext for RecordingContextSwitcher {
+        fn switch_to_task(&self, handle: TaskHandle) -> SwitchOutcome {
+            self.calls.lock().unwrap().push(handle);
+            self.outcome.lock().unwrap().clone().unwrap_or(SwitchOutcome::Yielded(handle, YieldReason::Voluntary))
+        }
     }
 }

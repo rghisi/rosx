@@ -1,6 +1,5 @@
 use crate::future::FutureRegistry;
 use crate::ipc::ipc_manager::IpcManager;
-use crate::ipc::mailbox_manager::MailboxManager;
 use crate::kernel_cell::KernelCell;
 use crate::memory::memory_manager::{MEMORY_MANAGER, MemoryManager};
 use crate::once::Once;
@@ -8,9 +7,44 @@ use crate::scheduler::fifo_strategy::FifoStrategy;
 use crate::scheduler::Scheduler;
 use crate::scheduler::TimerManager;
 use crate::task_manager::TaskManager;
-use crate::{ForNotifyingFutures, ForWakingTasks, ForCompletingExpiredTimers};
-use system::future::{self, Future, FutureHandle};
-use system::ipc::{IpcMessage, IpcMessageFuture, IpcReceiveError};
+use crate::task::TaskState;
+use crate::{ForCompletingExpiredTimers, ForManagingTasks, ForNotifyingFutures, ForWakingTasks};
+use system::future::{Future, FutureHandle};
+use system::ipc::{IpcMessage, IpcMessageFuture};
+
+// === Noop implementations for use in init() ===
+
+struct NoopContextSwitcher;
+impl crate::ForSwitchingTaskContext for NoopContextSwitcher {
+    fn switch_to_task(&self, handle: crate::task::TaskHandle) -> crate::SwitchOutcome {
+        crate::SwitchOutcome::Unchanged(handle)
+    }
+}
+static NOOP_CTX_SWITCHER: NoopContextSwitcher = NoopContextSwitcher;
+
+struct NoopTimerHandler;
+impl ForCompletingExpiredTimers for NoopTimerHandler {
+    fn complete_timer_future(&self, _handle: FutureHandle) {}
+}
+static NOOP_TIMER_HNDLR: NoopTimerHandler = NoopTimerHandler;
+
+struct NoopTimeSource;
+impl crate::ForReadingSystemTime for NoopTimeSource {
+    fn now(&self) -> u64 { 0 }
+}
+static NOOP_TIME_SRC: NoopTimeSource = NoopTimeSource;
+
+struct NoopTimerExpiry;
+impl crate::ForExpiringTimers for NoopTimerExpiry {
+    fn pop_expired(&self, _now: u64) -> Option<alloc::vec::Vec<FutureHandle>> { None }
+}
+static NOOP_TIMER_EXPIRY: NoopTimerExpiry = NoopTimerExpiry;
+
+struct NoopInterruptHandler;
+impl crate::ForHandlingHardwareInterrupts for NoopInterruptHandler {
+    fn handle(&self, _interrupt: crate::messages::HardwareInterrupt) {}
+}
+static NOOP_INTR_HNDLR: NoopInterruptHandler = NoopInterruptHandler;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
@@ -61,6 +95,23 @@ impl ForCompletingExpiredTimers for FutureRegistryTimerUseCase {
     }
 }
 
+/// Wrapper that delegates task management to a leaked KernelCell<TaskManager>.
+struct StaticTaskManager {
+    inner: &'static KernelCell<TaskManager>,
+}
+
+impl ForManagingTasks for StaticTaskManager {
+    fn get_state(&self, handle: crate::task::TaskHandle) -> TaskState {
+        self.inner.borrow().get_state(handle)
+    }
+    fn set_state(&self, handle: crate::task::TaskHandle, state: TaskState) {
+        self.inner.borrow_mut().set_state(handle, state);
+    }
+    fn remove_task(&self, handle: crate::task::TaskHandle) {
+        self.inner.borrow_mut().remove_task(handle);
+    }
+}
+
 // === KernelServices ===
 
 pub(crate) struct KernelServices {
@@ -82,7 +133,18 @@ pub(crate) fn init() {
         // no Drop, so leaking the wrapper is safe — the T lives for the
         // duration of the process (KERNEL_SERVICES is a static).
         let task_manager = Box::leak(Box::new(KernelCell::new(TaskManager::new())));
-        let scheduler_cell = Box::leak(Box::new(KernelCell::new(Scheduler::new(FifoStrategy::new()))));
+        let task_manager_wrapper: &'static dyn ForManagingTasks = Box::leak(Box::new(StaticTaskManager {
+            inner: task_manager,
+        })) as &'static dyn ForManagingTasks;
+        let scheduler_cell = Box::leak(Box::new(KernelCell::new(Scheduler::new_full(
+            FifoStrategy::new(),
+            &NOOP_CTX_SWITCHER,
+            &NOOP_TIMER_HNDLR,
+            &NOOP_TIME_SRC,
+            &NOOP_TIMER_EXPIRY,
+            &NOOP_INTR_HNDLR,
+            task_manager_wrapper,
+        ))));
         let wake_controller = Box::leak(Box::new(SchedulerWakerUseCase {
             scheduler: scheduler_cell,
         })) as &'static dyn ForWakingTasks;
