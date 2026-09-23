@@ -1,0 +1,7 @@
+[package]
+name = "rosx-integration"
+version = "0.1.0"
+edition = "2024"
+description = "QEMU integration tests for RosX"
+
+[workspace]
