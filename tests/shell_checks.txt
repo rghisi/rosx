@@ -1,0 +1,5 @@
+# default automated shell checks
+ls|conway
+ls|tetris
+pi|3.14159265
+sleep|
