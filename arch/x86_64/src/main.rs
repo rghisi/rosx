@@ -71,7 +71,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // kernel.schedule(FunctionTask::new("2", dummy::app::main2));
     // kernel.schedule(FunctionTask::new("3", dummy::app::main3));
     // kernel.schedule(FunctionTask::new("4", dummy::app::main4));
-    static RANDOM_GEN_SERVER_ELF: &[u8] = include_bytes!("../../../apps/random_gen_server/target/rosx-user/release/random_gen_server");
+    static RANDOM_GEN_SERVER_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/random_gen_server");
     let _ = kernel.schedule(new_elf_task(RANDOM_GEN_SERVER_ELF));
     let _ = kernel.schedule(FunctionTask::new("Shell", shell::shell::main));
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));

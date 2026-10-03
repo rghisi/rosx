@@ -38,8 +38,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
 │    x86_64-runner/ # standalone: BiosBoot → QEMU (NOT bootimage)
 └── apps/
-     [workspace members]  shell, dummy
-     [excluded ELF apps]  hello_elf, random_gen_server, snake, tetris, conway
+     [workspace members]  shell, dummy, hello_elf, random_gen_server, snake, tetris, conway, test_suite
 ```
 
 ---
@@ -50,25 +49,37 @@ Canonical recipes: `.github/workflows/ci.yml` (build + test) and `build-artifact
 
 ### x86_64
 ```bash
-cd arch/x86_64
-cargo build              # kernel -> target/rosx/debug/rosx   (add --release to match CI)
-cargo run                # run.sh -> arch/x86_64-runner -> BiosBoot disk image -> QEMU
+cargo xtask build              # ELF apps + kernel + disk image
+cargo xtask apps               # ELF apps only
+cargo xtask test               # all host unit tests
+cargo build -p rosx            # kernel only (from arch/x86_64 directory or with target)
+cargo run -p rosx              # run.sh -> arch/x86_64-runner -> BiosBoot disk image -> QEMU
 ```
 - `cargo run` uses the **custom runner** (`.cargo/config.toml` → `./run.sh`), which invokes `arch/x86_64-runner` to make a BIOS disk image with the `bootloader` crate's `BiosBoot`, then starts `qemu-system-x86_64`. **Not bootimage.**
 - Target spec: `arch/x86_64/rosx.json` — bare-metal `no_std`, `build-std` = core/alloc/compiler_builtins.
-- User-space ELF apps (hello_elf, random_gen_server, snake, tetris, conway) build separately with `--target rosx-user.json` (PIC/PIE), then get embedded into the kernel via `include_bytes!`.
+- User-space ELF apps (hello_elf, random_gen_server, snake, tetris, conway) are workspace members; build with `cargo xtask apps` or `cargo xtask build`.
+- `cargo build --workspace` is intentionally unsupported: bare-metal bins and PIE apps cannot compile for the host.
 
 ### x86_32
 ```bash
-cd arch/x86_32
-cargo build              # kernel (Multiboot2, boot.S)
-bash build-image.sh      # GRUB bootable image (needs grub-mkrescue, xorriso, mtools)
+cargo build -p rosx-i686       # kernel (Multiboot2, boot.S)
+bash arch/x86_32/build-image.sh   # GRUB bootable image (needs grub-mkrescue, xorriso, mtools)
 ```
+- x86_32 builds are untouched by xtask. Build user apps for x86_32 with the explicit `-Z` flags shown in CI.
 
 ### Unit tests (run on host)
 ```bash
-cargo test -p kernel       # ~149 tests: scheduler, memory, elf, ipc, future
-cargo test -p collections  # generational_arena
+cargo xtask test               # all workspace unit tests
+cargo test                     # default-members only
+cargo test -p collections      # generational_arena
+cargo test -p kernel -- --test-threads=1   # scheduler, memory, elf, ipc, future
+```
+
+### xtask commands
+```bash
+cargo xtask build [--debug]    # Build ELF apps + x86_64 kernel + disk image
+cargo xtask apps               # Build ELF apps only
+cargo xtask test [--integration] # Run unit tests; --integration is reserved
 ```
 
 ## Development Guidelines

@@ -111,17 +111,22 @@ The x86_64 platform is the current bootstrap target.
    cd rosx
    ```
 
-2. **Build and run:**
-   ```bash
-   cd arch/x86_64
-   cargo run
-   ```
+2. **Build everything (ELF apps + kernel + disk image):**
+    ```bash
+    cargo xtask build
+    ```
 
-   To build only:
-   ```bash
-   cd arch/x86_64
-   cargo build
-   ```
+3. **Run in QEMU:**
+    ```bash
+    cargo run -p rosx
+    ```
+
+    To build only the kernel:
+    ```bash
+    cargo build -p rosx --target arch/x86_64/rosx.json
+    ```
+
+    `cargo build --workspace` is intentionally unsupported; use `cargo xtask build` or build individual packages.
 
 ### Build and Run (x86_32)
 
@@ -129,21 +134,18 @@ The x86_32 platform runs on older 32-bit processors.
 
 1. **Build:**
    ```bash
-   cd arch/x86_32
-   cargo build
+   cargo build -p rosx-i686
    ```
 
 2. **Run:**
    ```bash
-   cd arch/x86_32
-   cargo run
+   bash arch/x86_32/build-image.sh
    ```
 
 ### Testing
 
 ```bash
-cargo test -p collections
-cargo test -p kernel -- --test-threads=1
+cargo xtask test
 ```
 
 ### More detail
@@ -166,10 +168,15 @@ rosx/
 │   │   ├── task.rs         # Task structure and management
 │   │   ├── memory/         # Memory allocation subsystem
 │   │   └── elf/            # ELF binary loader
-├── apps/                   # User-space applications
+├── apps/                   # User-space applications (workspace members)
 │   ├── shell/              # Command-line shell
 │   ├── hello_elf/          # Simple ELF test program
-│   └── ...                 # More applications in development
+│   ├── random_gen_server/  # Random number generator server
+│   ├── snake/              # Snake game
+│   ├── tetris/             # Tetris game
+│   ├── conway/             # Conway's Game of Life
+│   ├── dummy/              # Dummy app for testing
+│   └── test_suite/         # Test suite app
 ├── collections/            # Custom collections
 ├── system/                 # System-level utilities
 └── usrlib/                 # User-space library
