@@ -1,7 +1,7 @@
 ---
 description: Reviews the Coder's changes against the Architect's plan.
 mode: subagent
-model: lemonade/Qwen3.8-27B-UD-Q4_K_XL
+model: lemonade/Qwen3.8-Flash-Next
 permission:
   edit: deny
   bash: deny
