@@ -9,8 +9,10 @@ use crate::disk_image;
 use crate::kernel_build;
 use crate::monitor::Monitor;
 use crate::output::{self, SharedOutput};
+use crate::sendkey;
 
 const STDERR_TAIL_BYTES: usize = 4096;
+const INTER_KEY_DELAY: Duration = Duration::from_millis(50);
 const DROP_QUIT_CAP: Duration = Duration::from_secs(5);
 const DROP_REAP_CAP: Duration = Duration::from_secs(5);
 const DROP_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -19,6 +21,7 @@ pub struct QemuSession {
     child: Child,
     output: SharedOutput,
     stderr_tail: Arc<Mutex<String>>,
+    monitor: Option<Monitor>,
     temp_dir: tempfile::TempDir,
 }
 
@@ -89,6 +92,7 @@ impl QemuSession {
             child,
             output,
             stderr_tail,
+            monitor: None,
             temp_dir,
         }
     }
@@ -106,6 +110,39 @@ impl QemuSession {
         }
     }
 
+    pub fn send_key(&mut self, c: char) {
+        let token = sendkey::token_for(c)
+            .unwrap_or_else(|| panic!("cannot send character {c:?} over monitor sendkey"));
+        self.monitor_mut()
+            .send_command(&format!("sendkey {token}"))
+            .unwrap_or_else(|err| panic!("monitor command sendkey {token} failed: {err}"));
+    }
+
+    pub fn send_text(&mut self, s: &str) {
+        for c in s.chars() {
+            self.send_key(c);
+            thread::sleep(INTER_KEY_DELAY);
+        }
+    }
+
+    pub fn send_line(&mut self, s: &str) {
+        self.send_text(s);
+        self.send_key('\n');
+    }
+
+    fn monitor_mut(&mut self) -> &mut Monitor {
+        if self.monitor.is_none() {
+            let socket = self.monitor_socket();
+            self.monitor = Some(Monitor::connect(&socket).unwrap_or_else(|err| {
+                panic!(
+                    "failed to connect to QEMU monitor at {}: {err}",
+                    socket.display()
+                )
+            }));
+        }
+        self.monitor.as_mut().unwrap()
+    }
+
     fn monitor_socket(&self) -> PathBuf {
         self.temp_dir.path().join("monitor.sock")
     }
@@ -113,7 +150,11 @@ impl QemuSession {
 
 impl Drop for QemuSession {
     fn drop(&mut self) {
-        if let Ok(mut monitor) = Monitor::connect_with_cap(&self.monitor_socket(), DROP_QUIT_CAP) {
+        if let Some(monitor) = self.monitor.as_mut() {
+            let _ = monitor.quit();
+        } else if let Ok(mut monitor) =
+            Monitor::connect_with_cap(&self.monitor_socket(), DROP_QUIT_CAP)
+        {
             let _ = monitor.quit();
         }
 

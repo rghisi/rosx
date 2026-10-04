@@ -22,7 +22,11 @@ impl Monitor {
         let deadline = Instant::now() + cap;
         loop {
             match UnixStream::connect(socket_path) {
-                Ok(stream) => return Ok(Monitor { stream }),
+                Ok(stream) => {
+                    let mut monitor = Monitor { stream };
+                    monitor.drain_greeting();
+                    return Ok(monitor);
+                }
                 Err(err) => {
                     if Instant::now() >= deadline {
                         return Err(err);
@@ -56,6 +60,10 @@ impl Monitor {
             }
             Err(err) => Err(err),
         }
+    }
+
+    fn drain_greeting(&mut self) {
+        let _ = self.read_until_prompt();
     }
 
     fn read_until_prompt(&mut self) -> std::io::Result<String> {
