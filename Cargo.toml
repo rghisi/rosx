@@ -8,6 +8,7 @@ members = [
     "arch/x86_32",
     "apps/shell",
     "apps/dummy",
+    "tests-integration",
 ]
 exclude = [
     "apps/hello_elf",
