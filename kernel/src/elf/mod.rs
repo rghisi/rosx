@@ -54,17 +54,22 @@ pub fn load_elf(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError>
 }
 
 fn load_elf64(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError> {
-    let header = unsafe { &*(bytes.as_ptr() as *const Elf64Header) };
+    let header = unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const Elf64Header) };
 
-    let phdrs = unsafe {
-        core::slice::from_raw_parts(
-            bytes.as_ptr().add(header.e_phoff as usize) as *const Elf64Phdr,
-            header.e_phnum as usize,
-        )
+    let phdrs: Vec<Elf64Phdr> = unsafe {
+        let mut phdrs = Vec::with_capacity(header.e_phnum as usize);
+        for i in 0..header.e_phnum as usize {
+            let phdr_ptr = bytes
+                .as_ptr()
+                .add(header.e_phoff as usize + i * mem::size_of::<Elf64Phdr>())
+                as *const Elf64Phdr;
+            phdrs.push(core::ptr::read_unaligned(phdr_ptr));
+        }
+        phdrs
     };
 
     let mut max_addr: u64 = 0;
-    for phdr in phdrs {
+    for phdr in &phdrs {
         if phdr.p_type == PT_LOAD {
             let end = phdr.p_vaddr + phdr.p_memsz;
             if end > max_addr {
@@ -79,7 +84,7 @@ fn load_elf64(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError> {
 
     let mut image = vec![0u8; max_addr as usize];
 
-    for phdr in phdrs {
+    for phdr in &phdrs {
         if phdr.p_type == PT_LOAD {
             let dst_start = phdr.p_vaddr as usize;
             let src_start = phdr.p_offset as usize;
@@ -91,7 +96,7 @@ fn load_elf64(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError> {
 
     let base = image.as_ptr() as usize;
 
-    for phdr in phdrs {
+    for phdr in &phdrs {
         if phdr.p_type == PT_DYNAMIC {
             apply_relocations64(&image, base, phdr, elf_arch);
             break;
@@ -104,17 +109,22 @@ fn load_elf64(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError> {
 }
 
 fn load_elf32(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError> {
-    let header = unsafe { &*(bytes.as_ptr() as *const Elf32Header) };
+    let header = unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const Elf32Header) };
 
-    let phdrs = unsafe {
-        core::slice::from_raw_parts(
-            bytes.as_ptr().add(header.e_phoff as usize) as *const Elf32Phdr,
-            header.e_phnum as usize,
-        )
+    let phdrs: Vec<Elf32Phdr> = unsafe {
+        let mut phdrs = Vec::with_capacity(header.e_phnum as usize);
+        for i in 0..header.e_phnum as usize {
+            let phdr_ptr = bytes
+                .as_ptr()
+                .add(header.e_phoff as usize + i * mem::size_of::<Elf32Phdr>())
+                as *const Elf32Phdr;
+            phdrs.push(core::ptr::read_unaligned(phdr_ptr));
+        }
+        phdrs
     };
 
     let mut max_addr: u32 = 0;
-    for phdr in phdrs {
+    for phdr in &phdrs {
         if phdr.p_type == PT_LOAD {
             let end = phdr.p_vaddr + phdr.p_memsz;
             if end > max_addr {
@@ -129,7 +139,7 @@ fn load_elf32(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError> {
 
     let mut image = vec![0u8; max_addr as usize];
 
-    for phdr in phdrs {
+    for phdr in &phdrs {
         if phdr.p_type == PT_LOAD {
             let dst_start = phdr.p_vaddr as usize;
             let src_start = phdr.p_offset as usize;
@@ -141,7 +151,7 @@ fn load_elf32(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError> {
 
     let base = image.as_ptr() as usize;
 
-    for phdr in phdrs {
+    for phdr in &phdrs {
         if phdr.p_type == PT_DYNAMIC {
             apply_relocations32(&image, base, phdr, elf_arch);
             break;
@@ -157,17 +167,15 @@ fn apply_relocations64(image: &[u8], base: usize, dynamic_phdr: &Elf64Phdr, elf_
     let dyn_start = dynamic_phdr.p_vaddr as usize;
     let dyn_count = dynamic_phdr.p_memsz as usize / mem::size_of::<Elf64Dyn>();
 
-    let dyns = unsafe {
-        core::slice::from_raw_parts(
-            image.as_ptr().add(dyn_start) as *const Elf64Dyn,
-            dyn_count,
-        )
-    };
-
     let mut rela_offset: Option<u64> = None;
     let mut rela_size: Option<u64> = None;
 
-    for dyn_entry in dyns {
+    for i in 0..dyn_count {
+        let dyn_entry = unsafe {
+            core::ptr::read_unaligned(
+                image.as_ptr().add(dyn_start + i * mem::size_of::<Elf64Dyn>()) as *const Elf64Dyn,
+            )
+        };
         if dyn_entry.d_tag == 0 {
             break;
         }
@@ -180,14 +188,13 @@ fn apply_relocations64(image: &[u8], base: usize, dynamic_phdr: &Elf64Phdr, elf_
 
     if let (Some(offset), Some(size)) = (rela_offset, rela_size) {
         let rela_count = size as usize / mem::size_of::<Elf64Rela>();
-        let relas = unsafe {
-            core::slice::from_raw_parts(
-                image.as_ptr().add(offset as usize) as *const Elf64Rela,
-                rela_count,
-            )
-        };
-
-        for rela in relas {
+        for i in 0..rela_count {
+            let rela = unsafe {
+                core::ptr::read_unaligned(
+                    image.as_ptr().add(offset as usize + i * mem::size_of::<Elf64Rela>())
+                        as *const Elf64Rela,
+                )
+            };
             elf_arch.apply_relocation(base, rela.r_offset as usize, rela.r_info, rela.r_addend);
         }
     }
@@ -197,17 +204,15 @@ fn apply_relocations32(image: &[u8], base: usize, dynamic_phdr: &Elf32Phdr, elf_
     let dyn_start = dynamic_phdr.p_vaddr as usize;
     let dyn_count = dynamic_phdr.p_memsz as usize / mem::size_of::<Elf32Dyn>();
 
-    let dyns = unsafe {
-        core::slice::from_raw_parts(
-            image.as_ptr().add(dyn_start) as *const Elf32Dyn,
-            dyn_count,
-        )
-    };
-
     let mut rel_offset: Option<u32> = None;
     let mut rel_size: Option<u32> = None;
 
-    for dyn_entry in dyns {
+    for i in 0..dyn_count {
+        let dyn_entry = unsafe {
+            core::ptr::read_unaligned(
+                image.as_ptr().add(dyn_start + i * mem::size_of::<Elf32Dyn>()) as *const Elf32Dyn,
+            )
+        };
         if dyn_entry.d_tag == 0 {
             break;
         }
@@ -220,14 +225,13 @@ fn apply_relocations32(image: &[u8], base: usize, dynamic_phdr: &Elf32Phdr, elf_
 
     if let (Some(offset), Some(size)) = (rel_offset, rel_size) {
         let rel_count = size as usize / mem::size_of::<Elf32Rel>();
-        let rels = unsafe {
-            core::slice::from_raw_parts(
-                image.as_ptr().add(offset as usize) as *const Elf32Rel,
-                rel_count,
-            )
-        };
-
-        for rel in rels {
+        for i in 0..rel_count {
+            let rel = unsafe {
+                core::ptr::read_unaligned(
+                    image.as_ptr().add(offset as usize + i * mem::size_of::<Elf32Rel>())
+                        as *const Elf32Rel,
+                )
+            };
             let patch_offset = rel.r_offset as usize;
             let implicit_addend = unsafe {
                 core::ptr::read_unaligned(image.as_ptr().add(patch_offset) as *const i32) as i64

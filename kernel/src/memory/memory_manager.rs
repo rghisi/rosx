@@ -126,7 +126,7 @@ mod tests {
         fn disable_interrupts(&self) {}
         fn are_interrupts_enabled(&self) -> bool { false }
         fn initialize_stack(&self, _: usize, _: usize, _: usize, _: usize) -> usize { 0 }
-        fn swap_context(&self, _: *mut usize, _: usize) {}
+        fn swap_context(&self, _: *mut usize, _: *mut usize, _: usize) {}
         fn get_system_time(&self) -> u64 { 0 }
         fn halt(&self) {}
     }

@@ -31,7 +31,8 @@ impl ExecutionState {
             .get_task_stack_pointer_ref(self.scheduler);
         self.execution_context = ExecutionContext::UserTask;
         self.preemption_enabled = true;
-        self.cpu.swap_context(scheduler_stack_pointer_pointer, task_stack_pointer);
+        let state_pointer = self as *mut ExecutionState as *mut usize;
+        self.cpu.swap_context(state_pointer, scheduler_stack_pointer_pointer, task_stack_pointer);
         self.preemption_enabled = false;
         self.execution_context = ExecutionContext::Kernel;
 
@@ -51,7 +52,8 @@ impl ExecutionState {
             let scheduler_stack_pointer = services().task_manager
                 .borrow()
                 .get_task_stack_pointer(self.scheduler);
-            self.cpu.swap_context(task_stack_pointer_reference, scheduler_stack_pointer);
+            let state_pointer = self as *mut ExecutionState as *mut usize;
+            self.cpu.swap_context(state_pointer, task_stack_pointer_reference, scheduler_stack_pointer);
             self.execution_context = ExecutionContext::UserTask;
             self.preemption_enabled = true;
         }

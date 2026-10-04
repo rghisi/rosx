@@ -23,11 +23,29 @@ impl Scheduler {
         }
     }
 
-    pub fn run(&mut self) {
+    pub fn run() {
+        let mut interrupts = Vec::new();
         loop {
-            self.process_hardware_interrupts();
-            self.process_timer_notifications();
-            self.run_next_task();
+            interrupts.clear();
+            services().scheduler.borrow_mut().drain_hardware_interrupts(&mut interrupts);
+            for interrupt in interrupts.drain(..) {
+                match interrupt {
+                    HardwareInterrupt::Keyboard { scancode } => {
+                        if scancode & 0x80 == 0 {
+                            if let Ok(key) = crate::keyboard::Key::from_scancode_set1(scancode) {
+                                let event = crate::keyboard::KeyboardEvent::from_key(key);
+                                if let Some(c) = event.char {
+                                    crate::keyboard::push_key(c);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Self::process_timer_notifications();
+            let next_handle = services().scheduler.borrow_mut().start_next_task();
+            let returned_handle = kernel().switch_to_task(next_handle);
+            services().scheduler.borrow_mut().reconcile_returned_task(returned_handle);
         }
     }
 
@@ -67,33 +85,22 @@ impl Scheduler {
         services().task_manager.borrow_mut().remove_task(handle);
     }
 
-    fn run_next_task(&mut self) {
+    fn start_next_task(&mut self) -> TaskHandle {
         let next_handle = match self.algorithm.pick_next() {
             Some(handle) => handle,
             None => {
                 let idle = self.idle_task.unwrap();
                 services().task_manager.borrow_mut().set_state(idle, TaskState::Running);
-                let returned = kernel().switch_to_task(idle);
-                let task_state = services().task_manager.borrow().get_state(returned);
-                match task_state {
-                    TaskState::Running => {
-                        if Some(returned) == self.idle_task {
-                            self.idle_task = Some(returned);
-                        }
-                    }
-                    TaskState::Terminated => {
-                        self.handle_termination(returned);
-                    }
-                    _ => {}
-                }
-                return;
+                return idle;
             }
         };
 
         self.algorithm.on_task_start(next_handle);
         services().task_manager.borrow_mut().set_state(next_handle, TaskState::Running);
-        let returned_handle = kernel().switch_to_task(next_handle);
+        next_handle
+    }
 
+    fn reconcile_returned_task(&mut self, returned_handle: TaskHandle) {
         let task_state = services().task_manager.borrow().get_state(returned_handle);
         match task_state {
             TaskState::Created | TaskState::Ready => {}
@@ -114,25 +121,13 @@ impl Scheduler {
         }
     }
 
-    fn process_hardware_interrupts(&mut self) {
+    fn drain_hardware_interrupts(&mut self, out: &mut Vec<HardwareInterrupt>) {
         while let Some(hardware_interrupt) = self.hw_interrupt_queue.pop_front() {
-            match hardware_interrupt {
-                HardwareInterrupt::Keyboard { scancode } => {
-                    if scancode & 0x80 == 0 {
-                        if let Ok(key) = crate::keyboard::Key::from_scancode_set1(scancode) {
-                            let event = crate::keyboard::KeyboardEvent::from_key(key);
-                            if let Some(c) = event.char {
-                                crate::keyboard::push_key(c);
-                            }
-                        }
-                    }
-                }
-            };
+            out.push(hardware_interrupt);
         }
     }
 
-    fn process_timer_notifications(&mut self) {
-        use crate::kernel::kernel;
+    fn process_timer_notifications() {
         let now = kernel().get_system_time();
         if let Some(handles) = services().timer_manager.borrow_mut().pop_expired(now) {
             for handle in handles {

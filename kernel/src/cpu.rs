@@ -12,7 +12,12 @@ pub trait Cpu {
         param1: usize,
         param2: usize,
     ) -> usize;
-    fn swap_context(&self, stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize);
+    fn swap_context(
+        &self,
+        state: *mut usize,
+        stack_pointer_to_store: *mut usize,
+        stack_pointer_to_load: usize,
+    );
     fn get_system_time(&self) -> u64;
 
     fn halt(&self);
