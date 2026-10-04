@@ -52,7 +52,7 @@ fn build_kernel(debug: bool) {
     run(&mut cmd, "build x86_64 kernel");
 }
 
-fn build_image(debug: bool) {
+fn build_image(debug: bool, launch_qemu: bool) {
     let profile = if debug { "debug" } else { "release" };
     let kernel = workspace_root()
         .join("target")
@@ -65,8 +65,10 @@ fn build_image(debug: bool) {
         .arg("arch/x86_64-runner/Cargo.toml")
         .arg("--")
         .arg(&kernel)
-        .arg("x86_64")
-        .arg("--no-run");
+        .arg("x86_64");
+    if !launch_qemu {
+        cmd.arg("--no-run");
+    }
     run(&mut cmd, "create x86_64 disk image");
 }
 
@@ -83,7 +85,9 @@ fn run_tests(integration: bool) {
 }
 
 fn usage() {
-    eprintln!("usage: cargo xtask <build [--debug] | apps | test [--integration]>");
+    eprintln!(
+        "usage: cargo xtask <build [--debug] | run [x86_64] [--debug] | apps | test [--integration]>"
+    );
 }
 
 fn main() {
@@ -95,7 +99,18 @@ fn main() {
         "build" => {
             build_apps();
             build_kernel(debug);
-            build_image(debug);
+            build_image(debug, false);
+        }
+        "run" => {
+            let arch = args.get(1).map(String::as_str).unwrap_or("x86_64");
+            if arch != "x86_64" {
+                eprintln!("unsupported arch: {arch}");
+                usage();
+                process::exit(2);
+            }
+            build_apps();
+            build_kernel(debug);
+            build_image(debug, true);
         }
         "test" => run_tests(args.iter().any(|a| a == "--integration")),
         "help" | "--help" | "-h" => usage(),
