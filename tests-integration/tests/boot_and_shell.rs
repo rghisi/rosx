@@ -9,7 +9,6 @@ fn kernel_boots() {
 }
 
 #[test]
-#[ignore = "kernel panics at boot (state.rs:69 current_task None) before shell prompt; re-enable after kernel IPC boot fix"]
 fn shell_banner_and_prompt() {
     let session = QemuSession::spawn();
     session.expect_output("ROSE Shell", Duration::from_secs(60));
@@ -17,7 +16,6 @@ fn shell_banner_and_prompt() {
 }
 
 #[test]
-#[ignore = "kernel panics at boot (state.rs:69 current_task None) before shell prompt; re-enable after kernel IPC boot fix"]
 fn shell_echoes_keystrokes() {
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", Duration::from_secs(60));
