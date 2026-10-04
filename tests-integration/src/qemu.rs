@@ -1,5 +1,7 @@
+use std::env;
+use std::ffi::OsStr;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -22,7 +24,7 @@ pub struct QemuSession {
     output: SharedOutput,
     stderr_tail: Arc<Mutex<String>>,
     monitor: Option<Monitor>,
-    temp_dir: tempfile::TempDir,
+    temp_dir: Option<tempfile::TempDir>,
 }
 
 impl QemuSession {
@@ -93,8 +95,15 @@ impl QemuSession {
             output,
             stderr_tail,
             monitor: None,
-            temp_dir,
+            temp_dir: Some(temp_dir),
         }
+    }
+
+    pub fn temp_dir(&self) -> &Path {
+        self.temp_dir
+            .as_ref()
+            .expect("temp dir is only released during drop")
+            .path()
     }
 
     pub fn expect_output(&self, substr: &str, timeout: Duration) {
@@ -164,12 +173,24 @@ impl QemuSession {
     }
 
     fn monitor_socket(&self) -> PathBuf {
-        self.temp_dir.path().join("monitor.sock")
+        self.temp_dir().join("monitor.sock")
     }
+}
+
+fn should_keep_temp_dir(value: Option<&OsStr>) -> bool {
+    value.map_or(false, |v| !v.is_empty())
 }
 
 impl Drop for QemuSession {
     fn drop(&mut self) {
+        self.quit_qemu();
+        self.reap_child();
+        self.release_temp_dir();
+    }
+}
+
+impl QemuSession {
+    fn quit_qemu(&mut self) {
         if let Some(monitor) = self.monitor.as_mut() {
             let _ = monitor.quit();
         } else if let Ok(mut monitor) =
@@ -177,7 +198,9 @@ impl Drop for QemuSession {
         {
             let _ = monitor.quit();
         }
+    }
 
+    fn reap_child(&mut self) {
         let deadline = Instant::now() + DROP_REAP_CAP;
         loop {
             match self.child.try_wait() {
@@ -197,5 +220,38 @@ impl Drop for QemuSession {
                 }
             }
         }
+    }
+
+    fn release_temp_dir(&mut self) {
+        if let Some(temp_dir) = self.temp_dir.take() {
+            if should_keep_temp_dir(env::var_os("ROSX_QEMU_KEEP_TMP").as_deref()) {
+                let path = temp_dir.into_path();
+                eprintln!(
+                    "ROSX_QEMU_KEEP_TMP is set; retained test temp dir at {}",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_keep_temp_dir;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn keep_tmp_disabled_when_unset() {
+        assert!(!should_keep_temp_dir(None));
+    }
+
+    #[test]
+    fn keep_tmp_disabled_when_empty() {
+        assert!(!should_keep_temp_dir(Some(OsStr::new(""))));
+    }
+
+    #[test]
+    fn keep_tmp_enabled_when_non_empty() {
+        assert!(should_keep_temp_dir(Some(OsStr::new("1"))));
     }
 }
