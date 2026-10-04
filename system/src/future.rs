@@ -13,6 +13,11 @@ pub enum FutureResult {
 pub trait Future: Send + Sync {
     fn is_completed(&self) -> bool;
 
+    /// Mark this future as completed. Default no-op; override for
+    /// notification-driven futures (e.g. TimeFuture) where the
+    /// TimerManager flips the flag.
+    fn complete(&mut self) {}
+
     fn into_result(self: Box<Self>) -> FutureResult;
 
     fn as_any(&self) -> &dyn Any;

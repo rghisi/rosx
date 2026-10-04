@@ -4,6 +4,7 @@ name = "shell"
 publish = false
 version = "0.1.0"
 edition.workspace = true
+build = "build.rs"
 
 [dependencies]
 test_suite = { path = "../test_suite" }

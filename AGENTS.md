@@ -1,7 +1,7 @@
 # RosX - Agent Context Document
 
-> **Last Updated:** 2025-10-12
-> **Purpose:** Quick context recovery for AI coding assistants working on RosX
+> **Last Updated:** 2026-08-16
+> **Purpose:** Compact, always-accurate context for AI coding agents working on RosX.
 
 ---
 
@@ -11,79 +11,76 @@
 
 ### Key Characteristics
 - **Language:** Rust (with minimal assembly for architecture-specific code)
-- **Target Platforms:**
-  - **x86_64** (current - chosen for readily available infrastructure)
-  - **x86_32** (next - to run on older PCs)
-  - **ARM** (future)
-  - **RISC-V** (future)
-  - **m68k** (future)
-  - Microcontrollers (future)
-- **Scope:** Full-featured OS with networking, task scheduling, interrupt handling
+- **Target Platforms (status):**
+  - **x86_64** — bootstrap platform, complete.
+  - **x86_32** — complete (Multiboot2/GRUB, `arch/x86_32/`).
+  - **ARM, RISC-V, m68k** — future (no `arch/` dirs exist yet; m68k is feasibility-stage only).
+- **Scope:** Full-featured OS — scheduling, interrupts, IPC, ELF user-space; networking is a goal, not yet implemented.
 - **Project Type:** Learning/hobby project with practical goals
 
-**Platform Strategy:** x86_64 is NOT the primary focus - it's just the starting point due to tooling availability. Multi-platform support is a core design goal, not an afterthought. All kernel code must remain portable.
+**Platform Strategy:** x86_64 is the starting point due to tooling, not the focus — keep `kernel/` portable.
 
 ---
 
 ## Project Structure
 
 ```
-rosx/
-├── arch/                    # Architecture-specific implementations
-│   ├── x86_64/             # Current implementation (bootstrap platform)
-│   │   ├── src/
-│   │   │   ├── context_switching.S      # Assembly context switch code
-│   │   │   ├── process_initialization.S # Task initialization assembly
-│   │   │   ├── interrupts.rs            # IDT, PIC, interrupt handlers
-│   │   │   ├── cpu.rs                   # CPU trait implementation
-│   │   │   └── main.rs                  # Architecture entry point
-│   │   ├── .cargo/config.toml          # Build config (custom target)
-│   │   └── Cargo.toml
-│   ├── arm/                # ARM port (future)
-│   ├── riscv/              # RISC-V port (future)
-│   └── m68k/               # m68k port (future)
-│
-├── kernel/                 # Platform-agnostic kernel code
-│   ├── src/
-│   │   ├── kernel.rs       # Main kernel struct, task_yield()
-│   │   ├── task.rs         # Task structure and management
-│   │   ├── main_thread.rs  # Main scheduler thread
-│   │   ├── scheduler.rs    # Scheduler trait
-│   │   ├── simple_scheduler.rs  # Basic round-robin scheduler
-│   │   ├── function_task.rs     # Function-based tasks
-│   │   └── cpu.rs          # CPU trait definition
-│   └── Cargo.toml
-│
-├── docs/                   # Documentation
-├── DEVELOPMENT_LOG.md      # Session-based development history
-├── INTERRUPT_DRIVEN_CONTEXT_SWITCH_REFACTORING.md  # Current refactoring plan
-└── Cargo.toml             # Workspace configuration
+rosx/                        # Cargo workspace (edition 2024, nightly)
+├── kernel/                  # Platform-agnostic core (see submodules below)
+│    scheduler/ (SchedulingAlgorithm: MLFQ + FIFO)
+│    memory/   (global allocator; FreeList + BitmapChunk)
+│    elf/ ipc/ (mailbox) future/ syscall/ keyboard/ task*  cpu (HAL trait)  kconfig
+├── system/      # Abstractions: Future, syscall numbers, IPC types
+├── collections/ # generational_arena
+├── usrlib/      # User-space libc: syscall, out, arch/{x86_64,x86_32}
+├── arch/
+│    x86_64/        # entry, cpu, interrupts, framebuffer, terminal_fonts, *.S (global_asm)
+│    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
+│    x86_64-runner/ # standalone: BiosBoot → QEMU (NOT bootimage)
+└── apps/
+     [workspace members]  shell, dummy, hello_elf, random_gen_server, snake, tetris, conway, test_suite
 ```
 
 ---
 
 ## Build & Run
 
-### Build Command
+Canonical recipes: `.github/workflows/ci.yml` (build + test) and `build-artifacts.yml` (disk images).
+
+### x86_64
 ```bash
-cd arch/x86_64
-cargo build
+cargo xtask build              # ELF apps + kernel + disk image
+cargo xtask apps               # ELF apps only
+cargo xtask test               # all host unit tests
+cargo build -p rosx            # kernel only (from arch/x86_64 directory or with target)
+cargo run -p rosx              # run.sh -> arch/x86_64-runner -> BiosBoot disk image -> QEMU
+```
+- `cargo run` uses the **custom runner** (`.cargo/config.toml` → `./run.sh`), which invokes `arch/x86_64-runner` to make a BIOS disk image with the `bootloader` crate's `BiosBoot`, then starts `qemu-system-x86_64`. **Not bootimage.**
+- Target spec: `arch/x86_64/rosx.json` — bare-metal `no_std`, `build-std` = core/alloc/compiler_builtins.
+- User-space ELF apps (hello_elf, random_gen_server, snake, tetris, conway) are workspace members; build with `cargo xtask apps` or `cargo xtask build`.
+- `cargo build --workspace` is intentionally unsupported: bare-metal bins and PIE apps cannot compile for the host.
+
+### x86_32
+```bash
+cargo build -p rosx-i686       # kernel (Multiboot2, boot.S)
+bash arch/x86_32/build-image.sh   # GRUB bootable image (needs grub-mkrescue, xorriso, mtools)
+```
+- x86_32 builds are untouched by xtask. Build user apps for x86_32 with the explicit `-Z` flags shown in CI.
+
+### Unit tests (run on host)
+```bash
+cargo xtask test               # all workspace unit tests
+cargo test                     # default-members only
+cargo test -p collections      # generational_arena
+cargo test -p kernel -- --test-threads=1   # scheduler, memory, elf, ipc, future
 ```
 
-### Run with Bootloader
+### xtask commands
 ```bash
-cd arch/x86_64
-cargo run  # Uses bootimage runner configured in .cargo/config.toml
+cargo xtask build [--debug]    # Build ELF apps + x86_64 kernel + disk image
+cargo xtask apps               # Build ELF apps only
+cargo xtask test [--integration] # Run unit tests; --integration is reserved
 ```
-
-**Testing Workflow:**
-- **Manual:** QEMU run for manual testing (fast iteration)
-- **Automated:** Run unit tests in host arch
-
-### Custom Target
-- Target spec: `arch/x86_64/rosx.json`
-- Bare metal (no_std)
-- Builds core, alloc, compiler_builtins from source
 
 ## Development Guidelines
 
@@ -107,7 +104,7 @@ cargo run  # Uses bootimage runner configured in .cargo/config.toml
    - Interrupts currently disabled during critical sections
 
 5. **Testing:**
-   - **Write unit tests for all kernel modules** (see `kernel/src/simple_scheduler.rs` as example)
+   - **Write unit tests for all kernel modules** (see `kernel/src/scheduler/mlfq_strategy.rs` as example)
    - Unit tests should be comprehensive and test edge cases
    - Use `#[cfg(test)]` modules within each file
    - Integration testing: Use dummy tasks for scheduler/task testing
@@ -127,28 +124,29 @@ cargo run  # Uses bootimage runner configured in .cargo/config.toml
 
 **Hardware Abstraction:**
 - **All hardware-specific routines MUST be abstracted from the kernel**
-- Use Hardware Abstraction Layer (HAL) pattern - see `Cpu` trait as example
+- Use Hardware Abstraction Layer (HAL) pattern - see the `Cpu` trait as the reference example
 - Kernel code in `kernel/` should be completely platform-agnostic
 - Platform-specific implementations go in `arch/[platform]/`
-- Use traits to define hardware interfaces (like `Cpu`, `Scheduler`, `Runnable`)
+- Key HAL traits: `Cpu` (`kernel/src/cpu.rs`), `ElfArch` (`kernel/src/elf/arch.rs`)
 
 **Pluggable Architecture:**
-- **Schedulers must be pluggable** - Configurable during kernel bootstrapping, not hardcoded
-- **Memory managers must be pluggable** - Selectable during bootstrapping phase
-- Use trait-based design to allow multiple implementations
-- Configuration happens at boot time, not compile time (where feasible)
-- Goal: Easy experimentation with different strategies for different use cases
+- **Scheduling is pluggable (implemented):** the strategy is a `SchedulingAlgorithm` (MLFQ + FIFO) chosen at boot via `scheduler_factory` in `KConfig` (`kernel/src/kconfig.rs`).
+- **Memory is NOT pluggable (yet):** a single static `global_allocator` (`MemoryManager` → `FreeListAllocator`) is active; a `BitmapChunkAllocator` exists but is not wired in. Making the allocator selectable is a stated **low-priority goal**.
+- Prefer trait-based design so subsystems can be swapped at boot time, not compile time.
+
+**Kernel Subsystems (current invariants):**
+- `future/` + `ipc/` — **notification-driven** futures (time, task-completion, keyboard) and a mailbox IPC manager (bind/connect/send/receive); no polling on the preemption cycle.
+- `elf/` — loads standalone user-space ELF binaries into tasks (`new_elf_task`).
+- `task/` + `task_manager/` — task lifecycle, context switch, preemption.
 
 **Documentation & Comments:**
-- **CRITICAL: Minimal documentation - code is the source of truth**
-- **CRITICAL: NO code comments unless explicitly requested**
-- Code should be self-explanatory through:
+- **CRITICAL: No comments, ever** — the code is the source of truth; make it self-explanatory
+- Self-explain through:
   - Clear function names
   - Descriptive variable names
   - Well-structured logic
   - Type signatures that document intent
-- Exception: Assembly code should have comments explaining register usage and calling conventions
-- Focus on writing readable code rather than explaining it with comments
+- Exception: Assembly code must have comments (register usage, calling conventions)
 
 **General Style:**
 - Follow standard Rust conventions
@@ -159,9 +157,9 @@ cargo run  # Uses bootimage runner configured in .cargo/config.toml
 ---
 
 ### Build Issues?
-- Check that custom target exists: `arch/x86_64/rosx.json`
-- Verify rust-src component: `rustup component add rust-src`
-- Bootimage installed: `cargo install bootimage`
+- Toolchain: `rust-toolchain.toml` pins **nightly** with the `rust-src` component (`rustup component add rust-src`).
+- Custom targets: `arch/x86_64/rosx.json` (+ `rosx-user.json`), `arch/x86_32/rosx-i686.json` (+ `rosx-i686-user.json`).
+- No bootimage — the disk image comes from `arch/x86_64-runner` (the `bootloader` crate). To build it standalone: `cargo run --manifest-path arch/x86_64-runner/Cargo.toml -- <kernel-binary> x86_64 --no-run`.
 
 ---
 
@@ -204,14 +202,9 @@ This is the MOST CRITICAL guideline for working on RosX:
 ### Other Critical Guidelines
 
 - **CRITICAL: Minimize `unsafe` usage** - Use Rust's safe abstractions whenever possible; `unsafe` only when truly unavoidable
-- **CRITICAL: Hardware abstraction required** - All platform-specific code must go through HAL traits (like `Cpu` trait), never directly in kernel code
-- **CRITICAL: Pluggable architecture** - Schedulers and memory managers must be configurable at bootstrap, not hardcoded
-- **CRITICAL: Zero external dependencies in kernel/** - Only `core`, `alloc`, `compiler_builtins` allowed
-- **CRITICAL: No code comments unless requested** - Write self-explanatory code with clear names instead
-- **CRITICAL: Write unit tests** - All kernel modules should have comprehensive unit tests (see `simple_scheduler.rs` example)
+- **CRITICAL: Hardware abstraction required** - All platform-specific code must go through HAL traits (like `Cpu`), never directly in kernel code
+- **CRITICAL: kernel/ is `no_std`** - std is forbidden; dependencies are limited to the workspace crates `collections` + `system` and `lazy_static`. No other third-party crates.
+- **CRITICAL: No comments, ever** - Write self-explanatory code with clear names instead
+- **CRITICAL: Write unit tests** - All kernel modules should have comprehensive unit tests (see `kernel/src/scheduler/mlfq_strategy.rs` as a reference)
 - Multi-platform support is a goal - keep kernel code portable and platform-agnostic
-- Assembly should be minimal and well-documented (exception to no-comments rule)
-- The project is in active refactoring - check the refactoring doc before context switching work
-- Task finalization is currently broken - don't assume it works
-- Build and test after significant changes
-- When adding subsystems (schedulers, memory managers, etc.), design them as pluggable trait implementations
+- Build and test after significant changes (`cargo test -p kernel`)

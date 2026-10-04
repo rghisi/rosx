@@ -1,10 +1,22 @@
 use alloc::collections::{BTreeMap};
 use alloc::string::String;
+use alloc::boxed::Box;
 use collections::generational_arena::{GenerationalArena, Handle};
 use system::ipc::{IpcConnectionError, IpcMessage, IpcSendError, IpcConnectionHandle, IpcBindingError, IpcReceiveError, IpcMessageFuture};
 use system::future::FutureHandle;
 use crate::ipc::mailbox_manager::{MailboxManager, MailboxHandle};
-use crate::kernel_services::services;
+use crate::ForNotifyingFutures;
+
+struct NoopIpcNotifier;
+impl ForNotifyingFutures for NoopIpcNotifier {
+    fn register(&self, _future: Box<dyn system::future::Future + Send + Sync>) -> Option<FutureHandle> {
+        None
+    }
+    fn notify(&self, _handle: FutureHandle) {}
+    fn complete_ipc_message(&self, _handle: FutureHandle, _message: IpcMessage) {}
+}
+
+static NOOP_IPC_NOTIFIER: NoopIpcNotifier = NoopIpcNotifier;
 
 struct IpcServerBinding {
     pub service: String,
@@ -33,6 +45,7 @@ pub(crate) struct IpcManager {
     mailbox_manager: MailboxManager,
     connections: GenerationalArena<IpcConnection, 256>,
     registry: BTreeMap<String, IpcBindingHandle>,
+    notifier: &'static dyn ForNotifyingFutures,
 }
 
 impl IpcManager {
@@ -43,6 +56,17 @@ impl IpcManager {
             mailbox_manager: MailboxManager::new(),
             connections: GenerationalArena::new(),
             registry: BTreeMap::new(),
+            notifier: &NOOP_IPC_NOTIFIER,
+        }
+    }
+
+    pub(crate) fn new_with_notifier(notifier: &'static dyn ForNotifyingFutures) -> IpcManager {
+        IpcManager {
+            bindings: GenerationalArena::new(),
+            mailbox_manager: MailboxManager::new(),
+            connections: GenerationalArena::new(),
+            registry: BTreeMap::new(),
+            notifier,
         }
     }
 
@@ -112,8 +136,9 @@ impl IpcManager {
             let server_mailbox_handle = server_binding.mailbox_handle;
             self.mailbox_manager.pop_front_async(server_mailbox_handle)
         } else {
-            services().future_registry.borrow_mut()
-                .register(alloc::boxed::Box::new(IpcMessageFuture::with_error(IpcReceiveError::ConnectionNotFound))).unwrap()
+            self.notifier
+                .register(Box::new(IpcMessageFuture::with_error(IpcReceiveError::ConnectionNotFound)))
+                .unwrap()
         }
     }
 
@@ -121,8 +146,9 @@ impl IpcManager {
         if let Ok(connection) = self.connections.borrow(connection_handle) {
             self.mailbox_manager.pop_front_async(connection.client_mailbox)
         } else {
-            services().future_registry.borrow_mut()
-                .register(alloc::boxed::Box::new(IpcMessageFuture::with_error(IpcReceiveError::ConnectionNotFound))).unwrap()
+            self.notifier
+                .register(Box::new(IpcMessageFuture::with_error(IpcReceiveError::ConnectionNotFound)))
+                .unwrap()
         }
     }
 }

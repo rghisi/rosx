@@ -3,7 +3,12 @@ authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
 name = "snake"
 publish = false
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
+
+[[bin]]
+name = "snake"
+bench = false
+test = false
 
 [dependencies]
 system = { path = "../../system" }

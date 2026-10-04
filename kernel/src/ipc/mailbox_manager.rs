@@ -1,17 +1,29 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
+use alloc::boxed::Box;
 use collections::generational_arena::{GenerationalArena, Handle};
 use system::future::FutureHandle;
 use system::ipc::{IpcMessage, IpcMessageFuture, IpcReceiveError};
 use crate::ipc::mailbox::Mailbox;
-use alloc::boxed::Box;
-use crate::kernel_services::services;
+use crate::ForNotifyingFutures;
+
+struct NoopNotifier;
+impl ForNotifyingFutures for NoopNotifier {
+    fn register(&self, _future: Box<dyn system::future::Future + Send + Sync>) -> Option<system::future::FutureHandle> {
+        None
+    }
+    fn notify(&self, _handle: system::future::FutureHandle) {}
+    fn complete_ipc_message(&self, _handle: system::future::FutureHandle, _message: IpcMessage) {}
+}
+
+static NOOP_NOTIFIER: NoopNotifier = NoopNotifier;
 
 pub(crate) type MailboxHandle = Handle;
 
 pub(crate) struct MailboxManager {
     mailboxes: GenerationalArena<Mailbox, 256>,
     waiters: BTreeMap<MailboxHandle, Vec<FutureHandle>>,
+    notifier: &'static dyn ForNotifyingFutures,
 }
 
 impl MailboxManager {
@@ -19,6 +31,15 @@ impl MailboxManager {
         Self {
             mailboxes: GenerationalArena::new(),
             waiters: BTreeMap::new(),
+            notifier: &NOOP_NOTIFIER,
+        }
+    }
+
+    pub(crate) fn new_with_notifier(notifier: &'static dyn ForNotifyingFutures) -> Self {
+        Self {
+            mailboxes: GenerationalArena::new(),
+            waiters: BTreeMap::new(),
+            notifier,
         }
     }
 
@@ -41,17 +62,21 @@ impl MailboxManager {
     pub(crate) fn pop_front_async(&mut self, handle: MailboxHandle) -> FutureHandle {
         if let Ok(mailbox) = self.mailboxes.borrow_mut(handle) {
             if let Some(msg) = mailbox.pop_front() {
-                services().future_registry.borrow_mut()
-                    .register(Box::new(IpcMessageFuture::with_message(msg))).unwrap()
+                self.notifier
+                    .register(Box::new(IpcMessageFuture::with_message(msg)))
+                    .unwrap()
             } else {
-                let fh = services().future_registry.borrow_mut()
-                    .register(Box::new(IpcMessageFuture::new())).unwrap();
+                let fh = self
+                    .notifier
+                    .register(Box::new(IpcMessageFuture::new()))
+                    .unwrap();
                 self.waiters.entry(handle).or_default().push(fh);
                 fh
             }
         } else {
-            services().future_registry.borrow_mut()
-                .register(Box::new(IpcMessageFuture::with_error(IpcReceiveError::MailboxNotAvailable))).unwrap()
+            self.notifier
+                .register(Box::new(IpcMessageFuture::with_error(IpcReceiveError::MailboxNotAvailable)))
+                .unwrap()
         }
     }
 
@@ -61,12 +86,8 @@ impl MailboxManager {
                 if let Ok(mailbox) = self.mailboxes.borrow_mut(handle) {
                     if let Some(msg) = mailbox.pop_front() {
                         let fh = waiters.remove(0);
-                        if let Ok(future_box) = services().future_registry.borrow_mut().borrow_mut(fh) {
-                            if let Some(ipc_future) = future_box.as_any_mut().downcast_mut::<IpcMessageFuture>() {
-                                ipc_future.complete(msg);
-                            }
-                        }
-                        services().future_registry.borrow_mut().notify(fh);
+                        self.notifier.complete_ipc_message(fh, msg);
+                        self.notifier.notify(fh);
                     } else {
                         break;
                     }
@@ -82,6 +103,10 @@ impl MailboxManager {
 mod tests {
     use super::*;
     use crate::kernel_services::init as init_services;
+    use crate::kernel_services::services;
+    use crate::kernel_services::FutureRegistryNotifierUseCase;
+    use crate::ForNotifyingFutures;
+    use alloc::boxed::Box;
 
     #[test]
     fn test_create_remove() {
@@ -114,7 +139,11 @@ mod tests {
     #[test]
     fn test_pop_front_async() {
         init_services();
-        let mut manager = MailboxManager::new();
+        let notifier: &'static dyn ForNotifyingFutures =
+            Box::leak(Box::new(FutureRegistryNotifierUseCase {
+                future_registry: services().future_registry,
+            })) as &'static dyn ForNotifyingFutures;
+        let mut manager = MailboxManager::new_with_notifier(notifier);
         let handle = manager.create();
         
         // Case 1: Empty mailbox -> Pending
@@ -137,7 +166,11 @@ mod tests {
     #[test]
     fn test_push_back_notifies_waiters() {
         init_services();
-        let mut manager = MailboxManager::new();
+        let notifier: &'static dyn ForNotifyingFutures =
+            Box::leak(Box::new(FutureRegistryNotifierUseCase {
+                future_registry: services().future_registry,
+            })) as &'static dyn ForNotifyingFutures;
+        let mut manager = MailboxManager::new_with_notifier(notifier);
         let handle = manager.create();
         
         // 1. Create a blocked task

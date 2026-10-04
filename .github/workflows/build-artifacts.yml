@@ -25,36 +25,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/
-            apps/hello_elf/target/
-            apps/snake/target/
-            apps/tetris/target/
-            apps/conway/target/
           key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-build-
 
-      - name: Build hello_elf
-        working-directory: apps/hello_elf
-        run: cargo build --release
-
-      - name: Build snake
-        working-directory: apps/snake
-        run: cargo build --release
-
-      - name: Build tetris
-        working-directory: apps/tetris
-        run: cargo build --release
-
-      - name: Build conway
-        working-directory: apps/conway
-        run: cargo build --release
-
-      - name: Build kernel
-        working-directory: arch/x86_64
-        run: cargo build --release
-
-      - name: Create disk image
-        run: cargo run --manifest-path arch/x86_64-runner/Cargo.toml -- target/rosx/release/rosx x86_64 --no-run
+      - name: Build
+        run: cargo xtask build
 
       - name: Upload disk image
         uses: actions/upload-artifact@v4
@@ -82,29 +58,16 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/
-            apps/hello_elf/target/
-            apps/snake/target/
-            apps/tetris/target/
-            apps/conway/target/
           key: ${{ runner.os }}-cargo-build-x86_32-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-build-x86_32-
 
-      - name: Build hello_elf (x86_32)
-        working-directory: apps/hello_elf
-        run: cargo build --release --target ../../arch/x86_32/rosx-i686-user.json
+      - name: Build ELF apps
+        run: cargo build --release -p hello_elf -p random_gen_server -p snake -p tetris -p conway --target arch/x86_32/rosx-i686-user.json -Zbuild-std=core,alloc,compiler_builtins -Zbuild-std-features=compiler-builtins-mem -Zjson-target-spec
 
-      - name: Build snake (x86_32)
-        working-directory: apps/snake
-        run: cargo build --release --target ../../arch/x86_32/rosx-i686-user.json
-
-      - name: Build tetris (x86_32)
-        working-directory: apps/tetris
-        run: cargo build --release --target ../../arch/x86_32/rosx-i686-user.json
-
-      - name: Build conway (x86_32)
-        working-directory: apps/conway
-        run: cargo build --release --target ../../arch/x86_32/rosx-i686-user.json
+      - name: Build kernel
+        working-directory: arch/x86_32
+        run: cargo build --release
 
       - name: Install image tools
         run: sudo apt-get install -y grub-pc-bin grub-common xorriso mtools
