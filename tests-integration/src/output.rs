@@ -29,11 +29,21 @@ impl SharedOutput {
         pred: impl Fn(&str) -> bool,
         timeout: Duration,
     ) -> Result<usize, String> {
+        self.wait_for_since(0, pred, timeout)
+    }
+
+    pub fn wait_for_since(
+        &self,
+        mark: usize,
+        pred: impl Fn(&str) -> bool,
+        timeout: Duration,
+    ) -> Result<usize, String> {
         let deadline = Instant::now() + timeout;
         let (lock, cvar) = &*self.inner;
         let mut buffer = lock.lock().unwrap_or_else(|err| err.into_inner());
+        let start = mark.min(buffer.len());
         loop {
-            let stripped = strip_ansi(&buffer);
+            let stripped = strip_ansi(&buffer[start..]);
             if pred(&stripped) {
                 return Ok(buffer.len());
             }
@@ -121,7 +131,56 @@ fn tail_of(stripped: &str, n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_ansi;
+    use super::{SharedOutput, strip_ansi};
+    use std::time::Duration;
+
+    #[test]
+    fn delta_needle_before_mark_only_is_not_found() {
+        let output = SharedOutput::new();
+        output.push("snake rose> ");
+        let mark = output.len();
+        output.push("nothing interesting");
+        let result = output.wait_for_since(mark, |delta| delta.contains("snake"), Duration::from_millis(100));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn delta_needle_appended_after_mark_is_found() {
+        let output = SharedOutput::new();
+        output.push("snake rose> ");
+        let mark = output.len();
+        output.push("clear\tconway\tsnake\ttetris\t");
+        let result = output.wait_for_since(mark, |delta| delta.contains("tetris"), Duration::from_secs(1));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn mark_equal_to_len_yields_empty_delta() {
+        let output = SharedOutput::new();
+        output.push("rose> ");
+        let mark = output.len();
+        assert!(output.wait_for_since(mark, |delta| delta.is_empty(), Duration::from_millis(50)).is_ok());
+        assert!(output.wait_for_since(mark, |delta| delta.contains("rose>"), Duration::from_millis(50)).is_err());
+    }
+
+    #[test]
+    fn delta_scan_strips_ansi() {
+        let output = SharedOutput::new();
+        output.push("\x1B[32mrose>\x1B[m ");
+        let mark = output.len();
+        output.push("\x1B[32msnake\x1B[m\t");
+        assert!(output.wait_for_since(mark, |delta| delta.contains("snake"), Duration::from_millis(100)).is_ok());
+    }
+
+    #[test]
+    fn delta_mark_inside_escape_sequence_still_matches() {
+        let output = SharedOutput::new();
+        output.push("\x1B[32mrose>\x1B");
+        let mark = output.len();
+        output.push("[m \x1B[32msnake\x1B[m");
+        assert!(output.wait_for_since(mark, |delta| delta.contains("snake"), Duration::from_millis(100)).is_ok());
+        assert!(output.wait_for_since(mark, |delta| delta.contains("rose>"), Duration::from_millis(100)).is_err());
+    }
 
     #[test]
     fn strips_colored_prompt() {

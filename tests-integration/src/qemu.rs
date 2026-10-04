@@ -98,14 +98,34 @@ impl QemuSession {
     }
 
     pub fn expect_output(&self, substr: &str, timeout: Duration) {
-        if let Err(output_tail) = self.output.wait_for(|buffer| buffer.contains(substr), timeout) {
+        self.expect_from_mark(0, substr, timeout);
+    }
+
+    pub fn mark(&self) -> usize {
+        self.output.len()
+    }
+
+    pub fn expect_output_since(&self, mark: usize, needle: &str, timeout: Duration) {
+        self.expect_from_mark(mark, needle, timeout);
+    }
+
+    fn expect_from_mark(&self, mark: usize, needle: &str, timeout: Duration) {
+        if let Err(output_tail) = self
+            .output
+            .wait_for_since(mark, |delta| delta.contains(needle), timeout)
+        {
             let stderr_tail = self
                 .stderr_tail
                 .lock()
                 .unwrap_or_else(|err| err.into_inner())
                 .clone();
+            if mark == 0 {
+                panic!(
+                    "timed out after {timeout:?} waiting for output containing {needle:?}\ncaptured output tail:\n{output_tail}\nqemu stderr tail:\n{stderr_tail}"
+                );
+            }
             panic!(
-                "timed out after {timeout:?} waiting for output containing {substr:?}\ncaptured output tail:\n{output_tail}\nqemu stderr tail:\n{stderr_tail}"
+                "timed out after {timeout:?} waiting for output containing {needle:?} after mark {mark}\ncaptured output tail:\n{output_tail}\nqemu stderr tail:\n{stderr_tail}"
             );
         }
     }
