@@ -25,4 +25,4 @@ Implement the plan step by step, in order.
 
 ## Output
 
-Return: the files changed; for every verification command, the exact command line, its exit code, and a short raw output snippet proving green status (or the exact failures and why the plan is at fault); and any deviations from the plan.
+Return: the files changed; for every verification command, the exact command line, its exit code, and a short raw output snippet proving green status (or the exact failures and why the plan is at fault), marking which commands are most critical to re-verify; and any deviations from the plan. The Reviewer re-runs the key commands independently, so treat this report as an audit trail, not a substitute for verification.
