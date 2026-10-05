@@ -1,7 +1,7 @@
 ---
 description: Writes code and runs local tests.
 mode: subagent
-model: lemonade/Qwen3.6-35B-A3B-UD-Q4_K_XL
+model: lemonade/Qwen3.8-Flash-Next
 permission:
   edit: allow
   bash: allow

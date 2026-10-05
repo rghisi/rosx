@@ -172,8 +172,9 @@ impl Kernel {
             .get_task_stack_pointer(main_thread_handle);
         self.cpu.enable_interrupts();
         self.execution_state.preemption_enabled = false;
+        let state_pointer = &mut self.execution_state as *mut ExecutionState as *mut usize;
         self.cpu
-            .swap_context(null_mut(), scheduler_thread_stack_pointer);
+            .swap_context(state_pointer, null_mut(), scheduler_thread_stack_pointer);
     }
 
     pub fn schedule(&mut self, task: SharedTask) -> Result<FutureHandle, ()> {
@@ -308,7 +309,7 @@ pub fn bootstrap(
 }
 
 extern "C" fn main_thread_run() -> ! {
-    services().scheduler.borrow_mut().run();
+    crate::scheduler::Scheduler::run();
 
     panic!("Kernel main thread returned");
 }

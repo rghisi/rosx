@@ -63,7 +63,7 @@ impl IpcManager {
     pub(crate) fn new_with_notifier(notifier: &'static dyn ForNotifyingFutures) -> IpcManager {
         IpcManager {
             bindings: GenerationalArena::new(),
-            mailbox_manager: MailboxManager::new(),
+            mailbox_manager: MailboxManager::new_with_notifier(notifier),
             connections: GenerationalArena::new(),
             registry: BTreeMap::new(),
             notifier,

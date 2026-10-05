@@ -78,8 +78,16 @@ impl Cpu for X86_32 {
         }
     }
 
-    fn swap_context(&self, stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize) {
-        unsafe { swap_context(stack_pointer_to_store, stack_pointer_to_load) };
+    fn swap_context(
+        &self,
+        state: *mut usize,
+        stack_pointer_to_store: *mut usize,
+        stack_pointer_to_load: usize,
+    ) {
+        unsafe {
+            asm!("/* {0} */", in(reg) state, options(nomem, nostack, preserves_flags));
+            swap_context(stack_pointer_to_store, stack_pointer_to_load)
+        };
     }
 
     fn get_system_time(&self) -> u64 {

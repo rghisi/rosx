@@ -117,8 +117,14 @@ impl Cpu for X86_64 {
     }
 
     #[inline(always)]
-    fn swap_context(&self, stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize) {
+    fn swap_context(
+        &self,
+        state: *mut usize,
+        stack_pointer_to_store: *mut usize,
+        stack_pointer_to_load: usize,
+    ) {
         unsafe {
+            asm!("/* {0} */", in(reg) state, options(nomem, nostack, preserves_flags));
             swap_context(stack_pointer_to_store, stack_pointer_to_load);
         }
     }

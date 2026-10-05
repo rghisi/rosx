@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use crate::messages::HardwareInterrupt;
 use crate::scheduler::algorithm::SchedulingAlgorithm;
 use crate::task::{TaskHandle, TaskState};
+use crate::kernel_services::services;
 use crate::ForCompletingExpiredTimers;
 use crate::ForExpiringTimers;
 use crate::ForHandlingHardwareInterrupts;
@@ -91,11 +92,32 @@ impl Scheduler {
         }
     }
 
-    pub fn run(&mut self) {
+    pub fn run() {
+        let (context_switcher, timer_handler, time_source, timer_expiry, interrupt_handler) = {
+            let scheduler = services().scheduler.borrow_mut();
+            (
+                scheduler.context_switcher,
+                scheduler.timer_handler,
+                scheduler.time_source,
+                scheduler.timer_expiry,
+                scheduler.interrupt_handler,
+            )
+        };
+        let mut interrupts = Vec::new();
         loop {
-            self.process_hardware_interrupts();
-            self.process_timer_notifications();
-            self.run_next_task();
+            interrupts.clear();
+            services().scheduler.borrow_mut().drain_hardware_interrupts(&mut interrupts);
+            for interrupt in interrupts.drain(..) {
+                interrupt_handler.handle(interrupt);
+            }
+            if let Some(handles) = timer_expiry.pop_expired(time_source.now()) {
+                for handle in handles {
+                    timer_handler.complete_timer_future(handle);
+                }
+            }
+            let next_handle = services().scheduler.borrow_mut().start_next_task();
+            let outcome = context_switcher.switch_to_task(next_handle);
+            services().scheduler.borrow_mut().reconcile_returned_task(outcome);
         }
     }
 
@@ -140,30 +162,23 @@ impl Scheduler {
         self.tasks.remove_task(handle);
     }
 
-    fn run_next_task(&mut self) {
+    fn start_next_task(&mut self) -> TaskHandle {
         let next_handle = match self.algorithm.pick_next() {
             Some(handle) => handle,
             None => {
                 let idle = self.idle_task.unwrap();
                 self.tasks.set_state(idle, TaskState::Running);
-                match self.context_switcher.switch_to_task(idle) {
-                    SwitchOutcome::Yielded(returned, _) => {
-                        if Some(returned) == self.idle_task {
-                            self.idle_task = Some(returned);
-                        }
-                    }
-                    SwitchOutcome::Terminated(returned) => {
-                        self.handle_termination(returned);
-                    }
-                    SwitchOutcome::Blocked(_) | SwitchOutcome::Unchanged(_) => {}
-                }
-                return;
+                return idle;
             }
         };
 
         self.algorithm.on_task_start(next_handle);
         self.tasks.set_state(next_handle, TaskState::Running);
-        match self.context_switcher.switch_to_task(next_handle) {
+        next_handle
+    }
+
+    fn reconcile_returned_task(&mut self, outcome: SwitchOutcome) {
+        match outcome {
             SwitchOutcome::Yielded(returned_handle, yield_reason) => {
                 self.tasks.set_state(returned_handle, TaskState::Ready);
                 if Some(returned_handle) != self.idle_task {
@@ -181,18 +196,9 @@ impl Scheduler {
         }
     }
 
-    fn process_hardware_interrupts(&mut self) {
-        while let Some(interrupt) = self.hw_interrupt_queue.pop_front() {
-            self.interrupt_handler.handle(interrupt);
-        }
-    }
-
-    fn process_timer_notifications(&mut self) {
-        let now = self.time_source.now();
-        if let Some(handles) = self.timer_expiry.pop_expired(now) {
-            for handle in handles {
-                self.timer_handler.complete_timer_future(handle);
-            }
+    fn drain_hardware_interrupts(&mut self, out: &mut Vec<HardwareInterrupt>) {
+        while let Some(hardware_interrupt) = self.hw_interrupt_queue.pop_front() {
+            out.push(hardware_interrupt);
         }
     }
 }
@@ -339,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn run_next_task_calls_algorithm_methods_in_order() {
+    fn run_one_round_calls_algorithm_methods_in_order() {
         setup();
         let mut fake = FakeAlgorithm::new();
         let mut engine = Scheduler::new(fake.clone());
@@ -524,7 +530,7 @@ mod tests {
         assert_eq!(services().task_manager.borrow().get_state(handle), KS::Terminated);
     }
 
-    // === run_next_task tests ===
+    // === start_next_task / reconcile_returned_task tests ===
 
     fn create_running_task(name: &'static str) -> TaskHandle {
         let task = Task::new(name, 0x1000, 0);
@@ -539,8 +545,14 @@ mod tests {
         (leaked, calls, outcome)
     }
 
+    fn run_one_round(engine: &mut Scheduler, ctx: &FakeContextSwitcher) {
+        let next = engine.start_next_task();
+        let outcome = ctx.switch_to_task(next);
+        engine.reconcile_returned_task(outcome);
+    }
+
     #[test]
-    fn run_next_task_switches_to_picked_task() {
+    fn run_one_round_switches_to_picked_task() {
         setup();
         let mut fake = FakeAlgorithm::new();
         let (ctx, calls, _ret) = make_ctx();
@@ -549,14 +561,14 @@ mod tests {
         fake.next = Some(task_handle);
         let mut engine = Scheduler::new_with_context_switcher(fake, ctx, &NOOP_TIMER_HANDLER);
 
-        engine.run_next_task();
+        run_one_round(&mut engine, ctx);
 
         assert_eq!(calls.lock().unwrap().len(), 1);
         assert_eq!(calls.lock().unwrap()[0], task_handle);
     }
 
     #[test]
-    fn run_next_task_requeues_task_returned_in_running_state() {
+    fn run_one_round_requeues_task_returned_in_running_state() {
         setup();
         let mut fake = FakeAlgorithm::new();
         let (ctx, _calls, outcome) = make_ctx();
@@ -566,14 +578,14 @@ mod tests {
         let mut engine = Scheduler::new_with_context_switcher(fake.clone(), ctx, &NOOP_TIMER_HANDLER);
         *outcome.lock().unwrap() = Some(SwitchOutcome::Yielded(task_handle, YieldReason::Voluntary));
 
-        engine.run_next_task();
+        run_one_round(&mut engine, ctx);
 
         assert_eq!(fake.take_requeued(), vec![task_handle]);
         assert_eq!(fake.take_yielded(), vec![(task_handle, YieldReason::Voluntary)]);
     }
 
     #[test]
-    fn run_next_task_does_not_requeue_task_returned_in_blocked_state() {
+    fn run_one_round_does_not_requeue_task_returned_in_blocked_state() {
         setup();
         let mut fake = FakeAlgorithm::new();
         let (ctx, _calls, outcome) = make_ctx();
@@ -584,13 +596,13 @@ mod tests {
         let mut engine = Scheduler::new_with_context_switcher(fake.clone(), ctx, &NOOP_TIMER_HANDLER);
         *outcome.lock().unwrap() = Some(SwitchOutcome::Blocked(task_handle));
 
-        engine.run_next_task();
+        run_one_round(&mut engine, ctx);
 
         assert!(fake.take_requeued().is_empty());
     }
 
     #[test]
-    fn run_next_task_terminates_task_returned_in_terminated_state() {
+    fn run_one_round_terminates_task_returned_in_terminated_state() {
         setup();
         let mut fake = FakeAlgorithm::new();
         let (ctx, _calls, outcome) = make_ctx();
@@ -601,13 +613,13 @@ mod tests {
         let mut engine = Scheduler::new_with_context_switcher(fake.clone(), ctx, &NOOP_TIMER_HANDLER);
         *outcome.lock().unwrap() = Some(SwitchOutcome::Terminated(task_handle));
 
-        engine.run_next_task();
+        run_one_round(&mut engine, ctx);
 
         assert_eq!(fake.take_terminated(), vec![task_handle]);
     }
 
     #[test]
-    fn run_next_task_switches_to_idle_when_no_user_tasks() {
+    fn run_one_round_switches_to_idle_when_no_user_tasks() {
         setup();
         let mut fake = FakeAlgorithm::new();
         let (ctx, calls, _ret) = make_ctx();
@@ -616,14 +628,14 @@ mod tests {
         let mut engine = Scheduler::new_with_context_switcher(fake, ctx, &NOOP_TIMER_HANDLER);
         engine.set_idle_task(idle_handle).unwrap();
 
-        engine.run_next_task();
+        run_one_round(&mut engine, ctx);
 
         assert_eq!(calls.lock().unwrap().len(), 1);
         assert_eq!(calls.lock().unwrap()[0], idle_handle);
     }
 
     #[test]
-    fn run_next_task_updates_idle_handle_when_idle_returns_running() {
+    fn run_one_round_updates_idle_handle_when_idle_returns_running() {
         setup();
         let fake = FakeAlgorithm::new();
         let (ctx, _calls, outcome) = make_ctx();
@@ -633,7 +645,7 @@ mod tests {
         engine.set_idle_task(idle_handle).unwrap();
         *outcome.lock().unwrap() = Some(SwitchOutcome::Yielded(idle_handle, YieldReason::Voluntary));
 
-        engine.run_next_task();
+        run_one_round(&mut engine, ctx);
     }
 
     // === edge case: wake_tasks with terminated task ===
@@ -711,7 +723,7 @@ mod tests {
     }
 
     #[test]
-    fn process_timer_notifications_completes_expired_futures() {
+    fn expired_timer_futures_are_completed() {
         setup();
         let fake = FakeAlgorithm::new();
         let (ctx, _calls, _outcome) = make_ctx();
@@ -723,13 +735,17 @@ mod tests {
         let handler = Box::leak(Box::new(RecordingTimerHandler { completed: completed.clone() }));
 
         let mut engine = Scheduler::new_full(fake, ctx, handler, time, expiry, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER);
-        engine.process_timer_notifications();
+        if let Some(handles) = engine.timer_expiry.pop_expired(engine.time_source.now()) {
+            for handle in handles {
+                engine.timer_handler.complete_timer_future(handle);
+            }
+        }
 
         assert_eq!(*completed.lock().unwrap(), vec![fh]);
     }
 
     #[test]
-    fn process_timer_notifications_is_noop_when_nothing_expired() {
+    fn expired_timer_futures_is_noop_when_nothing_expired() {
         setup();
         let fake = FakeAlgorithm::new();
         let (ctx, _calls, _outcome) = make_ctx();
@@ -740,13 +756,17 @@ mod tests {
         let handler = Box::leak(Box::new(RecordingTimerHandler { completed: completed.clone() }));
 
         let mut engine = Scheduler::new_full(fake, ctx, handler, time, expiry, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER);
-        engine.process_timer_notifications();
+        if let Some(handles) = engine.timer_expiry.pop_expired(engine.time_source.now()) {
+            for handle in handles {
+                engine.timer_handler.complete_timer_future(handle);
+            }
+        }
 
         assert!(completed.lock().unwrap().is_empty());
     }
 
     #[test]
-    fn process_hardware_interrupts_delegates_to_handler() {
+    fn hardware_interrupts_are_delegated_to_handler() {
         setup();
         let fake = FakeAlgorithm::new();
         let (ctx, _calls, _outcome) = make_ctx();
@@ -758,7 +778,11 @@ mod tests {
 
         let mut engine = Scheduler::new_full(fake, ctx, &NOOP_TIMER_HANDLER, time, expiry, ints, &crate::kernel::KERNEL_TASK_MANAGER);
         engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1C });
-        engine.process_hardware_interrupts();
+        let mut interrupts = Vec::new();
+        engine.drain_hardware_interrupts(&mut interrupts);
+        for interrupt in interrupts {
+            engine.interrupt_handler.handle(interrupt);
+        }
 
         assert_eq!(*handled.lock().unwrap(), vec![0x1C]);
     }

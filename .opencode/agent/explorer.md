@@ -1,7 +1,7 @@
 ---
 description: Scans the codebase and returns a Context Map.
 mode: subagent
-model: lemonade/Qwen3.6-35B-A3B-UD-Q4_K_XL
+model: lemonade/Qwen3.8-Flash-Next
 permission:
   edit: deny
   read: allow

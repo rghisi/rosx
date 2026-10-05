@@ -1,7 +1,7 @@
 ---
 description: Summarizes completed work and writes git commits.
 mode: subagent
-model: lemonade/Llama-3.2-3B-Instruct-Q4_K_M
+model: lemonade/Qwen3.8-Flash-Next
 permission:
   edit: deny
   bash: deny
