@@ -72,47 +72,80 @@ fn build_image(debug: bool, launch_qemu: bool) {
     run(&mut cmd, "create x86_64 disk image");
 }
 
-fn run_tests(integration: bool) {
+fn run_tests(skip_integration: bool) {
+    build_apps();
     let mut cmd = cargo();
-    cmd.arg("test")
-        .arg("--workspace")
-        .arg("--")
-        .arg("--test-threads=1");
-    run(&mut cmd, "run all unit tests");
-    if integration {
-        eprintln!("warning: integration tests are not implemented yet; skipping");
-    }
+    cmd.arg("test").arg("--workspace");
+    let description = if skip_integration {
+        cmd.arg("--exclude").arg("tests-integration");
+        "run unit tests (integration excluded)"
+    } else {
+        "run all unit tests"
+    };
+    cmd.arg("--").arg("--test-threads=1");
+    run(&mut cmd, description);
 }
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [--debug] | run [x86_64] [--debug] | apps | test [--integration]>"
+        "usage: cargo xtask <build [--debug] | run [x86_64] [--debug] | apps | test [--skip-integration]>"
     );
+}
+
+fn parse_optional_flag(extras: &[String], flag: &str) -> bool {
+    let mut found = false;
+    for arg in extras {
+        if arg == flag && !found {
+            found = true;
+        } else {
+            eprintln!("unknown flag: {arg}");
+            usage();
+            process::exit(2);
+        }
+    }
+    found
 }
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let subcommand = args.first().map(String::as_str).unwrap_or("build");
-    let debug = args.iter().any(|a| a == "--debug");
+    let extras = args.get(1..).unwrap_or(&[]);
     match subcommand {
-        "apps" => build_apps(),
+        "apps" => {
+            if let Some(arg) = extras.first() {
+                eprintln!("unknown flag: {arg}");
+                usage();
+                process::exit(2);
+            }
+            build_apps();
+        }
         "build" => {
+            let debug = parse_optional_flag(extras, "--debug");
             build_apps();
             build_kernel(debug);
             build_image(debug, false);
         }
         "run" => {
-            let arch = args.get(1).map(String::as_str).unwrap_or("x86_64");
-            if arch != "x86_64" {
-                eprintln!("unsupported arch: {arch}");
-                usage();
-                process::exit(2);
-            }
+            let extras = match args.get(1) {
+                Some(arch) if !arch.starts_with('-') => {
+                    if arch != "x86_64" {
+                        eprintln!("unsupported arch: {arch}");
+                        usage();
+                        process::exit(2);
+                    }
+                    &args[2..]
+                }
+                _ => extras,
+            };
+            let debug = parse_optional_flag(extras, "--debug");
             build_apps();
             build_kernel(debug);
             build_image(debug, true);
         }
-        "test" => run_tests(args.iter().any(|a| a == "--integration")),
+        "test" => {
+            let skip_integration = parse_optional_flag(extras, "--skip-integration");
+            run_tests(skip_integration);
+        }
         "help" | "--help" | "-h" => usage(),
         other => {
             eprintln!("unknown subcommand: {other}");

@@ -1,3 +1,0 @@
-[target.'cfg(test)'.dependencies]
-std = { version = "1.0.0", package = "std" }
-
