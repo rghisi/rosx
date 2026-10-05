@@ -23,3 +23,4 @@ Read the Context Map and the task, then output a strict, step-by-step implementa
 
 - Steps must be small and independently verifiable. No step may depend on a later step.
 - Do not write full code; define contracts precisely enough that a coder can implement without re-planning.
+- Quote verbatim from the file, never paraphrase, any exact string, constant, or signature a step depends on.

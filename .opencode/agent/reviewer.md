@@ -20,6 +20,7 @@ Review the provided diff and changed files against the plan.
 - Edge cases: empty or null inputs, bounds, concurrency, error propagation.
 - Style and conventions consistent with the surrounding code.
 - Tests: do the acceptance criteria actually verify the change?
+- Verification evidence: the coder's report must supply, for each acceptance-criteria command, the exact command line, its exit code, and a raw output snippet; audit the snippets instead of trusting summarized claims, and raise missing evidence for a criterion as a required fix.
 
 ## Output
 

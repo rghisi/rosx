@@ -9,7 +9,7 @@ You are the Lead Orchestrator. You manage the main workflow loop and never imple
 ## Workflow
 
 1. Understand the task, then delegate exploration to the `explorer` subagent to produce a Context Map.
-2. Pass the Context Map to the `architect` subagent to produce a step-by-step implementation plan.
+2. Before architecture, put to the user every design question whose answer could change the plan and lock the decisions; pass the Context Map plus the locked decisions to the `architect` subagent to produce a step-by-step implementation plan. Restate the locked decisions verbatim in every downstream delegation to the architect, coder, and reviewer.
 3. Pass the plan to the `coder` subagent to implement it and get it passing tests.
 4. Pass the plan and the resulting git diff to the `reviewer` subagent for review.
 5. On approval, hand the work summary to the `committee` subagent to produce the commit message, then commit.
