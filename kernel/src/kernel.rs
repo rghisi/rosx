@@ -8,8 +8,15 @@ use crate::kprintln;
 use crate::messages::HardwareInterrupt;
 
 use crate::state::{ExecutionContext, ExecutionState};
+use crate::task::TaskState;
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, YieldReason};
+use crate::ForExpiringTimers;
+use crate::ForHandlingHardwareInterrupts;
+use crate::ForManagingTasks;
+use crate::ForReadingSystemTime;
+use crate::ForSwitchingTaskContext;
+use crate::SwitchOutcome;
 use alloc::boxed::Box;
 use core::ptr::null_mut;
 use collections::generational_arena::Error;
@@ -21,6 +28,77 @@ use crate::memory::MemoryBlocks;
 use crate::kernel_cell::KernelCell;
 
 static KERNEL_PTR: KernelCell<*mut Kernel> = KernelCell::new(null_mut());
+
+struct KernelContextSwitcher;
+static KERNEL_CONTEXT_SWITCHER: KernelContextSwitcher = KernelContextSwitcher;
+
+impl ForSwitchingTaskContext for KernelContextSwitcher {
+    fn switch_to_task(&self, handle: TaskHandle) -> SwitchOutcome {
+        let returned = kernel().execution_state.switch_to_task(handle);
+        match services().task_manager.borrow().get_state(returned) {
+            TaskState::Running => {
+                let reason = services().task_manager.borrow().get_yield_reason(returned).unwrap_or(YieldReason::Voluntary);
+                SwitchOutcome::Yielded(returned, reason)
+            }
+            TaskState::Blocked => SwitchOutcome::Blocked(returned),
+            TaskState::Terminated => SwitchOutcome::Terminated(returned),
+            _ => SwitchOutcome::Unchanged(returned),
+        }
+    }
+}
+
+pub(crate) struct KernelTimeSource;
+pub(crate) static KERNEL_TIME_SOURCE: KernelTimeSource = KernelTimeSource;
+
+impl ForReadingSystemTime for KernelTimeSource {
+    fn now(&self) -> u64 {
+        kernel().get_system_time()
+    }
+}
+
+pub(crate) struct KernelTimerExpiry;
+pub(crate) static KERNEL_TIMER_EXPIRY: KernelTimerExpiry = KernelTimerExpiry;
+
+impl ForExpiringTimers for KernelTimerExpiry {
+    fn pop_expired(&self, now: u64) -> Option<alloc::vec::Vec<system::future::FutureHandle>> {
+        services().timer_manager.borrow_mut().pop_expired(now)
+    }
+}
+
+pub(crate) struct KernelInterruptHandler;
+pub(crate) static KERNEL_INTERRUPT_HANDLER: KernelInterruptHandler = KernelInterruptHandler;
+
+impl ForHandlingHardwareInterrupts for KernelInterruptHandler {
+    fn handle(&self, interrupt: HardwareInterrupt) {
+        match interrupt {
+            HardwareInterrupt::Keyboard { scancode } => {
+                if scancode & 0x80 == 0 {
+                    if let Ok(key) = crate::keyboard::Key::from_scancode_set1(scancode) {
+                        let event = crate::keyboard::KeyboardEvent::from_key(key);
+                        if let Some(c) = event.char {
+                            crate::keyboard::push_key(c);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) struct KernelTaskManager;
+pub(crate) static KERNEL_TASK_MANAGER: KernelTaskManager = KernelTaskManager;
+
+impl ForManagingTasks for KernelTaskManager {
+    fn get_state(&self, handle: TaskHandle) -> TaskState {
+        services().task_manager.borrow().get_state(handle)
+    }
+    fn set_state(&self, handle: TaskHandle, state: TaskState) {
+        services().task_manager.borrow_mut().set_state(handle, state)
+    }
+    fn remove_task(&self, handle: TaskHandle) {
+        services().task_manager.borrow_mut().remove_task(handle)
+    }
+}
 
 pub fn kernel() -> &'static mut Kernel {
     unsafe { &mut **KERNEL_PTR.borrow() }
@@ -37,21 +115,21 @@ impl Kernel {
         let cpu = kconfig.cpu;
         let elf_arch = kconfig.elf_arch;
         crate::kernel_services::init();
-        let scheduler = (kconfig.scheduler_factory)();
-        services().scheduler.replace(*scheduler);
         let scheduler_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
         let scheduler_task_handler = services()
             .task_manager
             .borrow_mut()
             .add_task(scheduler_task)
             .unwrap();
-        cpu.initialize_task(
-            services()
-                .task_manager
-                .borrow_mut()
-                .borrow_task_mut(scheduler_task_handler)
-                .unwrap(),
-        );
+        services()
+            .task_manager
+            .borrow_mut()
+            .borrow_task_mut(scheduler_task_handler)
+            .unwrap()
+            .prepare_entry(cpu);
+
+        let scheduler = (kconfig.scheduler_factory)(&KERNEL_CONTEXT_SWITCHER, services().timer_handler);
+        services().scheduler.replace(*scheduler);
 
         Kernel {
             cpu,
@@ -77,13 +155,12 @@ impl Kernel {
             .borrow_mut()
             .add_task(idle_task)
             .unwrap();
-        self.cpu.initialize_task(
-            services()
-                .task_manager
-                .borrow_mut()
-                .borrow_task_mut(task_handle)
-                .unwrap(),
-        );
+        services()
+            .task_manager
+            .borrow_mut()
+            .borrow_task_mut(task_handle)
+            .unwrap()
+            .prepare_entry(self.cpu);
         let _ = services().scheduler.borrow_mut().set_idle_task(task_handle);
     }
 
@@ -130,7 +207,7 @@ impl Kernel {
     }
     
     pub fn sleep(&mut self, millis: u64) {
-        let future = Box::new(TimeFuture::new(millis));
+        let future = Box::new(TimeFuture::new());
         let handle = services().future_registry
             .borrow_mut()
             .register(future)
@@ -208,7 +285,7 @@ impl Kernel {
             let result = services().task_manager.borrow_mut().borrow_task_mut(task_handle);
             match result {
                 Ok(task) => {
-                    self.cpu.initialize_task(task);
+                    task.prepare_entry(self.cpu);
                 }
                 Err(_) => {
                     panic!("Not able to schedule task");

@@ -8,14 +8,24 @@ members = [
     "arch/x86_32",
     "apps/shell",
     "apps/dummy",
-    "tests-integration",
-]
-exclude = [
     "apps/hello_elf",
     "apps/random_gen_server",
     "apps/snake",
     "apps/tetris",
     "apps/conway",
+    "apps/test_suite",
+    "xtask",
+    "tests-integration",
+]
+default-members = [
+    "collections",
+    "system",
+    "kernel",
+    "usrlib",
+    "apps/shell",
+    "apps/dummy",
+    "apps/test_suite",
+    "xtask",
 ]
 resolver = "3"
 

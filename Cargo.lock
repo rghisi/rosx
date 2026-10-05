@@ -106,6 +106,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413d67b29ef1021b4d60f4aa1e925ca031751e213832b4b1d588fae623c05c60"
 
 [[package]]
+name = "conway"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
 name = "dummy"
 version = "0.1.0"
 dependencies = [
@@ -155,6 +163,14 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi",
+]
+
+[[package]]
+name = "hello_elf"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
 ]
 
 [[package]]
@@ -280,6 +296,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
+name = "random_gen_server"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
 name = "rosx"
 version = "0.1.0"
 dependencies = [
@@ -397,6 +421,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "snake"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
 name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -473,6 +505,14 @@ version = "0.1.0"
 dependencies = [
  "bootloader",
  "tempfile",
+]
+
+[[package]]
+name = "tetris"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
 ]
 
 [[package]]
@@ -557,6 +597,10 @@ dependencies = [
  "rustversion",
  "volatile 0.4.6",
 ]
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
 
 [[package]]
 name = "zmij"

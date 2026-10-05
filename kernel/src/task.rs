@@ -17,7 +17,7 @@ pub enum YieldReason {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) enum TaskState {
+pub enum TaskState {
     Created,
     Ready,
     Running,
@@ -136,6 +136,17 @@ impl Task {
     }
     pub fn entry_param(&self) -> usize {
         self.entry_param
+    }
+
+    pub fn prepare_entry(&mut self, cpu: &dyn Cpu) {
+        let new_stack_pointer = cpu.initialize_stack(
+            self.stack_pointer(),
+            self.entry_point(),
+            self.entry_param(),
+            0,
+        );
+        self.set_stack_pointer(new_stack_pointer);
+        self.set_ready();
     }
 }
 

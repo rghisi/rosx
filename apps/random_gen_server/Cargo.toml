@@ -3,7 +3,12 @@ authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
 name = "random_gen_server"
 publish = false
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
+
+[[bin]]
+name = "random_gen_server"
+bench = false
+test = false
 
 [dependencies]
 system = { path = "../../system" }
