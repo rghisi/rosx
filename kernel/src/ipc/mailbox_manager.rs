@@ -166,6 +166,7 @@ mod tests {
     #[test]
     fn test_push_back_notifies_waiters() {
         init_services();
+        crate::scheduler::wire_scheduler_for_tests();
         let notifier: &'static dyn ForNotifyingFutures =
             Box::leak(Box::new(FutureRegistryNotifierUseCase {
                 future_registry: services().future_registry,

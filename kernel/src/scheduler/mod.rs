@@ -5,6 +5,7 @@ mod scheduler;
 pub mod timer;
 
 use alloc::boxed::Box;
+use crate::kernel_services::services;
 use crate::ForCompletingExpiredTimers;
 use crate::ForSwitchingTaskContext;
 
@@ -35,6 +36,31 @@ pub fn mfq_scheduler(ctx: &'static dyn ForSwitchingTaskContext, timer: &'static 
 
 pub fn fifo_scheduler(ctx: &'static dyn ForSwitchingTaskContext, timer: &'static dyn ForCompletingExpiredTimers) -> Box<Scheduler> {
     Box::new(Scheduler::new(fifo_strategy::FifoStrategy::new(), kernel_ports(ctx, timer)))
+}
+
+impl Scheduler {
+    pub fn run() {
+        loop {
+            services().scheduler.borrow_mut().step();
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn wire_scheduler_for_tests() {
+    use std::sync::Once;
+
+    static WIRED: Once = Once::new();
+
+    struct KernelPortsTestContextSwitcher;
+    impl ForSwitchingTaskContext for KernelPortsTestContextSwitcher {
+        fn switch_to_task(&self, handle: crate::task::TaskHandle) -> crate::SwitchOutcome { crate::SwitchOutcome::Unchanged(handle) }
+    }
+    static CTX: KernelPortsTestContextSwitcher = KernelPortsTestContextSwitcher;
+
+    WIRED.call_once(|| {
+        services().scheduler.replace(*fifo_scheduler(&CTX, services().timer_handler));
+    });
 }
 
 #[cfg(test)]

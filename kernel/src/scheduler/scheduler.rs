@@ -4,7 +4,6 @@ use alloc::vec::Vec;
 use crate::messages::HardwareInterrupt;
 use crate::scheduler::algorithm::SchedulingAlgorithm;
 use crate::task::{TaskHandle, TaskState};
-use crate::kernel_services::services;
 use crate::ForCompletingExpiredTimers;
 use crate::ForExpiringTimers;
 use crate::ForHandlingHardwareInterrupts;
@@ -45,6 +44,14 @@ impl ForSwitchingTaskContext for NoopContextSwitcher {
 
 static NOOP_CONTEXT_SWITCHER: NoopContextSwitcher = NoopContextSwitcher;
 
+struct NoopTasks;
+impl ForManagingTasks for NoopTasks {
+    fn get_state(&self, _handle: TaskHandle) -> TaskState { TaskState::Created }
+    fn set_state(&self, _handle: TaskHandle, _state: TaskState) {}
+    fn remove_task(&self, _handle: TaskHandle) {}
+}
+static NOOP_TASKS: NoopTasks = NoopTasks;
+
 #[derive(Clone, Copy)]
 pub struct SchedulerPorts {
     context_switcher: &'static dyn ForSwitchingTaskContext,
@@ -81,7 +88,7 @@ impl SchedulerPorts {
             time_source: &NOOP_TIME_SOURCE,
             timer_expiry: &NOOP_TIMER_EXPIRY,
             interrupt_handler: &NOOP_INTERRUPT_HANDLER,
-            tasks: &crate::kernel::KERNEL_TASK_MANAGER,
+            tasks: &NOOP_TASKS,
         }
     }
 }
@@ -105,13 +112,7 @@ impl Scheduler {
         }
     }
 
-    pub fn run() {
-        loop {
-            services().scheduler.borrow_mut().step();
-        }
-    }
-
-    fn step(&mut self) {
+    pub(super) fn step(&mut self) {
         let mut interrupts = core::mem::take(&mut self.interrupt_drain_buf);
         self.drain_hardware_interrupts(&mut interrupts);
         for interrupt in interrupts.drain(..) {
@@ -215,17 +216,70 @@ impl Scheduler {
 mod tests {
     use super::*;
     use crate::task::YieldReason;
-    use collections::generational_arena::Handle;
-    use crate::kernel_services::{init, services};
-    use crate::task::{Task, TaskState as KS};
+    use collections::generational_arena::{Handle, HalfSize};
+    use crate::task::TaskState as KS;
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
-    use std::sync::Once;
     use system::future::FutureHandle;
 
-    static INIT: Once = Once::new();
+    #[derive(Clone)]
+    struct FakeTaskManager {
+        states: Arc<Mutex<BTreeMap<TaskHandle, TaskState>>>,
+        set_state_calls: Arc<Mutex<Vec<(TaskHandle, TaskState)>>>,
+        remove_calls: Arc<Mutex<Vec<TaskHandle>>>,
+        counter: Arc<AtomicUsize>,
+    }
 
-    fn setup() {
-        INIT.call_once(|| init());
+    impl FakeTaskManager {
+        fn new() -> Self {
+            FakeTaskManager {
+                states: Arc::new(Mutex::new(BTreeMap::new())),
+                set_state_calls: Arc::new(Mutex::new(Vec::new())),
+                remove_calls: Arc::new(Mutex::new(Vec::new())),
+                counter: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn leak(&self) -> &'static FakeTaskManager {
+            Box::leak(Box::new(self.clone()))
+        }
+
+        fn next_handle(&self) -> TaskHandle {
+            Handle::new(self.counter.fetch_add(1, Ordering::SeqCst) as HalfSize, 0)
+        }
+
+        fn seed(&self, handle: TaskHandle, state: TaskState) {
+            self.states.lock().unwrap().insert(handle, state);
+        }
+
+        fn state_of(&self, handle: TaskHandle) -> TaskState {
+            self.states.lock().unwrap().get(&handle).copied().unwrap_or(TaskState::Created)
+        }
+
+        fn take_set_state_calls(&self) -> Vec<(TaskHandle, TaskState)> {
+            self.set_state_calls.lock().unwrap().drain(..).collect()
+        }
+
+        fn take_remove_calls(&self) -> Vec<TaskHandle> {
+            self.remove_calls.lock().unwrap().drain(..).collect()
+        }
+    }
+
+    impl ForManagingTasks for FakeTaskManager {
+        fn get_state(&self, handle: TaskHandle) -> TaskState {
+            self.state_of(handle)
+        }
+
+        fn set_state(&self, handle: TaskHandle, state: TaskState) {
+            self.set_state_calls.lock().unwrap().push((handle, state));
+            self.states.lock().unwrap().insert(handle, state);
+        }
+
+        fn remove_task(&self, handle: TaskHandle) {
+            self.remove_calls.lock().unwrap().push(handle);
+            self.states.lock().unwrap().insert(handle, TaskState::Terminated);
+        }
     }
 
     struct FakeContextSwitcher {
@@ -333,10 +387,9 @@ mod tests {
         }
     }
 
-    fn create_ready_task(name: &'static str) -> TaskHandle {
-        let task = Task::new(name, 0x1000, 0);
-        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
-        services().task_manager.borrow_mut().set_state(handle, KS::Ready);
+    fn create_ready_task(fm: &FakeTaskManager) -> TaskHandle {
+        let handle = fm.next_handle();
+        fm.seed(handle, KS::Ready);
         handle
     }
 
@@ -344,27 +397,26 @@ mod tests {
 
     #[test]
     fn push_task_calls_push_ready_for_ready_tasks() {
-        setup();
+        let fm = FakeTaskManager::new();
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
+        let mut engine = Scheduler::new(fake.clone(), ports_with_tasks(fm.leak()));
 
-        let h = create_ready_task("T");
+        let h = create_ready_task(&fm);
         engine.push_task(h);
 
         assert_eq!(fake.take_pushed_ready(), vec![h]);
+        assert_eq!(fm.state_of(h), KS::Ready);
     }
 
     #[test]
     fn run_one_round_calls_algorithm_methods_in_order() {
-        setup();
+        let fm = FakeTaskManager::new();
         let mut fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
+        let mut engine = Scheduler::new(fake.clone(), ports_with_tasks(fm.leak()));
 
-        let h = create_ready_task("T");
+        let h = create_ready_task(&fm);
         fake.next = Some(h);
 
-        // We can't easily run the full engine loop in a test, but we can verify
-        // that push_task triggers push_ready on the algorithm
         engine.push_task(h);
 
         assert_eq!(fake.take_pushed_ready(), vec![h]);
@@ -372,24 +424,22 @@ mod tests {
 
     #[test]
     fn push_task_does_not_call_push_ready_for_non_ready_tasks() {
-        setup();
+        let fm = FakeTaskManager::new();
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
+        let mut engine = Scheduler::new(fake.clone(), ports_with_tasks(fm.leak()));
 
-        let task = Task::new("T", 0x1000, 0);
-        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
-        // Task is Created by default, not Ready
+        let handle = fm.next_handle();
 
         engine.push_task(handle);
 
         assert!(fake.take_pushed_ready().is_empty());
+        assert_eq!(fm.state_of(handle), KS::Created);
     }
 
     // === push_hardware_interrupt tests ===
 
     #[test]
     fn push_hardware_interrupt_adds_to_queue() {
-        setup();
         let fake = FakeAlgorithm::new();
         let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
 
@@ -402,11 +452,11 @@ mod tests {
 
     #[test]
     fn set_idle_task_succeeds_on_first_call() {
-        setup();
+        let fm = FakeTaskManager::new();
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
+        let mut engine = Scheduler::new(fake.clone(), ports_with_tasks(fm.leak()));
 
-        let idle = create_ready_task("Idle");
+        let idle = create_ready_task(&fm);
         let result = engine.set_idle_task(idle);
 
         assert!(result.is_ok());
@@ -414,12 +464,12 @@ mod tests {
 
     #[test]
     fn set_idle_task_fails_on_second_call() {
-        setup();
+        let fm = FakeTaskManager::new();
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
+        let mut engine = Scheduler::new(fake.clone(), ports_with_tasks(fm.leak()));
 
-        let idle1 = create_ready_task("Idle1");
-        let idle2 = create_ready_task("Idle2");
+        let idle1 = create_ready_task(&fm);
+        let idle2 = create_ready_task(&fm);
 
         assert!(engine.set_idle_task(idle1).is_ok());
         assert!(engine.set_idle_task(idle2).is_err());
@@ -429,7 +479,6 @@ mod tests {
 
     #[test]
     fn should_preempt_forwards_to_algorithm() {
-        setup();
         let fake = FakeAlgorithm::new();
         let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
 
@@ -512,40 +561,39 @@ mod tests {
 
     #[test]
     fn handle_termination_calls_on_task_terminate_on_algorithm() {
-        setup();
+        let fm = FakeTaskManager::new();
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
+        let mut engine = Scheduler::new(fake.clone(), ports_with_tasks(fm.leak()));
 
-        let task = Task::new("T", 0x1000, 0);
-        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+        let handle = fm.next_handle();
 
         engine.handle_termination(handle);
 
         assert_eq!(fake.take_terminated(), vec![handle]);
+        assert_eq!(fm.take_remove_calls(), vec![handle]);
     }
 
     #[test]
     fn handle_termination_removes_task_from_manager() {
-        setup();
+        let fm = FakeTaskManager::new();
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
+        let mut engine = Scheduler::new(fake.clone(), ports_with_tasks(fm.leak()));
 
-        let task = Task::new("T", 0x1000, 0);
-        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+        let handle = fm.next_handle();
+        fm.seed(handle, KS::Running);
 
-        assert_ne!(services().task_manager.borrow().get_state(handle), KS::Terminated);
+        assert_ne!(fm.state_of(handle), KS::Terminated);
 
         engine.handle_termination(handle);
 
-        assert_eq!(services().task_manager.borrow().get_state(handle), KS::Terminated);
+        assert_eq!(fm.state_of(handle), KS::Terminated);
     }
 
     // === start_next_task / reconcile_returned_task tests ===
 
-    fn create_running_task(name: &'static str) -> TaskHandle {
-        let task = Task::new(name, 0x1000, 0);
-        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
-        services().task_manager.borrow_mut().set_state(handle, KS::Running);
+    fn create_running_task(fm: &FakeTaskManager) -> TaskHandle {
+        let handle = fm.next_handle();
+        fm.seed(handle, KS::Running);
         handle
     }
 
@@ -555,14 +603,25 @@ mod tests {
         (leaked, calls, outcome)
     }
 
-    fn ports_with_ctx(context_switcher: &'static dyn ForSwitchingTaskContext) -> SchedulerPorts {
+    fn ports_with_tasks(tasks: &'static dyn ForManagingTasks) -> SchedulerPorts {
+        SchedulerPorts {
+            context_switcher: &NOOP_CONTEXT_SWITCHER,
+            timer_handler: &NOOP_TIMER_HANDLER,
+            time_source: &NOOP_TIME_SOURCE,
+            timer_expiry: &NOOP_TIMER_EXPIRY,
+            interrupt_handler: &NOOP_INTERRUPT_HANDLER,
+            tasks,
+        }
+    }
+
+    fn ports_ctx_and_tasks(context_switcher: &'static dyn ForSwitchingTaskContext, tasks: &'static dyn ForManagingTasks) -> SchedulerPorts {
         SchedulerPorts {
             context_switcher,
             timer_handler: &NOOP_TIMER_HANDLER,
             time_source: &NOOP_TIME_SOURCE,
             timer_expiry: &NOOP_TIMER_EXPIRY,
             interrupt_handler: &NOOP_INTERRUPT_HANDLER,
-            tasks: &crate::kernel::KERNEL_TASK_MANAGER,
+            tasks,
         }
     }
 
@@ -574,13 +633,13 @@ mod tests {
 
     #[test]
     fn run_one_round_switches_to_picked_task() {
-        setup();
+        let fm = FakeTaskManager::new();
         let mut fake = FakeAlgorithm::new();
         let (ctx, calls, _ret) = make_ctx();
 
-        let task_handle = create_running_task("T");
+        let task_handle = create_running_task(&fm);
         fake.next = Some(task_handle);
-        let mut engine = Scheduler::new(fake, ports_with_ctx(ctx));
+        let mut engine = Scheduler::new(fake, ports_ctx_and_tasks(ctx, fm.leak()));
 
         run_one_round(&mut engine, ctx);
 
@@ -590,13 +649,13 @@ mod tests {
 
     #[test]
     fn run_one_round_requeues_task_returned_in_running_state() {
-        setup();
+        let fm = FakeTaskManager::new();
         let mut fake = FakeAlgorithm::new();
         let (ctx, _calls, outcome) = make_ctx();
 
-        let task_handle = create_running_task("T");
+        let task_handle = create_running_task(&fm);
         fake.next = Some(task_handle);
-        let mut engine = Scheduler::new(fake.clone(), ports_with_ctx(ctx));
+        let mut engine = Scheduler::new(fake.clone(), ports_ctx_and_tasks(ctx, fm.leak()));
         *outcome.lock().unwrap() = Some(SwitchOutcome::Yielded(task_handle, YieldReason::Voluntary));
 
         run_one_round(&mut engine, ctx);
@@ -607,14 +666,14 @@ mod tests {
 
     #[test]
     fn run_one_round_does_not_requeue_task_returned_in_blocked_state() {
-        setup();
+        let fm = FakeTaskManager::new();
         let mut fake = FakeAlgorithm::new();
         let (ctx, _calls, outcome) = make_ctx();
 
-        let task_handle = create_running_task("T");
-        services().task_manager.borrow_mut().set_state(task_handle, KS::Blocked);
+        let task_handle = create_running_task(&fm);
+        fm.seed(task_handle, KS::Blocked);
         fake.next = Some(task_handle);
-        let mut engine = Scheduler::new(fake.clone(), ports_with_ctx(ctx));
+        let mut engine = Scheduler::new(fake.clone(), ports_ctx_and_tasks(ctx, fm.leak()));
         *outcome.lock().unwrap() = Some(SwitchOutcome::Blocked(task_handle));
 
         run_one_round(&mut engine, ctx);
@@ -624,14 +683,14 @@ mod tests {
 
     #[test]
     fn run_one_round_terminates_task_returned_in_terminated_state() {
-        setup();
+        let fm = FakeTaskManager::new();
         let mut fake = FakeAlgorithm::new();
         let (ctx, _calls, outcome) = make_ctx();
 
-        let task_handle = create_running_task("T");
-        services().task_manager.borrow_mut().set_state(task_handle, KS::Terminated);
+        let task_handle = create_running_task(&fm);
+        fm.seed(task_handle, KS::Terminated);
         fake.next = Some(task_handle);
-        let mut engine = Scheduler::new(fake.clone(), ports_with_ctx(ctx));
+        let mut engine = Scheduler::new(fake.clone(), ports_ctx_and_tasks(ctx, fm.leak()));
         *outcome.lock().unwrap() = Some(SwitchOutcome::Terminated(task_handle));
 
         run_one_round(&mut engine, ctx);
@@ -641,12 +700,12 @@ mod tests {
 
     #[test]
     fn run_one_round_switches_to_idle_when_no_user_tasks() {
-        setup();
-        let mut fake = FakeAlgorithm::new();
+        let fm = FakeTaskManager::new();
+        let fake = FakeAlgorithm::new();
         let (ctx, calls, _ret) = make_ctx();
 
-        let idle_handle = create_running_task("Idle");
-        let mut engine = Scheduler::new(fake, ports_with_ctx(ctx));
+        let idle_handle = create_running_task(&fm);
+        let mut engine = Scheduler::new(fake, ports_ctx_and_tasks(ctx, fm.leak()));
         engine.set_idle_task(idle_handle).unwrap();
 
         run_one_round(&mut engine, ctx);
@@ -657,12 +716,12 @@ mod tests {
 
     #[test]
     fn run_one_round_updates_idle_handle_when_idle_returns_running() {
-        setup();
+        let fm = FakeTaskManager::new();
         let fake = FakeAlgorithm::new();
         let (ctx, _calls, outcome) = make_ctx();
 
-        let idle_handle = create_running_task("Idle");
-        let mut engine = Scheduler::new(fake.clone(), ports_with_ctx(ctx));
+        let idle_handle = create_running_task(&fm);
+        let mut engine = Scheduler::new(fake.clone(), ports_ctx_and_tasks(ctx, fm.leak()));
         engine.set_idle_task(idle_handle).unwrap();
         *outcome.lock().unwrap() = Some(SwitchOutcome::Yielded(idle_handle, YieldReason::Voluntary));
 
@@ -673,36 +732,37 @@ mod tests {
 
     #[test]
     fn wake_tasks_should_not_resurrect_terminated_task() {
-        setup();
-        let mut fake = FakeAlgorithm::new();
+        let fm = FakeTaskManager::new();
+        let fake = FakeAlgorithm::new();
         let (ctx, _calls, _ret) = make_ctx();
-        let mut engine = Scheduler::new(fake.clone(), ports_with_ctx(ctx));
+        let mut engine = Scheduler::new(fake.clone(), ports_ctx_and_tasks(ctx, fm.leak()));
 
-        let task = Task::new("T", 0x1000, 0);
-        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
-        services().task_manager.borrow_mut().set_state(handle, KS::Terminated);
+        let handle = fm.next_handle();
+        fm.seed(handle, KS::Terminated);
 
         engine.wake_tasks(vec![handle]);
 
-        assert_eq!(services().task_manager.borrow().get_state(handle), KS::Terminated);
+        assert_eq!(fm.state_of(handle), KS::Terminated);
+        assert!(fake.take_pushed_ready().is_empty());
     }
 
     // === edge case: idle task termination leaves stale handle ===
 
     #[test]
     fn handle_termination_of_idle_task_should_clear_idle_handle() {
-        setup();
-        let mut fake = FakeAlgorithm::new();
+        let fm = FakeTaskManager::new();
+        let fake = FakeAlgorithm::new();
         let (ctx, _calls, _ret) = make_ctx();
-        let mut engine = Scheduler::new(fake, ports_with_ctx(ctx));
+        let mut engine = Scheduler::new(fake, ports_ctx_and_tasks(ctx, fm.leak()));
 
-        let idle_handle = create_running_task("Idle");
+        let idle_handle = create_running_task(&fm);
         engine.set_idle_task(idle_handle).unwrap();
 
         engine.handle_termination(idle_handle);
 
-        let result = engine.set_idle_task(create_running_task("NewIdle"));
+        let result = engine.set_idle_task(create_running_task(&fm));
         assert!(result.is_ok());
+        assert_eq!(fm.take_remove_calls(), vec![idle_handle]);
     }
 
     struct FakeTimeSource {
@@ -805,7 +865,7 @@ mod tests {
 
     #[test]
     fn step_handles_interrupts_before_timer_expiry() {
-        setup();
+        let fm = FakeTaskManager::new();
         let log = new_call_log();
         let handled = Arc::new(Mutex::new(Vec::new()));
         let seen_now = Arc::new(Mutex::new(Vec::new()));
@@ -820,7 +880,7 @@ mod tests {
         let ctx = Box::leak(Box::new(StepContextSwitcher { calls: calls.clone(), outcome: Arc::new(Mutex::new(None)), log: log.clone() }));
 
         let mut fake = FakeAlgorithm::new();
-        let h = create_ready_task("T");
+        let h = create_ready_task(&fm);
         fake.next = Some(h);
 
         let mut engine = Scheduler::new(
@@ -831,7 +891,7 @@ mod tests {
                 time_source: time,
                 timer_expiry: expiry,
                 interrupt_handler: irq,
-                tasks: &crate::kernel::KERNEL_TASK_MANAGER,
+                tasks: fm.leak(),
             },
         );
         engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1C });
@@ -846,7 +906,7 @@ mod tests {
 
     #[test]
     fn step_completes_expired_timer_futures() {
-        setup();
+        let fm = FakeTaskManager::new();
         let fh1 = Handle::new(1, 0);
         let fh2 = Handle::new(2, 0);
 
@@ -861,7 +921,7 @@ mod tests {
         let ctx = Box::leak(Box::new(StepContextSwitcher { calls: calls.clone(), outcome: Arc::new(Mutex::new(None)), log: log.clone() }));
 
         let mut fake = FakeAlgorithm::new();
-        let h = create_ready_task("T");
+        let h = create_ready_task(&fm);
         fake.next = Some(h);
 
         let mut engine = Scheduler::new(
@@ -872,7 +932,7 @@ mod tests {
                 time_source: time,
                 timer_expiry: expiry,
                 interrupt_handler: &NOOP_INTERRUPT_HANDLER,
-                tasks: &crate::kernel::KERNEL_TASK_MANAGER,
+                tasks: fm.leak(),
             },
         );
 
@@ -884,14 +944,16 @@ mod tests {
 
     #[test]
     fn expired_timer_futures_is_noop_when_nothing_expired() {
-        setup();
-        let fake = FakeAlgorithm::new();
-        let (ctx, _calls, _outcome) = make_ctx();
-
+        let fm = FakeTaskManager::new();
         let time = Box::leak(Box::new(FakeTimeSource { now: 0 }));
         let expiry = Box::leak(Box::new(FakeExpiry { handles: None }));
         let completed = Arc::new(Mutex::new(Vec::new()));
         let handler = Box::leak(Box::new(RecordingTimerHandler { completed: completed.clone() }));
+        let ctx = Box::leak(Box::new(StepContextSwitcher { calls: Arc::new(Mutex::new(Vec::new())), outcome: Arc::new(Mutex::new(None)), log: new_call_log() }));
+
+        let mut fake = FakeAlgorithm::new();
+        let h = create_ready_task(&fm);
+        fake.next = Some(h);
 
         let mut engine = Scheduler::new(
             fake,
@@ -901,21 +963,18 @@ mod tests {
                 time_source: time,
                 timer_expiry: expiry,
                 interrupt_handler: &NOOP_INTERRUPT_HANDLER,
-                tasks: &crate::kernel::KERNEL_TASK_MANAGER,
+                tasks: fm.leak(),
             },
         );
-        if let Some(handles) = engine.ports.timer_expiry.pop_expired(engine.ports.time_source.now()) {
-            for handle in handles {
-                engine.ports.timer_handler.complete_timer_future(handle);
-            }
-        }
+
+        engine.step();
 
         assert!(completed.lock().unwrap().is_empty());
     }
 
     #[test]
     fn step_routes_hardware_interrupts() {
-        setup();
+        let fm = FakeTaskManager::new();
         let handled = Arc::new(Mutex::new(Vec::new()));
         let ints = Box::leak(Box::new(RecordingInterruptHandler { handled: handled.clone() }));
 
@@ -923,7 +982,7 @@ mod tests {
         let ctx = Box::leak(Box::new(StepContextSwitcher { calls: calls.clone(), outcome: Arc::new(Mutex::new(None)), log: new_call_log() }));
 
         let mut fake = FakeAlgorithm::new();
-        let h = create_ready_task("T");
+        let h = create_ready_task(&fm);
         fake.picks.lock().unwrap().push_back(h);
         fake.picks.lock().unwrap().push_back(h);
 
@@ -935,7 +994,7 @@ mod tests {
                 time_source: &NOOP_TIME_SOURCE,
                 timer_expiry: &NOOP_TIMER_EXPIRY,
                 interrupt_handler: ints,
-                tasks: &crate::kernel::KERNEL_TASK_MANAGER,
+                tasks: fm.leak(),
             },
         );
         engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1C });
@@ -950,17 +1009,17 @@ mod tests {
 
     #[test]
     fn step_switches_to_picked_task_and_reconciles_yield() {
-        setup();
+        let fm = FakeTaskManager::new();
         let calls = Arc::new(Mutex::new(Vec::new()));
         let outcome = Arc::new(Mutex::new(None));
         let ctx = Box::leak(Box::new(StepContextSwitcher { calls: calls.clone(), outcome: outcome.clone(), log: new_call_log() }));
 
         let mut fake = FakeAlgorithm::new();
-        let h = create_ready_task("T");
+        let h = create_ready_task(&fm);
         fake.next = Some(h);
         fake.picks.lock().unwrap().push_back(h);
 
-        let mut engine = Scheduler::new(fake.clone(), ports_with_ctx(ctx));
+        let mut engine = Scheduler::new(fake.clone(), ports_ctx_and_tasks(ctx, fm.leak()));
         *outcome.lock().unwrap() = Some(SwitchOutcome::Yielded(h, YieldReason::Voluntary));
 
         engine.step();
@@ -970,26 +1029,28 @@ mod tests {
         assert_eq!(fake.take_yielded(), vec![(h, YieldReason::Voluntary), (h, YieldReason::Voluntary)]);
         assert_eq!(fake.take_requeued(), vec![h, h]);
         assert_eq!(fake.take_on_task_start(), vec![h, h]);
+        assert_eq!(fm.take_set_state_calls(), vec![(h, KS::Running), (h, KS::Ready), (h, KS::Running), (h, KS::Ready)]);
+        assert_eq!(fm.state_of(h), KS::Ready);
     }
 
     #[test]
     fn step_falls_back_to_idle_when_nothing_ready() {
-        setup();
+        let fm = FakeTaskManager::new();
         let calls = Arc::new(Mutex::new(Vec::new()));
         let outcome = Arc::new(Mutex::new(None));
         let ctx = Box::leak(Box::new(StepContextSwitcher { calls: calls.clone(), outcome: outcome.clone(), log: new_call_log() }));
 
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone(), ports_with_ctx(ctx));
+        let mut engine = Scheduler::new(fake.clone(), ports_ctx_and_tasks(ctx, fm.leak()));
 
-        let idle = create_running_task("Idle");
+        let idle = create_running_task(&fm);
         engine.set_idle_task(idle).unwrap();
         *outcome.lock().unwrap() = Some(SwitchOutcome::Unchanged(idle));
 
         engine.step();
 
         assert_eq!(*calls.lock().unwrap(), vec![idle]);
-        assert_eq!(services().task_manager.borrow().get_state(idle), KS::Running);
+        assert_eq!(fm.state_of(idle), KS::Running);
         assert!(fake.take_on_task_start().is_empty());
         assert!(fake.take_requeued().is_empty());
     }
