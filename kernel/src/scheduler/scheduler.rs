@@ -55,6 +55,7 @@ pub struct Scheduler {
     timer_expiry: &'static dyn ForExpiringTimers,
     interrupt_handler: &'static dyn ForHandlingHardwareInterrupts,
     tasks: &'static dyn ForManagingTasks,
+    interrupt_drain_buf: Vec<HardwareInterrupt>,
 }
 
 impl Scheduler {
@@ -89,36 +90,32 @@ impl Scheduler {
             timer_expiry,
             interrupt_handler,
             tasks,
+            interrupt_drain_buf: Vec::new(),
         }
     }
 
     pub fn run() {
-        let (context_switcher, timer_handler, time_source, timer_expiry, interrupt_handler) = {
-            let scheduler = services().scheduler.borrow_mut();
-            (
-                scheduler.context_switcher,
-                scheduler.timer_handler,
-                scheduler.time_source,
-                scheduler.timer_expiry,
-                scheduler.interrupt_handler,
-            )
-        };
-        let mut interrupts = Vec::new();
         loop {
-            interrupts.clear();
-            services().scheduler.borrow_mut().drain_hardware_interrupts(&mut interrupts);
-            for interrupt in interrupts.drain(..) {
-                interrupt_handler.handle(interrupt);
-            }
-            if let Some(handles) = timer_expiry.pop_expired(time_source.now()) {
-                for handle in handles {
-                    timer_handler.complete_timer_future(handle);
-                }
-            }
-            let next_handle = services().scheduler.borrow_mut().start_next_task();
-            let outcome = context_switcher.switch_to_task(next_handle);
-            services().scheduler.borrow_mut().reconcile_returned_task(outcome);
+            services().scheduler.borrow_mut().step();
         }
+    }
+
+    fn step(&mut self) {
+        let mut interrupts = core::mem::take(&mut self.interrupt_drain_buf);
+        self.drain_hardware_interrupts(&mut interrupts);
+        for interrupt in interrupts.drain(..) {
+            self.interrupt_handler.handle(interrupt);
+        }
+        if let Some(handles) = self.timer_expiry.pop_expired(self.time_source.now()) {
+            for handle in handles {
+                self.timer_handler.complete_timer_future(handle);
+            }
+        }
+        let next_handle = self.start_next_task();
+        let outcome = self.context_switcher.switch_to_task(next_handle);
+        self.reconcile_returned_task(outcome);
+        interrupts.clear();
+        self.interrupt_drain_buf = interrupts;
     }
 
     pub fn push_task(&mut self, handle: TaskHandle) {
@@ -251,6 +248,7 @@ mod tests {
     #[derive(Clone)]
     struct FakeAlgorithm {
         next: Option<TaskHandle>,
+        picks: Arc<Mutex<std::collections::VecDeque<TaskHandle>>>,
         should_preempt_result: Arc<Mutex<bool>>,
         requeued: Arc<Mutex<Vec<TaskHandle>>>,
         pushed_ready: Arc<Mutex<Vec<TaskHandle>>>,
@@ -263,6 +261,7 @@ mod tests {
         fn new() -> Self {
             FakeAlgorithm {
                 next: None,
+                picks: Arc::new(Mutex::new(std::collections::VecDeque::new())),
                 should_preempt_result: Arc::new(Mutex::new(false)),
                 requeued: Arc::new(Mutex::new(Vec::new())),
                 pushed_ready: Arc::new(Mutex::new(Vec::new())),
@@ -295,7 +294,7 @@ mod tests {
 
     impl SchedulingAlgorithm for FakeAlgorithm {
         fn pick_next(&mut self) -> Option<TaskHandle> {
-            self.next.take()
+            self.next.take().or_else(|| self.picks.lock().unwrap().pop_front())
         }
 
         fn record_yield(&mut self, handle: TaskHandle, yield_reason: YieldReason) {
@@ -722,26 +721,123 @@ mod tests {
         }
     }
 
-    #[test]
-    fn expired_timer_futures_are_completed() {
-        setup();
-        let fake = FakeAlgorithm::new();
-        let (ctx, _calls, _outcome) = make_ctx();
+    type CallLog = Arc<Mutex<Vec<&'static str>>>;
 
-        let fh = Handle::new(1, 0);
-        let time = Box::leak(Box::new(FakeTimeSource { now: 100 }));
-        let expiry = Box::leak(Box::new(FakeExpiry { handles: Some(vec![fh]) }));
-        let completed = Arc::new(Mutex::new(Vec::new()));
-        let handler = Box::leak(Box::new(RecordingTimerHandler { completed: completed.clone() }));
+    fn new_call_log() -> CallLog {
+        Arc::new(Mutex::new(Vec::new()))
+    }
 
-        let mut engine = Scheduler::new_full(fake, ctx, handler, time, expiry, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER);
-        if let Some(handles) = engine.timer_expiry.pop_expired(engine.time_source.now()) {
-            for handle in handles {
-                engine.timer_handler.complete_timer_future(handle);
+    struct StepInterruptHandler {
+        handled: Arc<Mutex<Vec<u8>>>,
+        log: CallLog,
+    }
+
+    impl ForHandlingHardwareInterrupts for StepInterruptHandler {
+        fn handle(&self, interrupt: HardwareInterrupt) {
+            self.log.lock().unwrap().push("interrupt");
+            if let HardwareInterrupt::Keyboard { scancode } = interrupt {
+                self.handled.lock().unwrap().push(scancode);
             }
         }
+    }
 
+    struct StepExpiry {
+        handles: Option<Vec<FutureHandle>>,
+        seen_now: Arc<Mutex<Vec<u64>>>,
+        log: CallLog,
+    }
+
+    impl ForExpiringTimers for StepExpiry {
+        fn pop_expired(&self, now: u64) -> Option<Vec<FutureHandle>> {
+            self.log.lock().unwrap().push("pop_expired");
+            self.seen_now.lock().unwrap().push(now);
+            self.handles.clone()
+        }
+    }
+
+    struct StepTimerHandler {
+        completed: Arc<Mutex<Vec<FutureHandle>>>,
+        log: CallLog,
+    }
+
+    impl ForCompletingExpiredTimers for StepTimerHandler {
+        fn complete_timer_future(&self, handle: FutureHandle) {
+            self.log.lock().unwrap().push("complete");
+            self.completed.lock().unwrap().push(handle);
+        }
+    }
+
+    struct StepContextSwitcher {
+        calls: Arc<Mutex<Vec<TaskHandle>>>,
+        outcome: Arc<Mutex<Option<SwitchOutcome>>>,
+        log: CallLog,
+    }
+
+    impl ForSwitchingTaskContext for StepContextSwitcher {
+        fn switch_to_task(&self, handle: TaskHandle) -> SwitchOutcome {
+            self.log.lock().unwrap().push("switch");
+            self.calls.lock().unwrap().push(handle);
+            self.outcome.lock().unwrap().clone().unwrap_or(SwitchOutcome::Unchanged(handle))
+        }
+    }
+
+    #[test]
+    fn step_handles_interrupts_before_timer_expiry() {
+        setup();
+        let log = new_call_log();
+        let handled = Arc::new(Mutex::new(Vec::new()));
+        let seen_now = Arc::new(Mutex::new(Vec::new()));
+        let completed = Arc::new(Mutex::new(Vec::new()));
+        let calls = Arc::new(Mutex::new(Vec::new()));
+
+        let fh = Handle::new(1, 0);
+        let irq = Box::leak(Box::new(StepInterruptHandler { handled: handled.clone(), log: log.clone() }));
+        let time = Box::leak(Box::new(FakeTimeSource { now: 100 }));
+        let expiry = Box::leak(Box::new(StepExpiry { handles: Some(vec![fh]), seen_now: seen_now.clone(), log: log.clone() }));
+        let timer = Box::leak(Box::new(StepTimerHandler { completed: completed.clone(), log: log.clone() }));
+        let ctx = Box::leak(Box::new(StepContextSwitcher { calls: calls.clone(), outcome: Arc::new(Mutex::new(None)), log: log.clone() }));
+
+        let mut fake = FakeAlgorithm::new();
+        let h = create_ready_task("T");
+        fake.next = Some(h);
+
+        let mut engine = Scheduler::new_full(fake, ctx, timer, time, expiry, irq, &crate::kernel::KERNEL_TASK_MANAGER);
+        engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1C });
+
+        engine.step();
+
+        assert_eq!(*log.lock().unwrap(), vec!["interrupt", "pop_expired", "complete", "switch"]);
+        assert_eq!(*handled.lock().unwrap(), vec![0x1C]);
         assert_eq!(*completed.lock().unwrap(), vec![fh]);
+        assert_eq!(*seen_now.lock().unwrap(), vec![100]);
+    }
+
+    #[test]
+    fn step_completes_expired_timer_futures() {
+        setup();
+        let fh1 = Handle::new(1, 0);
+        let fh2 = Handle::new(2, 0);
+
+        let log = new_call_log();
+        let seen_now = Arc::new(Mutex::new(Vec::new()));
+        let completed = Arc::new(Mutex::new(Vec::new()));
+        let calls = Arc::new(Mutex::new(Vec::new()));
+
+        let time = Box::leak(Box::new(FakeTimeSource { now: 100 }));
+        let expiry = Box::leak(Box::new(StepExpiry { handles: Some(vec![fh1, fh2]), seen_now: seen_now.clone(), log: log.clone() }));
+        let timer = Box::leak(Box::new(StepTimerHandler { completed: completed.clone(), log: log.clone() }));
+        let ctx = Box::leak(Box::new(StepContextSwitcher { calls: calls.clone(), outcome: Arc::new(Mutex::new(None)), log: log.clone() }));
+
+        let mut fake = FakeAlgorithm::new();
+        let h = create_ready_task("T");
+        fake.next = Some(h);
+
+        let mut engine = Scheduler::new_full(fake, ctx, timer, time, expiry, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER);
+
+        engine.step();
+
+        assert_eq!(*completed.lock().unwrap(), vec![fh1, fh2]);
+        assert_eq!(*seen_now.lock().unwrap(), vec![100]);
     }
 
     #[test]
@@ -766,24 +862,73 @@ mod tests {
     }
 
     #[test]
-    fn hardware_interrupts_are_delegated_to_handler() {
+    fn step_routes_hardware_interrupts() {
         setup();
-        let fake = FakeAlgorithm::new();
-        let (ctx, _calls, _outcome) = make_ctx();
-
-        let time = Box::leak(Box::new(FakeTimeSource { now: 0 }));
-        let expiry = Box::leak(Box::new(FakeExpiry { handles: None }));
         let handled = Arc::new(Mutex::new(Vec::new()));
         let ints = Box::leak(Box::new(RecordingInterruptHandler { handled: handled.clone() }));
 
-        let mut engine = Scheduler::new_full(fake, ctx, &NOOP_TIMER_HANDLER, time, expiry, ints, &crate::kernel::KERNEL_TASK_MANAGER);
-        engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1C });
-        let mut interrupts = Vec::new();
-        engine.drain_hardware_interrupts(&mut interrupts);
-        for interrupt in interrupts {
-            engine.interrupt_handler.handle(interrupt);
-        }
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let ctx = Box::leak(Box::new(StepContextSwitcher { calls: calls.clone(), outcome: Arc::new(Mutex::new(None)), log: new_call_log() }));
 
-        assert_eq!(*handled.lock().unwrap(), vec![0x1C]);
+        let mut fake = FakeAlgorithm::new();
+        let h = create_ready_task("T");
+        fake.picks.lock().unwrap().push_back(h);
+        fake.picks.lock().unwrap().push_back(h);
+
+        let mut engine = Scheduler::new_full(fake, ctx, &NOOP_TIMER_HANDLER, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, ints, &crate::kernel::KERNEL_TASK_MANAGER);
+        engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1C });
+        engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1E });
+
+        engine.step();
+        assert_eq!(*handled.lock().unwrap(), vec![0x1C, 0x1E]);
+
+        engine.step();
+        assert_eq!(*handled.lock().unwrap(), vec![0x1C, 0x1E]);
+    }
+
+    #[test]
+    fn step_switches_to_picked_task_and_reconciles_yield() {
+        setup();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let outcome = Arc::new(Mutex::new(None));
+        let ctx = Box::leak(Box::new(StepContextSwitcher { calls: calls.clone(), outcome: outcome.clone(), log: new_call_log() }));
+
+        let mut fake = FakeAlgorithm::new();
+        let h = create_ready_task("T");
+        fake.next = Some(h);
+        fake.picks.lock().unwrap().push_back(h);
+
+        let mut engine = Scheduler::new_full(fake.clone(), ctx, &NOOP_TIMER_HANDLER, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER);
+        *outcome.lock().unwrap() = Some(SwitchOutcome::Yielded(h, YieldReason::Voluntary));
+
+        engine.step();
+        engine.step();
+
+        assert_eq!(*calls.lock().unwrap(), vec![h, h]);
+        assert_eq!(fake.take_yielded(), vec![(h, YieldReason::Voluntary), (h, YieldReason::Voluntary)]);
+        assert_eq!(fake.take_requeued(), vec![h, h]);
+        assert_eq!(fake.take_on_task_start(), vec![h, h]);
+    }
+
+    #[test]
+    fn step_falls_back_to_idle_when_nothing_ready() {
+        setup();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let outcome = Arc::new(Mutex::new(None));
+        let ctx = Box::leak(Box::new(StepContextSwitcher { calls: calls.clone(), outcome: outcome.clone(), log: new_call_log() }));
+
+        let fake = FakeAlgorithm::new();
+        let mut engine = Scheduler::new_full(fake.clone(), ctx, &NOOP_TIMER_HANDLER, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER);
+
+        let idle = create_running_task("Idle");
+        engine.set_idle_task(idle).unwrap();
+        *outcome.lock().unwrap() = Some(SwitchOutcome::Unchanged(idle));
+
+        engine.step();
+
+        assert_eq!(*calls.lock().unwrap(), vec![idle]);
+        assert_eq!(services().task_manager.borrow().get_state(idle), KS::Running);
+        assert!(fake.take_on_task_start().is_empty());
+        assert!(fake.take_requeued().is_empty());
     }
 }
