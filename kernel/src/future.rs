@@ -168,7 +168,10 @@ mod tests {
     static INIT: Once = Once::new();
 
     fn setup() {
-        INIT.call_once(|| init_services());
+        INIT.call_once(|| {
+            init_services();
+            crate::scheduler::wire_scheduler_for_tests();
+        });
     }
 
     struct DummyFuture;

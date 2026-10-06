@@ -16,7 +16,7 @@ Implement the plan step by step, in order.
 ## Rules
 
 - Follow the plan exactly. If a step is ambiguous or wrong, note the deviation in your final report instead of re-planning.
-- After implementing, run the build and test commands from the plan's acceptance criteria via bash, plus `cargo fmt --check` on every touched Rust file; scope any formatting fix to touched files only.
+- After implementing, run the build and test commands from the plan's acceptance criteria via bash, plus `cargo fmt --check` on every touched Rust file; scope any formatting fix to touched files only. When a touched file already fails `cargo fmt --check` on the untouched baseline, prove it (e.g. `git show HEAD:<file> | rustfmt --check`), follow the surrounding house style instead of reformatting, and report the baseline failure — never inject formatting churn into a behavior-preserving diff.
 - Exercise every edge case the plan calls out, not just the happy path; for a CLI change that includes zero-arg and unknown-flag invocations.
 - Never judge pass/fail from output piped through `tail`/`head`; capture each command's exit code directly.
 - When a failure looks unrelated to your changes, prove pre-existence by re-running it against the pre-change baseline (e.g. `git stash`), report the proof, and never silently fix it.
