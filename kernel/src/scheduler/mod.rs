@@ -10,32 +10,31 @@ use crate::ForSwitchingTaskContext;
 
 pub use algorithm::SchedulingAlgorithm;
 pub use scheduler::Scheduler;
+pub use scheduler::SchedulerPorts;
 pub use timer::TimerManager;
 
 pub type SchedulerFactory = fn(&'static dyn ForSwitchingTaskContext, &'static dyn ForCompletingExpiredTimers) -> Box<Scheduler>;
 
-pub fn mfq_scheduler(ctx: &'static dyn ForSwitchingTaskContext, timer: &'static dyn ForCompletingExpiredTimers) -> Box<Scheduler> {
-    Box::new(Scheduler::new_full(
-        mlfq_strategy::MlfqStrategy::new(),
-        ctx,
-        timer,
+fn kernel_ports(
+    context_switcher: &'static dyn ForSwitchingTaskContext,
+    timer_handler: &'static dyn ForCompletingExpiredTimers,
+) -> SchedulerPorts {
+    SchedulerPorts::new(
+        context_switcher,
+        timer_handler,
         &crate::kernel::KERNEL_TIME_SOURCE,
         &crate::kernel::KERNEL_TIMER_EXPIRY,
         &crate::kernel::KERNEL_INTERRUPT_HANDLER,
         &crate::kernel::KERNEL_TASK_MANAGER,
-    ))
+    )
+}
+
+pub fn mfq_scheduler(ctx: &'static dyn ForSwitchingTaskContext, timer: &'static dyn ForCompletingExpiredTimers) -> Box<Scheduler> {
+    Box::new(Scheduler::new(mlfq_strategy::MlfqStrategy::new(), kernel_ports(ctx, timer)))
 }
 
 pub fn fifo_scheduler(ctx: &'static dyn ForSwitchingTaskContext, timer: &'static dyn ForCompletingExpiredTimers) -> Box<Scheduler> {
-    Box::new(Scheduler::new_full(
-        fifo_strategy::FifoStrategy::new(),
-        ctx,
-        timer,
-        &crate::kernel::KERNEL_TIME_SOURCE,
-        &crate::kernel::KERNEL_TIMER_EXPIRY,
-        &crate::kernel::KERNEL_INTERRUPT_HANDLER,
-        &crate::kernel::KERNEL_TASK_MANAGER,
-    ))
+    Box::new(Scheduler::new(fifo_strategy::FifoStrategy::new(), kernel_ports(ctx, timer)))
 }
 
 #[cfg(test)]

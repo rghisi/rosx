@@ -6,6 +6,7 @@ use crate::memory::memory_manager::{MEMORY_MANAGER, MemoryManager};
 use crate::once::Once;
 use crate::scheduler::fifo_strategy::FifoStrategy;
 use crate::scheduler::Scheduler;
+use crate::scheduler::SchedulerPorts;
 use crate::scheduler::TimerManager;
 use crate::task_manager::TaskManager;
 use crate::{ForNotifyingFutures, ForWakingTasks, ForCompletingExpiredTimers};
@@ -82,7 +83,7 @@ pub(crate) fn init() {
         // no Drop, so leaking the wrapper is safe — the T lives for the
         // duration of the process (KERNEL_SERVICES is a static).
         let task_manager = Box::leak(Box::new(KernelCell::new(TaskManager::new())));
-        let scheduler_cell = Box::leak(Box::new(KernelCell::new(Scheduler::new(FifoStrategy::new()))));
+        let scheduler_cell = Box::leak(Box::new(KernelCell::new(Scheduler::new(FifoStrategy::new(), SchedulerPorts::noop()))));
         let wake_controller = Box::leak(Box::new(SchedulerWakerUseCase {
             scheduler: scheduler_cell,
         })) as &'static dyn ForWakingTasks;

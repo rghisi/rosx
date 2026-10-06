@@ -45,34 +45,18 @@ impl ForSwitchingTaskContext for NoopContextSwitcher {
 
 static NOOP_CONTEXT_SWITCHER: NoopContextSwitcher = NoopContextSwitcher;
 
-pub struct Scheduler {
-    algorithm: Box<dyn SchedulingAlgorithm + Send>,
+#[derive(Clone, Copy)]
+pub struct SchedulerPorts {
     context_switcher: &'static dyn ForSwitchingTaskContext,
-    hw_interrupt_queue: VecDeque<HardwareInterrupt>,
-    idle_task: Option<TaskHandle>,
     timer_handler: &'static dyn ForCompletingExpiredTimers,
     time_source: &'static dyn ForReadingSystemTime,
     timer_expiry: &'static dyn ForExpiringTimers,
     interrupt_handler: &'static dyn ForHandlingHardwareInterrupts,
     tasks: &'static dyn ForManagingTasks,
-    interrupt_drain_buf: Vec<HardwareInterrupt>,
 }
 
-impl Scheduler {
-    pub fn new(algorithm: impl SchedulingAlgorithm + 'static) -> Self {
-        Scheduler::new_full(algorithm, &NOOP_CONTEXT_SWITCHER, &NOOP_TIMER_HANDLER, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER)
-    }
-
-    pub fn new_with_context_switcher(
-        algorithm: impl SchedulingAlgorithm + 'static,
-        context_switcher: &'static dyn ForSwitchingTaskContext,
-        timer_handler: &'static dyn ForCompletingExpiredTimers,
-    ) -> Self {
-        Scheduler::new_full(algorithm, context_switcher, timer_handler, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER)
-    }
-
-    pub fn new_full(
-        algorithm: impl SchedulingAlgorithm + 'static,
+impl SchedulerPorts {
+    pub fn new(
         context_switcher: &'static dyn ForSwitchingTaskContext,
         timer_handler: &'static dyn ForCompletingExpiredTimers,
         time_source: &'static dyn ForReadingSystemTime,
@@ -80,16 +64,43 @@ impl Scheduler {
         interrupt_handler: &'static dyn ForHandlingHardwareInterrupts,
         tasks: &'static dyn ForManagingTasks,
     ) -> Self {
-        Scheduler {
-            algorithm: Box::new(algorithm),
+        SchedulerPorts {
             context_switcher,
-            hw_interrupt_queue: VecDeque::with_capacity(5),
-            idle_task: None,
             timer_handler,
             time_source,
             timer_expiry,
             interrupt_handler,
             tasks,
+        }
+    }
+
+    pub fn noop() -> Self {
+        SchedulerPorts {
+            context_switcher: &NOOP_CONTEXT_SWITCHER,
+            timer_handler: &NOOP_TIMER_HANDLER,
+            time_source: &NOOP_TIME_SOURCE,
+            timer_expiry: &NOOP_TIMER_EXPIRY,
+            interrupt_handler: &NOOP_INTERRUPT_HANDLER,
+            tasks: &crate::kernel::KERNEL_TASK_MANAGER,
+        }
+    }
+}
+
+pub struct Scheduler {
+    algorithm: Box<dyn SchedulingAlgorithm + Send>,
+    hw_interrupt_queue: VecDeque<HardwareInterrupt>,
+    idle_task: Option<TaskHandle>,
+    ports: SchedulerPorts,
+    interrupt_drain_buf: Vec<HardwareInterrupt>,
+}
+
+impl Scheduler {
+    pub fn new(algorithm: impl SchedulingAlgorithm + 'static, ports: SchedulerPorts) -> Self {
+        Scheduler {
+            algorithm: Box::new(algorithm),
+            hw_interrupt_queue: VecDeque::with_capacity(5),
+            idle_task: None,
+            ports,
             interrupt_drain_buf: Vec::new(),
         }
     }
@@ -104,22 +115,22 @@ impl Scheduler {
         let mut interrupts = core::mem::take(&mut self.interrupt_drain_buf);
         self.drain_hardware_interrupts(&mut interrupts);
         for interrupt in interrupts.drain(..) {
-            self.interrupt_handler.handle(interrupt);
+            self.ports.interrupt_handler.handle(interrupt);
         }
-        if let Some(handles) = self.timer_expiry.pop_expired(self.time_source.now()) {
+        if let Some(handles) = self.ports.timer_expiry.pop_expired(self.ports.time_source.now()) {
             for handle in handles {
-                self.timer_handler.complete_timer_future(handle);
+                self.ports.timer_handler.complete_timer_future(handle);
             }
         }
         let next_handle = self.start_next_task();
-        let outcome = self.context_switcher.switch_to_task(next_handle);
+        let outcome = self.ports.context_switcher.switch_to_task(next_handle);
         self.reconcile_returned_task(outcome);
         interrupts.clear();
         self.interrupt_drain_buf = interrupts;
     }
 
     pub fn push_task(&mut self, handle: TaskHandle) {
-        match self.tasks.get_state(handle) {
+        match self.ports.tasks.get_state(handle) {
             TaskState::Ready => self.algorithm.push_ready(handle),
             _ => {}
         }
@@ -127,8 +138,8 @@ impl Scheduler {
 
     pub fn wake_tasks(&mut self, handles: Vec<TaskHandle>) {
         for handle in handles {
-            if self.tasks.get_state(handle) != TaskState::Terminated {
-                self.tasks.set_state(handle, TaskState::Ready);
+            if self.ports.tasks.get_state(handle) != TaskState::Terminated {
+                self.ports.tasks.set_state(handle, TaskState::Ready);
                 self.algorithm.push_ready(handle);
             }
         }
@@ -156,7 +167,7 @@ impl Scheduler {
             self.idle_task = None;
         }
         self.algorithm.on_task_terminate(handle);
-        self.tasks.remove_task(handle);
+        self.ports.tasks.remove_task(handle);
     }
 
     fn start_next_task(&mut self) -> TaskHandle {
@@ -164,20 +175,20 @@ impl Scheduler {
             Some(handle) => handle,
             None => {
                 let idle = self.idle_task.unwrap();
-                self.tasks.set_state(idle, TaskState::Running);
+                self.ports.tasks.set_state(idle, TaskState::Running);
                 return idle;
             }
         };
 
         self.algorithm.on_task_start(next_handle);
-        self.tasks.set_state(next_handle, TaskState::Running);
+        self.ports.tasks.set_state(next_handle, TaskState::Running);
         next_handle
     }
 
     fn reconcile_returned_task(&mut self, outcome: SwitchOutcome) {
         match outcome {
             SwitchOutcome::Yielded(returned_handle, yield_reason) => {
-                self.tasks.set_state(returned_handle, TaskState::Ready);
+                self.ports.tasks.set_state(returned_handle, TaskState::Ready);
                 if Some(returned_handle) != self.idle_task {
                     self.algorithm.record_yield(returned_handle, yield_reason);
                     self.algorithm.requeue_after_run(returned_handle);
@@ -335,7 +346,7 @@ mod tests {
     fn push_task_calls_push_ready_for_ready_tasks() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
 
         let h = create_ready_task("T");
         engine.push_task(h);
@@ -347,7 +358,7 @@ mod tests {
     fn run_one_round_calls_algorithm_methods_in_order() {
         setup();
         let mut fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
 
         let h = create_ready_task("T");
         fake.next = Some(h);
@@ -363,7 +374,7 @@ mod tests {
     fn push_task_does_not_call_push_ready_for_non_ready_tasks() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
 
         let task = Task::new("T", 0x1000, 0);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
@@ -380,7 +391,7 @@ mod tests {
     fn push_hardware_interrupt_adds_to_queue() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
 
         engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1C });
 
@@ -393,7 +404,7 @@ mod tests {
     fn set_idle_task_succeeds_on_first_call() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
 
         let idle = create_ready_task("Idle");
         let result = engine.set_idle_task(idle);
@@ -405,7 +416,7 @@ mod tests {
     fn set_idle_task_fails_on_second_call() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
 
         let idle1 = create_ready_task("Idle1");
         let idle2 = create_ready_task("Idle2");
@@ -420,7 +431,7 @@ mod tests {
     fn should_preempt_forwards_to_algorithm() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
 
         *fake.should_preempt_result.lock().unwrap() = true;
         assert!(engine.should_preempt());
@@ -503,7 +514,7 @@ mod tests {
     fn handle_termination_calls_on_task_terminate_on_algorithm() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
 
         let task = Task::new("T", 0x1000, 0);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
@@ -517,7 +528,7 @@ mod tests {
     fn handle_termination_removes_task_from_manager() {
         setup();
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone());
+        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
 
         let task = Task::new("T", 0x1000, 0);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
@@ -544,6 +555,17 @@ mod tests {
         (leaked, calls, outcome)
     }
 
+    fn ports_with_ctx(context_switcher: &'static dyn ForSwitchingTaskContext) -> SchedulerPorts {
+        SchedulerPorts {
+            context_switcher,
+            timer_handler: &NOOP_TIMER_HANDLER,
+            time_source: &NOOP_TIME_SOURCE,
+            timer_expiry: &NOOP_TIMER_EXPIRY,
+            interrupt_handler: &NOOP_INTERRUPT_HANDLER,
+            tasks: &crate::kernel::KERNEL_TASK_MANAGER,
+        }
+    }
+
     fn run_one_round(engine: &mut Scheduler, ctx: &FakeContextSwitcher) {
         let next = engine.start_next_task();
         let outcome = ctx.switch_to_task(next);
@@ -558,7 +580,7 @@ mod tests {
 
         let task_handle = create_running_task("T");
         fake.next = Some(task_handle);
-        let mut engine = Scheduler::new_with_context_switcher(fake, ctx, &NOOP_TIMER_HANDLER);
+        let mut engine = Scheduler::new(fake, ports_with_ctx(ctx));
 
         run_one_round(&mut engine, ctx);
 
@@ -574,7 +596,7 @@ mod tests {
 
         let task_handle = create_running_task("T");
         fake.next = Some(task_handle);
-        let mut engine = Scheduler::new_with_context_switcher(fake.clone(), ctx, &NOOP_TIMER_HANDLER);
+        let mut engine = Scheduler::new(fake.clone(), ports_with_ctx(ctx));
         *outcome.lock().unwrap() = Some(SwitchOutcome::Yielded(task_handle, YieldReason::Voluntary));
 
         run_one_round(&mut engine, ctx);
@@ -592,7 +614,7 @@ mod tests {
         let task_handle = create_running_task("T");
         services().task_manager.borrow_mut().set_state(task_handle, KS::Blocked);
         fake.next = Some(task_handle);
-        let mut engine = Scheduler::new_with_context_switcher(fake.clone(), ctx, &NOOP_TIMER_HANDLER);
+        let mut engine = Scheduler::new(fake.clone(), ports_with_ctx(ctx));
         *outcome.lock().unwrap() = Some(SwitchOutcome::Blocked(task_handle));
 
         run_one_round(&mut engine, ctx);
@@ -609,7 +631,7 @@ mod tests {
         let task_handle = create_running_task("T");
         services().task_manager.borrow_mut().set_state(task_handle, KS::Terminated);
         fake.next = Some(task_handle);
-        let mut engine = Scheduler::new_with_context_switcher(fake.clone(), ctx, &NOOP_TIMER_HANDLER);
+        let mut engine = Scheduler::new(fake.clone(), ports_with_ctx(ctx));
         *outcome.lock().unwrap() = Some(SwitchOutcome::Terminated(task_handle));
 
         run_one_round(&mut engine, ctx);
@@ -624,7 +646,7 @@ mod tests {
         let (ctx, calls, _ret) = make_ctx();
 
         let idle_handle = create_running_task("Idle");
-        let mut engine = Scheduler::new_with_context_switcher(fake, ctx, &NOOP_TIMER_HANDLER);
+        let mut engine = Scheduler::new(fake, ports_with_ctx(ctx));
         engine.set_idle_task(idle_handle).unwrap();
 
         run_one_round(&mut engine, ctx);
@@ -640,7 +662,7 @@ mod tests {
         let (ctx, _calls, outcome) = make_ctx();
 
         let idle_handle = create_running_task("Idle");
-        let mut engine = Scheduler::new_with_context_switcher(fake.clone(), ctx, &NOOP_TIMER_HANDLER);
+        let mut engine = Scheduler::new(fake.clone(), ports_with_ctx(ctx));
         engine.set_idle_task(idle_handle).unwrap();
         *outcome.lock().unwrap() = Some(SwitchOutcome::Yielded(idle_handle, YieldReason::Voluntary));
 
@@ -654,7 +676,7 @@ mod tests {
         setup();
         let mut fake = FakeAlgorithm::new();
         let (ctx, _calls, _ret) = make_ctx();
-        let mut engine = Scheduler::new_with_context_switcher(fake.clone(), ctx, &NOOP_TIMER_HANDLER);
+        let mut engine = Scheduler::new(fake.clone(), ports_with_ctx(ctx));
 
         let task = Task::new("T", 0x1000, 0);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
@@ -672,7 +694,7 @@ mod tests {
         setup();
         let mut fake = FakeAlgorithm::new();
         let (ctx, _calls, _ret) = make_ctx();
-        let mut engine = Scheduler::new_with_context_switcher(fake, ctx, &NOOP_TIMER_HANDLER);
+        let mut engine = Scheduler::new(fake, ports_with_ctx(ctx));
 
         let idle_handle = create_running_task("Idle");
         engine.set_idle_task(idle_handle).unwrap();
@@ -801,7 +823,17 @@ mod tests {
         let h = create_ready_task("T");
         fake.next = Some(h);
 
-        let mut engine = Scheduler::new_full(fake, ctx, timer, time, expiry, irq, &crate::kernel::KERNEL_TASK_MANAGER);
+        let mut engine = Scheduler::new(
+            fake,
+            SchedulerPorts {
+                context_switcher: ctx,
+                timer_handler: timer,
+                time_source: time,
+                timer_expiry: expiry,
+                interrupt_handler: irq,
+                tasks: &crate::kernel::KERNEL_TASK_MANAGER,
+            },
+        );
         engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1C });
 
         engine.step();
@@ -832,7 +864,17 @@ mod tests {
         let h = create_ready_task("T");
         fake.next = Some(h);
 
-        let mut engine = Scheduler::new_full(fake, ctx, timer, time, expiry, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER);
+        let mut engine = Scheduler::new(
+            fake,
+            SchedulerPorts {
+                context_switcher: ctx,
+                timer_handler: timer,
+                time_source: time,
+                timer_expiry: expiry,
+                interrupt_handler: &NOOP_INTERRUPT_HANDLER,
+                tasks: &crate::kernel::KERNEL_TASK_MANAGER,
+            },
+        );
 
         engine.step();
 
@@ -851,10 +893,20 @@ mod tests {
         let completed = Arc::new(Mutex::new(Vec::new()));
         let handler = Box::leak(Box::new(RecordingTimerHandler { completed: completed.clone() }));
 
-        let mut engine = Scheduler::new_full(fake, ctx, handler, time, expiry, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER);
-        if let Some(handles) = engine.timer_expiry.pop_expired(engine.time_source.now()) {
+        let mut engine = Scheduler::new(
+            fake,
+            SchedulerPorts {
+                context_switcher: ctx,
+                timer_handler: handler,
+                time_source: time,
+                timer_expiry: expiry,
+                interrupt_handler: &NOOP_INTERRUPT_HANDLER,
+                tasks: &crate::kernel::KERNEL_TASK_MANAGER,
+            },
+        );
+        if let Some(handles) = engine.ports.timer_expiry.pop_expired(engine.ports.time_source.now()) {
             for handle in handles {
-                engine.timer_handler.complete_timer_future(handle);
+                engine.ports.timer_handler.complete_timer_future(handle);
             }
         }
 
@@ -875,7 +927,17 @@ mod tests {
         fake.picks.lock().unwrap().push_back(h);
         fake.picks.lock().unwrap().push_back(h);
 
-        let mut engine = Scheduler::new_full(fake, ctx, &NOOP_TIMER_HANDLER, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, ints, &crate::kernel::KERNEL_TASK_MANAGER);
+        let mut engine = Scheduler::new(
+            fake,
+            SchedulerPorts {
+                context_switcher: ctx,
+                timer_handler: &NOOP_TIMER_HANDLER,
+                time_source: &NOOP_TIME_SOURCE,
+                timer_expiry: &NOOP_TIMER_EXPIRY,
+                interrupt_handler: ints,
+                tasks: &crate::kernel::KERNEL_TASK_MANAGER,
+            },
+        );
         engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1C });
         engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1E });
 
@@ -898,7 +960,7 @@ mod tests {
         fake.next = Some(h);
         fake.picks.lock().unwrap().push_back(h);
 
-        let mut engine = Scheduler::new_full(fake.clone(), ctx, &NOOP_TIMER_HANDLER, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER);
+        let mut engine = Scheduler::new(fake.clone(), ports_with_ctx(ctx));
         *outcome.lock().unwrap() = Some(SwitchOutcome::Yielded(h, YieldReason::Voluntary));
 
         engine.step();
@@ -918,7 +980,7 @@ mod tests {
         let ctx = Box::leak(Box::new(StepContextSwitcher { calls: calls.clone(), outcome: outcome.clone(), log: new_call_log() }));
 
         let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new_full(fake.clone(), ctx, &NOOP_TIMER_HANDLER, &NOOP_TIME_SOURCE, &NOOP_TIMER_EXPIRY, &NOOP_INTERRUPT_HANDLER, &crate::kernel::KERNEL_TASK_MANAGER);
+        let mut engine = Scheduler::new(fake.clone(), ports_with_ctx(ctx));
 
         let idle = create_running_task("Idle");
         engine.set_idle_task(idle).unwrap();
