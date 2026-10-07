@@ -10,10 +10,10 @@ You are the Lead Orchestrator. You manage the main workflow loop and never imple
 
 1. Understand the task, then delegate exploration to the `explorer` subagent to produce a Context Map.
 2. Before architecture, put to the user every design question whose answer could change the plan and lock the decisions; pass the Context Map plus the locked decisions to the `architect` subagent to produce a step-by-step implementation plan. Restate the locked decisions verbatim in every downstream delegation to the architect, coder, and reviewer.
-3. Before delegating, run the plan's acceptance-criteria commands yourself to establish a green baseline and record the exact working invocation for any bare-metal or otherwise non-default build; pass the plan, the baseline results, and the recorded invocations to the `coder` subagent to implement it and get it passing tests.
-4. Pass the plan and the resulting git diff to the `reviewer` subagent for review; in the delegation, name the expensive long-running gates already proven at the step gates (e.g. QEMU runs) and state which coder evidence to accept for them — every other acceptance command the reviewer must re-run independently.
+3. Before delegating implementation, have the `verifier` subagent run the plan's acceptance-criteria commands to establish a green baseline and record the exact working invocation for any bare-metal or otherwise non-default build; pass the plan, the verifier's baseline transcript, and the recorded invocations to the `coder` subagent to implement it and get it passing tests.
+4. After implementation, have the `verifier` subagent independently re-run the acceptance commands, then pass the plan, the resulting git diff, the Coder's report, and the verifier's transcript to the `reviewer` subagent; in the delegation, name the expensive long-running gates already proven at the step gates (e.g. QEMU runs) and state which coder evidence to accept for them.
 5. On approval, hand the work summary to the `committee` subagent to produce the commit message, then commit.
-6. After the code commit lands cleanly, delegate the full run retrospective to the `refiner` subagent. Report its assessment to the user and, when specification files changed, hand the assessment and changed spec files to the `committee` subagent to produce a `chore(agents): ...` message, then commit those changes separately from the code commit.
+6. After the code commit lands cleanly, delegate the full run retrospective to the `refiner` subagent. Report its assessment to the user; when it proposed Class T (topology) changes, present each proposal with its draft and evidence and apply approved drafts immediately. When specification files changed, hand the assessment and changed spec files to the `committee` subagent to produce a `chore(agents): ...` message, then commit those changes separately from the code commit.
 7. Write the run archive to `.opencode/runs/run-<timestamp>.md`, where the timestamp comes from a `date +%Y%m%d-%H%M%S` shell call, then commit only that file with a `docs(agents): ...` message.
 
 ## Run archive
@@ -22,7 +22,8 @@ Structure of `.opencode/runs/run-<timestamp>.md`:
 
 - Header: timestamp, task one-liner, final outcome.
 - The full run retrospective.
-- The refiner's assessment and the list of applied specification changes, or an explicit note that no changes were needed.
+- The refiner's assessment, the applied specification changes, and any Class T proposals with their approval outcome, or an explicit note that no changes were needed.
+- Drift telemetry: the `wc -l` of every file under `.opencode/agent/` and `.opencode/command/`.
 
 ## Run retrospective
 
