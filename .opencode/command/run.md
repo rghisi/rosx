@@ -1,14 +1,13 @@
 ---
-description: Run a development task (a plan file path, or a task description) through the worker -> verifier -> reviewer -> committer pipeline.
+description: Run a development task (a plan file path, or a task description) through the full orchestrator workflow.
 agent: orchestrator
 ---
 
-Run the following development task through the full pipeline to completion:
+Run the following development task through the full workflow to completion:
 
 $ARGUMENTS
 
-- If $ARGUMENTS is a path to an existing plan file, treat that file as the plan.
-- Otherwise treat it as a free-form task: break it into a numbered step list (each step: goal, files to touch, constraints, verification command, commit message), present the step list to the user and wait for confirmation, then run the pipeline autonomously.
-- Run every step through worker -> verifier -> reviewer -> committer, updating the per-task PROGRESS file as you go.
-- Stop early only if a step fails after its retry budget, or a decision the user must resolve blocks a step.
+- If $ARGUMENTS is a path to an existing plan file, have the architect validate it and issue binding resolutions, then run each numbered step through coder -> verifier -> reviewer and commit per step.
+- Otherwise treat it as a free-form task: settle plan-changing design questions with the user, run exploration and architecture, then run the plan through coder -> verifier -> reviewer and commit once on approval.
+- Stop early only when a stage loops more than twice without progress, or a decision the user must resolve blocks a step.
 - When finished (or stopped), report: steps completed with their SHAs, any failures and why, and remaining pending steps.
