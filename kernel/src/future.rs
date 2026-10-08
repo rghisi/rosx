@@ -6,7 +6,7 @@ use system::future::{Future, FutureHandle, FutureResult};
 use collections::generational_arena::{Error, GenerationalArena};
 use crate::task::TaskHandle;
 use crate::kernel_services::services;
-use crate::ForWakingTasks;
+use crate::ports::driven::ForWakingTasks;
 
 pub struct TimeFuture {
     completed: bool,

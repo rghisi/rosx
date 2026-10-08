@@ -4,13 +4,13 @@ use alloc::vec::Vec;
 use crate::messages::HardwareInterrupt;
 use crate::scheduler::algorithm::SchedulingAlgorithm;
 use crate::task::{TaskHandle, TaskState};
-use crate::ForCompletingExpiredTimers;
-use crate::ForExpiringTimers;
-use crate::ForHandlingHardwareInterrupts;
-use crate::ForManagingTasks;
-use crate::ForReadingSystemTime;
-use crate::ForSwitchingTaskContext;
-use crate::SwitchOutcome;
+use crate::ports::driven::ForCompletingExpiredTimers;
+use crate::ports::driven::ForExpiringTimers;
+use crate::ports::driven::ForHandlingHardwareInterrupts;
+use crate::ports::driven::ForManagingTasks;
+use crate::ports::driven::ForReadingSystemTime;
+use crate::ports::driven::ForSwitchingTaskContext;
+use crate::ports::driven::SwitchOutcome;
 
 struct NoopTimerHandler;
 impl ForCompletingExpiredTimers for NoopTimerHandler {

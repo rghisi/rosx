@@ -6,8 +6,8 @@ pub mod timer;
 
 use alloc::boxed::Box;
 use crate::kernel_services::services;
-use crate::ForCompletingExpiredTimers;
-use crate::ForSwitchingTaskContext;
+use crate::ports::driven::ForCompletingExpiredTimers;
+use crate::ports::driven::ForSwitchingTaskContext;
 
 pub use algorithm::SchedulingAlgorithm;
 pub use scheduler::Scheduler;
@@ -54,7 +54,7 @@ pub(crate) fn wire_scheduler_for_tests() {
 
     struct KernelPortsTestContextSwitcher;
     impl ForSwitchingTaskContext for KernelPortsTestContextSwitcher {
-        fn switch_to_task(&self, handle: crate::task::TaskHandle) -> crate::SwitchOutcome { crate::SwitchOutcome::Unchanged(handle) }
+        fn switch_to_task(&self, handle: crate::task::TaskHandle) -> crate::ports::driven::SwitchOutcome { crate::ports::driven::SwitchOutcome::Unchanged(handle) }
     }
     static CTX: KernelPortsTestContextSwitcher = KernelPortsTestContextSwitcher;
 
@@ -67,7 +67,7 @@ pub(crate) fn wire_scheduler_for_tests() {
 mod tests {
     use super::*;
     use crate::kernel_services::{init, services};
-    use crate::SwitchOutcome;
+    use crate::ports::driven::SwitchOutcome;
     use crate::task::{Task, TaskHandle, TaskState};
     use std::sync::Once;
 
