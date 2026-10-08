@@ -9,7 +9,7 @@ use crate::scheduler::Scheduler;
 use crate::scheduler::SchedulerPorts;
 use crate::scheduler::TimerManager;
 use crate::task_manager::TaskManager;
-use crate::{ForNotifyingFutures, ForWakingTasks, ForCompletingExpiredTimers};
+use crate::ports::driven::{ForNotifyingFutures, ForWakingTasks, ForCompletingExpiredTimers};
 use system::future::{self, Future, FutureHandle};
 use system::ipc::{IpcMessage, IpcMessageFuture, IpcReceiveError};
 use alloc::boxed::Box;

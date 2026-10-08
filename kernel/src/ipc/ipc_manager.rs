@@ -5,7 +5,7 @@ use collections::generational_arena::{GenerationalArena, Handle};
 use system::ipc::{IpcConnectionError, IpcMessage, IpcSendError, IpcConnectionHandle, IpcBindingError, IpcReceiveError, IpcMessageFuture};
 use system::future::FutureHandle;
 use crate::ipc::mailbox_manager::{MailboxManager, MailboxHandle};
-use crate::ForNotifyingFutures;
+use crate::ports::driven::ForNotifyingFutures;
 
 struct NoopIpcNotifier;
 impl ForNotifyingFutures for NoopIpcNotifier {

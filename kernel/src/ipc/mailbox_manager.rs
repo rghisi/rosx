@@ -5,7 +5,7 @@ use collections::generational_arena::{GenerationalArena, Handle};
 use system::future::FutureHandle;
 use system::ipc::{IpcMessage, IpcMessageFuture, IpcReceiveError};
 use crate::ipc::mailbox::Mailbox;
-use crate::ForNotifyingFutures;
+use crate::ports::driven::ForNotifyingFutures;
 
 struct NoopNotifier;
 impl ForNotifyingFutures for NoopNotifier {
@@ -105,7 +105,7 @@ mod tests {
     use crate::kernel_services::init as init_services;
     use crate::kernel_services::services;
     use crate::kernel_services::FutureRegistryNotifierUseCase;
-    use crate::ForNotifyingFutures;
+    use crate::ports::driven::ForNotifyingFutures;
     use alloc::boxed::Box;
 
     #[test]

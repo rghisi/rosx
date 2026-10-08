@@ -31,3 +31,4 @@ When the task supplies an existing plan document, validate it against the Contex
 - Steps must be small and independently verifiable. No step may depend on a later step.
 - Do not write full code; define contracts precisely enough that a coder can implement without re-planning.
 - Quote verbatim from the file, never paraphrase, any exact string, constant, or signature a step depends on.
+- Derived prescriptions must hold against the actual repo, not idealized idioms: any stated count must be derivable from the step's own structural enumeration; match patterns must cover the repo's real syntax (`pub(crate)` with no space, braced `use` lists); verification commands may rely only on tools the Context Map confirms available — when unconfirmed, write portable POSIX `grep -E` gates, never `rg`.
