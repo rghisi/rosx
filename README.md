@@ -134,7 +134,8 @@ The x86_32 platform runs on older 32-bit processors.
 
 1. **Build:**
    ```bash
-   cargo build -p rosx-i686
+   cd arch/x86_32
+   cargo build -p rosx-x86
    ```
 
 2. **Run:**
