@@ -1,6 +1,6 @@
 # RosX - Agent Context Document
 
-> **Last Updated:** 2026-08-16
+> **Last Updated:** 2026-10-08
 > **Purpose:** Compact, always-accurate context for AI coding agents working on RosX.
 
 ---
@@ -62,7 +62,7 @@ cargo run -p rosx              # run.sh -> arch/x86_64-runner -> BiosBoot disk i
 
 ### x86_32
 ```bash
-cargo build -p rosx-i686       # kernel (Multiboot2, boot.S)
+cargo build -p rosx-x86        # kernel (Multiboot2, boot.S); run from arch/x86_32/ — its .cargo/config.toml supplies the rosx-i686 custom target
 bash arch/x86_32/build-image.sh   # GRUB bootable image (needs grub-mkrescue, xorriso, mtools)
 ```
 - x86_32 builds are untouched by xtask. Build user apps for x86_32 with the explicit `-Z` flags shown in CI.
