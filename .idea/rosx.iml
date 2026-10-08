@@ -12,6 +12,19 @@
       <sourceFolder url="file://$MODULE_DIR$/apps/test_suite/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/collections/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/arch/x86_32/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/apps/conway/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/apps/hello_elf/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/apps/random_gen_server/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/apps/snake/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/apps/tetris/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/tests-integration/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/tests-integration/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/xtask/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/apps/conway/target" />
+      <excludeFolder url="file://$MODULE_DIR$/apps/hello_elf/target" />
+      <excludeFolder url="file://$MODULE_DIR$/apps/random_gen_server/target" />
+      <excludeFolder url="file://$MODULE_DIR$/apps/snake/target" />
+      <excludeFolder url="file://$MODULE_DIR$/apps/tetris/target" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
