@@ -2,36 +2,28 @@ use crate::syscall::Syscall;
 use core::fmt::{Display, Formatter};
 use system::future::FutureResult;
 use system::ipc::{
-    IpcBufferError, IpcBufferHandle, IpcConnectionHandle, IpcReceiveError, IpcSendError,
+    IpcConnectionHandle, IpcMessageError, IpcMessageHandle, IpcReceiveError, IpcSendError,
 };
 
-pub struct WritableMailbox {
-    buffer: IpcBufferHandle,
+pub struct OutgoingMessage {
+    message: IpcMessageHandle,
     sent: bool,
 }
 
-impl WritableMailbox {
-    pub fn alloc() -> Result<Self, IpcBufferError> {
+impl OutgoingMessage {
+    pub fn create(connection: IpcConnectionHandle, size: usize) -> Result<Self, IpcSendError> {
         Ok(Self {
-            buffer: Syscall::ipc_alloc_buffer()?,
+            message: Syscall::ipc_create_message(connection, size)?,
             sent: false,
         })
     }
 
-    pub fn write(&mut self, bytes: &[u8]) -> Result<(), IpcBufferError> {
-        Syscall::ipc_write_buffer(self.buffer, bytes)
+    pub fn write(&mut self, bytes: &[u8]) -> Result<(), IpcMessageError> {
+        Syscall::ipc_write_message(self.message, bytes)
     }
 
-    pub fn send(mut self, connection: IpcConnectionHandle) -> Result<(), IpcSendError> {
-        let result = Syscall::ipc_send(connection, self.buffer);
-        if result.is_ok() {
-            self.sent = true;
-        }
-        result
-    }
-
-    pub fn send_to_client(mut self, connection: IpcConnectionHandle) -> Result<(), IpcSendError> {
-        let result = Syscall::ipc_send_to_client(connection, self.buffer);
+    pub fn send(mut self) -> Result<(), IpcSendError> {
+        let result = Syscall::ipc_send_message(self.message);
         if result.is_ok() {
             self.sent = true;
         }
@@ -39,52 +31,43 @@ impl WritableMailbox {
     }
 }
 
-impl Drop for WritableMailbox {
+impl Drop for OutgoingMessage {
     fn drop(&mut self) {
         if !self.sent {
-            let _ = Syscall::ipc_dispose_buffer(self.buffer);
+            let _ = Syscall::ipc_dispose_message(self.message);
         }
     }
 }
 
-pub struct ReadableMailbox {
-    buffer: IpcBufferHandle,
+pub struct IncomingMessage {
+    message: IpcMessageHandle,
 }
 
-impl ReadableMailbox {
-    pub fn new(buffer: IpcBufferHandle) -> Self {
-        Self { buffer }
+impl IncomingMessage {
+    pub fn new(message_handle: IpcMessageHandle) -> Self {
+        Self { message: message_handle }
     }
 
-    pub fn read(&mut self, dst: &mut [u8]) -> Result<usize, IpcBufferError> {
-        Syscall::ipc_read_buffer(self.buffer, dst)
+    pub fn read(&mut self, dst: &mut [u8]) -> Result<usize, IpcMessageError> {
+        Syscall::ipc_read_message(self.message, dst)
     }
 }
 
-impl Drop for ReadableMailbox {
+impl Drop for IncomingMessage {
     fn drop(&mut self) {
-        let _ = Syscall::ipc_dispose_buffer(self.buffer);
+        let _ = Syscall::ipc_dispose_message(self.message);
     }
 }
 
 pub fn ipc_send_value(connection: IpcConnectionHandle, value: usize) -> Result<(), IpcSendError> {
-    let mut mailbox = WritableMailbox::alloc()?;
-    mailbox.write(&value.to_ne_bytes())?;
-    mailbox.send(connection)
-}
-
-pub fn ipc_send_value_to_client(
-    connection: IpcConnectionHandle,
-    value: usize,
-) -> Result<(), IpcSendError> {
-    let mut mailbox = WritableMailbox::alloc()?;
-    mailbox.write(&value.to_ne_bytes())?;
-    mailbox.send_to_client(connection)
+    let mut message = OutgoingMessage::create(connection, core::mem::size_of::<usize>())?;
+    message.write(&value.to_ne_bytes())?;
+    message.send()
 }
 
 pub enum ReceiveValueError {
     Receive(IpcReceiveError),
-    Buffer(IpcBufferError),
+    Buffer(IpcMessageError),
     ShortRead,
 }
 
@@ -104,19 +87,19 @@ impl From<IpcReceiveError> for ReceiveValueError {
     }
 }
 
-impl From<IpcBufferError> for ReceiveValueError {
-    fn from(e: IpcBufferError) -> Self {
+impl From<IpcMessageError> for ReceiveValueError {
+    fn from(e: IpcMessageError) -> Self {
         Self::Buffer(e)
     }
 }
 
 pub fn ipc_receive_value(connection: IpcConnectionHandle) -> Result<usize, ReceiveValueError> {
-    let fh = Syscall::ipc_receive(connection);
+    let fh = Syscall::ipc_receive_message(connection);
     match Syscall::wait_future(fh) {
         FutureResult::IpcMessage(Ok(msg)) => {
-            let mut mailbox = ReadableMailbox::new(msg.buffer_handle);
+            let mut message = IncomingMessage::new(msg.message_handle);
             let mut bytes = [0u8; core::mem::size_of::<usize>()];
-            let copied = mailbox.read(&mut bytes)?;
+            let copied = message.read(&mut bytes)?;
             if copied != bytes.len() {
                 return Err(ReceiveValueError::ShortRead);
             }

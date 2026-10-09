@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use core::fmt;
 use system::syscall_numbers::SyscallNum;
 use system::future::{FutureHandle, FutureResult};
-use system::ipc::{IpcBindingError, IpcBindingHandle, IpcConnectionError, IpcSendError, IpcConnectionHandle, IpcBufferError, IpcBufferHandle};
+use system::ipc::{IpcBindingError, IpcBindingHandle, IpcConnectionError, IpcSendError, IpcConnectionHandle, IpcMessageError, IpcMessageHandle};
 use crate::arch;
 
 pub struct Syscall {}
@@ -74,50 +74,45 @@ impl Syscall {
         arch::raw_syscall(SyscallNum::IpcDisconnect as usize, connection_handle.index as usize, connection_handle.generation as usize, 0usize);
     }
 
-    pub fn ipc_send(connection_handle: IpcConnectionHandle, buffer_handle: IpcBufferHandle) -> Result<(), IpcSendError> {
-        let result_pointer = arch::raw_syscall(SyscallNum::IpcSend as usize, connection_handle.index as usize, connection_handle.generation as usize, buffer_handle.pack());
-        unsafe { *Box::from_raw(result_pointer as *mut Result<(), IpcSendError>) }
-    }
-
-    pub fn ipc_receive(connection_handle: IpcConnectionHandle) -> FutureHandle {
-        let raw = arch::raw_syscall(SyscallNum::IpcReceive as usize, connection_handle.index as usize, connection_handle.generation as usize, 0usize);
-        FutureHandle::unpack(raw)
-    }
-
     pub fn ipc_bind(service: &str) -> Result<IpcBindingHandle, IpcBindingError> {
         let boxed = Box::into_raw(Box::new(service)) as usize;
         let result = arch::raw_syscall(SyscallNum::IpcBind as usize, boxed, 0, 0);
         unsafe { *Box::from_raw(result as *mut Result<IpcBindingHandle, IpcBindingError>) }
     }
 
-    pub fn ipc_receive_from_client(binding_handle: IpcBindingHandle) -> FutureHandle {
-        let raw = arch::raw_syscall(SyscallNum::IpcReceiveFromClient as usize, binding_handle.index as usize, binding_handle.generation as usize, 0usize);
-        FutureHandle::unpack(raw)
+    pub fn ipc_create_message(connection_handle: IpcConnectionHandle, data_size: usize) -> Result<IpcMessageHandle, IpcSendError> {
+        let result_pointer = arch::raw_syscall(SyscallNum::IpcCreateMessage as usize, connection_handle.pack(), data_size, 0);
+        unsafe { *Box::from_raw(result_pointer as *mut Result<IpcMessageHandle, IpcSendError>) }
     }
 
-    pub fn ipc_send_to_client(connection_handle: IpcConnectionHandle, buffer_handle: IpcBufferHandle) -> Result<(), IpcSendError> {
-        let result_pointer = arch::raw_syscall(SyscallNum::IpcSendToClient as usize, connection_handle.index as usize, connection_handle.generation as usize, buffer_handle.pack());
+    pub fn ipc_write_message(message_handle: IpcMessageHandle, bytes: &[u8]) -> Result<(), IpcMessageError> {
+        let result_pointer = arch::raw_syscall(SyscallNum::IpcWriteMessage as usize, message_handle.pack(), bytes.as_ptr() as usize, bytes.len());
+        unsafe { *Box::from_raw(result_pointer as *mut Result<(), IpcMessageError>) }
+    }
+
+    pub fn ipc_send_message(message_handle: IpcMessageHandle) -> Result<(), IpcSendError> {
+        let result_pointer = arch::raw_syscall(SyscallNum::IpcSendMessage as usize, message_handle.pack(), 0, 0);
         unsafe { *Box::from_raw(result_pointer as *mut Result<(), IpcSendError>) }
     }
 
-    pub fn ipc_alloc_buffer() -> Result<IpcBufferHandle, IpcBufferError> {
-        let result_pointer = arch::raw_syscall(SyscallNum::IpcBufferAlloc as usize, 0, 0, 0);
-        unsafe { *Box::from_raw(result_pointer as *mut Result<IpcBufferHandle, IpcBufferError>) }
+    pub fn ipc_read_message(message_handle: IpcMessageHandle, dst: &mut [u8]) -> Result<usize, IpcMessageError> {
+        let result_pointer = arch::raw_syscall(SyscallNum::IpcReadMessage as usize, message_handle.pack(), dst.as_mut_ptr() as usize, dst.len());
+        unsafe { *Box::from_raw(result_pointer as *mut Result<usize, IpcMessageError>) }
     }
 
-    pub fn ipc_write_buffer(buffer_handle: IpcBufferHandle, bytes: &[u8]) -> Result<(), IpcBufferError> {
-        let result_pointer = arch::raw_syscall(SyscallNum::IpcBufferWrite as usize, buffer_handle.pack(), bytes.as_ptr() as usize, bytes.len());
-        unsafe { *Box::from_raw(result_pointer as *mut Result<(), IpcBufferError>) }
+    pub fn ipc_receive_message(connection_handle: IpcConnectionHandle) -> FutureHandle {
+        let raw = arch::raw_syscall(SyscallNum::IpcReceiveMessage as usize, connection_handle.pack(), 0, 0);
+        FutureHandle::unpack(raw)
     }
 
-    pub fn ipc_read_buffer(buffer_handle: IpcBufferHandle, dst: &mut [u8]) -> Result<usize, IpcBufferError> {
-        let result_pointer = arch::raw_syscall(SyscallNum::IpcBufferRead as usize, buffer_handle.pack(), dst.as_mut_ptr() as usize, dst.len());
-        unsafe { *Box::from_raw(result_pointer as *mut Result<usize, IpcBufferError>) }
+    pub fn ipc_accept_message(binding_handle: IpcBindingHandle) -> FutureHandle {
+        let raw = arch::raw_syscall(SyscallNum::IpcAcceptMessage as usize, binding_handle.pack(), 0, 0);
+        FutureHandle::unpack(raw)
     }
 
-    pub fn ipc_dispose_buffer(buffer_handle: IpcBufferHandle) -> Result<(), IpcBufferError> {
-        let result_pointer = arch::raw_syscall(SyscallNum::IpcBufferDispose as usize, buffer_handle.pack(), 0, 0);
-        unsafe { *Box::from_raw(result_pointer as *mut Result<(), IpcBufferError>) }
+    pub fn ipc_dispose_message(message_handle: IpcMessageHandle) -> Result<(), IpcMessageError> {
+        let result_pointer = arch::raw_syscall(SyscallNum::IpcDisposeMessage as usize, message_handle.pack(), 0, 0);
+        unsafe { *Box::from_raw(result_pointer as *mut Result<(), IpcMessageError>) }
     }
 }
 

@@ -3,7 +3,9 @@ use collections::generational_arena::Handle;
 
 pub type IpcConnectionHandle = Handle;
 pub type IpcBindingHandle = Handle;
-pub type IpcBufferHandle = Handle;
+pub type IpcMessageHandle = Handle;
+
+pub const MAX_MESSAGE_SIZE: usize = 64;
 
 #[derive(Debug)]
 pub enum IpcConnectionError {
@@ -20,7 +22,7 @@ pub enum IpcBindingError {
 pub enum IpcSendError {
     ConnectionNotFound,
     ConnectionCongested,
-    InvalidBuffer(IpcBufferError),
+    InvalidBuffer(IpcMessageError),
 }
 
 impl Display for IpcSendError {
@@ -33,27 +35,29 @@ impl Display for IpcSendError {
     }
 }
 
-impl From<IpcBufferError> for IpcSendError {
-    fn from(e: IpcBufferError) -> Self {
+impl From<IpcMessageError> for IpcSendError {
+    fn from(e: IpcMessageError) -> Self {
         Self::InvalidBuffer(e)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IpcBufferError {
+pub enum IpcMessageError {
     BufferNotFound,
     Sealed,
     Unsealed,
     PoolExhausted,
+    MessageTooLarge,
 }
 
-impl Display for IpcBufferError {
+impl Display for IpcMessageError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
-            IpcBufferError::BufferNotFound => write!(f, "Buffer not found"),
-            IpcBufferError::Sealed => write!(f, "Buffer is sealed"),
-            IpcBufferError::Unsealed => write!(f, "Buffer is not sealed"),
-            IpcBufferError::PoolExhausted => write!(f, "Buffer pool exhausted"),
+            IpcMessageError::BufferNotFound => write!(f, "Buffer not found"),
+            IpcMessageError::Sealed => write!(f, "Buffer is sealed"),
+            IpcMessageError::Unsealed => write!(f, "Buffer is not sealed"),
+            IpcMessageError::PoolExhausted => write!(f, "Buffer pool exhausted"),
+            IpcMessageError::MessageTooLarge => write!(f, "Message too large"),
         }
     }
 }
@@ -77,7 +81,7 @@ impl Display for IpcReceiveError {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct IpcMessage {
-    pub buffer_handle: IpcBufferHandle,
+    pub message_handle: IpcMessageHandle,
     pub connection_handle: IpcConnectionHandle,
 }
 

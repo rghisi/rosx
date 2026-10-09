@@ -2,11 +2,13 @@ use alloc::collections::{BTreeMap};
 use alloc::string::String;
 use alloc::boxed::Box;
 use collections::generational_arena::{GenerationalArena, Handle};
-use system::ipc::{IpcConnectionError, IpcMessage, IpcSendError, IpcConnectionHandle, IpcBindingError, IpcReceiveError, IpcMessageFuture, IpcBufferError, IpcBufferHandle};
+use system::ipc::{IpcConnectionError, IpcMessage, IpcSendError, IpcConnectionHandle, IpcBindingError, IpcReceiveError, IpcMessageFuture, IpcMessageError, IpcMessageHandle};
 use system::future::FutureHandle;
 use crate::ipc::mailbox_manager::{MailboxManager, MailboxHandle};
+use crate::ipc::message_buffer::MessageRoute;
 use crate::ipc::message_buffer_manager::MessageBufferManager;
 use crate::ports::driven::ForNotifyingFutures;
+use crate::task::TaskHandle;
 
 struct NoopIpcNotifier;
 impl ForNotifyingFutures for NoopIpcNotifier {
@@ -39,6 +41,7 @@ type IpcBindingHandle = Handle;
 struct IpcConnection {
     server_mailbox: MailboxHandle,
     client_mailbox: MailboxHandle,
+    client_task: TaskHandle,
 }
 
 pub(crate) struct IpcManager {
@@ -87,14 +90,15 @@ impl IpcManager {
         Ok(binding_handle)
     }
 
-    pub(crate) fn connect(&mut self, service: &str) -> Result<IpcConnectionHandle, IpcConnectionError> {
+    pub(crate) fn connect(&mut self, service: &str, caller: TaskHandle) -> Result<IpcConnectionHandle, IpcConnectionError> {
         if let Some(binding_handler) = self.registry.get(service).copied() {
             if let Ok(server_binding) = self.bindings.borrow(binding_handler) {
                 let client_mailbox_handle = self.mailbox_manager.create();
                 let server_mailbox_handle = server_binding.mailbox_handle;
                 let connection = IpcConnection {
                     server_mailbox: server_mailbox_handle,
-                    client_mailbox: client_mailbox_handle
+                    client_mailbox: client_mailbox_handle,
+                    client_task: caller
                 };
                 if let Ok(connection_handle) = self.connections.add(connection) {
                     Ok(connection_handle)
@@ -110,50 +114,62 @@ impl IpcManager {
     }
 
     pub(crate) fn disconnect(&mut self, connection_handle: IpcConnectionHandle) {
-        if let Ok(connection) = self.connections.remove(connection_handle) {
-            self.mailbox_manager.remove(connection.client_mailbox);
-        }
-    }
-
-    pub(crate) fn send_to_server(&mut self, message: IpcMessage) -> Result<(), IpcSendError> {
-        let connection_handle = message.connection_handle;
-        let server_mailbox = match self.connections.borrow(connection_handle) {
-            Ok(connection) => connection.server_mailbox,
-            Err(_) => return Err(IpcSendError::ConnectionNotFound),
-        };
-        self.buffer_manager.seal(message.buffer_handle).map_err(IpcSendError::InvalidBuffer)?;
-        self.mailbox_manager.push_back(server_mailbox, message);
-        Ok(())
-    }
-
-    pub(crate) fn send_to_client(&mut self, message: IpcMessage) -> Result<(), IpcSendError> {
-        let connection_handle = message.connection_handle;
         let client_mailbox = match self.connections.borrow(connection_handle) {
             Ok(connection) => connection.client_mailbox,
+            Err(_) => return,
+        };
+        for message in self.mailbox_manager.drain(client_mailbox) {
+            let _ = self.buffer_manager.dispose(message.message_handle);
+        }
+        self.mailbox_manager.remove(client_mailbox);
+        let _ = self.connections.remove(connection_handle);
+    }
+
+    pub(crate) fn create_message(&mut self, connection: IpcConnectionHandle, caller: TaskHandle, data_size: usize) -> Result<IpcMessageHandle, IpcSendError> {
+        let destination = match self.connections.borrow(connection) {
+            Ok(conn) => {
+                if caller == conn.client_task {
+                    conn.server_mailbox
+                } else {
+                    conn.client_mailbox
+                }
+            }
             Err(_) => return Err(IpcSendError::ConnectionNotFound),
         };
-        self.buffer_manager.seal(message.buffer_handle).map_err(IpcSendError::InvalidBuffer)?;
-        self.mailbox_manager.push_back(client_mailbox, message);
+        self.buffer_manager
+            .create(data_size, MessageRoute { connection, destination })
+            .map_err(IpcSendError::InvalidBuffer)
+    }
+
+    pub(crate) fn send_message(&mut self, message_handle: IpcMessageHandle) -> Result<(), IpcSendError> {
+        let route = match self.buffer_manager.route_of(message_handle) {
+            Some(route) => route,
+            None => return Err(IpcSendError::InvalidBuffer(IpcMessageError::BufferNotFound)),
+        };
+        if self.connections.borrow(route.connection).is_err() {
+            return Err(IpcSendError::ConnectionNotFound);
+        }
+        self.buffer_manager.seal(message_handle).map_err(IpcSendError::InvalidBuffer)?;
+        self.mailbox_manager.push_back(route.destination, IpcMessage {
+            message_handle,
+            connection_handle: route.connection,
+        });
         Ok(())
     }
 
-    pub(crate) fn alloc_buffer(&mut self) -> Result<IpcBufferHandle, IpcBufferError> {
-        self.buffer_manager.alloc()
-    }
-
-    pub(crate) fn write_buffer(&mut self, handle: IpcBufferHandle, bytes: &[u8]) -> Result<(), IpcBufferError> {
+    pub(crate) fn write_message(&mut self, handle: IpcMessageHandle, bytes: &[u8]) -> Result<(), IpcMessageError> {
         self.buffer_manager.write(handle, bytes)
     }
 
-    pub(crate) fn read_buffer(&mut self, handle: IpcBufferHandle, dst: &mut [u8]) -> Result<usize, IpcBufferError> {
+    pub(crate) fn read_message(&mut self, handle: IpcMessageHandle, dst: &mut [u8]) -> Result<usize, IpcMessageError> {
         self.buffer_manager.read(handle, dst)
     }
 
-    pub(crate) fn dispose_buffer(&mut self, handle: IpcBufferHandle) -> Result<(), IpcBufferError> {
+    pub(crate) fn dispose_message(&mut self, handle: IpcMessageHandle) -> Result<(), IpcMessageError> {
         self.buffer_manager.dispose(handle)
     }
 
-    pub(crate) fn receive_from_all_clients_async(&mut self, server_binding_handle: IpcBindingHandle) -> FutureHandle {
+    pub(crate) fn accept_message_async(&mut self, server_binding_handle: IpcBindingHandle) -> FutureHandle {
         if let Ok(server_binding) = self.bindings.borrow(server_binding_handle) {
             let server_mailbox_handle = server_binding.mailbox_handle;
             self.mailbox_manager.pop_front_async(server_mailbox_handle)
@@ -164,7 +180,7 @@ impl IpcManager {
         }
     }
 
-    pub(crate) fn receive_from_server_async(&mut self, connection_handle: IpcConnectionHandle) -> FutureHandle {
+    pub(crate) fn receive_message_async(&mut self, connection_handle: IpcConnectionHandle) -> FutureHandle {
         if let Ok(connection) = self.connections.borrow(connection_handle) {
             self.mailbox_manager.pop_front_async(connection.client_mailbox)
         } else {
@@ -183,6 +199,9 @@ mod tests {
     use crate::kernel_services::FutureRegistryNotifierUseCase;
     use crate::ports::driven::ForNotifyingFutures;
 
+    const CLIENT_TASK: Handle = Handle { index: 1, generation: 1 };
+    const SERVER_TASK: Handle = Handle { index: 2, generation: 1 };
+
     fn manager_with_notifier() -> IpcManager {
         init_services();
         let notifier: &'static dyn ForNotifyingFutures =
@@ -194,76 +213,210 @@ mod tests {
 
     fn bind_and_connect(manager: &mut IpcManager, service: &str) -> (IpcBindingHandle, IpcConnectionHandle) {
         let binding = manager.bind_service(service).unwrap();
-        let connection = manager.connect(service).unwrap();
+        let connection = manager.connect(service, CLIENT_TASK).unwrap();
         (binding, connection)
     }
 
     #[test]
-    fn send_to_server_seals_buffer_and_delivers_handle() {
+    fn client_send_accept_yields_sealed_message() {
         let mut manager = manager_with_notifier();
-        let (binding, connection) = bind_and_connect(&mut manager, "SEAL-E2E");
+        let (binding, connection) = bind_and_connect(&mut manager, "MSG-E2E");
 
-        let buffer_handle = manager.alloc_buffer().unwrap();
-        assert!(manager.write_buffer(buffer_handle, b"payload").is_ok());
-        assert!(manager.send_to_server(IpcMessage { buffer_handle, connection_handle: connection }).is_ok());
+        let message_handle = manager.create_message(connection, CLIENT_TASK, 8).unwrap();
+        assert!(manager.write_message(message_handle, b"payload").is_ok());
+        assert!(manager.send_message(message_handle).is_ok());
 
-        let fh = manager.receive_from_all_clients_async(binding);
+        let fh = manager.accept_message_async(binding);
         {
-            let mut registry = services().future_registry.borrow_mut();
+            let registry = services().future_registry.borrow_mut();
             let future_box = registry.borrow_mut(fh).unwrap();
             let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
-            assert_eq!(ipc_future.result().unwrap().buffer_handle, buffer_handle);
+            let delivered = ipc_future.result().unwrap();
+            assert_eq!(delivered.message_handle, message_handle);
+            assert_eq!(delivered.connection_handle, connection);
         }
 
         let mut dst = [0u8; 64];
-        let copied = manager.read_buffer(buffer_handle, &mut dst).unwrap();
+        let copied = manager.read_message(message_handle, &mut dst).unwrap();
         assert_eq!(copied, 7);
         assert_eq!(&dst[..copied], b"payload");
     }
 
     #[test]
-    fn double_send_of_same_buffer_is_rejected() {
+    fn server_reply_reaches_client_mailbox() {
         let mut manager = manager_with_notifier();
-        let (_binding, connection) = bind_and_connect(&mut manager, "SEAL-DOUBLE");
+        let (_binding, connection) = bind_and_connect(&mut manager, "MSG-REPLY");
 
-        let buffer_handle = manager.alloc_buffer().unwrap();
-        assert!(manager.write_buffer(buffer_handle, b"once").is_ok());
-        assert!(manager.send_to_server(IpcMessage { buffer_handle, connection_handle: connection }).is_ok());
+        let reply_handle = manager.create_message(connection, SERVER_TASK, 8).unwrap();
+        assert!(manager.write_message(reply_handle, b"reply!!").is_ok());
+        assert!(manager.send_message(reply_handle).is_ok());
+
+        let fh = manager.receive_message_async(connection);
+        {
+            let registry = services().future_registry.borrow_mut();
+            let future_box = registry.borrow_mut(fh).unwrap();
+            let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
+            let delivered = ipc_future.result().unwrap();
+            assert_eq!(delivered.message_handle, reply_handle);
+            assert_eq!(delivered.connection_handle, connection);
+        }
+    }
+
+    #[test]
+    fn double_send_of_same_message_is_rejected() {
+        let mut manager = manager_with_notifier();
+        let (_binding, connection) = bind_and_connect(&mut manager, "MSG-DOUBLE");
+
+        let message_handle = manager.create_message(connection, CLIENT_TASK, 8).unwrap();
+        assert!(manager.write_message(message_handle, b"once").is_ok());
+        assert!(manager.send_message(message_handle).is_ok());
 
         assert_eq!(
-            manager.send_to_server(IpcMessage { buffer_handle, connection_handle: connection }),
-            Err(IpcSendError::InvalidBuffer(IpcBufferError::Sealed))
+            manager.send_message(message_handle),
+            Err(IpcSendError::InvalidBuffer(IpcMessageError::Sealed))
         );
     }
 
     #[test]
-    fn send_of_disposed_buffer_is_rejected() {
+    fn send_of_disposed_message_is_rejected() {
         let mut manager = manager_with_notifier();
-        let (_binding, connection) = bind_and_connect(&mut manager, "SEAL-DISPOSED");
+        let (_binding, connection) = bind_and_connect(&mut manager, "MSG-DISPOSED");
 
-        let buffer_handle = manager.alloc_buffer().unwrap();
-        assert!(manager.dispose_buffer(buffer_handle).is_ok());
+        let message_handle = manager.create_message(connection, CLIENT_TASK, 8).unwrap();
+        assert!(manager.dispose_message(message_handle).is_ok());
 
         assert_eq!(
-            manager.send_to_server(IpcMessage { buffer_handle, connection_handle: connection }),
-            Err(IpcSendError::InvalidBuffer(IpcBufferError::BufferNotFound))
+            manager.send_message(message_handle),
+            Err(IpcSendError::InvalidBuffer(IpcMessageError::BufferNotFound))
         );
     }
 
     #[test]
     fn send_on_dead_connection_skips_seal() {
         let mut manager = manager_with_notifier();
-        let (_binding, connection) = bind_and_connect(&mut manager, "SEAL-DEADCONN");
+        let (_binding, connection) = bind_and_connect(&mut manager, "MSG-DEADCONN");
 
-        let buffer_handle = manager.alloc_buffer().unwrap();
-        assert!(manager.write_buffer(buffer_handle, b"orphan").is_ok());
+        let message_handle = manager.create_message(connection, CLIENT_TASK, 8).unwrap();
+        assert!(manager.write_message(message_handle, b"orphan").is_ok());
         manager.disconnect(connection);
 
         assert_eq!(
-            manager.send_to_server(IpcMessage { buffer_handle, connection_handle: connection }),
+            manager.send_message(message_handle),
             Err(IpcSendError::ConnectionNotFound)
         );
-        assert_eq!(manager.read_buffer(buffer_handle, &mut [0u8; 8]), Err(IpcBufferError::Unsealed));
-        assert!(manager.dispose_buffer(buffer_handle).is_ok());
+        assert_eq!(manager.read_message(message_handle, &mut [0u8; 8]), Err(IpcMessageError::Unsealed));
+        assert!(manager.dispose_message(message_handle).is_ok());
+    }
+
+    #[test]
+    fn create_message_on_dead_connection_is_rejected() {
+        let mut manager = manager_with_notifier();
+        let (_binding, connection) = bind_and_connect(&mut manager, "MSG-DEADCREATE");
+        manager.disconnect(connection);
+
+        assert_eq!(
+            manager.create_message(connection, CLIENT_TASK, 8),
+            Err(IpcSendError::ConnectionNotFound)
+        );
+    }
+
+    #[test]
+    fn create_message_rejects_data_size_above_cap() {
+        let mut manager = manager_with_notifier();
+        let (_binding, connection) = bind_and_connect(&mut manager, "MSG-TOOBIG");
+
+        assert_eq!(
+            manager.create_message(connection, CLIENT_TASK, 65),
+            Err(IpcSendError::InvalidBuffer(IpcMessageError::MessageTooLarge))
+        );
+    }
+
+    #[test]
+    fn write_message_enforces_cap() {
+        let mut manager = manager_with_notifier();
+        let (_binding, connection) = bind_and_connect(&mut manager, "MSG-CAP");
+
+        let message_handle = manager.create_message(connection, CLIENT_TASK, 64).unwrap();
+        assert!(manager.write_message(message_handle, &[0xAA; 64]).is_ok());
+        assert_eq!(
+            manager.write_message(message_handle, &[0xBB; 1]),
+            Err(IpcMessageError::MessageTooLarge)
+        );
+    }
+
+    #[test]
+    fn accept_before_connect_delivers_message() {
+        use system::future::Future;
+        let mut manager = manager_with_notifier();
+        let binding = manager.bind_service("MSG-EARLY").unwrap();
+
+        let fh = manager.accept_message_async(binding);
+        {
+            let registry = services().future_registry.borrow_mut();
+            let future_box = registry.borrow_mut(fh).unwrap();
+            let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
+            assert!(!ipc_future.is_completed());
+        }
+
+        let connection = manager.connect("MSG-EARLY", CLIENT_TASK).unwrap();
+        let message_handle = manager.create_message(connection, CLIENT_TASK, 8).unwrap();
+        assert!(manager.send_message(message_handle).is_ok());
+
+        {
+            let registry = services().future_registry.borrow_mut();
+            let future_box = registry.borrow_mut(fh).unwrap();
+            let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
+            assert_eq!(ipc_future.result().unwrap().message_handle, message_handle);
+        }
+    }
+
+    #[test]
+    fn receive_on_dead_connection_yields_error_future() {
+        use system::future::Future;
+        let mut manager = manager_with_notifier();
+        let (_binding, connection) = bind_and_connect(&mut manager, "MSG-DEADRECV");
+        manager.disconnect(connection);
+
+        let fh = manager.receive_message_async(connection);
+        let registry = services().future_registry.borrow_mut();
+        let future_box = registry.borrow_mut(fh).unwrap();
+        let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
+        assert!(ipc_future.is_completed());
+        assert!(matches!(
+            ipc_future.result(),
+            Err(IpcReceiveError::ConnectionNotFound)
+        ));
+    }
+
+    #[test]
+    fn accept_on_unknown_binding_yields_error_future() {
+        use system::future::Future;
+        let mut manager = manager_with_notifier();
+
+        let fh = manager.accept_message_async(Handle::new(99, 1));
+        let registry = services().future_registry.borrow_mut();
+        let future_box = registry.borrow_mut(fh).unwrap();
+        let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
+        assert!(ipc_future.is_completed());
+        assert!(matches!(
+            ipc_future.result(),
+            Err(IpcReceiveError::ConnectionNotFound)
+        ));
+    }
+
+    #[test]
+    fn disconnect_disposes_messages_queued_for_client() {
+        let mut manager = manager_with_notifier();
+        let (_binding, connection) = bind_and_connect(&mut manager, "MSG-DRAIN");
+
+        let reply_handle = manager.create_message(connection, SERVER_TASK, 8).unwrap();
+        assert!(manager.send_message(reply_handle).is_ok());
+
+        manager.disconnect(connection);
+
+        assert_eq!(
+            manager.read_message(reply_handle, &mut [0u8; 8]),
+            Err(IpcMessageError::BufferNotFound)
+        );
     }
 }
