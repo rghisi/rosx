@@ -35,6 +35,7 @@ Run the commands you are given (a green baseline, or the plan's acceptance-crite
 - Report pass/fail only; correctness judgment belongs to the Reviewer.
 - Run every command even after one fails, unless the failure blocks later ones.
 - When establishing a green baseline, also record the compiler-warning fingerprint (warning counts per target and per warning code) and report it, so later stages can prove a change preserved warnings instead of arguing it.
+- A test command that exits 0 while selecting zero tests is a vacuous gate, not a pass: at baseline, record the test target and count each acceptance command actually selected, and report any vacuous invocation form discovered (e.g. a positional argument filtering test names instead of selecting the target).
 
 ## Output
 

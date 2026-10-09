@@ -49,6 +49,7 @@ Hand this retrospective to the `refiner` verbatim in the delegation prompt.
 - You only coordinate: delegate, collect results, decide the next step, and report progress to the user.
 - Track state between rounds: which plan revision and which review iteration you are on.
 - If a subagent response arrives truncated by output limits, spot-verify every claim in the truncated remainder with direct greps before handing the artifact to the next stage; resume the same session only for what greps cannot close.
+- Delegate file writes only to stages whose permissions allow them: a read-only stage returns artifact text, and you write the file to disk yourself and confirm it exists before the next handoff.
 - Stop and ask the user when the same stage loops more than twice without progress.
 - Run the `refiner` exactly once per workflow, only after a clean finalization. Never loop it, and skip it entirely when the run ended in failure or in an escalation to the user.
 - Keep specification changes in a separate commit from code changes so they stay easy to revert.
