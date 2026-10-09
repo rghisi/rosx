@@ -24,7 +24,8 @@ When the task supplies an existing plan document, validate it against the Contex
 
 - Every step's dependencies resolve at its turn; no step may name code introduced later.
 - Every verification gate is satisfiable across all steps; a final grep gate must not contradict an earlier step's placement.
-- Every acceptance-criteria command references packages, targets, and flags that actually exist in the workspace.
+- Every acceptance-criteria command references packages, targets, and flags that actually exist in the workspace and runs green verbatim as written: a single-package build must carry the features it needs on its own, because cargo unifies features only across the packages named in the invocation; the plan document's self-attestation (a "validated baseline" header) is not evidence — a command not confirmable from the Context Map is flagged for the orchestrator's baseline pass, never passed through silently.
+- A gate labeled manual is promoted to a scripted command whenever the Context Map shows repo tooling that automates it (e.g. a QEMU session harness with spawn/expect/mark); runtime gates must yield machine-countable evidence, and the manual label survives only for gates no tooling can prove.
 
 ## Constraints
 
