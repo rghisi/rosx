@@ -6,6 +6,7 @@ extern crate alloc;
 use core::alloc::{GlobalAlloc, Layout};
 use core::panic::PanicInfo;
 use usrlib::{println};
+use usrlib::ipc::{ipc_send_value_to_client, ReadableMailbox};
 use usrlib::syscall::Syscall;
 use system::future::FutureResult;
 
@@ -38,8 +39,9 @@ impl RandomGeneratorServer {
             loop {
                 let fh = Syscall::ipc_receive_from_client(binding);
                 if let FutureResult::IpcMessage(Ok(msg)) = Syscall::wait_future(fh) {
+                    let _request = ReadableMailbox::new(msg.buffer_handle);
                     let value = self.next() as usize;
-                    let _ = Syscall::ipc_send_to_client(msg.connection_handle, value);
+                    let _ = ipc_send_value_to_client(msg.connection_handle, value);
                 }
             }
         }

@@ -3,6 +3,7 @@ use collections::generational_arena::Handle;
 
 pub type IpcConnectionHandle = Handle;
 pub type IpcBindingHandle = Handle;
+pub type IpcBufferHandle = Handle;
 
 #[derive(Debug)]
 pub enum IpcConnectionError {
@@ -10,14 +11,16 @@ pub enum IpcConnectionError {
     ConnectionCannotBeEstablished,
 }
 
+#[derive(Debug)]
 pub enum IpcBindingError {
     AlreadyBound,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpcSendError {
     ConnectionNotFound,
-    ConnectionCongested
+    ConnectionCongested,
+    InvalidBuffer(IpcBufferError),
 }
 
 impl Display for IpcSendError {
@@ -25,6 +28,32 @@ impl Display for IpcSendError {
         match self {
             IpcSendError::ConnectionNotFound =>  write!(f, "Connection not found"),
             IpcSendError::ConnectionCongested => write!(f, "Connection congested"),
+            IpcSendError::InvalidBuffer(e) => write!(f, "Invalid buffer: {}", e),
+        }
+    }
+}
+
+impl From<IpcBufferError> for IpcSendError {
+    fn from(e: IpcBufferError) -> Self {
+        Self::InvalidBuffer(e)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IpcBufferError {
+    BufferNotFound,
+    Sealed,
+    Unsealed,
+    PoolExhausted,
+}
+
+impl Display for IpcBufferError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            IpcBufferError::BufferNotFound => write!(f, "Buffer not found"),
+            IpcBufferError::Sealed => write!(f, "Buffer is sealed"),
+            IpcBufferError::Unsealed => write!(f, "Buffer is not sealed"),
+            IpcBufferError::PoolExhausted => write!(f, "Buffer pool exhausted"),
         }
     }
 }
@@ -48,7 +77,7 @@ impl Display for IpcReceiveError {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct IpcMessage {
-    pub data: usize,
+    pub buffer_handle: IpcBufferHandle,
     pub connection_handle: IpcConnectionHandle,
 }
 

@@ -129,11 +129,11 @@ mod tests {
         assert!(!future.is_completed());
         let msg = IpcMessage {
             connection_handle: Handle::new(1, 1),
-            data: 123,
+            buffer_handle: Handle::new(7, 1),
         };
         future.complete(msg);
         assert!(future.is_completed());
-        assert_eq!(future.result().unwrap().data, 123);
+        assert_eq!(future.result().unwrap().buffer_handle, Handle::new(7, 1));
     }
 
     #[test]
@@ -152,7 +152,7 @@ mod tests {
         // Case 2: Data pushed -> Waiter notified
         let msg = IpcMessage {
             connection_handle: Handle::new(1, 1),
-            data: 456,
+            buffer_handle: Handle::new(7, 2),
         };
         manager.push_back(handle, msg);
 
@@ -160,7 +160,7 @@ mod tests {
         let mut registry = services().future_registry.borrow_mut();
         let future_box = registry.borrow_mut(fh).unwrap();
         let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
-        assert_eq!(ipc_future.result().unwrap().data, 456);
+        assert_eq!(ipc_future.result().unwrap().buffer_handle, Handle::new(7, 2));
     }
 
     #[test]
@@ -188,7 +188,7 @@ mod tests {
         // 4. push_back should notify and wake the task
         let msg = IpcMessage {
             connection_handle: Handle::new(1, 1),
-            data: 789,
+            buffer_handle: Handle::new(7, 3),
         };
         manager.push_back(handle, msg);
 

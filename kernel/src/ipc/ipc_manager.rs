@@ -2,9 +2,10 @@ use alloc::collections::{BTreeMap};
 use alloc::string::String;
 use alloc::boxed::Box;
 use collections::generational_arena::{GenerationalArena, Handle};
-use system::ipc::{IpcConnectionError, IpcMessage, IpcSendError, IpcConnectionHandle, IpcBindingError, IpcReceiveError, IpcMessageFuture};
+use system::ipc::{IpcConnectionError, IpcMessage, IpcSendError, IpcConnectionHandle, IpcBindingError, IpcReceiveError, IpcMessageFuture, IpcBufferError, IpcBufferHandle};
 use system::future::FutureHandle;
 use crate::ipc::mailbox_manager::{MailboxManager, MailboxHandle};
+use crate::ipc::message_buffer_manager::MessageBufferManager;
 use crate::ports::driven::ForNotifyingFutures;
 
 struct NoopIpcNotifier;
@@ -43,6 +44,7 @@ struct IpcConnection {
 pub(crate) struct IpcManager {
     bindings: GenerationalArena<IpcServerBinding, 256>,
     mailbox_manager: MailboxManager,
+    buffer_manager: MessageBufferManager,
     connections: GenerationalArena<IpcConnection, 256>,
     registry: BTreeMap<String, IpcBindingHandle>,
     notifier: &'static dyn ForNotifyingFutures,
@@ -54,6 +56,7 @@ impl IpcManager {
         IpcManager {
             bindings: GenerationalArena::new(),
             mailbox_manager: MailboxManager::new(),
+            buffer_manager: MessageBufferManager::new(),
             connections: GenerationalArena::new(),
             registry: BTreeMap::new(),
             notifier: &NOOP_IPC_NOTIFIER,
@@ -64,6 +67,7 @@ impl IpcManager {
         IpcManager {
             bindings: GenerationalArena::new(),
             mailbox_manager: MailboxManager::new_with_notifier(notifier),
+            buffer_manager: MessageBufferManager::new(),
             connections: GenerationalArena::new(),
             registry: BTreeMap::new(),
             notifier,
@@ -113,22 +117,40 @@ impl IpcManager {
 
     pub(crate) fn send_to_server(&mut self, message: IpcMessage) -> Result<(), IpcSendError> {
         let connection_handle = message.connection_handle;
-        if let Ok(connection) = self.connections.borrow(connection_handle) {
-            self.mailbox_manager.push_back(connection.server_mailbox, message);
-            Ok(())
-        } else {
-            Err(IpcSendError::ConnectionNotFound)
-        }
+        let server_mailbox = match self.connections.borrow(connection_handle) {
+            Ok(connection) => connection.server_mailbox,
+            Err(_) => return Err(IpcSendError::ConnectionNotFound),
+        };
+        self.buffer_manager.seal(message.buffer_handle).map_err(IpcSendError::InvalidBuffer)?;
+        self.mailbox_manager.push_back(server_mailbox, message);
+        Ok(())
     }
 
     pub(crate) fn send_to_client(&mut self, message: IpcMessage) -> Result<(), IpcSendError> {
         let connection_handle = message.connection_handle;
-        if let Ok(connection) = self.connections.borrow(connection_handle) {
-            self.mailbox_manager.push_back(connection.client_mailbox, message);
-            Ok(())
-        } else {
-            Err(IpcSendError::ConnectionNotFound)
-        }
+        let client_mailbox = match self.connections.borrow(connection_handle) {
+            Ok(connection) => connection.client_mailbox,
+            Err(_) => return Err(IpcSendError::ConnectionNotFound),
+        };
+        self.buffer_manager.seal(message.buffer_handle).map_err(IpcSendError::InvalidBuffer)?;
+        self.mailbox_manager.push_back(client_mailbox, message);
+        Ok(())
+    }
+
+    pub(crate) fn alloc_buffer(&mut self) -> Result<IpcBufferHandle, IpcBufferError> {
+        self.buffer_manager.alloc()
+    }
+
+    pub(crate) fn write_buffer(&mut self, handle: IpcBufferHandle, bytes: &[u8]) -> Result<(), IpcBufferError> {
+        self.buffer_manager.write(handle, bytes)
+    }
+
+    pub(crate) fn read_buffer(&mut self, handle: IpcBufferHandle, dst: &mut [u8]) -> Result<usize, IpcBufferError> {
+        self.buffer_manager.read(handle, dst)
+    }
+
+    pub(crate) fn dispose_buffer(&mut self, handle: IpcBufferHandle) -> Result<(), IpcBufferError> {
+        self.buffer_manager.dispose(handle)
     }
 
     pub(crate) fn receive_from_all_clients_async(&mut self, server_binding_handle: IpcBindingHandle) -> FutureHandle {
@@ -150,5 +172,98 @@ impl IpcManager {
                 .register(Box::new(IpcMessageFuture::with_error(IpcReceiveError::ConnectionNotFound)))
                 .unwrap()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel_services::init as init_services;
+    use crate::kernel_services::services;
+    use crate::kernel_services::FutureRegistryNotifierUseCase;
+    use crate::ports::driven::ForNotifyingFutures;
+
+    fn manager_with_notifier() -> IpcManager {
+        init_services();
+        let notifier: &'static dyn ForNotifyingFutures =
+            Box::leak(Box::new(FutureRegistryNotifierUseCase {
+                future_registry: services().future_registry,
+            })) as &'static dyn ForNotifyingFutures;
+        IpcManager::new_with_notifier(notifier)
+    }
+
+    fn bind_and_connect(manager: &mut IpcManager, service: &str) -> (IpcBindingHandle, IpcConnectionHandle) {
+        let binding = manager.bind_service(service).unwrap();
+        let connection = manager.connect(service).unwrap();
+        (binding, connection)
+    }
+
+    #[test]
+    fn send_to_server_seals_buffer_and_delivers_handle() {
+        let mut manager = manager_with_notifier();
+        let (binding, connection) = bind_and_connect(&mut manager, "SEAL-E2E");
+
+        let buffer_handle = manager.alloc_buffer().unwrap();
+        assert!(manager.write_buffer(buffer_handle, b"payload").is_ok());
+        assert!(manager.send_to_server(IpcMessage { buffer_handle, connection_handle: connection }).is_ok());
+
+        let fh = manager.receive_from_all_clients_async(binding);
+        {
+            let mut registry = services().future_registry.borrow_mut();
+            let future_box = registry.borrow_mut(fh).unwrap();
+            let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
+            assert_eq!(ipc_future.result().unwrap().buffer_handle, buffer_handle);
+        }
+
+        let mut dst = [0u8; 64];
+        let copied = manager.read_buffer(buffer_handle, &mut dst).unwrap();
+        assert_eq!(copied, 7);
+        assert_eq!(&dst[..copied], b"payload");
+    }
+
+    #[test]
+    fn double_send_of_same_buffer_is_rejected() {
+        let mut manager = manager_with_notifier();
+        let (_binding, connection) = bind_and_connect(&mut manager, "SEAL-DOUBLE");
+
+        let buffer_handle = manager.alloc_buffer().unwrap();
+        assert!(manager.write_buffer(buffer_handle, b"once").is_ok());
+        assert!(manager.send_to_server(IpcMessage { buffer_handle, connection_handle: connection }).is_ok());
+
+        assert_eq!(
+            manager.send_to_server(IpcMessage { buffer_handle, connection_handle: connection }),
+            Err(IpcSendError::InvalidBuffer(IpcBufferError::Sealed))
+        );
+    }
+
+    #[test]
+    fn send_of_disposed_buffer_is_rejected() {
+        let mut manager = manager_with_notifier();
+        let (_binding, connection) = bind_and_connect(&mut manager, "SEAL-DISPOSED");
+
+        let buffer_handle = manager.alloc_buffer().unwrap();
+        assert!(manager.dispose_buffer(buffer_handle).is_ok());
+
+        assert_eq!(
+            manager.send_to_server(IpcMessage { buffer_handle, connection_handle: connection }),
+            Err(IpcSendError::InvalidBuffer(IpcBufferError::BufferNotFound))
+        );
+    }
+
+    #[test]
+    fn send_on_dead_connection_skips_seal() {
+        let mut manager = manager_with_notifier();
+        let (_binding, connection) = bind_and_connect(&mut manager, "SEAL-DEADCONN");
+
+        let buffer_handle = manager.alloc_buffer().unwrap();
+        assert!(manager.write_buffer(buffer_handle, b"orphan").is_ok());
+        manager.disconnect(connection);
+
+        assert_eq!(
+            manager.send_to_server(IpcMessage { buffer_handle, connection_handle: connection }),
+            Err(IpcSendError::ConnectionNotFound)
+        );
+        assert_eq!(manager.read_buffer(buffer_handle, &mut [0u8; 8]), Err(IpcBufferError::Unsealed));
+        assert!(manager.dispose_buffer(buffer_handle).is_ok());
     }
 }

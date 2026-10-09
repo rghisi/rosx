@@ -19,6 +19,10 @@ pub enum SyscallNum {
     IpcBind = 15,
     IpcReceiveFromClient = 16,
     IpcSendToClient = 17,
+    IpcBufferAlloc = 18,
+    IpcBufferWrite = 19,
+    IpcBufferRead = 20,
+    IpcBufferDispose = 21,
 }
 
 impl TryFrom<usize> for SyscallNum {
@@ -44,6 +48,10 @@ impl TryFrom<usize> for SyscallNum {
             15 => Ok(Self::IpcBind),
             16 => Ok(Self::IpcReceiveFromClient),
             17 => Ok(Self::IpcSendToClient),
+            18 => Ok(Self::IpcBufferAlloc),
+            19 => Ok(Self::IpcBufferWrite),
+            20 => Ok(Self::IpcBufferRead),
+            21 => Ok(Self::IpcBufferDispose),
             _ => Err(()),
         }
     }

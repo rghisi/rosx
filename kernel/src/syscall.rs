@@ -6,7 +6,7 @@ use crate::default_output::print;
 use system::syscall_numbers::SyscallNum;
 use collections::generational_arena::HalfSize;
 use system::future::FutureHandle;
-use system::ipc::{IpcMessage, IpcConnectionHandle, IpcBindingHandle};
+use system::ipc::{IpcMessage, IpcConnectionHandle, IpcBindingHandle, IpcBufferHandle};
 use system::future::FutureResult;
 use crate::task::{new_elf_task, new_entrypoint_task};
 
@@ -88,10 +88,10 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             0usize
         }
         Ok(SyscallNum::IpcSend) => {
-            let value = arg3;
+            let buffer_handle = IpcBufferHandle::unpack(arg3);
             let connection_handle = IpcConnectionHandle::new(arg1 as HalfSize, arg2 as HalfSize);
             let message = IpcMessage {
-                data: value,
+                buffer_handle,
                 connection_handle
             };
             let result = services().ipc_manager.borrow_mut().send_to_server(message);
@@ -112,8 +112,29 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::IpcSendToClient) => {
             let connection_handle = IpcConnectionHandle::new(arg1 as HalfSize, arg2 as HalfSize);
-            let message = IpcMessage { data: arg3, connection_handle };
+            let message = IpcMessage { buffer_handle: IpcBufferHandle::unpack(arg3), connection_handle };
             let result = services().ipc_manager.borrow_mut().send_to_client(message);
+            Box::into_raw(Box::new(result)) as usize
+        }
+        Ok(SyscallNum::IpcBufferAlloc) => {
+            let result = services().ipc_manager.borrow_mut().alloc_buffer();
+            Box::into_raw(Box::new(result)) as usize
+        }
+        Ok(SyscallNum::IpcBufferWrite) => {
+            let buffer_handle = IpcBufferHandle::unpack(arg1);
+            let bytes = unsafe { core::slice::from_raw_parts(arg2 as *const u8, arg3) };
+            let result = services().ipc_manager.borrow_mut().write_buffer(buffer_handle, bytes);
+            Box::into_raw(Box::new(result)) as usize
+        }
+        Ok(SyscallNum::IpcBufferRead) => {
+            let buffer_handle = IpcBufferHandle::unpack(arg1);
+            let dst = unsafe { core::slice::from_raw_parts_mut(arg2 as *mut u8, arg3) };
+            let result = services().ipc_manager.borrow_mut().read_buffer(buffer_handle, dst);
+            Box::into_raw(Box::new(result)) as usize
+        }
+        Ok(SyscallNum::IpcBufferDispose) => {
+            let buffer_handle = IpcBufferHandle::unpack(arg1);
+            let result = services().ipc_manager.borrow_mut().dispose_buffer(buffer_handle);
             Box::into_raw(Box::new(result)) as usize
         }
         Err(_) => 0,
