@@ -31,6 +31,7 @@ Run the commands you are given (a green baseline, or the plan's acceptance-crite
 
 - Capture each command's exit code directly, never through a `tail`/`head` pipe.
 - Prefer the narrowest command that verifies a criterion; avoid full clean rebuilds and unbounded long-running processes.
+- Express every `timeout` wrapped around a build or test run as an explicit unit-suffixed literal (e.g. `timeout 900s`) and re-read the typed number and unit before launching; never pass a bare number whose unit is guessed — a mistyped unit self-kills the gate (9 ms is not 900 s). Disclose and re-run any such self-kill.
 - The working tree must be byte-identical after your run: no file edits, no git write operations, no package installs, no deletions; artifacts under `target/` are fine.
 - Report pass/fail only; correctness judgment belongs to the Reviewer.
 - Run every command even after one fails, unless the failure blocks later ones.
