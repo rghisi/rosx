@@ -10,23 +10,32 @@ pub struct Handle {
 }
 
 impl Handle {
+    pub const INDEX_BITS: usize = 16;
+    pub const INDEX_MASK: usize = (1 << Self::INDEX_BITS) - 1;
+    pub const GENERATION_MASK: usize = (ERROR_BIT - 1) >> Self::INDEX_BITS;
+
     pub fn new(index: u16, generation: u16) -> Self {
         Self { index, generation }
     }
 
     pub fn pack(&self) -> usize {
-        (((self.generation as usize) & 0x7FFF) << 16) | (self.index as usize)
+        (((self.generation as usize) & Self::GENERATION_MASK) << Self::INDEX_BITS)
+            | (self.index as usize & Self::INDEX_MASK)
     }
 
     pub fn unpack(packed: usize) -> Self {
         Self {
-            index: (packed & 0xFFFF) as u16,
-            generation: ((packed >> 16) & 0x7FFF) as u16,
+            index: (packed & Self::INDEX_MASK) as u16,
+            generation: ((packed >> Self::INDEX_BITS) & Self::GENERATION_MASK) as u16,
         }
     }
 
     pub const fn is_handle(raw: usize) -> bool {
-        raw & !(0x7FFF_FFFFusize) == 0
+        raw < ERROR_BIT
+    }
+
+    pub const fn next_generation(current: u16) -> u16 {
+        (current + 1) & (Self::GENERATION_MASK as u16)
     }
 }
 
@@ -90,7 +99,7 @@ impl<T, const S: usize> GenerationalArena<T, S> {
             return Err(Error::NotFound);
         }
         let item = self.items[index].take().unwrap();
-        self.generations[index] = (self.generations[index] + 1) & 0x7FFF;
+        self.generations[index] = Handle::next_generation(self.generations[index]);
         self.free_slots.push_back(handle.index);
         Ok(item)
     }
@@ -182,6 +191,13 @@ mod tests {
         let wrapped = arena.add(0).unwrap();
         assert_eq!(wrapped.generation, 0);
         assert_eq!(wrapped.pack() & ERROR_BIT, 0);
+    }
+
+    #[test]
+    fn next_generation_should_wrap_within_generation_space() {
+        assert_eq!(Handle::next_generation(0), 1);
+        assert_eq!(Handle::next_generation(0x7FFE), 0x7FFF);
+        assert_eq!(Handle::next_generation(0x7FFF), 0);
     }
 
     #[test]

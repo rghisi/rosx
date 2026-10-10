@@ -23,7 +23,7 @@ impl ErrorCode {
     }
 
     pub fn from_code(raw: usize) -> ErrorCode {
-        match raw & 0x7FFF_FFFF {
+        match raw & (ERROR_BIT - 1) {
             0x0101 => ErrorCode::IpcServerNotFound,
             0x0102 => ErrorCode::IpcConnectionCannotBeEstablished,
             0x0103 => ErrorCode::IpcAlreadyBound,
