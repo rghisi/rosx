@@ -1,7 +1,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use system::future::{Future, FutureHandle};
-use system::ipc::IpcMessage;
+use system::ipc::Message;
 use crate::messages::HardwareInterrupt;
 use crate::task::{TaskHandle, TaskState, YieldReason};
 
@@ -12,7 +12,7 @@ pub(crate) trait ForWakingTasks: Send + Sync {
 pub(crate) trait ForNotifyingFutures: Send + Sync {
     fn register(&self, future: Box<dyn Future + Send + Sync>) -> Option<FutureHandle>;
     fn notify(&self, handle: FutureHandle);
-    fn complete_ipc_message(&self, handle: FutureHandle, message: IpcMessage);
+    fn complete_ipc_message(&self, handle: FutureHandle, message: Message);
 }
 
 pub trait ForCompletingExpiredTimers: Send + Sync {

@@ -15,13 +15,9 @@ pub enum SyscallNum {
     IpcConnect = 11,
     IpcDisconnect = 12,
     IpcBind = 15,
-    IpcCreateMessage = 18,
-    IpcWriteMessage = 19,
     IpcSendMessage = 20,
-    IpcReadMessage = 21,
     IpcReceiveMessage = 22,
     IpcAcceptMessage = 23,
-    IpcDisposeMessage = 24,
 }
 
 impl TryFrom<usize> for SyscallNum {
@@ -43,13 +39,9 @@ impl TryFrom<usize> for SyscallNum {
             11 => Ok(Self::IpcConnect),
             12 => Ok(Self::IpcDisconnect),
             15 => Ok(Self::IpcBind),
-            18 => Ok(Self::IpcCreateMessage),
-            19 => Ok(Self::IpcWriteMessage),
             20 => Ok(Self::IpcSendMessage),
-            21 => Ok(Self::IpcReadMessage),
             22 => Ok(Self::IpcReceiveMessage),
             23 => Ok(Self::IpcAcceptMessage),
-            24 => Ok(Self::IpcDisposeMessage),
             _ => Err(()),
         }
     }

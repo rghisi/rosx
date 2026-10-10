@@ -6,8 +6,7 @@ use crate::default_output::print;
 use system::syscall_numbers::SyscallNum;
 use collections::generational_arena::HalfSize;
 use system::future::FutureHandle;
-use system::ipc::{IpcConnectionHandle, IpcBindingHandle, IpcMessageHandle};
-use system::future::FutureResult;
+use system::ipc::{IpcConnectionHandle, IpcBindingHandle, Message, IpcMessageFuture};
 use crate::task::{new_elf_task, new_entrypoint_task};
 
 #[cfg(not(test))]
@@ -49,9 +48,16 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::WaitFuture) => {
             let handle = FutureHandle::unpack(arg1 as usize);
+            let out_ptr = arg2;
             let future = kernel().wait_future(handle).unwrap();
-            let result: FutureResult = future.into_result();
-            Box::into_raw(Box::new(result)) as usize
+            match future.as_any().downcast_ref::<IpcMessageFuture>() {
+                Some(ipc) => match ipc.result() {
+                    Ok(message) if out_ptr != 0 => { unsafe { core::ptr::write(out_ptr as *mut Message, message) }; 0 }
+                    Ok(_) => 0,
+                    Err(e) => e.to_reg(),
+                },
+                None => 0,
+            }
         }
         Ok(SyscallNum::IsFutureCompleted) => {
             let handle = FutureHandle::unpack(arg1 as usize);
@@ -79,8 +85,10 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::IpcConnect) => {
             let service: &str = unsafe { *Box::from_raw(arg1 as *mut &str) };
-            let result = services().ipc_manager.borrow_mut().connect(service, kernel().execution_state.current_task());
-            Box::into_raw(Box::new(result)) as usize
+            match services().ipc_manager.borrow_mut().connect(service, kernel().execution_state.current_task()) {
+                Ok(handle) => handle.pack(),
+                Err(e) => e.to_reg(),
+            }
         }
         Ok(SyscallNum::IpcDisconnect) => {
             let connection_handle = IpcConnectionHandle::new(arg1 as HalfSize, arg2 as HalfSize);
@@ -89,38 +97,20 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::IpcBind) => {
             let service: &str = unsafe { *Box::from_raw(arg1 as *mut &str) };
-            let result = services().ipc_manager.borrow_mut().bind_service(service);
-            Box::into_raw(Box::new(result)) as usize
-        }
-        Ok(SyscallNum::IpcCreateMessage) => {
-            let connection = IpcConnectionHandle::unpack(arg1);
-            let result = services().ipc_manager.borrow_mut().create_message(connection, kernel().execution_state.current_task(), arg2);
-            Box::into_raw(Box::new(result)) as usize
-        }
-        Ok(SyscallNum::IpcWriteMessage) => {
-            let message_handle = IpcMessageHandle::unpack(arg1);
-            let bytes = unsafe { core::slice::from_raw_parts(arg2 as *const u8, arg3) };
-            let result = services().ipc_manager.borrow_mut().write_message(message_handle, bytes);
-            Box::into_raw(Box::new(result)) as usize
+            match services().ipc_manager.borrow_mut().bind_service(service) {
+                Ok(handle) => handle.pack(),
+                Err(e) => e.to_reg(),
+            }
         }
         Ok(SyscallNum::IpcSendMessage) => {
-            let message_handle = IpcMessageHandle::unpack(arg1);
-            let result = services().ipc_manager.borrow_mut().send_message(message_handle);
-            Box::into_raw(Box::new(result)) as usize
-        }
-        Ok(SyscallNum::IpcReadMessage) => {
-            let message_handle = IpcMessageHandle::unpack(arg1);
-            let dst = unsafe { core::slice::from_raw_parts_mut(arg2 as *mut u8, arg3) };
-            let result = services().ipc_manager.borrow_mut().read_message(message_handle, dst);
-            Box::into_raw(Box::new(result)) as usize
+            let envelope = unsafe { &*(arg1 as *const Message) };
+            match services().ipc_manager.borrow_mut().send_message(kernel().execution_state.current_task(), envelope) {
+                Ok(()) => 0,
+                Err(e) => e.to_reg(),
+            }
         }
         Ok(SyscallNum::IpcReceiveMessage) => services().ipc_manager.borrow_mut().receive_message_async(IpcConnectionHandle::unpack(arg1)).pack(),
         Ok(SyscallNum::IpcAcceptMessage) => services().ipc_manager.borrow_mut().accept_message_async(IpcBindingHandle::unpack(arg1)).pack(),
-        Ok(SyscallNum::IpcDisposeMessage) => {
-            let message_handle = IpcMessageHandle::unpack(arg1);
-            let result = services().ipc_manager.borrow_mut().dispose_message(message_handle);
-            Box::into_raw(Box::new(result)) as usize
-        }
         Err(_) => 0,
     }
 }

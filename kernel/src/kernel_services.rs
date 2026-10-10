@@ -11,7 +11,7 @@ use crate::scheduler::TimerManager;
 use crate::task_manager::TaskManager;
 use crate::ports::driven::{ForNotifyingFutures, ForWakingTasks, ForCompletingExpiredTimers};
 use system::future::{self, Future, FutureHandle};
-use system::ipc::{IpcMessage, IpcMessageFuture, IpcReceiveError};
+use system::ipc::{IpcMessageFuture, IpcReceiveError, Message};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
@@ -40,7 +40,7 @@ impl ForNotifyingFutures for FutureRegistryNotifierUseCase {
         self.future_registry.borrow_mut().notify(handle);
     }
 
-    fn complete_ipc_message(&self, handle: FutureHandle, message: IpcMessage) {
+    fn complete_ipc_message(&self, handle: FutureHandle, message: Message) {
         if let Ok(future_box) = self.future_registry.borrow_mut().borrow_mut(handle) {
             if let Some(ipc_future) = future_box.as_any_mut().downcast_mut::<IpcMessageFuture>() {
                 ipc_future.complete(message);

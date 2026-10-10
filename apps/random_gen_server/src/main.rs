@@ -6,9 +6,8 @@ extern crate alloc;
 use core::alloc::{GlobalAlloc, Layout};
 use core::panic::PanicInfo;
 use usrlib::{println};
-use usrlib::ipc::{IncomingMessage, ipc_send_value};
+use usrlib::ipc::ipc_send_value;
 use usrlib::syscall::Syscall;
-use system::future::FutureResult;
 
 struct SyscallAllocator;
 
@@ -38,10 +37,9 @@ impl RandomGeneratorServer {
         if let Ok(binding) = Syscall::ipc_bind("RANDOM") {
             loop {
                 let fh = Syscall::ipc_accept_message(binding);
-                if let FutureResult::IpcMessage(Ok(msg)) = Syscall::wait_future(fh) {
-                    let _request = IncomingMessage::new(msg.message_handle);
+                if let Ok(envelope) = Syscall::wait_for_message(fh) {
                     let value = self.next() as usize;
-                    let _ = ipc_send_value(msg.connection_handle, value);
+                    let _ = ipc_send_value(envelope.conn(), value);
                 }
             }
         }
