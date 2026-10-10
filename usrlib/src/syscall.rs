@@ -1,10 +1,11 @@
 use crate::arch;
 use alloc::boxed::Box;
 use core::fmt;
+use system::error::from_reg;
 use system::future::FutureHandle;
 use system::ipc::{
     IpcBindingError, IpcBindingHandle, IpcConnectionError, IpcConnectionHandle, IpcReceiveError,
-    IpcSendError, MESSAGE_PAYLOAD_BYTES, Message, ipc_is_err,
+    IpcSendError, MESSAGE_PAYLOAD_BYTES, Message,
 };
 use system::syscall_numbers::SyscallNum;
 
@@ -42,7 +43,7 @@ impl Syscall {
             &mut envelope as *mut Message as usize,
             0,
         );
-        if ipc_is_err(raw) {
+        if from_reg(raw).is_err() {
             Err(IpcReceiveError::from_reg(raw))
         } else {
             Ok(envelope)
@@ -84,29 +85,27 @@ impl Syscall {
     pub fn ipc_connect(service: &str) -> Result<IpcConnectionHandle, IpcConnectionError> {
         let boxed = Box::into_raw(Box::new(service)) as usize;
         let raw = arch::raw_syscall(SyscallNum::IpcConnect as usize, boxed, 0, 0);
-        if ipc_is_err(raw) {
-            Err(IpcConnectionError::from_reg(raw))
-        } else {
-            Ok(IpcConnectionHandle::unpack(raw))
+        match from_reg(raw) {
+            Ok(handle) => Ok(handle),
+            Err(_) => Err(IpcConnectionError::from_reg(raw)),
         }
     }
 
     pub fn ipc_disconnect(connection_handle: IpcConnectionHandle) {
         arch::raw_syscall(
             SyscallNum::IpcDisconnect as usize,
-            connection_handle.index as usize,
-            connection_handle.generation as usize,
-            0usize,
+            connection_handle.pack(),
+            0,
+            0,
         );
     }
 
     pub fn ipc_bind(service: &str) -> Result<IpcBindingHandle, IpcBindingError> {
         let boxed = Box::into_raw(Box::new(service)) as usize;
         let raw = arch::raw_syscall(SyscallNum::IpcBind as usize, boxed, 0, 0);
-        if ipc_is_err(raw) {
-            Err(IpcBindingError::from_reg(raw))
-        } else {
-            Ok(IpcBindingHandle::unpack(raw))
+        match from_reg(raw) {
+            Ok(handle) => Ok(handle),
+            Err(_) => Err(IpcBindingError::from_reg(raw)),
         }
     }
 
@@ -121,7 +120,7 @@ impl Syscall {
             0,
             0,
         );
-        if ipc_is_err(raw) {
+        if from_reg(raw).is_err() {
             Err(IpcSendError::from_reg(raw))
         } else {
             Ok(())

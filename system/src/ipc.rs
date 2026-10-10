@@ -1,16 +1,17 @@
 use core::fmt::{Display, Formatter};
 use collections::generational_arena::Handle;
+use crate::error::{ErrorCode, ErrorCodeOf};
 
 pub type IpcConnectionHandle = Handle;
 pub type IpcBindingHandle = Handle;
 
 pub const MESSAGE_BYTES: usize = 64;
-pub const MESSAGE_PAYLOAD_BYTES: usize = 56;
+pub const MESSAGE_PAYLOAD_BYTES: usize = 60;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Message {
-    conn: u64,
+    conn: u32,
     data: [u8; MESSAGE_PAYLOAD_BYTES],
 }
 
@@ -18,7 +19,7 @@ impl Message {
     pub const EMPTY: Self = Self { conn: 0, data: [0; MESSAGE_PAYLOAD_BYTES] };
 
     pub fn new(connection: IpcConnectionHandle, data: &[u8; MESSAGE_PAYLOAD_BYTES]) -> Self {
-        Self { conn: connection.pack() as u64, data: *data }
+        Self { conn: connection.pack() as u32, data: *data }
     }
 
     pub fn conn(&self) -> IpcConnectionHandle {
@@ -30,16 +31,6 @@ impl Message {
     }
 }
 
-pub const IPC_ERR_TAG: usize = 1usize << (usize::BITS - 8);
-
-pub const fn ipc_err(code: usize) -> usize {
-    IPC_ERR_TAG | code
-}
-
-pub const fn ipc_is_err(raw: usize) -> bool {
-    raw & IPC_ERR_TAG != 0
-}
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum IpcConnectionError {
     ServerNotFound,
@@ -47,17 +38,14 @@ pub enum IpcConnectionError {
 }
 
 impl IpcConnectionError {
-    pub const fn to_reg(self) -> usize {
-        ipc_err(match self {
-            IpcConnectionError::ServerNotFound => 1,
-            IpcConnectionError::ConnectionCannotBeEstablished => 2,
-        })
+    pub fn to_reg(self) -> usize {
+        self.to_error_code().to_reg()
     }
 
     pub fn from_reg(raw: usize) -> Self {
-        match raw & !IPC_ERR_TAG {
-            2 => IpcConnectionError::ConnectionCannotBeEstablished,
-            _ => IpcConnectionError::ServerNotFound,
+        match ErrorCode::from_code(raw) {
+            ErrorCode::IpcConnectionCannotBeEstablished => Self::ConnectionCannotBeEstablished,
+            _ => Self::ServerNotFound,
         }
     }
 }
@@ -68,14 +56,12 @@ pub enum IpcBindingError {
 }
 
 impl IpcBindingError {
-    pub const fn to_reg(self) -> usize {
-        ipc_err(match self {
-            IpcBindingError::AlreadyBound => 1,
-        })
+    pub fn to_reg(self) -> usize {
+        self.to_error_code().to_reg()
     }
 
     pub fn from_reg(raw: usize) -> Self {
-        match raw & !IPC_ERR_TAG {
+        match ErrorCode::from_code(raw) {
             _ => IpcBindingError::AlreadyBound,
         }
     }
@@ -88,16 +74,13 @@ pub enum IpcSendError {
 }
 
 impl IpcSendError {
-    pub const fn to_reg(self) -> usize {
-        ipc_err(match self {
-            IpcSendError::ConnectionNotFound => 1,
-            IpcSendError::ConnectionCongested => 2,
-        })
+    pub fn to_reg(self) -> usize {
+        self.to_error_code().to_reg()
     }
 
     pub fn from_reg(raw: usize) -> Self {
-        match raw & !IPC_ERR_TAG {
-            2 => IpcSendError::ConnectionCongested,
+        match ErrorCode::from_code(raw) {
+            ErrorCode::IpcSendConnectionCongested => IpcSendError::ConnectionCongested,
             _ => IpcSendError::ConnectionNotFound,
         }
     }
@@ -120,18 +103,14 @@ pub enum IpcReceiveError {
 }
 
 impl IpcReceiveError {
-    pub const fn to_reg(self) -> usize {
-        ipc_err(match self {
-            IpcReceiveError::ConnectionNotFound => 1,
-            IpcReceiveError::NoMessagesAvailable => 2,
-            IpcReceiveError::MailboxNotAvailable => 3,
-        })
+    pub fn to_reg(self) -> usize {
+        self.to_error_code().to_reg()
     }
 
     pub fn from_reg(raw: usize) -> Self {
-        match raw & !IPC_ERR_TAG {
-            2 => IpcReceiveError::NoMessagesAvailable,
-            3 => IpcReceiveError::MailboxNotAvailable,
+        match ErrorCode::from_code(raw) {
+            ErrorCode::IpcReceiveNoMessagesAvailable => IpcReceiveError::NoMessagesAvailable,
+            ErrorCode::IpcMailboxNotAvailable => IpcReceiveError::MailboxNotAvailable,
             _ => IpcReceiveError::ConnectionNotFound,
         }
     }
@@ -202,23 +181,23 @@ impl Future for IpcMessageFuture {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use collections::generational_arena::HalfSize;
+    use collections::generational_arena::ERROR_BIT;
 
     #[test]
-    fn message_is_64_bytes_align_8() {
+    fn message_is_64_bytes_align_4() {
         assert_eq!(core::mem::size_of::<Message>(), 64);
-        assert_eq!(core::mem::align_of::<Message>(), 8);
+        assert_eq!(core::mem::align_of::<Message>(), 4);
     }
 
     #[test]
     fn message_conn_field_at_offset_zero() {
         assert_eq!(core::mem::offset_of!(Message, conn), 0);
-        assert_eq!(core::mem::offset_of!(Message, data), 8);
+        assert_eq!(core::mem::offset_of!(Message, data), 4);
     }
 
     #[test]
     fn message_new_and_accessors_roundtrip() {
-        let extreme = Handle::new(255 as HalfSize, HalfSize::MAX);
+        let extreme = Handle::new(0xFFFF, 0x7FFF);
         let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = core::array::from_fn(|i| i as u8);
         let message = Message::new(extreme, &pattern);
         assert_eq!(message.conn(), extreme);
@@ -226,24 +205,26 @@ mod tests {
     }
 
     #[test]
-    fn err_tag_disjoint_from_256_slot_packed_handles_and_roundtrip() {
-        let half_bits = core::mem::size_of::<HalfSize>() * 8;
-        let max_packed = (255usize << half_bits) | (HalfSize::MAX as usize);
-        assert!(max_packed < IPC_ERR_TAG);
-        for code in 1..=8 {
-            assert!(ipc_is_err(ipc_err(code)));
-        }
-        assert!(!ipc_is_err(max_packed));
+    fn packed_handle_space_is_disjoint_from_error_space() {
+        assert_eq!(Handle::new(0xFFFF, 0x7FFF).pack(), 0x7FFF_FFFF);
+        assert!(Handle::is_handle(0x7FFF_FFFF));
+        assert!(!Handle::is_handle(ERROR_BIT));
         for error in [IpcConnectionError::ServerNotFound, IpcConnectionError::ConnectionCannotBeEstablished] {
-            let raw = error.clone().to_reg();
+            let raw = error.to_reg();
+            assert_ne!(raw & ERROR_BIT, 0);
+            assert!(!Handle::is_handle(raw));
             assert_eq!(IpcConnectionError::from_reg(raw), error);
         }
         for error in [IpcBindingError::AlreadyBound] {
-            let raw = error.clone().to_reg();
+            let raw = error.to_reg();
+            assert_ne!(raw & ERROR_BIT, 0);
+            assert!(!Handle::is_handle(raw));
             assert_eq!(IpcBindingError::from_reg(raw), error);
         }
         for error in [IpcSendError::ConnectionNotFound, IpcSendError::ConnectionCongested] {
             let raw = error.clone().to_reg();
+            assert_ne!(raw & ERROR_BIT, 0);
+            assert!(!Handle::is_handle(raw));
             assert_eq!(IpcSendError::from_reg(raw), error);
         }
         for error in [
@@ -251,7 +232,9 @@ mod tests {
             IpcReceiveError::NoMessagesAvailable,
             IpcReceiveError::MailboxNotAvailable,
         ] {
-            let raw = error.clone().to_reg();
+            let raw = error.to_reg();
+            assert_ne!(raw & ERROR_BIT, 0);
+            assert!(!Handle::is_handle(raw));
             assert_eq!(IpcReceiveError::from_reg(raw), error);
         }
     }
