@@ -202,7 +202,6 @@ impl Future for IpcMessageFuture {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use collections::generational_arena::HalfSize;
 
     #[test]
     fn message_is_64_bytes_align_8() {
@@ -218,7 +217,7 @@ mod tests {
 
     #[test]
     fn message_new_and_accessors_roundtrip() {
-        let extreme = Handle::new(255 as HalfSize, HalfSize::MAX);
+        let extreme = Handle::new(255, 0x7FFF);
         let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = core::array::from_fn(|i| i as u8);
         let message = Message::new(extreme, &pattern);
         assert_eq!(message.conn(), extreme);
@@ -227,8 +226,7 @@ mod tests {
 
     #[test]
     fn err_tag_disjoint_from_256_slot_packed_handles_and_roundtrip() {
-        let half_bits = core::mem::size_of::<HalfSize>() * 8;
-        let max_packed = (255usize << half_bits) | (HalfSize::MAX as usize);
+        let max_packed = Handle::new(255u16, 0x7FFFu16).pack();
         assert!(max_packed < IPC_ERR_TAG);
         for code in 1..=8 {
             assert!(ipc_is_err(ipc_err(code)));
