@@ -82,6 +82,13 @@ impl SharedOutput {
             .unwrap_or_else(|err| err.into_inner())
             .clone()
     }
+
+    pub fn snapshot_from(&self, mark: usize) -> String {
+        let (lock, _cvar) = &*self.inner;
+        let buffer = lock.lock().unwrap_or_else(|err| err.into_inner());
+        let start = mark.min(buffer.len());
+        buffer[start..].to_string()
+    }
 }
 
 pub fn strip_ansi(s: &str) -> String {

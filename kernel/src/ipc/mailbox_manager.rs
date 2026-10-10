@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use alloc::boxed::Box;
 use collections::generational_arena::{GenerationalArena, Handle};
 use system::future::FutureHandle;
-use system::ipc::{IpcMessage, IpcMessageFuture, IpcReceiveError};
+use system::ipc::{IpcMessageFuture, IpcReceiveError, IpcSendError, Message};
 use crate::ipc::mailbox::Mailbox;
 use crate::ports::driven::ForNotifyingFutures;
 
@@ -13,7 +13,7 @@ impl ForNotifyingFutures for NoopNotifier {
         None
     }
     fn notify(&self, _handle: system::future::FutureHandle) {}
-    fn complete_ipc_message(&self, _handle: system::future::FutureHandle, _message: IpcMessage) {}
+    fn complete_ipc_message(&self, _handle: system::future::FutureHandle, _message: Message) {}
 }
 
 static NOOP_NOTIFIER: NoopNotifier = NoopNotifier;
@@ -52,10 +52,17 @@ impl MailboxManager {
         self.waiters.remove(&handle);
     }
 
-    pub(crate) fn push_back(&mut self, handle: MailboxHandle, message: IpcMessage) {
-        if let Ok(mailbox) = self.mailboxes.borrow_mut(handle) {
-            mailbox.push_back(message);
-            self.notify_waiters(handle);
+    pub(crate) fn push_back(&mut self, handle: MailboxHandle, message: Message) -> Result<(), IpcSendError> {
+        let queued = match self.mailboxes.borrow_mut(handle) {
+            Ok(mailbox) => mailbox.push_back(message),
+            Err(_) => return Err(IpcSendError::ConnectionNotFound),
+        };
+        match queued {
+            Ok(()) => {
+                self.notify_waiters(handle);
+                Ok(())
+            }
+            Err(()) => Err(IpcSendError::ConnectionCongested),
         }
     }
 
@@ -123,21 +130,23 @@ mod tests {
     }
 
     #[test]
-    fn test_ipc_message_future() {
+    fn test_ipc_message_future_carries_envelope() {
         use system::future::Future;
+        use system::ipc::MESSAGE_PAYLOAD_BYTES;
         let mut future = IpcMessageFuture::new();
         assert!(!future.is_completed());
-        let msg = IpcMessage {
-            connection_handle: Handle::new(1, 1),
-            data: 123,
-        };
+        let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = core::array::from_fn(|i| (i * 3 + 1) as u8);
+        let msg = Message::new(Handle::new(1, 1), &pattern);
         future.complete(msg);
         assert!(future.is_completed());
-        assert_eq!(future.result().unwrap().data, 123);
+        let delivered = future.result().unwrap();
+        assert_eq!(delivered.conn(), Handle::new(1, 1));
+        assert_eq!(delivered.data(), &pattern);
     }
 
     #[test]
     fn test_pop_front_async() {
+        use system::ipc::MESSAGE_PAYLOAD_BYTES;
         init_services();
         let notifier: &'static dyn ForNotifyingFutures =
             Box::leak(Box::new(FutureRegistryNotifierUseCase {
@@ -150,21 +159,22 @@ mod tests {
         let fh = manager.pop_front_async(handle);
         
         // Case 2: Data pushed -> Waiter notified
-        let msg = IpcMessage {
-            connection_handle: Handle::new(1, 1),
-            data: 456,
-        };
-        manager.push_back(handle, msg);
+        let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = core::array::from_fn(|i| (i ^ 0x5A) as u8);
+        let msg = Message::new(Handle::new(1, 1), &pattern);
+        assert_eq!(manager.push_back(handle, msg), Ok(()));
 
         // Verify that the future now has the message
         let mut registry = services().future_registry.borrow_mut();
         let future_box = registry.borrow_mut(fh).unwrap();
         let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
-        assert_eq!(ipc_future.result().unwrap().data, 456);
+        let delivered = ipc_future.result().unwrap();
+        assert_eq!(delivered.conn(), Handle::new(1, 1));
+        assert_eq!(delivered.data(), &pattern);
     }
 
     #[test]
     fn test_push_back_notifies_waiters() {
+        use system::ipc::MESSAGE_PAYLOAD_BYTES;
         init_services();
         crate::scheduler::wire_scheduler_for_tests();
         let notifier: &'static dyn ForNotifyingFutures =
@@ -186,12 +196,34 @@ mod tests {
         services().future_registry.borrow_mut().register_waiter(future_handle, task_handle);
         
         // 4. push_back should notify and wake the task
-        let msg = IpcMessage {
-            connection_handle: Handle::new(1, 1),
-            data: 789,
-        };
-        manager.push_back(handle, msg);
+        let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = [0xC3; MESSAGE_PAYLOAD_BYTES];
+        let msg = Message::new(Handle::new(1, 1), &pattern);
+        assert_eq!(manager.push_back(handle, msg), Ok(()));
 
         assert_eq!(services().task_manager.borrow().get_state(task_handle), crate::task::TaskState::Ready);
+    }
+
+    #[test]
+    fn test_push_back_rejects_at_depth_32() {
+        let mut manager = MailboxManager::new();
+        let handle = manager.create();
+        let msg = Message::new(Handle::new(1, 1), &[0xA5; system::ipc::MESSAGE_PAYLOAD_BYTES]);
+        for _ in 0..32 {
+            assert_eq!(manager.push_back(handle, msg), Ok(()));
+        }
+        assert_eq!(manager.push_back(handle, msg), Err(IpcSendError::ConnectionCongested));
+    }
+
+    #[test]
+    fn test_congestion_recovers_after_pop() {
+        let mut manager = MailboxManager::new();
+        let handle = manager.create();
+        let msg = Message::new(Handle::new(1, 1), &[0x5A; system::ipc::MESSAGE_PAYLOAD_BYTES]);
+        for _ in 0..32 {
+            assert_eq!(manager.push_back(handle, msg), Ok(()));
+        }
+        assert_eq!(manager.push_back(handle, msg), Err(IpcSendError::ConnectionCongested));
+        assert!(manager.mailboxes.borrow_mut(handle).unwrap().pop_front().is_some());
+        assert_eq!(manager.push_back(handle, msg), Ok(()));
     }
 }

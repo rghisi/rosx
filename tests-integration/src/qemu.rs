@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use crate::disk_image;
 use crate::kernel_build;
 use crate::monitor::Monitor;
-use crate::output::{self, SharedOutput};
+use crate::output::{self, strip_ansi, SharedOutput};
 use crate::sendkey;
 
 const STDERR_TAIL_BYTES: usize = 4096;
@@ -116,6 +116,19 @@ impl QemuSession {
 
     pub fn expect_output_since(&self, mark: usize, needle: &str, timeout: Duration) {
         self.expect_from_mark(mark, needle, timeout);
+    }
+
+    pub fn wait_until_since(
+        &self,
+        mark: usize,
+        pred: impl Fn(&str) -> bool,
+        timeout: Duration,
+    ) -> Result<usize, String> {
+        self.output.wait_for_since(mark, pred, timeout)
+    }
+
+    pub fn content_since(&self, mark: usize) -> String {
+        strip_ansi(&self.output.snapshot_from(mark))
     }
 
     fn expect_from_mark(&self, mark: usize, needle: &str, timeout: Duration) {

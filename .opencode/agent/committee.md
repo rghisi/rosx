@@ -11,9 +11,10 @@ You are the Committee subagent. You summarize completed work into a git commit m
 
 ## Task
 
-Given the summary of completed work (plan, changed files, review outcome), write a conventional git commit message:
+Given the summary of completed work (plan, changed files, review outcome), write a git commit message in the prevailing style:
 
-- Format: `<type>(<scope>): <summary>`, with type from feat, fix, refactor, test, docs, chore, perf, build, ci.
+- Style precedence: when the delegation or the repo's own rule (AGENTS.md at repo root) prescribes a commit style, follow it verbatim — e.g. a repo that bans subject prefixes gets bare-title subjects; a prefix prescribed by the orchestrator's workflow (e.g. `chore(agents):`) applies when its delegation carries one.
+- Fallback format, only when neither the delegation nor the repo prescribes a style: `<type>(<scope>): <summary>`, with type from feat, fix, refactor, test, docs, chore, perf, build, ci.
 - Summary line under 72 characters, imperative mood, no trailing period.
 - Optional body: what changed and why, wrapped at 72 characters.
 - No signatures, no metadata, no commentary.
