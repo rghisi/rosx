@@ -24,5 +24,6 @@ Return a concise Context Map with:
 - Build, run, and test commands, plus toolchain constraints.
 - Verification automation already present in the repo (test harnesses, scripted QEMU/session runners, expect-style helpers) that a plan could use to prove runtime gates instead of labeling them manual.
 - Dependencies and conventions that constrain the change.
+- When the task supplies a pre-existing plan or spec document, verify every baseline claim it makes — file/symbol inventories, affected-site lists, CI composition, current-state assertions — against the tree and list each deviation as a numbered correction; such documents decay between authoring and execution.
 
 Keep it concise: bullet points and file paths, no code dumps. Do not propose solutions or write any code.
