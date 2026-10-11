@@ -61,7 +61,7 @@ Core components are designed to be interchangeable:
 The system utilizes:
 - **Free-list Allocator:** Active global allocator for kernel memory
 - **Bitmap-chunk Allocator:** Present, not yet wired in
-- **`no_std`:** std is forbidden; dependencies limited to `collections`, `system`, `lazy_static`
+- **`no_std`:** std is forbidden; dependencies limited to `system` and `lazy_static`
 
 ## Current State
 
@@ -168,6 +168,8 @@ rosx/
 │   │   ├── scheduler/      # Pluggable scheduling strategies
 │   │   ├── task.rs         # Task structure and management
 │   │   ├── memory/         # Memory allocation subsystem
+│   │   ├── collections/    # Generational arena (kernel-owned storage)
+│   │   ├── handle/         # Handle domain newtypes (task/future/ipc-connection/ipc-binding)
 │   │   └── elf/            # ELF binary loader
 ├── apps/                   # User-space applications (workspace members)
 │   ├── shell/              # Command-line shell
@@ -178,8 +180,7 @@ rosx/
 │   ├── conway/             # Conway's Game of Life
 │   ├── dummy/              # Dummy app for testing
 │   └── test_suite/         # Test suite app
-├── collections/            # Custom collections
-├── system/                 # System-level utilities
+├── system/                 # ABI treaty: syscall numbers, wire layout, error numbers
 └── usrlib/                 # User-space library
 ```
 
@@ -195,9 +196,19 @@ rosx/
 
 - **Incremental Development:** Make small, testable changes; verify each step
 - **Hardware Abstraction:** All platform-specific code must use traits (HAL pattern)
-- **`no_std` kernel:** std is forbidden; dependencies are limited to `collections`, `system`, and `lazy_static`
+- **`no_std` kernel:** std is forbidden; dependencies are limited to `system` and `lazy_static`
 - **Unit Tests:** Write comprehensive tests for all kernel modules
 - **No Comments in Code:** Write self-explanatory code with clear names; exceptions for assembly
+
+### Architecture Principles
+
+- **Domain knowledge is owned by the allocating subsystem.** A kernel resource's identity, layout, and validity rules live with the subsystem that allocates and validates it; OS policy must not live in infrastructure crates.
+- **The kernel is the single authority on invariants.** Validation happens once, kernel-side; user space carries opaque tokens and neither re-checks nor duplicates kernel invariants.
+- **The shared treaty holds the contract, not the mechanism.** `system` contains numbers and layouts only: a type that describes *how the kernel works* is in the wrong crate; a type that describes *what the boundary contract says* belongs in `system`.
+- **Translation lives at the boundaries.** The kernel edge encodes domain→wire and the user edge decodes wire→user-view; the shared crate cannot own either translation — the dependency arrows forbid it.
+- **User-visible APIs expose no kernel internals.** Debug aids are kernel-side and never part of the ABI.
+
+These principles are the regression guard: the very inversion this rework removed survived many runs because no document stated who owns handle semantics, while the HAL rule — written down — has been obeyed throughout.
 
 See `AGENTS.md` for detailed development guidelines and coding standards.
 
