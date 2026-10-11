@@ -36,9 +36,9 @@ impl TimerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use collections::generational_arena::{Handle, HalfSize};
+    use collections::generational_arena::Handle;
 
-    fn handle(index: HalfSize) -> FutureHandle {
+    fn handle(index: u16) -> FutureHandle {
         Handle::new(index, 0)
     }
 

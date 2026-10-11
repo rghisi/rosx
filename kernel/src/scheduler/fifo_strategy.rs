@@ -54,7 +54,7 @@ impl SchedulingAlgorithm for FifoStrategy {
 mod tests {
     use super::*;
 
-    fn make_handle(index: u32, generation: u32) -> TaskHandle {
+    fn make_handle(index: u16, generation: u16) -> TaskHandle {
         Handle::new(index, generation)
     }
 

@@ -3,3 +3,4 @@
 .claude/
 sessions
 __pycache__/
+.opencode/artifacts/

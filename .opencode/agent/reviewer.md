@@ -3,7 +3,9 @@ description: Reviews the Coder's changes against the plan and audits verificatio
 mode: subagent
 model: lemonade/Qwen3.8-Flash-Next
 permission:
-  edit: deny
+  edit:
+    "*": deny
+    ".opencode/artifacts/**": allow
   bash: deny
 ---
 
@@ -27,5 +29,7 @@ Either:
 
 - `APPROVED`, with a short summary and which verified commands satisfy which criteria, or
 - A numbered list of required fixes, each with `file:line`, what is wrong, and what the fix must be.
+
+When the delegation names an artifact path, write the full audit detail to that file and return only the verdict line plus, for required fixes, the numbered `file:line` list inline — routing must need no re-read.
 
 Be strict: approve only when the diff fully satisfies the plan with no open flaws.

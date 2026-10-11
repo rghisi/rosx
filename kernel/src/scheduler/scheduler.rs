@@ -216,7 +216,7 @@ impl Scheduler {
 mod tests {
     use super::*;
     use crate::task::YieldReason;
-    use collections::generational_arena::{Handle, HalfSize};
+    use collections::generational_arena::Handle;
     use crate::task::TaskState as KS;
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -246,7 +246,7 @@ mod tests {
         }
 
         fn next_handle(&self) -> TaskHandle {
-            Handle::new(self.counter.fetch_add(1, Ordering::SeqCst) as HalfSize, 0)
+            Handle::new(self.counter.fetch_add(1, Ordering::SeqCst) as u16, 0)
         }
 
         fn seed(&self, handle: TaskHandle, state: TaskState) {
