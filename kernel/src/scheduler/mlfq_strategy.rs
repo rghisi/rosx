@@ -1,5 +1,5 @@
 use alloc::collections::{BTreeMap, VecDeque};
-use collections::generational_arena::Handle;
+use crate::collections::arena::Handle;
 use crate::task::{TaskHandle, YieldReason};
 use super::algorithm::SchedulingAlgorithm;
 

@@ -1,6 +1,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use system::future::{Future, FutureHandle};
+use crate::collections::arena::Handle as FutureHandle;
+use system::future::Future;
 use system::ipc::Message;
 use crate::messages::HardwareInterrupt;
 use crate::task::{TaskHandle, TaskState, YieldReason};

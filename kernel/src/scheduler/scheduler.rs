@@ -1,6 +1,7 @@
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
+use crate::collections::arena::Handle as FutureHandle;
 use crate::messages::HardwareInterrupt;
 use crate::scheduler::algorithm::SchedulingAlgorithm;
 use crate::task::{TaskHandle, TaskState};
@@ -14,7 +15,7 @@ use crate::ports::driven::SwitchOutcome;
 
 struct NoopTimerHandler;
 impl ForCompletingExpiredTimers for NoopTimerHandler {
-    fn complete_timer_future(&self, _handle: system::future::FutureHandle) {}
+    fn complete_timer_future(&self, _handle: FutureHandle) {}
 }
 
 static NOOP_TIMER_HANDLER: NoopTimerHandler = NoopTimerHandler;
@@ -27,7 +28,7 @@ static NOOP_TIME_SOURCE: NoopTimeSource = NoopTimeSource;
 
 struct NoopTimerExpiry;
 impl ForExpiringTimers for NoopTimerExpiry {
-    fn pop_expired(&self, _now: u64) -> Option<Vec<system::future::FutureHandle>> { None }
+    fn pop_expired(&self, _now: u64) -> Option<Vec<FutureHandle>> { None }
 }
 static NOOP_TIMER_EXPIRY: NoopTimerExpiry = NoopTimerExpiry;
 
@@ -216,12 +217,11 @@ impl Scheduler {
 mod tests {
     use super::*;
     use crate::task::YieldReason;
-    use collections::generational_arena::Handle;
+    use crate::collections::arena::Handle;
     use crate::task::TaskState as KS;
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
-    use system::future::FutureHandle;
 
     #[derive(Clone)]
     struct FakeTaskManager {

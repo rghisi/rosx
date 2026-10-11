@@ -1,6 +1,6 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use system::future::FutureHandle;
+use crate::collections::arena::Handle as FutureHandle;
 use crate::kernel_services::services;
 
 pub struct TimerManager {
@@ -36,7 +36,7 @@ impl TimerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use collections::generational_arena::Handle;
+    use crate::collections::arena::Handle;
 
     fn handle(index: u16) -> FutureHandle {
         Handle::new(index, 0)

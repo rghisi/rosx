@@ -4,9 +4,8 @@ use crate::kernel::kernel;
 use crate::kernel_services::services;
 use crate::default_output::print;
 use system::syscall_numbers::SyscallNum;
-use system::error::into_reg;
-use system::future::FutureHandle;
-use system::ipc::{IpcConnectionHandle, IpcBindingHandle, Message, IpcMessageFuture};
+use system::ipc::{Message, IpcMessageFuture};
+use crate::collections::arena::{Handle as FutureHandle, Handle as IpcConnectionHandle, Handle as IpcBindingHandle};
 use crate::task::{new_elf_task, new_entrypoint_task};
 
 #[cfg(not(test))]
@@ -85,7 +84,10 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::IpcConnect) => {
             let service: &str = unsafe { *Box::from_raw(arg1 as *mut &str) };
-            into_reg(services().ipc_manager.borrow_mut().connect(service, kernel().execution_state.current_task()))
+            match services().ipc_manager.borrow_mut().connect(service, kernel().execution_state.current_task()) {
+                Ok(handle) => handle.pack(),
+                Err(e) => e.to_reg(),
+            }
         }
         Ok(SyscallNum::IpcDisconnect) => {
             let connection_handle = IpcConnectionHandle::unpack(arg1);
@@ -94,7 +96,10 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::IpcBind) => {
             let service: &str = unsafe { *Box::from_raw(arg1 as *mut &str) };
-            into_reg(services().ipc_manager.borrow_mut().bind_service(service))
+            match services().ipc_manager.borrow_mut().bind_service(service) {
+                Ok(handle) => handle.pack(),
+                Err(e) => e.to_reg(),
+            }
         }
         Ok(SyscallNum::IpcSendMessage) => {
             let envelope = unsafe { &*(arg1 as *const Message) };

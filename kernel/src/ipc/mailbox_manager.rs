@@ -1,19 +1,18 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use alloc::boxed::Box;
-use collections::generational_arena::{GenerationalArena, Handle};
-use system::future::FutureHandle;
+use crate::collections::arena::{GenerationalArena, Handle, Handle as FutureHandle};
 use system::ipc::{IpcMessageFuture, IpcReceiveError, IpcSendError, Message};
 use crate::ipc::mailbox::Mailbox;
 use crate::ports::driven::ForNotifyingFutures;
 
 struct NoopNotifier;
 impl ForNotifyingFutures for NoopNotifier {
-    fn register(&self, _future: Box<dyn system::future::Future + Send + Sync>) -> Option<system::future::FutureHandle> {
+    fn register(&self, _future: Box<dyn system::future::Future + Send + Sync>) -> Option<FutureHandle> {
         None
     }
-    fn notify(&self, _handle: system::future::FutureHandle) {}
-    fn complete_ipc_message(&self, _handle: system::future::FutureHandle, _message: Message) {}
+    fn notify(&self, _handle: FutureHandle) {}
+    fn complete_ipc_message(&self, _handle: FutureHandle, _message: Message) {}
 }
 
 static NOOP_NOTIFIER: NoopNotifier = NoopNotifier;
@@ -136,11 +135,11 @@ mod tests {
         let mut future = IpcMessageFuture::new();
         assert!(!future.is_completed());
         let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = core::array::from_fn(|i| (i * 3 + 1) as u8);
-        let msg = Message::new(Handle::new(1, 1), &pattern);
+        let msg = Message::new_packed(Handle::new(1, 1).pack() as u32, &pattern);
         future.complete(msg);
         assert!(future.is_completed());
         let delivered = future.result().unwrap();
-        assert_eq!(delivered.conn(), Handle::new(1, 1));
+        assert_eq!(delivered.conn_packed(), Handle::new(1, 1).pack() as u32);
         assert_eq!(delivered.data(), &pattern);
     }
 
@@ -160,7 +159,7 @@ mod tests {
         
         // Case 2: Data pushed -> Waiter notified
         let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = core::array::from_fn(|i| (i ^ 0x5A) as u8);
-        let msg = Message::new(Handle::new(1, 1), &pattern);
+        let msg = Message::new_packed(Handle::new(1, 1).pack() as u32, &pattern);
         assert_eq!(manager.push_back(handle, msg), Ok(()));
 
         // Verify that the future now has the message
@@ -168,7 +167,7 @@ mod tests {
         let future_box = registry.borrow_mut(fh).unwrap();
         let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
         let delivered = ipc_future.result().unwrap();
-        assert_eq!(delivered.conn(), Handle::new(1, 1));
+        assert_eq!(delivered.conn_packed(), Handle::new(1, 1).pack() as u32);
         assert_eq!(delivered.data(), &pattern);
     }
 
@@ -197,7 +196,7 @@ mod tests {
         
         // 4. push_back should notify and wake the task
         let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = [0xC3; MESSAGE_PAYLOAD_BYTES];
-        let msg = Message::new(Handle::new(1, 1), &pattern);
+        let msg = Message::new_packed(Handle::new(1, 1).pack() as u32, &pattern);
         assert_eq!(manager.push_back(handle, msg), Ok(()));
 
         assert_eq!(services().task_manager.borrow().get_state(task_handle), crate::task::TaskState::Ready);
@@ -207,7 +206,7 @@ mod tests {
     fn test_push_back_rejects_at_depth_32() {
         let mut manager = MailboxManager::new();
         let handle = manager.create();
-        let msg = Message::new(Handle::new(1, 1), &[0xA5; system::ipc::MESSAGE_PAYLOAD_BYTES]);
+        let msg = Message::new_packed(Handle::new(1, 1).pack() as u32, &[0xA5; system::ipc::MESSAGE_PAYLOAD_BYTES]);
         for _ in 0..32 {
             assert_eq!(manager.push_back(handle, msg), Ok(()));
         }
@@ -218,7 +217,7 @@ mod tests {
     fn test_congestion_recovers_after_pop() {
         let mut manager = MailboxManager::new();
         let handle = manager.create();
-        let msg = Message::new(Handle::new(1, 1), &[0x5A; system::ipc::MESSAGE_PAYLOAD_BYTES]);
+        let msg = Message::new_packed(Handle::new(1, 1).pack() as u32, &[0x5A; system::ipc::MESSAGE_PAYLOAD_BYTES]);
         for _ in 0..32 {
             assert_eq!(manager.push_back(handle, msg), Ok(()));
         }

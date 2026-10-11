@@ -1,9 +1,8 @@
 use alloc::collections::{BTreeMap};
 use alloc::string::String;
 use alloc::boxed::Box;
-use collections::generational_arena::{GenerationalArena, Handle};
-use system::ipc::{IpcConnectionError, IpcSendError, IpcConnectionHandle, IpcBindingError, IpcReceiveError, IpcMessageFuture, Message};
-use system::future::FutureHandle;
+use crate::collections::arena::{GenerationalArena, Handle, Handle as FutureHandle};
+use system::ipc::{IpcConnectionError, IpcSendError, IpcBindingError, IpcReceiveError, IpcMessageFuture, Message};
 use crate::ipc::mailbox_manager::{MailboxManager, MailboxHandle};
 use crate::ports::driven::ForNotifyingFutures;
 use crate::task::TaskHandle;
@@ -35,6 +34,7 @@ impl IpcServerBinding {
 }
 
 type IpcBindingHandle = Handle;
+type IpcConnectionHandle = Handle;
 
 struct IpcConnection {
     server_mailbox: MailboxHandle,
@@ -118,7 +118,7 @@ impl IpcManager {
     }
 
     pub(crate) fn send_message(&mut self, caller: TaskHandle, envelope: &Message) -> Result<(), IpcSendError> {
-        let connection = envelope.conn();
+        let connection = Handle::unpack(envelope.conn_packed() as usize);
         let destination = match self.connections.borrow(connection) {
             Ok(conn) => {
                 if caller == conn.client_task {
@@ -194,11 +194,11 @@ mod tests {
         let (binding, connection) = bind_and_connect(&mut manager, "MSG-E2E");
 
         let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = core::array::from_fn(|i| (i * 7 + 3) as u8);
-        assert_eq!(manager.send_message(CLIENT_TASK, &Message::new(connection, &pattern)), Ok(()));
+        assert_eq!(manager.send_message(CLIENT_TASK, &Message::new_packed(connection.pack() as u32, &pattern)), Ok(()));
 
         let fh = manager.accept_message_async(binding);
         let delivered = delivered_message(fh);
-        assert_eq!(delivered.conn(), connection);
+        assert_eq!(delivered.conn_packed(), connection.pack() as u32);
         assert_eq!(delivered.data(), &pattern);
     }
 
@@ -208,17 +208,17 @@ mod tests {
         let (binding, connection) = bind_and_connect(&mut manager, "MSG-REPLY");
 
         let request_pattern = [0x11u8; MESSAGE_PAYLOAD_BYTES];
-        assert_eq!(manager.send_message(CLIENT_TASK, &Message::new(connection, &request_pattern)), Ok(()));
+        assert_eq!(manager.send_message(CLIENT_TASK, &Message::new_packed(connection.pack() as u32, &request_pattern)), Ok(()));
         let fh = manager.accept_message_async(binding);
         let delivered = delivered_message(fh);
-        assert_eq!(delivered.conn(), connection);
+        assert_eq!(delivered.conn_packed(), connection.pack() as u32);
 
         let reply_pattern = [0x22u8; MESSAGE_PAYLOAD_BYTES];
-        assert_eq!(manager.send_message(SERVER_TASK, &Message::new(delivered.conn(), &reply_pattern)), Ok(()));
+        assert_eq!(manager.send_message(SERVER_TASK, &Message::new_packed(delivered.conn_packed(), &reply_pattern)), Ok(()));
 
         let fh = manager.receive_message_async(connection);
         let reply = delivered_message(fh);
-        assert_eq!(reply.conn(), connection);
+        assert_eq!(reply.conn_packed(), connection.pack() as u32);
         assert_eq!(reply.data(), &reply_pattern);
     }
 
@@ -229,7 +229,7 @@ mod tests {
         manager.disconnect(connection);
 
         assert_eq!(
-            manager.send_message(CLIENT_TASK, &Message::new(connection, &[0u8; MESSAGE_PAYLOAD_BYTES])),
+            manager.send_message(CLIENT_TASK, &Message::new_packed(connection.pack() as u32, &[0u8; MESSAGE_PAYLOAD_BYTES])),
             Err(IpcSendError::ConnectionNotFound)
         );
     }
@@ -250,11 +250,11 @@ mod tests {
         assert_eq!(c2.generation, c1.generation + 1);
 
         assert_eq!(
-            manager.send_message(CLIENT_TASK, &Message::new(c1, &[0u8; MESSAGE_PAYLOAD_BYTES])),
+            manager.send_message(CLIENT_TASK, &Message::new_packed(c1.pack() as u32, &[0u8; MESSAGE_PAYLOAD_BYTES])),
             Err(IpcSendError::ConnectionNotFound)
         );
         assert_eq!(
-            manager.send_message(CLIENT_TASK, &Message::new(c2, &[0u8; MESSAGE_PAYLOAD_BYTES])),
+            manager.send_message(CLIENT_TASK, &Message::new_packed(c2.pack() as u32, &[0u8; MESSAGE_PAYLOAD_BYTES])),
             Ok(())
         );
     }
@@ -264,7 +264,7 @@ mod tests {
         let mut manager = manager_with_notifier();
         let (binding, connection) = bind_and_connect(&mut manager, "MSG-FLOOD");
 
-        let envelope = Message::new(connection, &[0u8; MESSAGE_PAYLOAD_BYTES]);
+        let envelope = Message::new_packed(connection.pack() as u32, &[0u8; MESSAGE_PAYLOAD_BYTES]);
         for _ in 0..32 {
             assert_eq!(manager.send_message(CLIENT_TASK, &envelope), Ok(()));
         }
@@ -272,7 +272,7 @@ mod tests {
 
         let fh = manager.accept_message_async(binding);
         let consumed = delivered_message(fh);
-        assert_eq!(consumed.conn(), connection);
+        assert_eq!(consumed.conn_packed(), connection.pack() as u32);
         assert_eq!(consumed.data(), &[0u8; MESSAGE_PAYLOAD_BYTES]);
 
         assert_eq!(manager.send_message(CLIENT_TASK, &envelope), Ok(()));
@@ -294,10 +294,10 @@ mod tests {
 
         let connection = manager.connect("MSG-EARLY", CLIENT_TASK).unwrap();
         let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = core::array::from_fn(|i| (255 - i as u8) as u8);
-        assert_eq!(manager.send_message(CLIENT_TASK, &Message::new(connection, &pattern)), Ok(()));
+        assert_eq!(manager.send_message(CLIENT_TASK, &Message::new_packed(connection.pack() as u32, &pattern)), Ok(()));
 
         let delivered = delivered_message(fh);
-        assert_eq!(delivered.conn(), connection);
+        assert_eq!(delivered.conn_packed(), connection.pack() as u32);
         assert_eq!(delivered.data(), &pattern);
     }
 
@@ -342,7 +342,7 @@ mod tests {
         let (_binding, connection) = bind_and_connect(&mut manager, "MSG-DRAIN");
 
         assert_eq!(
-            manager.send_message(SERVER_TASK, &Message::new(connection, &[0u8; MESSAGE_PAYLOAD_BYTES])),
+            manager.send_message(SERVER_TASK, &Message::new_packed(connection.pack() as u32, &[0u8; MESSAGE_PAYLOAD_BYTES])),
             Ok(())
         );
         manager.disconnect(connection);

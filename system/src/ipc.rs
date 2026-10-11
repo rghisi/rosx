@@ -26,6 +26,14 @@ impl Message {
         Handle::unpack(self.conn as usize)
     }
 
+    pub fn new_packed(conn: u32, data: &[u8; MESSAGE_PAYLOAD_BYTES]) -> Self {
+        Self { conn, data: *data }
+    }
+
+    pub const fn conn_packed(&self) -> u32 {
+        self.conn
+    }
+
     pub fn data(&self) -> &[u8; MESSAGE_PAYLOAD_BYTES] {
         &self.data
     }

@@ -1,8 +1,8 @@
-use collections::generational_arena::GenerationalArena;
+use crate::collections::arena::GenerationalArena;
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, TaskState, YieldReason};
 use core::ptr::null_mut;
-use system::future::FutureHandle;
+use crate::collections::arena::Handle as FutureHandle;
 
 pub(crate) struct TaskManager {
     tasks: GenerationalArena<SharedTask, 256>,
@@ -98,7 +98,7 @@ impl TaskManager {
 mod tests {
     use super::*;
     use crate::task::Task;
-    use collections::generational_arena::GenerationalArena;
+    use crate::collections::arena::GenerationalArena;
 
     fn make_future_handle() -> FutureHandle {
         let mut arena: GenerationalArena<u8, 1> = GenerationalArena::new();

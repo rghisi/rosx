@@ -19,8 +19,8 @@ use crate::ports::driven::ForSwitchingTaskContext;
 use crate::ports::driven::SwitchOutcome;
 use alloc::boxed::Box;
 use core::ptr::null_mut;
-use collections::generational_arena::Error;
-use system::future::{Future, FutureHandle };
+use crate::collections::arena::{Error, Handle as FutureHandle};
+use system::future::Future;
 #[cfg(not(test))]
 use crate::memory::memory_manager::MEMORY_MANAGER;
 #[cfg(not(test))]
@@ -60,7 +60,7 @@ pub(crate) struct KernelTimerExpiry;
 pub(crate) static KERNEL_TIMER_EXPIRY: KernelTimerExpiry = KernelTimerExpiry;
 
 impl ForExpiringTimers for KernelTimerExpiry {
-    fn pop_expired(&self, now: u64) -> Option<alloc::vec::Vec<system::future::FutureHandle>> {
+    fn pop_expired(&self, now: u64) -> Option<alloc::vec::Vec<FutureHandle>> {
         services().timer_manager.borrow_mut().pop_expired(now)
     }
 }

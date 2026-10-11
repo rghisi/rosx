@@ -2,10 +2,10 @@
 #![cfg_attr(not(test), feature(alloc_error_handler))]
 
 extern crate alloc;
-extern crate collections;
 extern crate lazy_static;
 extern crate system;
 
+pub mod collections;
 pub mod cpu;
 pub mod default_output;
 pub mod elf;
