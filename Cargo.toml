@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "collections",
     "system",
     "kernel",
     "usrlib",
@@ -18,7 +17,6 @@ members = [
     "tests-integration",
 ]
 default-members = [
-    "collections",
     "system",
     "kernel",
     "usrlib",

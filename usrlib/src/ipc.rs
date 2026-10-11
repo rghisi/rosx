@@ -15,7 +15,7 @@ impl ReceivedMessage {
     }
 
     pub fn connection(&self) -> Option<UserConnectionHandle> {
-        UserConnectionHandle::from_token(self.message.conn_packed() as usize)
+        UserConnectionHandle::from_token(self.message.conn() as usize)
     }
 
     pub fn data(&self) -> &[u8; MESSAGE_PAYLOAD_BYTES] {

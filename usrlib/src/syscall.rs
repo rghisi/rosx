@@ -122,7 +122,7 @@ impl Syscall {
         connection: UserConnectionHandle,
         data: &[u8; MESSAGE_PAYLOAD_BYTES],
     ) -> Result<(), IpcSendError> {
-        let envelope = Message::new_packed(connection.packed(), data);
+        let envelope = Message::new(connection.packed(), data);
         let raw = arch::raw_syscall(
             SyscallNum::IpcSendMessage as usize,
             &envelope as *const Message as usize,
