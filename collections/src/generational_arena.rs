@@ -15,10 +15,18 @@ impl Handle {
     pub const GENERATION_MASK: usize = (ERROR_BIT - 1) >> Self::INDEX_BITS;
 
     pub fn new(index: u16, generation: u16) -> Self {
+        debug_assert!(
+            generation <= (Self::GENERATION_MASK as u16),
+            "generation outside 15-bit handle space"
+        );
         Self { index, generation }
     }
 
     pub fn pack(&self) -> usize {
+        debug_assert!(
+            self.generation <= (Self::GENERATION_MASK as u16),
+            "generation outside 15-bit handle space"
+        );
         (((self.generation as usize) & Self::GENERATION_MASK) << Self::INDEX_BITS)
             | (self.index as usize & Self::INDEX_MASK)
     }
@@ -198,6 +206,13 @@ mod tests {
         assert_eq!(Handle::next_generation(0), 1);
         assert_eq!(Handle::next_generation(0x7FFE), 0x7FFF);
         assert_eq!(Handle::next_generation(0x7FFF), 0);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "generation outside 15-bit handle space")]
+    fn new_should_panic_on_generation_above_the_15_bit_domain() {
+        Handle::new(0, 0xFFFF);
     }
 
     #[test]
