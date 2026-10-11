@@ -334,6 +334,8 @@ Word-aware rationale (C5): `\bFuture\b` cannot match the surviving variant names
 ```
 Plus the type-shape proof: `checks/compile_fail.sh` green (Step 18; `unverified` until the baseline pass pins it).
 
+**ADJUDICATION (review round 1, 2026-10-11):** line 2 (case-insensitive `\b(index|generation)\b` over `usrlib/src apps`) is unsatisfiable as authored for reasons predating the series — application vocabulary (conway generations, tetris cell indices, allocator loop indices) already produced 13 matches at the pre-refactor commit `3de2324`. The enforced scope is `usrlib/src` (zero matches on the final tree) plus the line-1 field-access gate over `apps` (clean; the sole baseline site `shell.rs:134` is gone). Gate-definition defect; no code change required.
+
 ### 7.4 Warning fingerprint gate (Δ-new = 0 against the **re-established** baseline, BR-15; manual bookkeeping — no repo tooling exists, Context Map §8)
 Baseline capture (verifier, branch-point commit **and** re-run on final tree):
 ```
