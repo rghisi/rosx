@@ -37,6 +37,7 @@ Run the commands you are given (a green baseline, or the plan's acceptance-crite
 - Run every command even after one fails, unless the failure blocks later ones.
 - When establishing a green baseline, also record the compiler-warning fingerprint (warning counts per target and per warning code) and report it, so later stages can prove a change preserved warnings instead of arguing it.
 - A test command that exits 0 while selecting zero tests is a vacuous gate, not a pass: at baseline, record the test target and count each acceptance command actually selected, and report any vacuous invocation form discovered (e.g. a positional argument filtering test names instead of selecting the target).
+- At baseline, dry-run every absence/negative grep gate against the pre-change tree (e.g. `git grep -E '<pattern>' <base-ref>`) and report its match inventory: matches outside the plan's reach — unrelated vocabulary in the gate's scope — are gate-authoring defects for pre-implementation arbitration, never defects-on-record at review.
 
 ## Output
 

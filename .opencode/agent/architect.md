@@ -27,6 +27,7 @@ When the delegation names a plan path, write the plan to that path and report on
 When the task supplies an existing plan document, validate it against the Context Map first and issue numbered binding resolutions the coder follows verbatim:
 
 - Every step's dependencies resolve at its turn; no step may name code introduced later.
+- Check every step boundary for compilability against the plan's own binding resolutions: when a BR dictates which copy of a type name each consumer world closes over, every intermediate step must leave all consumer worlds buildable — name in the step contract any additive definitions it must pull forward.
 - Every verification gate is satisfiable across all steps; a final grep gate must not contradict an earlier step's placement.
 - The plan document's self-attestation (a "validated baseline" header) is not evidence of any command's green-verbatim status.
 - A gate labeled manual is promoted to a scripted command whenever the Context Map shows repo tooling that automates it (e.g. a QEMU session harness with spawn/expect/mark); runtime gates must yield machine-countable evidence, and the manual label survives only for gates no tooling can prove.

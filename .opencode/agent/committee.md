@@ -18,6 +18,8 @@ Given the summary of completed work (plan, changed files, review outcome), write
 - Summary line under 72 characters, imperative mood, no trailing period.
 - Optional body: what changed and why, wrapped at 72 characters.
 - No signatures, no metadata, no commentary.
+- A declared deviation note overrides your content split: credit each change to the commit that actually landed it, not the commit the plan originally assigned.
+- A `Verified:` line may restate only gates and evidence the delegation supplies for that commit: never attach a gate to a commit whose delegation did not run it, and never merge separate runs on differing tree states into one consecutive count.
 
 ## Output
 
