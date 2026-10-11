@@ -3,7 +3,7 @@
 > **Date:** 2026-10-11
 > **Branch:** `kernel-owned-handle` (from `main` @ `7171686`, post PR #57 merge)
 > **Status:** LOCKED for execution — OD1/OD2 resolved 2026-10-11 (§6); no open decisions remain.
-> **Supersedes:** decisions D2 and D4 of `plans/fixed-size-handle.md` (placement of `ERROR_BIT` and codec ownership). The wire layout D1 and everything on it stay frozen.
+> **Supersedes:** two placement decisions from the fixed-size-handle work (PR #57, merged as `7171686`; its plan document has since been removed from this directory): where `ERROR_BIT` lives and who owns the handle/error codec. The 32-bit wire layout itself and everything built on it stay frozen (R8).
 
 ---
 
@@ -48,7 +48,7 @@ kernel                                      usrlib   owns: opaque user handle ne
 
 - **R1 — collections dissolved.** The crate is removed from the workspace; the arena lives under `kernel/` with its unit tests relocated. Kernel behavior unchanged by the move.
 - **R2 — `system` names no domain types.** After the refactor, `system/` contains zero references to `Handle`, `GenerationalArena`, `Future` (trait), or `collections`. Grep gate: `use collections` and `generational_arena` → zero matches in `system/`; `Handle` → zero matches in `system/src`.
-- **R3 — `ERROR_BIT` moves to `system`** (wire ABI owner). The kernel handle layout is expressed against it; all disjointness law tests survive, relocated. Supersedes D2/D4.
+- **R3 — `ERROR_BIT` moves to `system`** (wire ABI owner). The kernel handle layout is expressed against it; all disjointness law tests survive, relocated. Overrides the `ERROR_BIT` placement decision of the fixed-size-handle work (see header).
 - **R4 — kernel domain typing.** Four distinct newtype types kernel-side; fields private; no `index`/`generation` accessor reachable from outside the `kernel` crate. Passing a task handle where an IPC binding is expected becomes a compile error.
 - **R5 — user-space opacity.** No application can decompose a handle identity: `usrlib` handle types have private internals; user-visible `Debug` prints the packed value only (hex), never the struct. Kernel-side `Debug` for handles MAY print `{ index, generation }` — kernel-internal debug aid, not ABI.
 - **R6 — two edge codecs.** Kernel owns domain→`usize` encoding (incl. `impl From<KernelError> for ErrorCode` projections); `usrlib` owns `usize`→user decoding. The sealed `ErrorCodeOf` machinery from PR #57 is deleted. Each half is unit-tested in its own crate; the composed roundtrip law is verified end-to-end by `ipc_random` through real syscalls.
