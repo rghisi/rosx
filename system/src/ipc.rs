@@ -189,7 +189,7 @@ impl Future for IpcMessageFuture {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use collections::generational_arena::ERROR_BIT;
+    use crate::error::ERROR_BIT;
 
     #[test]
     fn message_is_64_bytes_align_4() {

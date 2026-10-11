@@ -1,7 +1,11 @@
 use crate::ipc::{IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError};
 use collections::generational_arena::Handle;
 
-pub use collections::generational_arena::ERROR_BIT;
+pub const ERROR_BIT: usize = 1 << 31;
+
+pub const fn is_token(raw: usize) -> bool {
+    raw < ERROR_BIT
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u32)]
