@@ -1,26 +1,25 @@
 use crate::arch;
+use crate::error::{IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError};
+use crate::handle::{UserBindingHandle, UserConnectionHandle, UserFutureHandle};
+use crate::ipc::ReceivedMessage;
 use alloc::boxed::Box;
 use core::fmt;
-use system::error::from_reg;
-use system::future::FutureHandle;
-use system::ipc::{
-    IpcBindingError, IpcBindingHandle, IpcConnectionError, IpcConnectionHandle, IpcReceiveError,
-    IpcSendError, MESSAGE_PAYLOAD_BYTES, Message,
-};
+use system::error::{ErrorCode, is_token};
+use system::ipc::{MESSAGE_PAYLOAD_BYTES, Message};
 use system::syscall_numbers::SyscallNum;
 
 pub struct Syscall {}
 
 impl Syscall {
-    pub fn exec(entrypoint: usize) -> FutureHandle {
+    pub fn exec(entrypoint: usize) -> Option<UserFutureHandle> {
         let raw = arch::raw_syscall(SyscallNum::Exec as usize, entrypoint as usize, 0, 0);
-        FutureHandle::unpack(raw)
+        UserFutureHandle::from_token(raw)
     }
 
-    pub fn load(elf: &'static [u8]) -> FutureHandle {
+    pub fn load(elf: &'static [u8]) -> Option<UserFutureHandle> {
         let elf_ptr = Box::into_raw(Box::new(elf)) as usize;
         let raw = arch::raw_syscall(SyscallNum::LoadElf as usize, elf_ptr as usize, 0, 0);
-        FutureHandle::unpack(raw)
+        UserFutureHandle::from_token(raw)
     }
 
     pub fn task_yield() {
@@ -31,27 +30,37 @@ impl Syscall {
         arch::raw_syscall(SyscallNum::Sleep as usize, ms as usize, 0, 0);
     }
 
-    pub fn wait_future(handle: FutureHandle) {
-        arch::raw_syscall(SyscallNum::WaitFuture as usize, handle.pack(), 0, 0);
+    pub fn wait_future(handle: UserFutureHandle) {
+        arch::raw_syscall(
+            SyscallNum::WaitFuture as usize,
+            handle.packed() as usize,
+            0,
+            0,
+        );
     }
 
-    pub fn wait_for_message(handle: FutureHandle) -> Result<Message, IpcReceiveError> {
+    pub fn wait_for_message(handle: UserFutureHandle) -> Result<ReceivedMessage, IpcReceiveError> {
         let mut envelope = Message::EMPTY;
         let raw = arch::raw_syscall(
             SyscallNum::WaitFuture as usize,
-            handle.pack(),
+            handle.packed() as usize,
             &mut envelope as *mut Message as usize,
             0,
         );
-        if from_reg(raw).is_err() {
-            Err(IpcReceiveError::from_reg(raw))
+        if is_token(raw) {
+            Ok(ReceivedMessage::new(envelope))
         } else {
-            Ok(envelope)
+            Err(IpcReceiveError::from(ErrorCode::from_code(raw)))
         }
     }
 
-    pub fn is_future_completed(handle: FutureHandle) -> bool {
-        let result = arch::raw_syscall(SyscallNum::IsFutureCompleted as usize, handle.pack(), 0, 0);
+    pub fn is_future_completed(handle: UserFutureHandle) -> bool {
+        let result = arch::raw_syscall(
+            SyscallNum::IsFutureCompleted as usize,
+            handle.packed() as usize,
+            0,
+            0,
+        );
         result != 0
     }
 
@@ -82,68 +91,70 @@ impl Syscall {
         arch::raw_syscall(SyscallNum::Dealloc as usize, ptr as usize, size, align);
     }
 
-    pub fn ipc_connect(service: &str) -> Result<IpcConnectionHandle, IpcConnectionError> {
+    pub fn ipc_connect(service: &str) -> Result<UserConnectionHandle, IpcConnectionError> {
         let boxed = Box::into_raw(Box::new(service)) as usize;
         let raw = arch::raw_syscall(SyscallNum::IpcConnect as usize, boxed, 0, 0);
-        match from_reg(raw) {
-            Ok(handle) => Ok(handle),
-            Err(_) => Err(IpcConnectionError::from_reg(raw)),
+        match UserConnectionHandle::from_token(raw) {
+            Some(handle) => Ok(handle),
+            None => Err(IpcConnectionError::from(ErrorCode::from_code(raw))),
         }
     }
 
-    pub fn ipc_disconnect(connection_handle: IpcConnectionHandle) {
+    pub fn ipc_disconnect(connection_handle: UserConnectionHandle) {
         arch::raw_syscall(
             SyscallNum::IpcDisconnect as usize,
-            connection_handle.pack(),
+            connection_handle.packed() as usize,
             0,
             0,
         );
     }
 
-    pub fn ipc_bind(service: &str) -> Result<IpcBindingHandle, IpcBindingError> {
+    pub fn ipc_bind(service: &str) -> Result<UserBindingHandle, IpcBindingError> {
         let boxed = Box::into_raw(Box::new(service)) as usize;
         let raw = arch::raw_syscall(SyscallNum::IpcBind as usize, boxed, 0, 0);
-        match from_reg(raw) {
-            Ok(handle) => Ok(handle),
-            Err(_) => Err(IpcBindingError::from_reg(raw)),
+        match UserBindingHandle::from_token(raw) {
+            Some(handle) => Ok(handle),
+            None => Err(IpcBindingError::from(ErrorCode::from_code(raw))),
         }
     }
 
     pub fn ipc_send(
-        connection: IpcConnectionHandle,
+        connection: UserConnectionHandle,
         data: &[u8; MESSAGE_PAYLOAD_BYTES],
     ) -> Result<(), IpcSendError> {
-        let envelope = Message::new(connection, data);
+        let envelope = Message::new_packed(connection.packed(), data);
         let raw = arch::raw_syscall(
             SyscallNum::IpcSendMessage as usize,
             &envelope as *const Message as usize,
             0,
             0,
         );
-        if from_reg(raw).is_err() {
-            Err(IpcSendError::from_reg(raw))
-        } else {
+        if is_token(raw) {
             Ok(())
+        } else {
+            Err(IpcSendError::from(ErrorCode::from_code(raw)))
         }
     }
 
-    pub fn ipc_receive_message(connection_handle: IpcConnectionHandle) -> FutureHandle {
+    pub fn ipc_receive_message(
+        connection_handle: UserConnectionHandle,
+    ) -> Option<UserFutureHandle> {
         let raw = arch::raw_syscall(
             SyscallNum::IpcReceiveMessage as usize,
-            connection_handle.pack(),
+            connection_handle.packed() as usize,
             0,
             0,
         );
-        FutureHandle::unpack(raw)
+        UserFutureHandle::from_token(raw)
     }
 
-    pub fn ipc_accept_message(binding_handle: IpcBindingHandle) -> FutureHandle {
+    pub fn ipc_accept_message(binding_handle: UserBindingHandle) -> Option<UserFutureHandle> {
         let raw = arch::raw_syscall(
             SyscallNum::IpcAcceptMessage as usize,
-            binding_handle.pack(),
+            binding_handle.packed() as usize,
             0,
             0,
         );
-        FutureHandle::unpack(raw)
+        UserFutureHandle::from_token(raw)
     }
 }

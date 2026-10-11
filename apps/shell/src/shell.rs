@@ -1,4 +1,5 @@
 use usrlib::{print, println};
+use usrlib::handle::UserConnectionHandle;
 use usrlib::ipc::{ipc_receive_value, ipc_send_value};
 use usrlib::syscall::Syscall;
 use alloc::string::String;
@@ -104,23 +105,33 @@ fn ls() {
 }
 
 fn pi() {
-    Syscall::wait_future(Syscall::load(PI_ELF));
+    if let Some(fh) = Syscall::load(PI_ELF) {
+        Syscall::wait_future(fh);
+    }
 }
 
 fn snake() {
-    Syscall::wait_future(Syscall::load(SNAKE_ELF));
+    if let Some(fh) = Syscall::load(SNAKE_ELF) {
+        Syscall::wait_future(fh);
+    }
 }
 
 fn tetris() {
-    Syscall::wait_future(Syscall::load(TETRIS_ELF));
+    if let Some(fh) = Syscall::load(TETRIS_ELF) {
+        Syscall::wait_future(fh);
+    }
 }
 
 fn conway() {
-    Syscall::wait_future(Syscall::load(CONWAY_ELF));
+    if let Some(fh) = Syscall::load(CONWAY_ELF) {
+        Syscall::wait_future(fh);
+    }
 }
 
 fn tests() {
-    Syscall::wait_future(Syscall::exec(test_suite::app::main as usize));
+    if let Some(fh) = Syscall::exec(test_suite::app::main as usize) {
+        Syscall::wait_future(fh);
+    }
 }
 
 fn sleep() {
@@ -128,11 +139,15 @@ fn sleep() {
 }
 
 fn random() {
-    for i in 1..260 {
+    let mut first: Option<UserConnectionHandle> = None;
+    for _ in 1..260 {
         let ipc_connection_result = Syscall::ipc_connect("RANDOM");
         if let Ok(ipc_connection) = ipc_connection_result {
-            println!("RANDOM Server: {} {}", ipc_connection.index, ipc_connection.generation);
-            for i in 1..2 {
+            if first.is_none() {
+                first = Some(ipc_connection);
+            }
+            println!("RANDOM Server: {}", ipc_connection);
+            for _ in 1..2 {
                 match ipc_send_value(ipc_connection, 123456) {
                     Ok(result) => {
                         println!("RANDOM Value requested");
@@ -149,6 +164,26 @@ fn random() {
             Syscall::ipc_disconnect(ipc_connection);
         } else {
             println!("Connection failed");;
+        }
+    }
+    if let Some(stale) = first {
+        match ipc_send_value(stale, 0) {
+            Err(_) => println!("RANDOM Stale rejected"),
+            Ok(()) => println!("RANDOM Stale accepted"),
+        }
+        if let Ok(fresh) = Syscall::ipc_connect("RANDOM") {
+            match ipc_send_value(fresh, 123456) {
+                Ok(_) => match ipc_receive_value(fresh) {
+                    Ok(value) => println!("RANDOM Fresh value: {}", value),
+                    Err(e) => println!("RANDOM Value not received: {}", e),
+                },
+                Err(result) => {
+                    println!("RANDOM Failed to send: {}", result);
+                }
+            }
+            Syscall::ipc_disconnect(fresh);
+        } else {
+            println!("Connection failed");
         }
     }
 }

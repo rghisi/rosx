@@ -8,10 +8,13 @@ const DIAGNOSTIC_TAIL_CHARS: usize = 2000;
 const SERVER_PREFIX: &str = "RANDOM Server: ";
 const VALUE_REQUESTED: &str = "RANDOM Value requested";
 const VALUE_PREFIX: &str = "RANDOM Value: ";
-const FAILURE_STRINGS: [&str; 6] = [
+const FRESH_VALUE_PREFIX: &str = "RANDOM Fresh value: ";
+const STALE_REJECTED: &str = "RANDOM Stale rejected";
+const FAILURE_STRINGS: [&str; 7] = [
     "RANDOM Value not received",
     "RANDOM Failed to send",
     "Connection failed",
+    "RANDOM Stale accepted",
     "[IPC Server] Random - Panic!",
     "Buffer pool exhausted",
     "Buffer not found",
@@ -30,17 +33,17 @@ fn parse_number(raw: &str, line: &str) -> usize {
         .unwrap_or_else(|err| panic!("cannot parse {raw:?} as usize from raw line {line:?}: {err}"))
 }
 
-fn server_pairs(content: &str) -> Vec<(usize, usize)> {
+fn parse_token(raw: &str, line: &str) -> usize {
+    usize::from_str_radix(raw.trim(), 16).unwrap_or_else(|err| {
+        panic!("cannot parse {raw:?} as hex token from raw line {line:?}: {err}")
+    })
+}
+
+fn server_tokens(content: &str) -> Vec<usize> {
     content
         .lines()
         .filter(|line| line.starts_with(SERVER_PREFIX))
-        .map(|line| {
-            let rest = line[SERVER_PREFIX.len()..].trim();
-            let (index, generation) = rest
-                .split_once(' ')
-                .unwrap_or_else(|| panic!("malformed server line {line:?}"));
-            (parse_number(index, line), parse_number(generation, line))
-        })
+        .map(|line| parse_token(&line[SERVER_PREFIX.len()..], line))
         .collect()
 }
 
@@ -61,12 +64,12 @@ fn tail_chars(content: &str, n: usize) -> String {
 }
 
 fn window_diagnostics(content: &str) -> String {
-    let pairs = server_pairs(content);
+    let tokens = server_tokens(content);
     let parsed_values = values(content);
-    let first_generation = pairs.first().map(|(_, generation)| *generation);
-    let max_generation = pairs.iter().map(|(_, generation)| *generation).max();
+    let first_packed = tokens.first().copied();
+    let max_packed = tokens.iter().max().copied();
     format!(
-        "server_count={} requested_count={} value_count={} first_generation={first_generation:?} max_generation={max_generation:?} values_len={} window_tail={}",
+        "server_count={} requested_count={} value_count={} first_packed={first_packed:?} max_packed={max_packed:?} values_len={} window_tail={}",
         count_prefixes(content, SERVER_PREFIX),
         count_prefixes(content, VALUE_REQUESTED),
         count_prefixes(content, VALUE_PREFIX),
@@ -113,19 +116,22 @@ fn shell_random_capability_ipc_roundtrip() {
         window_diagnostics(&content)
     );
 
-    let pairs = server_pairs(&content);
+    let tokens = server_tokens(&content);
     assert_eq!(
-        pairs.len(),
+        tokens.len(),
         ITERATIONS,
-        "unexpected number of parsed server handle pairs\n{}",
+        "unexpected number of parsed server handle tokens\n{}",
         window_diagnostics(&content)
     );
-    let first_generation = pairs[0].1;
     assert!(
-        pairs
-            .iter()
-            .any(|(_, generation)| *generation > first_generation),
-        "expected at least one connection generation above the first observed {first_generation}\n{}",
+        content.contains(STALE_REJECTED),
+        "expected the recycled first connection to be rejected on send\n{}",
+        window_diagnostics(&content)
+    );
+    assert_eq!(
+        count_prefixes(&content, FRESH_VALUE_PREFIX),
+        1,
+        "expected exactly one fresh roundtrip value line\n{}",
         window_diagnostics(&content)
     );
 
