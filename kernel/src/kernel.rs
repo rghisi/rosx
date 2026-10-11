@@ -19,8 +19,9 @@ use crate::ports::driven::ForSwitchingTaskContext;
 use crate::ports::driven::SwitchOutcome;
 use alloc::boxed::Box;
 use core::ptr::null_mut;
-use crate::collections::arena::{Error, Handle as FutureHandle};
-use system::future::Future;
+use crate::collections::arena::Error;
+use crate::future::Future;
+use crate::handle::FutureHandle;
 #[cfg(not(test))]
 use crate::memory::memory_manager::MEMORY_MANAGER;
 #[cfg(not(test))]

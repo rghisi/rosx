@@ -1,15 +1,19 @@
 use alloc::collections::{BTreeMap};
 use alloc::string::String;
 use alloc::boxed::Box;
-use crate::collections::arena::{GenerationalArena, Handle, Handle as FutureHandle};
-use system::ipc::{IpcConnectionError, IpcSendError, IpcBindingError, IpcReceiveError, IpcMessageFuture, Message};
+use crate::collections::arena::GenerationalArena;
+use crate::future::Future;
+use crate::handle::{FutureHandle, IpcBindingHandle, IpcConnectionHandle};
+use crate::ipc::errors::{IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError};
+use crate::ipc::message_future::IpcMessageFuture;
+use system::ipc::Message;
 use crate::ipc::mailbox_manager::{MailboxManager, MailboxHandle};
 use crate::ports::driven::ForNotifyingFutures;
 use crate::task::TaskHandle;
 
 struct NoopIpcNotifier;
 impl ForNotifyingFutures for NoopIpcNotifier {
-    fn register(&self, _future: Box<dyn system::future::Future + Send + Sync>) -> Option<FutureHandle> {
+    fn register(&self, _future: Box<dyn Future + Send + Sync>) -> Option<FutureHandle> {
         None
     }
     fn notify(&self, _handle: FutureHandle) {}
@@ -32,9 +36,6 @@ impl IpcServerBinding {
         }
     }
 }
-
-type IpcBindingHandle = Handle;
-type IpcConnectionHandle = Handle;
 
 struct IpcConnection {
     server_mailbox: MailboxHandle,
@@ -79,7 +80,7 @@ impl IpcManager {
 
         let mailbox_handle = self.mailbox_manager.create();
         let binding = IpcServerBinding::new(String::from(service), mailbox_handle);
-        let binding_handle = self.bindings.add(binding).unwrap();
+        let binding_handle = IpcBindingHandle::from(self.bindings.add(binding).unwrap());
         self.registry.insert(String::from(service), binding_handle);
 
         Ok(binding_handle)
@@ -87,7 +88,7 @@ impl IpcManager {
 
     pub(crate) fn connect(&mut self, service: &str, caller: TaskHandle) -> Result<IpcConnectionHandle, IpcConnectionError> {
         if let Some(binding_handler) = self.registry.get(service).copied() {
-            if let Ok(server_binding) = self.bindings.borrow(binding_handler) {
+            if let Ok(server_binding) = self.bindings.borrow(binding_handler.into()) {
                 let client_mailbox_handle = self.mailbox_manager.create();
                 let server_mailbox_handle = server_binding.mailbox_handle;
                 let connection = IpcConnection {
@@ -96,7 +97,7 @@ impl IpcManager {
                     client_task: caller
                 };
                 if let Ok(connection_handle) = self.connections.add(connection) {
-                    Ok(connection_handle)
+                    Ok(IpcConnectionHandle::from(connection_handle))
                 } else {
                     Err(IpcConnectionError::ConnectionCannotBeEstablished)
                 }
@@ -109,17 +110,20 @@ impl IpcManager {
     }
 
     pub(crate) fn disconnect(&mut self, connection_handle: IpcConnectionHandle) {
-        let client_mailbox = match self.connections.borrow(connection_handle) {
+        let client_mailbox = match self.connections.borrow(connection_handle.into()) {
             Ok(connection) => connection.client_mailbox,
             Err(_) => return,
         };
         self.mailbox_manager.remove(client_mailbox);
-        let _ = self.connections.remove(connection_handle);
+        let _ = self.connections.remove(connection_handle.into());
     }
 
     pub(crate) fn send_message(&mut self, caller: TaskHandle, envelope: &Message) -> Result<(), IpcSendError> {
-        let connection = Handle::unpack(envelope.conn_packed() as usize);
-        let destination = match self.connections.borrow(connection) {
+        let connection = match IpcConnectionHandle::from_packed(envelope.conn_packed() as usize) {
+            Some(connection) => connection,
+            None => return Err(IpcSendError::ConnectionNotFound),
+        };
+        let destination = match self.connections.borrow(connection.into()) {
             Ok(conn) => {
                 if caller == conn.client_task {
                     conn.server_mailbox
@@ -133,7 +137,7 @@ impl IpcManager {
     }
 
     pub(crate) fn accept_message_async(&mut self, server_binding_handle: IpcBindingHandle) -> FutureHandle {
-        if let Ok(server_binding) = self.bindings.borrow(server_binding_handle) {
+        if let Ok(server_binding) = self.bindings.borrow(server_binding_handle.into()) {
             let server_mailbox_handle = server_binding.mailbox_handle;
             self.mailbox_manager.pop_front_async(server_mailbox_handle)
         } else {
@@ -144,7 +148,7 @@ impl IpcManager {
     }
 
     pub(crate) fn receive_message_async(&mut self, connection_handle: IpcConnectionHandle) -> FutureHandle {
-        if let Ok(connection) = self.connections.borrow(connection_handle) {
+        if let Ok(connection) = self.connections.borrow(connection_handle.into()) {
             self.mailbox_manager.pop_front_async(connection.client_mailbox)
         } else {
             self.notifier
@@ -163,8 +167,8 @@ mod tests {
     use crate::ports::driven::ForNotifyingFutures;
     use system::ipc::MESSAGE_PAYLOAD_BYTES;
 
-    const CLIENT_TASK: Handle = Handle { index: 1, generation: 1 };
-    const SERVER_TASK: Handle = Handle { index: 2, generation: 1 };
+    const CLIENT_TASK: TaskHandle = TaskHandle::new(1, 1);
+    const SERVER_TASK: TaskHandle = TaskHandle::new(2, 1);
 
     fn manager_with_notifier() -> IpcManager {
         init_services();
@@ -246,8 +250,8 @@ mod tests {
         }
 
         let c2 = manager.connect("MSG-ABA", CLIENT_TASK).unwrap();
-        assert_eq!(c2.index, c1.index);
-        assert_eq!(c2.generation, c1.generation + 1);
+        assert_eq!(c2.index(), c1.index());
+        assert_eq!(c2.generation(), c1.generation() + 1);
 
         assert_eq!(
             manager.send_message(CLIENT_TASK, &Message::new_packed(c1.pack() as u32, &[0u8; MESSAGE_PAYLOAD_BYTES])),
@@ -280,7 +284,7 @@ mod tests {
 
     #[test]
     fn accept_before_connect_delivers_message() {
-        use system::future::Future;
+        use crate::future::Future;
         let mut manager = manager_with_notifier();
         let binding = manager.bind_service("MSG-EARLY").unwrap();
 
@@ -303,7 +307,7 @@ mod tests {
 
     #[test]
     fn receive_on_dead_connection_yields_error_future() {
-        use system::future::Future;
+        use crate::future::Future;
         let mut manager = manager_with_notifier();
         let (_binding, connection) = bind_and_connect(&mut manager, "MSG-DEADRECV");
         manager.disconnect(connection);
@@ -321,10 +325,10 @@ mod tests {
 
     #[test]
     fn accept_on_unknown_binding_yields_error_future() {
-        use system::future::Future;
+        use crate::future::Future;
         let mut manager = manager_with_notifier();
 
-        let fh = manager.accept_message_async(Handle::new(99, 1));
+        let fh = manager.accept_message_async(IpcBindingHandle::new(99, 1));
         let registry = services().future_registry.borrow_mut();
         let future_box = registry.borrow_mut(fh).unwrap();
         let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
@@ -336,8 +340,19 @@ mod tests {
     }
 
     #[test]
+    fn send_on_error_bit_conn_word_rejected() {
+        let mut manager = manager_with_notifier();
+        let (_binding, connection) = bind_and_connect(&mut manager, "MSG-GARBAGE");
+        let malformed_conn = (system::error::ERROR_BIT | connection.pack()) as u32;
+        assert_eq!(
+            manager.send_message(CLIENT_TASK, &Message::new_packed(malformed_conn, &[0u8; MESSAGE_PAYLOAD_BYTES])),
+            Err(IpcSendError::ConnectionNotFound)
+        );
+    }
+
+    #[test]
     fn disconnect_drops_queued_envelopes() {
-        use system::future::Future;
+        use crate::future::Future;
         let mut manager = manager_with_notifier();
         let (_binding, connection) = bind_and_connect(&mut manager, "MSG-DRAIN");
 

@@ -2,11 +2,26 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::any::Any;
-use system::future::Future;
-use crate::collections::arena::{Error, GenerationalArena, Handle as FutureHandle};
+use crate::collections::arena::{Error, GenerationalArena};
+use crate::handle::FutureHandle;
 use crate::task::TaskHandle;
 use crate::kernel_services::services;
 use crate::ports::driven::ForWakingTasks;
+
+pub trait Future: Send + Sync {
+    fn is_completed(&self) -> bool;
+
+    /// Mark this future as completed. Default no-op; override for
+    /// notification-driven futures (e.g. TimeFuture) where the
+    /// TimerManager flips the flag.
+    fn complete(&mut self) {}
+
+    fn as_any(&self) -> &dyn Any;
+
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
+}
 
 pub struct TimeFuture {
     completed: bool,
@@ -115,7 +130,7 @@ impl FutureRegistry {
     }
 
     pub fn register(&mut self, future: Box<dyn Future + Send + Sync>) -> Option<FutureHandle> {
-        self.arena.add(future).ok()
+        self.arena.add(future).ok().map(FutureHandle::from)
     }
 
     pub fn register_waiter(&mut self, future_handle: FutureHandle, task_handle: TaskHandle) {
@@ -123,7 +138,7 @@ impl FutureRegistry {
     }
 
     pub fn get(&mut self, handle: FutureHandle) -> Option<bool> {
-        if let Ok(future) = self.arena.borrow_mut(handle) {
+        if let Ok(future) = self.arena.borrow_mut(handle.into()) {
             Some(future.is_completed())
         } else {
             None
@@ -131,15 +146,15 @@ impl FutureRegistry {
     }
 
     pub fn consume(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
-        self.arena.remove(handle)
+        self.arena.remove(handle.into())
     }
 
     pub fn borrow_mut(&mut self, handle: FutureHandle) -> Result<&mut Box<dyn Future + Send + Sync>, Error> {
-        self.arena.borrow_mut(handle)
+        self.arena.borrow_mut(handle.into())
     }
 
     pub fn replace(&mut self, handle: FutureHandle, future: Box<dyn Future + Send + Sync>) -> Result<FutureHandle, Error> {
-        self.arena.replace(handle, future)
+        self.arena.replace(handle.into(), future).map(FutureHandle::from)
     }
 
     pub fn notify(&mut self, handle: FutureHandle) {

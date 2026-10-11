@@ -1,14 +1,18 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use alloc::boxed::Box;
-use crate::collections::arena::{GenerationalArena, Handle, Handle as FutureHandle};
-use system::ipc::{IpcMessageFuture, IpcReceiveError, IpcSendError, Message};
+use crate::collections::arena::GenerationalArena;
+use crate::future::Future;
+use crate::handle::{FutureHandle, Handle};
+use crate::ipc::errors::{IpcReceiveError, IpcSendError};
+use crate::ipc::message_future::IpcMessageFuture;
 use crate::ipc::mailbox::Mailbox;
 use crate::ports::driven::ForNotifyingFutures;
+use system::ipc::Message;
 
 struct NoopNotifier;
 impl ForNotifyingFutures for NoopNotifier {
-    fn register(&self, _future: Box<dyn system::future::Future + Send + Sync>) -> Option<FutureHandle> {
+    fn register(&self, _future: Box<dyn Future + Send + Sync>) -> Option<FutureHandle> {
         None
     }
     fn notify(&self, _handle: FutureHandle) {}
@@ -130,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_ipc_message_future_carries_envelope() {
-        use system::future::Future;
+        use crate::future::Future;
         use system::ipc::MESSAGE_PAYLOAD_BYTES;
         let mut future = IpcMessageFuture::new();
         assert!(!future.is_completed());

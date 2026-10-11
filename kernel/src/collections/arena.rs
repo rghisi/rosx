@@ -1,51 +1,6 @@
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-
-pub const ERROR_BIT: usize = 1 << 31;
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Handle {
-    pub index: u16,
-    pub generation: u16,
-}
-
-impl Handle {
-    pub const INDEX_BITS: usize = 16;
-    pub const INDEX_MASK: usize = (1 << Self::INDEX_BITS) - 1;
-    pub const GENERATION_MASK: usize = (ERROR_BIT - 1) >> Self::INDEX_BITS;
-
-    pub fn new(index: u16, generation: u16) -> Self {
-        debug_assert!(
-            generation <= (Self::GENERATION_MASK as u16),
-            "generation outside 15-bit handle space"
-        );
-        Self { index, generation }
-    }
-
-    pub fn pack(&self) -> usize {
-        debug_assert!(
-            self.generation <= (Self::GENERATION_MASK as u16),
-            "generation outside 15-bit handle space"
-        );
-        (((self.generation as usize) & Self::GENERATION_MASK) << Self::INDEX_BITS)
-            | (self.index as usize & Self::INDEX_MASK)
-    }
-
-    pub fn unpack(packed: usize) -> Self {
-        Self {
-            index: (packed & Self::INDEX_MASK) as u16,
-            generation: ((packed >> Self::INDEX_BITS) & Self::GENERATION_MASK) as u16,
-        }
-    }
-
-    pub const fn is_handle(raw: usize) -> bool {
-        raw < ERROR_BIT
-    }
-
-    pub const fn next_generation(current: u16) -> u16 {
-        (current + 1) & (Self::GENERATION_MASK as u16)
-    }
-}
+use crate::handle::{Handle, next_generation};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
@@ -74,7 +29,7 @@ impl<T, const S: usize> GenerationalArena<T, S> {
         Self { items, generations, free_slots }
     }
 
-    pub fn add(&mut self, item: T) -> Result<Handle, Error> {
+    pub(crate) fn add(&mut self, item: T) -> Result<Handle, Error> {
         match self.free_slots.pop_front() {
             Some(index) => {
                 let generation = self.generations[index as usize];
@@ -85,7 +40,7 @@ impl<T, const S: usize> GenerationalArena<T, S> {
         }
     }
 
-    pub fn borrow(&self, handle: Handle) -> Result<&T, Error> {
+    pub(crate) fn borrow(&self, handle: Handle) -> Result<&T, Error> {
         let index = handle.index as usize;
         if index < self.items.len() && self.generations[index] == handle.generation {
             return Ok(self.items[index].as_ref().unwrap());
@@ -93,7 +48,7 @@ impl<T, const S: usize> GenerationalArena<T, S> {
         Err(Error::NotFound)
     }
 
-    pub fn borrow_mut(&mut self, handle: Handle) -> Result<&mut T, Error> {
+    pub(crate) fn borrow_mut(&mut self, handle: Handle) -> Result<&mut T, Error> {
         let index = handle.index as usize;
         if index < self.items.len() && self.generations[index] == handle.generation {
             return Ok(self.items[index].as_mut().unwrap());
@@ -101,18 +56,18 @@ impl<T, const S: usize> GenerationalArena<T, S> {
         Err(Error::NotFound)
     }
 
-    pub fn remove(&mut self, handle: Handle) -> Result<T, Error> {
+    pub(crate) fn remove(&mut self, handle: Handle) -> Result<T, Error> {
         let index = handle.index as usize;
         if index >= self.items.len() || self.generations[index] != handle.generation {
             return Err(Error::NotFound);
         }
         let item = self.items[index].take().unwrap();
-        self.generations[index] = Handle::next_generation(self.generations[index]);
+        self.generations[index] = next_generation(self.generations[index]);
         self.free_slots.push_back(handle.index);
         Ok(item)
     }
 
-    pub fn replace(&mut self, handle: Handle, item: T) -> Result<Handle, Error> {
+    pub(crate) fn replace(&mut self, handle: Handle, item: T) -> Result<Handle, Error> {
         let index = handle.index as usize;
         if index >= self.items.len() || self.generations[index] != handle.generation {
             return Err(Error::NotFound);
@@ -125,105 +80,10 @@ impl<T, const S: usize> GenerationalArena<T, S> {
 #[cfg(test)]
 mod tests {
     extern crate std;
-    use crate::collections::arena::{Error, GenerationalArena, Handle, ERROR_BIT};
+    use crate::collections::arena::{Error, GenerationalArena};
     use std::string::String;
     use std::string::ToString;
     use std::vec;
-
-    #[test]
-    fn handle_pack_should_encode_generation_in_bits_30_to_16_and_index_in_bits_15_to_0() {
-        let handle = Handle::new(5, 10);
-        assert_eq!(handle.pack(), (10usize << 16) | 5);
-    }
-
-    #[test]
-    fn handle_unpack_should_decode_index_and_generation_from_usize() {
-        let packed = (10usize << 16) | 5;
-        let handle = Handle::unpack(packed);
-        assert_eq!(handle.index, 5);
-        assert_eq!(handle.generation, 10);
-    }
-
-    #[test]
-    fn handle_pack_unpack_should_roundtrip() {
-        let original = Handle::new(42, 7);
-        assert_eq!(Handle::unpack(original.pack()), original);
-    }
-
-    #[test]
-    fn handle_pack_unpack_should_roundtrip_edge_handles() {
-        for (index, generation) in [(0u16, 0u16), (65535, 0), (0, 32767), (65535, 32767)] {
-            let handle = Handle::new(index, generation);
-            assert_eq!(Handle::unpack(handle.pack()), handle);
-        }
-    }
-
-    #[test]
-    fn handle_pack_should_never_set_error_bit() {
-        let mut index = 0u16;
-        loop {
-            let mut generation = 0u16;
-            loop {
-                assert_eq!(Handle::new(index, generation).pack() & ERROR_BIT, 0);
-                if generation >= 0x7FFF {
-                    break;
-                }
-                generation = generation.saturating_add(997).min(0x7FFF);
-            }
-            if index >= 65535 {
-                break;
-            }
-            index = index.saturating_add(997).min(65535);
-        }
-    }
-
-    #[test]
-    fn is_handle_should_accept_only_wellformed_packed_values() {
-        assert!(Handle::is_handle(0));
-        assert!(Handle::is_handle(0x7FFF_FFFF));
-        assert!(!Handle::is_handle(ERROR_BIT));
-        assert!(!Handle::is_handle(ERROR_BIT | 1));
-        assert!(!Handle::is_handle(1usize << 32));
-        assert!(!Handle::is_handle(usize::MAX));
-    }
-
-    #[test]
-    fn generation_counter_should_cycle_from_32767_to_0_without_setting_error_bit() {
-        let mut arena: GenerationalArena<u8, 1> = GenerationalArena::new();
-        for counter in 0..32768usize {
-            let handle = arena.add(0).unwrap();
-            assert_eq!(handle.generation, (counter & 0x7FFF) as u16);
-            assert_eq!(handle.pack() & ERROR_BIT, 0);
-            arena.remove(handle).unwrap();
-        }
-        let wrapped = arena.add(0).unwrap();
-        assert_eq!(wrapped.generation, 0);
-        assert_eq!(wrapped.pack() & ERROR_BIT, 0);
-    }
-
-    #[test]
-    fn next_generation_should_wrap_within_generation_space() {
-        assert_eq!(Handle::next_generation(0), 1);
-        assert_eq!(Handle::next_generation(0x7FFE), 0x7FFF);
-        assert_eq!(Handle::next_generation(0x7FFF), 0);
-    }
-
-    #[cfg(debug_assertions)]
-    #[test]
-    #[should_panic(expected = "generation outside 15-bit handle space")]
-    fn new_should_panic_on_generation_above_the_15_bit_domain() {
-        Handle::new(0, 0xFFFF);
-    }
-
-    #[test]
-    fn handles_should_be_equals_when_created_with_the_same_index_and_generation() {
-        let h1 = Handle::new(5, 10);
-        let h2 = Handle::new(5, 10);
-        let h3 = Handle::new(5, 11);
-
-        assert_eq!(h1, h2);
-        assert_ne!(h1, h3);
-    }
 
     #[test]
     fn should_initialize_with_s_slots() {

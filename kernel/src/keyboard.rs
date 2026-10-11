@@ -1,6 +1,6 @@
 use alloc::boxed::Box;
-use crate::collections::arena::Handle as FutureHandle;
-use system::future::Future;
+use crate::future::Future;
+use crate::handle::FutureHandle;
 use crate::kernel_cell::KernelCell;
 use crate::kernel_services::services;
 use alloc::collections::VecDeque;

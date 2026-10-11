@@ -1,4 +1,3 @@
-use crate::collections::arena::Handle;
 use crate::task::{TaskHandle, YieldReason};
 use super::algorithm::SchedulingAlgorithm;
 
@@ -55,7 +54,7 @@ mod tests {
     use super::*;
 
     fn make_handle(index: u16, generation: u16) -> TaskHandle {
-        Handle::new(index, generation)
+        TaskHandle::new(index, generation)
     }
 
     #[test]
