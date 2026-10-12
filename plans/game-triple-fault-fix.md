@@ -1,0 +1,610 @@
+---
+
+# Plan: Fix game triple-fault (snake/tetris idle) — turn `app_lifecycle` green
+
+**Branch:** `fix/game-triple-fault` = `main(7171686)` + `97be6b7` (red tests + `QemuSession::is_running()`). Kernel code at `7171686`.
+**Goal:** `tests-integration/tests/app_lifecycle.rs` (`tetris_survives_idle`, `snake_survives_idle`) PASS with their `#[ignore]` attributes removed.
+**Author:** Architect subagent, 2026-10-11. No code in this document; contracts only.
+
+## 1. Locked decisions (verbatim from user + orchestrator)
+
+- **D1:** Fix at root cause in the scheduler/task lifecycle. Required core changes: MLFQ `push_ready` dedups (no duplicate handle across any queue); `on_task_terminate` removes ALL occurrences of the handle from every queue (loop until none found) + yield_info; comprehensive new unit tests in mlfq_strategy.rs for dedup, remove-all, pick_next-after-terminate safety (repo rule: unit tests for all kernel changes, see existing mlfq tests style).
+- **D2:** Kernel is sole invariant authority: silent zero-tolerance in the switch path is forbidden. `switch_to_task`/context switch must never restore a context for a handle the TaskManager cannot resolve to a live task: prefer defensive skip (return/skip so the scheduler re-picks or falls to idle) plus debug_assert! to make bugs loud in dev. Changing `get_task_stack_stack_pointer` to return Option<usize> is acceptable if the blast radius stays within kernel crate call sites (enumerate call sites in the plan). NO println! spam in hot paths, NO comments anywhere (AGENTS.md). *(Note: decision text as delegated reads `get_task_stack_pointer`.)*
+- **D3:** KernelCell re-entrancy: ONLY if D1+D2 do not turn the tests green, add the minimal diagnostic: a borrow-depth flag inside KernelCell making re-entrant borrow_mut panic loudly in dev instead of aliasing UB. Full HAL/redesign of the ISR/queueing architecture is OUT of scope (future architecture discussion).
+- **D4:** The pre-fault FREEZE (lost wakeup: app blocked on a future that never completes, or double-queue livelock) must be diagnosed during implementation; D1 is hypothesized to eliminate it (double-queued task whose requeue_after_run removes the wake's yield_info entry etc.). If the freeze persists after D1+D2 with unit tests green, the coder must STOP and report evidence (frozen screen + which future/waiter) rather than broaden scope.
+- **D5:** Kernel/ stays no_std, portable (no arch-specific code in kernel/), no comments, no new deps, minimal diff. Keep kernel/src/scheduler/scheduler.rs step() structure unchanged unless evidence demands otherwise.
+
+## 2. Background
+
+Launching snake/tetris from the shell on the **debug** kernel renders some frames, then freezes; ~13.5 s after spawn the guest triple-faults: `#PF` at RIP=0 (CPL=0, GPRs zero, stack below RSP = zero page) → `#DF` → triple fault. Forensics (2026-10-11, trusted): the context switched INTO was zeroed (`RIP=0`, `RSP=0x20000013b90` into zeroed fresh memory, deterministic across runs); the IRQ frame at the last tick sat on an ELF app task's stack (`elf_task_wrapper` at bottom, `syscall_handler_entry+0x40` trampoline; symbols `timer_interrupt_handler → Kernel::preempt → Scheduler::should_preempt → KernelCell::borrow`).
+
+Code-level chain on `main`, re-verified by reading (all file:line below are current on this branch):
+
+1. `kernel/src/scheduler/mlfq_strategy.rs:74-76` — `fn push_ready(&mut self, handle: TaskHandle) { self.queues[0].push_back(handle); }` — no dedup.
+   `kernel/src/scheduler/mlfq_strategy.rs:87-94` — `on_task_terminate` removes only the FIRST matching occurrence per queue (`if let Some(pos) = queue.iter().position(…) { queue.remove(pos); }` once) — duplicates/stale handles survive removal; then `self.yield_info.remove(&handle);`.
+   `requeue_after_run` (mlfq_strategy.rs:65-72) is the second enqueue edge and also pushes unguarded.
+2. `kernel/src/task_manager.rs:69-74` — `pub(crate) fn get_task_stack_pointer(&self, handle: TaskHandle) -> usize { … Err(_) => 0, }` returns **0** for dead handles; `get_task_stack_pointer_ref` (lines 76-81) returns `null_mut()`; `set_state` (50-54) silently ignores dead handles; `get_state` (43-48) maps dead → `Terminated`.
+3. `kernel/src/state.rs:22-40` — `switch_to_task` feeds that `0` straight into `self.cpu.swap_context(state_pointer, scheduler_stack_pointer_pointer, task_stack_pointer)` (line 35) — unconditional restore of a zeroed context → #PF → #DF → TF.
+4. Re-entrant aliasing (believed cause of the pre-fault freeze/lost wakeups): `kernel/src/scheduler/mod.rs:42-46` `run()` = `loop { services().scheduler.borrow_mut().step(); }` and `step()`'s `switch_to_task` runs whole task executions **while that `&mut Scheduler` is live**; the timer ISR `kernel().preempt()` (`arch/x86_64/src/interrupts.rs:104-113`) and keyboard ISR `kernel().enqueue(...)` (`arch/x86_64/src/interrupts.rs:116-127`) re-enter the same cell — `kernel/src/kernel_cell.rs:23-26` is a bare `UnsafeCell` borrow with **no** tracking. Same pattern via `terminate_and_yield` → `notify` → wake → `SchedulerWakerUseCase::wake_tasks` (`kernel/src/kernel_services.rs:25-27`) from task context.
+
+Production scheduler on x86_64 is MLFQ (`arch/x86_64/src/main.rs:43`: `scheduler_factory: scheduler::mfq_scheduler`), installed over the constructor-default FIFO cell at `kernel/src/kernel.rs:131-132` (`services().scheduler.replace(*scheduler);`).
+
+Idle-state note (for D4): snake after GAME OVER (self-inflicted wall crash without input, `apps/snake/src/main.rs:181-191`) blocks in `loop { Syscall::read_char() … }` (`apps/snake/src/main.rs:224-234`) → `SyscallNum::ReadChar` registers a `KeyboardFuture` waiter and blocks (`kernel/src/syscall.rs:36-48`). During the 35/45 s idle window nothing terminates and no keys arrive — the guest must stay alive purely on ticks + shell + random_gen_server.
+
+## 3. Baseline facts (sourced; do not re-run expensive baselines)
+
+- Delegation baseline, established 2026-10-11 on this lineage: `boot_and_shell` **PASS (4 passed)**; `ipc_random` **PASS (1 passed)**; `app_lifecycle` **RED for the right reason** (dead guest ~13.5 s); unit suite green; repro script ran today for `snake` (`timeout`/QEMU/python3 tooling therefore confirmed working in this environment).
+- Repro script exists and was read today: `/tmp/opencode/repro_triple_fault.py` (153 lines, outside the repo). It builds the image via `arch/x86_64-runner/target/debug/runner` (binary name `runner` confirmed in `arch/x86_64-runner/Cargo.toml`, standalone workspace), runs QEMU with `-action shutdown=pause -d int,cpu_reset -D …/exc.log`, types `<app>` + Enter at `rose>`, scripts `PHASES`, and prints machine-countable lines including `QEMU returncode:`, markers (`game_over_snake:`, `prompt_seen:`), and `exc.log: lines: N resets: M`.
+- `get_task_stack_pointer` call sites **exactly** (grep-verified; blast radius is kernel-crate-only): `kernel/src/task_manager.rs:69` (definition), `kernel/src/kernel.rs:172` (`Kernel::start`, scheduler-task handle, added + `prepare_entry`'d in `Kernel::new` at kernel.rs:118-129 — always live there), `kernel/src/state.rs:26` (`switch_to_task`), `kernel/src/state.rs:54` (`switch_to_scheduler`, `self.scheduler` — never terminated). `get_task_stack_pointer_ref` call sites (unchanged): `state.rs:31`, `state.rs:48`.
+- `cargo test -p tests-integration …` is valid: `tests-integration` is a workspace member (`Cargo.toml:18`); the integration harness builds the **dev** kernel itself to `target/rosx/debug/rosx` (`tests-integration/src/kernel_build.rs:24-76`) — same artifact the repro script consumes.
+- xtask surface (read from `xtask/src/main.rs` + `.github/workflows/ci.yml`): `cargo xtask apps`, `cargo xtask build`, `cargo xtask build --debug`, `cargo xtask test --skip-integration` all exist; CI's unit gate is `cargo xtask test --skip-integration` (ci.yml:31).
+- `cargo test -p kernel -- --test-threads=1` is the repo's kernel unit invocation (AGENTS.md); kernel unit tests share static `KernelServices` (`kernel/src/kernel_services.rs:77-123`) so single-threaded is mandatory.
+- Command-green provenance: all acceptance commands below are either (a) proven green today by the delegation baseline, or (b) CI/AGENTS-canonical. The one command string without a same-day literal run is `cargo xtask build --debug` (its today-equivalents ran: `cargo xtask build` in CI form and the harness's dev-profile kernel build that produced a bootable guest at 13.5 s) — marked **unverified-literal**; orchestrator baseline pass covers it; never treat it as binding until proven.
+
+## 4. Steps
+
+### Step 1 — MLFQ queue hygiene (dedup + remove-all). File: `kernel/src/scheduler/mlfq_strategy.rs`
+
+**What to change** (contract, no code):
+- Add a private helper on `MlfqStrategy`, e.g. signature `fn contains_handle(&self, handle: TaskHandle) -> bool` — prose: returns true iff `handle` occurs in any of `self.queues` (iter over all `NUM_QUEUES` deques, value-compare `TaskHandle` which is `Copy + PartialEq` via `Handle`).
+- `push_ready` (currently line 74): return without pushing when `contains_handle(handle)` is true; otherwise `push_back` on queue 0 as today. This makes the invariant *"no two equal handles across any queues"* inductive for this edge regardless of upstream double-wake source (wake_tasks `kernel/src/scheduler/scheduler.rs:140-147` can push a handle that is already Ready-queued or even Running; `Kernel::push_task` `scheduler.rs:133-138` can re-push a fresh Ready task — the strategy-level guard closes every enumerated edge at once, per D1).
+- `requeue_after_run` (lines 65-72): consume `yield_info` exactly as today (`remove`), then **skip the `push_back` iff `contains_handle(handle)` is already true after the remove** (the double-queued-during-run case: wake pushed while the task was Running, then reconcile's `requeue_after_run` — `scheduler.rs:189-198` — would push a second copy). Skipping preserves queue position; yielding demotion info is consumed either way, so no stale `yield_info` leaks into a later requeue. Without this second guard the D1 invariant is not enforced on all edges of the same type.
+- `on_task_terminate` (lines 87-94): for **each** queue, loop `while let Some(pos) = queue.iter().position(…)` and `queue.remove(pos)` until none found (termination: each iteration strictly shrinks the deque), then remove `yield_info` as today. This closes the exact forensic fault mechanism: with remove-once, the surviving stale copy is later `pick_next`'d after `remove_task`, `get_task_stack_pointer` yields 0 → `swap_context` to zero page → #PF→#DF→TF.
+- No new imports; no comments; `yield_info` keying unchanged.
+
+**New unit tests** (append to the existing `mod tests`, matching existing style: `make_handle(index, generation)` helper, direct field assertions on `strategy.queues[…]`):
+- `push_ready_is_idempotent_for_same_handle` — push twice → `queues[0].len() == 1`, total across all queues == 1.
+- `push_ready_skips_handle_already_queued_in_lower_queue` — push directly into `queues[2]`, then `push_ready` → `queues[0].len() == 0`, `queues[2].len() == 1`.
+- `requeue_after_run_does_not_duplicate_already_queued_handle` — push `h`; `record_yield(h, Preempted)`; `requeue_after_run(h)` (h still queued) → total occurrences 1, `yield_info` no longer contains `h`.
+- `on_task_terminate_removes_every_duplicate_occurrence` — push `h` twice (via `push_ready` and one direct `queues[1].push_back` to bypass the dedup guard and simulate legacy/corrupt state), plus `record_yield`; `on_task_terminate(h)` → no queue contains `h`; `yield_info` cleared; `pick_next().is_none()`.
+- `pick_next_after_terminate_never_returns_dead_handle` — `h1`, `h2` queued; terminate `h1`; remaining picks yield only `h2`, then `None`.
+
+**Verification gate:** `cargo test -p kernel -- --test-threads=1` → all pass, including all pre-existing scheduler tests (verified by reading: no existing test in `mlfq_strategy.rs`, `fifo_strategy.rs`, `scheduler.rs`, `mod.rs` enqueues the same handle twice through the strategy; direct `queues[i].push_back` test fixtures bypass guards and stay valid).
+
+### Step 2 — Loud switch path: no silent zero restore (D2). Files: `kernel/src/task_manager.rs`, `kernel/src/state.rs`, `kernel/src/kernel.rs`
+
+Must be one compilable unit (signature change + all call sites simultaneously).
+
+**`task_manager.rs`:** change `pub(crate) fn get_task_stack_pointer(&self, handle: TaskHandle) -> usize` (line 69) to `-> Option<usize>`: `Ok(task) => Some(task.stack_pointer())`, `Err(_) => None`. Do **not** change `get_task_stack_pointer_ref` (still `*mut usize`/null for dead; its two call sites are save-direction on handles that are live by construction: `self.scheduler` and `current_task` — note in commit message). Keep `use core::ptr::null_mut;` (still needed by `_ref`). No behavioral change to `set_state`/`get_state`.
+
+**`state.rs` `switch_to_task` (lines 22-40):** before any mutation of `self`, resolve the stack pointer via the new `Option` and apply a single defensive-skip predicate: `None`, `Some(0)`, — the contract is *"cannot resolve to a live, entry-prepared task"*. On skip: fire `debug_assert!` with a message naming the failure (fires in the debug profile, which is exactly what the integration tests run → `handle_panic` prints `!!! PANIC !!!` + file:line to the debug console — loud, per D2), then **return `task_handle` unchanged without touching `current_task`, `execution_context`, or `preemption_enabled`, and without calling `swap_context`**. Rationale for skip-and-return-handle: `KernelContextSwitcher::switch_to_task` (`kernel/src/kernel.rs:36-47`) maps the returned handle's state to `SwitchOutcome::Terminated` (`kernel.rs:44`), so `reconcile_returned_task` → `handle_termination` (`scheduler.rs:166-172`) drops any residual copies via the now-remove-all `on_task_terminate` and re-picks/falls to idle on the next `step()` — self-healing, no println, no panic in release. On the normal path, behavior is byte-for-byte as today plus unwrap of the `Option` (use a `match`/`let … else` in prose form; do not introduce imports).
+**`state.rs` line 54 (`switch_to_scheduler`)** and **`kernel.rs:172` (`Kernel::start`)**: scheduler/main-thread handles are added and `prepare_entry`'d before use (`kernel.rs:118-129`, `kernel.rs:152-163`) — resolve the `Option` with `expect` carrying a static message string.
+
+**New unit tests** (`task_manager.rs`, extend existing `mod tests`): after `add_task`, `get_task_stack_pointer(handle)` is `Some(_)` and non-zero (`Task::new` at `kernel/src/task.rs:66-83` pre-sets SP, so no `Cpu` needed); after `remove_task(handle)`, it is `None` and `get_state(handle) == Terminated`.
+
+**Verification gates:**
+- `grep -E 'pub\(crate\) fn get_task_stack_pointer\(&self, handle: TaskHandle\) -> Option<usize>' kernel/src/task_manager.rs` → exactly 1 line; `grep -rn -E 'get_task_stack_pointer' kernel/src` → the 7 enumerated sites from §3 only, no others.
+- `cargo test -p kernel -- --test-threads=1` → green.
+- `cargo xtask build --debug` → green (**unverified-literal** per §3; if it fails on an environment issue, report, do not paper over). Note: this build carries `debug_assertions` ON — a firing assert on QEMU is a *finding* (red + evidence), never to be silenced.
+
+### Step 3 — Wake/enqueue call-site audit (mostly read-only; smallest correct guard only on evidence). Files: audit all; possible touch: `kernel/src/scheduler/scheduler.rs`
+
+Enumerated enqueue edges and why Step 1's strategy-level dedup closes each concrete window:
+- `wake_tasks` `scheduler.rs:140-147` (reachable via `SchedulerWakerUseCase` `kernel_services.rs:25-27` ← `FutureRegistry::notify` `future.rs:145-148` ← timer `kernel_services.rs:56-63`, keyboard `keyboard.rs:20-28` (gated by `was_empty`), task-completion `kernel.rs:270`, mailbox `mailbox_manager.rs:90-107`): can target a handle that is Ready-and-queued or Running (single-CPU interleavings plus the KernelCell aliasing UB can make the `get_state != Terminated` check at `scheduler.rs:142` act on torn state). Window closed at the queue edge by dedup.
+- `reconcile_returned_task` Yielded branch `scheduler.rs:191-198` (`record_yield` + `requeue_after_run`) racing a wake push during the task's own run — closed by the requeue guard in Step 1 (the exact double-push the delegation hypothesizes).
+- `push_task` `scheduler.rs:133-138` ← `schedule_task` `kernel.rs:295`: fresh Ready task pushed once; re-push idempotent via dedup.
+- Repeated `notify` on one future: already idempotent (waiters are `remove`d, `future.rs:146`; pinned by test `notify_does_not_double_wake`, `future.rs:202-219`).
+- `wake_tasks`' Terminated filter (`scheduler.rs:142`) must remain (pinned by `wake_tasks_should_not_resurrect_terminated_task`, `scheduler.rs:733-747`).
+
+**Deliverable:** the audit either records (in the commit message) "no further code guard: strategy-level dedup covers every enumerated edge", or — **only if** the repro in Step 5 shows state-clobbering symptoms from waking a `Running` task (symptom signature: task Ready but not in any queue, `SwitchOutcome::Unchanged` at `kernel.rs:45` for a task that was running) — adds exactly one guard in `wake_tasks`: skip both the state overwrite and the push when `get_state(handle) == TaskState::Running`, plus a unit test on `Scheduler` using the existing `FakeTaskManager`/`FakeAlgorithm` harness. Do not add speculative filters beyond this (D5). Keep `step()` structure untouched (D5).
+
+**Gate:** `cargo test -p kernel -- --test-threads=1` green (no-op if audit yields no code change).
+
+### Step 4 — Profile + apps build matrix. Files: none (commands only)
+
+- `cargo xtask apps` → green (user-ELF set unchanged; shell embeds `target/rosx-user/release/{snake,tetris,…}` via `apps/shell/build.rs` — must exist before Step 6).
+- `cargo xtask build` → green (release; also refreshes `arch/x86_64-runner/target/debug/runner` needed by Step 5).
+- `cargo xtask build --debug` → green; produces `target/rosx/debug/rosx` (the profile the tests and repro run). **unverified-literal** per §3.
+
+### Step 5 — Fast runtime loop (before flipping `#[ignore]`). Files: none
+
+Run for **both** games, in this order, from the repo root:
+
+```
+KERNEL=/home/ghisi/git/rosx/target/rosx/debug/rosx PHASES="wait:35" timeout 70s python3 /tmp/opencode/repro_triple_fault.py snake
+KERNEL=/home/ghisi/git/rosx/target/rosx/debug/rosx PHASES="wait:35" timeout 70s python3 /tmp/opencode/repro_triple_fault.py tetris
+```
+
+(Precondition: Step 4 built the debug kernel; the script rebuilds the disk image itself via `arch/x86_64-runner/target/debug/runner`. Script presence + mechanics verified today; harness tooling confirmed by the delegation's same-day run.)
+
+**GREEN contract (machine-countable):** printed line `exc.log: lines: N resets: 0` (no `cpu_reset` = no triple fault within the 35 s horizon), guest alive through the phase (no early QEMU exit), snake additionally shows `game_over_snake: True` with the screen tail still rendering frames; tetris shows continued frame output in the stdout tail. Any `resets: ≥ 1` or a dead returncode = still red.
+
+**STOP-reporting rule (D4, binding):** if unit tests (Steps 1-3) are green and unit gates pass but the repro still shows the **freeze** (guest alive but repaints stop — lost wakeup / double-queue livelock) or any reset, the coder **stops and reports evidence**: the screen tail, the `exc.log` tail, the probe output (`PROBE_EXTRA`/`info registers` hooks exist in the script) identifying which future/waiter the game task is parked on, and the exact command lines run. Do NOT broaden scope; do NOT add D3 code without orchestrator go-ahead.
+
+### Step 6 — Un-ignore the red tests + full verification matrix. File: `tests-integration/tests/app_lifecycle.rs`
+
+Remove the two attributes verbatim in full (both start with `#[ignore = "red: deterministic triple fault after launching`):
+- line 16: `#[ignore = "red: deterministic triple fault after launching tetris with no further input; see 2026-10-11 investigation"]`
+- line 58: `#[ignore = "red: deterministic triple fault after launching snake with no further input; see 2026-10-11 investigation"]`
+
+Leave the test bodies and all timing constants untouched.
+
+**Gates (expensive; run once, in this order):**
+1. Green gate: `cargo test -p tests-integration --test app_lifecycle -- --ignored --test-threads=1` → **2 passed, 0 failed** (~4 min; two QEMU boots).
+2. `cargo test -p tests-integration --test boot_and_shell -- --test-threads=1` → **4 passed** (baseline parity).
+3. `cargo test -p tests-integration --test ipc_random -- --test-threads=1` → **1 passed** (baseline parity).
+4. `cargo xtask test --skip-integration` → green (full unit suite, CI-equivalent).
+5. `grep -E '#\[ignore' tests-integration/tests/app_lifecycle.rs` → no output (exit status 1).
+
+### Step 7 — ONLY if Steps 5/6 still fault after D1+D2 with unit tests green (D3 diagnostic, scratch only)
+
+Do this on a **scratch commit/branch**, never as the committed green state:
+- `kernel/src/kernel_cell.rs`: add `borrow_depth: core::cell::Cell<u8>` alongside `data` (`Cell::new(0)` keeps `KernelCell::new` a `const fn`); change `borrow_mut` to return a `pub(crate)` guard type implementing `Deref`/`DerefMut<Target = T>` with `Drop` decrementing; increment in `borrow_mut` and `debug_assert_eq!(depth_before, 0, "re-entrant KernelCell::borrow_mut")` **only under `debug_assertions`**. `borrow`/`replace` unchanged.
+- Contract warning the coder must verify before interpreting results: legitimate re-entrancy **exists today by construction** — the outer `services().scheduler.borrow_mut().step()` (`scheduler/mod.rs:44`) is live for the whole task execution, so a timer tick's `preempt()` → `scheduler.borrow_mut().should_preempt()` (`kernel.rs:248-255`) enters the same cell during any preempted quantum. A committed unconditional panic would halt the guest on the first preempt even in a fixed kernel. Therefore: run scratch, capture **which** re-entry fires first (timer tick mid-step vs. `terminate_and_yield` → notify wake), report the evidence for the architecture discussion (out of scope per D3), and revert. If the scratch run's recorded sites are all known-benign-looking ticks, that confirms the aliasing UB as the remaining root cause and the fix belongs to a future ISR/HAL design change — an orchestrator decision, not this branch's.
+
+## 5. Blast radius (tests that transitively reach the changed code)
+
+- **Global service registry reach:** `kernel/src/kernel_services.rs` statics + `wire_scheduler_for_tests` (`scheduler/mod.rs:49-64`) wire `FutureRegistry`'s wake controller to the global scheduler cell; therefore `kernel/src/future.rs` tests (`notify_moves_waiters_to_ready`, `notify_does_not_double_wake`), `kernel/src/scheduler/mod.rs` tests (`fifo_scheduler_factory_produces_functional_scheduler`, `mfq_scheduler_factory_produces_functional_scheduler` — real `MlfqStrategy` wake at mod.rs:110), and `mailbox_manager.rs` tests (`test_push_back_notifies_waiters`) transitively execute the Step 1 strategy. All perform single pushes → unaffected; they must nonetheless run green under `--test-threads=1`.
+- **Constructor replacement plumbing:** `Kernel::new` (kernel.rs:131-132) replaces the constructor-default FIFO scheduler cell with the MLFQ one — Step 1 changes behavior only for the production (MLFQ) path; `FifoStrategy` is deliberately left un-deduplicated (minimal diff, D5; known deferred gap, call it out in the commit message).
+- **`scheduler.rs` `FakeAlgorithm` tests** — trait `SchedulingAlgorithm` signatures unchanged → compile + green invariant.
+- **Guest-side (no host coverage):** `state.rs` switch logic and the Step 2 `debug_assert` execute only in QEMU — proven by the repro (Step 5) and all three integration binaries (Step 6), not by unit tests.
+- **`tests-integration` crate itself** (std, host) is unaffected by kernel edits; only guest behavior changes its outcome.
+
+## 6. Risks & edge cases
+
+- **`debug_assert` fires during Step 5/6 dev runs** → guest prints `!!! PANIC !!!` (`kernel/src/panic.rs:4-17`) and halts without triple-faulting; `is_running()` may stay true → the repaint assertion message, not the triple-fault message, will be the failure text. Treat as red + evidence of a remaining stale-switch source; do not delete the assert.
+- **Dedup scan cost:** bounded by `GenerationalArena<SharedTask, 256>` (`task_manager.rs:8`) × 3 queues; runs on wake/enqueue frequency, not on the tick cycle — acceptable for a dev OS.
+- **`requeue_after_run` skip case** must still consume `yield_info` (contract in Step 1) or a stale priority entry misplaces a later requeue.
+- **Skip path in `switch_to_task`** must not mutate `current_task`/`preemption_enabled`/`execution_context` and must not call `swap_context`; correctness depends on `KernelContextSwitcher`'s `Terminated` mapping (`kernel.rs:44`) making the scheduler self-heal.
+- **`Kernel::start` / `switch_to_scheduler` `expect`s** are safe only because the scheduler task is never removed (`terminate_and_yield` is reached only from task wrappers); if a future change removes the scheduler task, they panic loudly — intended.
+- **No comments / no new deps / no arch-specific code in `kernel/`** (AGENTS.md); existing comments in touched test files must not be propagated to new code.
+- **D3 guard panic-on-benign-tick** (Step 7 warning) — the diagnostic is interpretable only against the known re-entrant sites enumerated there.
+- **Integration flakiness:** each ignored test is a full QEMU boot (~2 min); run them sequentially (`--test-threads=1`), never in parallel with the repro (QEMU + temp-dir contention).
+
+## 7. Acceptance criteria (exact commands)
+
+Build/test commands that must pass, in order, on the final tree (Step 6 applied):
+
+1. `cargo test -p kernel -- --test-threads=1` — all unit tests pass (includes the new mlfq + task_manager tests).
+2. `cargo xtask apps` — green.
+3. `cargo xtask build --debug` — green (**unverified-literal** until orchestrator baseline proves it verbatim).
+4. `cargo xtask build` — green.
+5. `cargo test -p tests-integration --test app_lifecycle -- --ignored --test-threads=1` — **`2 passed`**.
+6. `cargo test -p tests-integration --test boot_and_shell -- --test-threads=1` — **`4 passed`** (baseline parity, established today).
+7. `cargo test -p tests-integration --test ipc_random -- --test-threads=1` — **`1 passed`** (baseline parity, established today).
+8. `cargo xtask test --skip-integration` — green.
+9. `grep -E '#\[ignore' tests-integration/tests/app_lifecycle.rs` — zero matches.
+
+Warning posture: no new warnings beyond the lineage baseline attributable to files touched here (Δ-new = 0 against the orchestrator's recorded baseline fingerprint; decreases at deleted sites are expected, not violations). No absolute-zero warning claim is made, and none may be substituted.
+
+## 8. Commit-ready summary (final commit body; no prefix per AGENTS.md; keep Steps 1/2/(3)/6 as separate small commits with confirmations per AGENTS.md workflow)
+
+```
+Fix scheduler lifecycle to end the snake/tetris triple fault
+
+MLFQ could hold duplicate handles (push_ready/requeue_after_run never
+deduplicated) and on_task_terminate removed only one occurrence, so a
+terminated task's stale handle stayed schedulable; switch_to_task then
+restored the zeroed context of the freed arena slot: #PF at RIP=0 -> #DF
+-> triple fault.
+
+- push_ready and requeue_after_run skip handles already queued in any MLFQ queue
+- on_task_terminate removes all occurrences of the handle and its yield info
+- get_task_stack_pointer returns Option<usize>; switch_to_task defensively skips
+  and debug_asserts instead of restoring a dead context, letting the scheduler
+  re-pick or fall to idle
+- new unit tests for dedup, remove-all, and pick_next-after-terminate
+- enable tetris_survives_idle and snake_survives_idle
+```
+
+Deferred follow-ups to note (not this branch): FIFO strategy dedup gap; KernelCell ISR re-entrancy architecture discussion (D3 evidence, if gathered).
+
+---
+
+# Revision 2 (2026-10-11) — post-D4 pivot: switch-window mechanism
+
+**Basis:** coder report `.opencode/artifacts/game-triple-fault-coder-report.md` (D4 STOP, Steps 1–4 green, fault byte-identical after D1+D2). Rev-1 Steps 1–3 stay **in the tree** (defense-in-depth per D1/D2); Step 6 remains gated. This revision supersedes Rev-1 §4 Step 5 GREEN wording (the `resets:` line is void — see §R2.2) and Rev-1 Step 7's panic-form diagnostic (superseded by a counter form).
+
+## R2.0 Evidence ledger (sourced from the coder report transcript; do not re-run)
+
+- Report row #1: `cargo test -p kernel -- --test-threads=1` → `test result: ok. 189 passed; 0 failed`. **Unit baseline is now 189** (182 + 7 new).
+- Report rows #3/#4/#5: `cargo xtask apps`, `cargo xtask build`, `cargo xtask build --debug` all exit 0 today on the modified tree. This **retires Rev-1 §3 "unverified-literal"** on `cargo xtask build --debug`.
+- Report row #2: `cargo xtask test` exit 0, incl. `boot_and_shell` 4 passed, `ipc_random` 1 passed, `app_lifecycle` 2 ignored.
+- Report rows #7–#9: fault persists, deterministic signature `RIP=0, RSP=0x20000013b90` across apps/runs/pre/post-D1+D2; `panic: False` ⇒ the D2 `debug_assert!` in `switch_to_task` **never fired** ⇒ the bad restore does not flow through the `get_task_stack_pointer == None/Some(0)` path. H4 (dead-handle restore via the Option path) is REFUTED as the active vector; H5 (harness artifact) REFUTED.
+- Report row #11: warning fingerprint Δ-new=0 (kernel lib 65↔65, rosx bin 26↔26, shell lib 5, +1 pre-existing manifest/future-incompat). This is the recorded baseline fingerprint for the warning posture below.
+- Report row #13: D2 assert string present in the debug artifact (post-edit rebuild) — the negative at row #8 is real, not a stale-kernel artifact.
+- Report §deviations: Rev-1 Step 5's `timeout 70s` binding form fails as a harness property (prompt written without trailing newline; script burns its 40 s prompt wait) — superseded by the 110 s floor + `-u` form in §R2.2.
+
+## R2.1 Mechanism hypotheses (re-verified against the current tree)
+
+- **H1 (top) — stale-flag IRQ window at the switch boundary.** `switch_to_task` sets `self.preemption_enabled = true;` (`kernel/src/state.rs:43`) *before* `self.cpu.swap_context(...)` (`:45`) and clears it only on return (`:46`), while asm ends `sti` (`arch/x86_64/src/context_switching.S:40`) then `ret` (`:41`). A tick landing between `sti` and the target's flag re-arm sees IF=1 with a stale `true` **while still in scheduler-side context**; the sole consumer `Kernel::preempt` (`kernel/src/kernel.rs:250`: `if self.execution_state.preemption_enabled && services().scheduler.borrow_mut().should_preempt() {`) can then run a phantom `switch_to_scheduler` that plants a one-frame-shifted context (fatal RSP `0x20000013b90` sits ~0x1b8 below the observed live idle halt frame `0x20000013d48`; task stacks are zero-initialized at `kernel/src/task.rs:73`, explaining the RIP=0/GPR-zero restore). Forensic anchor: snake's final tick `IP=0008:000000000022de47` = `arch/x86_64/src/cpu.rs:130` `swap_context` wrapper — the interrupt landed immediately after asm `sti; ret`, in kernel CS.
+- **H2 (co-factor) — `KernelCell` re-entrancy aliasing UB** (`kernel/src/kernel_cell.rs:23-26` bare `UnsafeCell`; outer `services().scheduler.borrow_mut().step()` live across task execution at `kernel/src/scheduler/mod.rs:42-46`; ISR re-entry `preempt()`/`enqueue()` at `arch/x86_64/src/interrupts.rs`). D3 diagnostic is now **activated** (its "only if D1+D2 fail" condition is met) but stays scratch-only, never committed.
+- **H3 — corrupted-but-nonzero saved SP** (variant of H1/H2; heap `Box<Task>` addresses are not nm-visible ⇒ attribution is best-effort).
+- **H4 — stale/duplicate ready-queue handle: REFUTED as active vector** (D1+D2 green yet fault identical; D2 assert silent). The implemented hygiene stays as defense-in-depth.
+- **H5 — harness artifact: REFUTED.**
+
+**Fix-A preempt-preservation proof (verified by reading, this is what makes the one-line deletion shippable rather than symptom-masking):** every legitimate resume re-arms the flag independent of `state.rs:43` — mid-execution resumes return through `switch_to_scheduler`'s epilogue (`state.rs:69 self.preemption_enabled = true;`; all task-initiated yields route through it: `wait_future` `kernel.rs:229`, `task_yield` `:246`, `preempt` `:254`, `terminate_and_yield` `:275`), and first entries set it in the wrappers (`task.rs:168` `idle_entry`, `:187` `task_wrapper`, `:224` `elf_task_wrapper`). `state.rs:43` therefore only ever affects the `sti`→resume window; deleting it closes the window without disabling preemption on any legitimate path. ISR save/restore sites (`Kernel::schedule` `kernel.rs:182-183/:199`, `Kernel::enqueue` `:204-205/:207`) restore whatever the window holds and are re-armed by the same epilogues.
+
+## R2.2 Corrected runtime GREEN contract (binding; supersedes Rev-1 Step 5 GREEN wording)
+
+`resets:` is **void** — per coder report: "`resets: 0` in every run is a harness artifact: `-action shutdown=pause` pauses the VM on triple fault instead of logging `cpu_reset`; script then kills QEMU (`returncode: -9`)". Discriminate with greps against the script's printed `tmp:` dir, never with the `resets:` line.
+
+Run sequentially (never two QEMU at once — temp-dir/contention), from the repo root, always `python3 -u`, timeout floor **110 s**:
+
+```
+KERNEL=/home/ghisi/git/rosx/target/rosx/debug/rosx PHASES="wait:35" timeout 110s python3 -u /tmp/opencode/repro_triple_fault.py snake 2>&1 | tee /tmp/opencode/repro_snake_g.log
+KERNEL=/home/ghisi/git/rosx/target/rosx/debug/rosx PHASES="wait:35" timeout 110s python3 -u /tmp/opencode/repro_triple_fault.py tetris 2>&1 | tee /tmp/opencode/repro_tetris_g.log
+```
+
+Then, per app (POSIX):
+
+```
+TMP=$(grep '^tmp:' LOG | tail -n1 | awk '{print $2}')
+grep -c -E 'Triple fault' "$TMP/exc.log"    # BINDING: must be 0
+grep -c '!!! PANIC !!!' LOG                 # must be 0 (a PANIC banner = red + finding, never silence)
+grep -c -E 'v=0e' "$TMP/exc.log"            # must be 0 (strongly expected)
+grep -c -E 'v=08' "$TMP/exc.log"            # must be 0 (strongly expected)
+```
+
+Interpretation: returncode `-9` = script completed its teardown (normal; decide by greps). Returncode `124` = **inconclusive → rerun once with timeout +50 s**; never treat a truncated log as green/red. Continuation markers required: snake stdout tail still rendering board frames at the horizon; tetris likewise (`prompt_seen: True` alone is boot-only and insufficient).
+
+## R2.3 Steps
+
+### Rev-2 Step 1 — R1 forensic probe runs (no repo change)
+
+Both apps, sequential, from the repo root:
+
+```
+KERNEL=/home/ghisi/git/rosx/target/rosx/debug/rosx PHASES="wait:8;probe;wait:12;probe;wait:40" PROBE_EXTRA=0x20000013a90,0x20000013d00 timeout 160s python3 -u /tmp/opencode/repro_triple_fault.py snake 2>&1 | tee /tmp/opencode/repro_snake_r1.log
+```
+
+(then the same for `tetris` → `/tmp/opencode/repro_tetris_r1.log`). Addresses straddle the fatal `0x20000013b90` and the live halt frame `0x20000013d48`; the script's `probe` phase (`/tmp/opencode/repro_triple_fault.py:102-120`) emits `info status`, `info registers`, `info symbol <RIP>`, `x/48gx <RSP>`, and `x/64gx <addr>` per `PROBE_EXTRA` value.
+
+**Gate (evidence, not green):** each log contains the `--- PROBE status ---` sections and a `tmp:` line; the fault chain's last `v=20` tick IP before the final `v=0e`/`v=08` pair is recorded from `"$TMP/exc.log"`. Interpret new IPs only against the already-mapped anchors {`0x22de47` = `swap_context` wrapper `arch/x86_64/src/cpu.rs:130`; `0x22b994` = `syscall_handler_entry+0x40`; `0x287f80` = btree `first_edge` (scheduler-side drop)}; `nm`/`objdump` availability is **unverified** in this environment — do not gate on them. H1 predicts the memory at `0x20000013b90` looks like a swap-context save frame (register-save pattern + kernel-code return address) shifted from the live idle frame, not a live user frame.
+
+### Rev-2 Step 2 — R3a causal single-lever scratch experiment (kernel-only, no USER-GATE)
+
+**Exactly one edit:** delete line `self.preemption_enabled = true;` (`kernel/src/state.rs:43`) from `switch_to_task`. Nothing else — not `:46`, not asm, not wrappers. Save the tree diff first (`git diff > /tmp/opencode/rosx_pre_r3a.diff`) for exact restoration if red.
+
+Verification sequence:
+1. `cargo test -p kernel -- --test-threads=1` → `189 passed; 0 failed` (baseline sourced from report row #1; any count change is a finding).
+2. `cargo xtask build --debug` → exit 0.
+3. §R2.2 GREEN runs on both apps.
+
+**Decision:** both apps `Triple fault` count 0 **and** `!!! PANIC !!!` 0 **and** continuation markers present ⇒ H1 confirmed; this one-line deletion **is** Fix-A → Rev-2 Step 4. Byte-identical fault ⇒ H1 window refuted as the carrier; restore from the saved diff and go to Rev-2 Step 3. PANIC banner ⇒ the D2 assert now fires — that is red + a new loud finding (Rev-1 §6 risk rule: never delete the assert); stop and report.
+
+### Rev-2 Step 3 — R2 scratch KernelCell re-entrancy **counter** (scratch only, never committed; supersedes Rev-1 Step 7 panic form)
+
+The panic form is known-useless: benign tick re-entrancy fires by construction (Rev-1 Step 7 contract warning; report row #8 `panic: False` shows nothing fatal was already asserted). Contract: in `kernel/src/kernel_cell.rs`, add a `core::cell::Cell<u8>` depth alongside `data` plus a high-water `Cell<u8>`; `borrow_mut` increments, records max, and returns a `pub(crate)` guard implementing `Deref`/`DerefMut<Target = T>` whose `Drop` decrements; `borrow`/`replace` unchanged; **no panics, ever**. Readout: one-shot `kprintln!` (the macro already used at `kernel/src/kernel.rs:309`) guarded by a `Cell<bool>` "announced" flag, printing the first depth≥2 observation. Gate: scratch snake run prints a depth≥2 observation naming which path (expected: tick-mid-step vs `terminate_and_yield`→notify-wake — attribution for the D3 architecture note). **Revert before any further gate**; final-tree check `grep -E 'Cell<u8>|announced' kernel/src/kernel_cell.rs` → zero matches.
+
+### Rev-2 Step 4 — Promote Fix-A (only if Rev-2 Step 2 green)
+
+Keep the same single-line deletion; it becomes the committed change (fmt-neutral: single line removed; coder report row #10 hunk-count method shows Δ-hunk 0 for a pure deletion). No USER-GATE (no `arch/` edit, no change to when interrupts are enabled — the asm `sti`/`cli` behavior is untouched; only the *preemption flag* stops being set early). Commit-message addendum to Rev-1 §8 body (one bullet): switch-window explanation + the R2.1 re-arm-site proof. Then re-run §R2.2 on both apps against the final tree, then Rev-2 Step 6.
+
+### Rev-2 Step 5 — Fix-C fallback (ONLY if Step 2 red AND Step 3 attributes mid-window re-entrancy; **USER-GATE: requires explicit user approval before any edit**)
+
+Contract at contract-level: remove `sti` (`arch/x86_64/src/context_switching.S:40`) so `swap_context` returns with the interrupt state it was given (`cli` at line 4 stays), and give IF explicit owners — kernel-side `self.cpu.enable_interrupts()` (call form at `kernel/src/kernel.rs:174`) at the same sites that re-arm the flag: `switch_to_scheduler` epilogue (after `state.rs:69`), `switch_to_task` scheduler-side epilogue (after `:46`), and the three wrapper entry points after their flag sets (`task.rs:168/:187/:224`). Before touching asm the coder must audit `initialize_stack` in `arch/x86_64/src/cpu.rs` for rFLAGS/IF semantics of constructed first-entry frames (the asm `ret` into them is not an `iretq`). Because Fix-C edits `kernel/src/state.rs` (shared, multi-arch), the x86_32 parity gate applies: build per AGENTS.md from `arch/x86_32/` (`cargo build -p rosx-x86`). All Fix-C edits + this section's rationale require recorded user approval; without it, STOP and report instead.
+
+### Rev-2 Step 6 — Ship gate: un-`#[ignore]` + full matrix (unchanged from Rev-1 Step 6 / §7)
+
+Only after Step 4 (or Step 5, if approved) is §R2.2-green on the final tree. Remove verbatim the two attributes (`tests-integration/tests/app_lifecycle.rs:16` tetris, `:58` snake, both `#[ignore = "red: deterministic triple fault after launching …"]`), bodies untouched, then run Rev-1 §7 gates 1–9 in order with baselines updated: gate 1 expects **189 passed** (report row #1); gates 6/7 baselines 4 passed / 1 passed (report row #2).
+
+## R2.4 Blast radius additions
+
+- **Fix-A touches flag read through the global services registry:** `preemption_enabled` lives on `ExecutionState`, reached by `Kernel::preempt` via the global cell; full site enumeration (grep-verified this turn, 21 repo hits): definition/`state.rs:15`; sets `task.rs:168/:187/:224`, `state.rs:43(deleted)/:46/:59/:69`, `kernel.rs:140/:175/:183/:199/:205/:207/:263`; read `kernel.rs:250`. No host unit test executes the swap path (Rev-1 §5), so guest proof = §R2.2 runs + all three integration binaries; host proof = the 189 suite.
+- **Fix-C blast radius:** `arch/x86_64/src/context_switching.S` (shared by every task transition), `arch/x86_64/src/cpu.rs` (`initialize_stack`, `swap_context` wrapper), ISR assumptions in `arch/x86_64/src/interrupts.rs`, and — because epilogue edits land in shared `state.rs` — the **x86_32 kernel build**; add `cargo build -p rosx-x86` (run from `arch/x86_32/`) to that branch's matrix.
+- Rev-2 Steps 2/3 are scratch: their blast radius is nil once reverted; gate `git status --porcelain` before the final matrix shows only the intended ship files (per coder report: 4 modified kernel files + `state.rs` line deletion when Fix-A ships; `plans/**` untracked is fine).
+
+## R2.5 Stop rules (binding)
+
+1. R3a red byte-identical → restore diff, run Rev-2 Step 3 for attribution, then **D4 stop-and-report** with: both R1 logs, the counter readout, exact command lines. No Fix-C without user approval.
+2. Any `!!! PANIC !!!` banner → red + finding; the assert stays.
+3. Freeze-with-live-guest (repaints stop) → D4 evidence rule (screen tail, exc.log tail, waiter attribution).
+4. Scratch code (R2 counter, any probe hooks) never in a commit; Fix-C never without a recorded user-approval line in the orchestrator transcript.
+5. One QEMU process at a time; `124` = inconclusive rerun (+50 s), never a verdict.
+
+## R2.6 Acceptance criteria (final tree)
+
+Rev-1 §7 items 1–9, with: item 1 baseline **189 passed** (report row #1); `cargo xtask build --debug` is now proven-run (report row #5) — provenance tag retired. Plus: §R2.2 greps green for both games on the final artifact, `grep -E 'Cell<u8>|announced' kernel/src/kernel_cell.rs` zero matches, and (Fix-C branch only) `cargo build -p rosx-x86` from `arch/x86_32/` green. Warning posture unchanged: **Δ-new = 0 against the report-row-#11 fingerprint** (kernel lib 65, rosx bin 26, shell lib 5, +1 manifest/future-incompat); any re-fingerprint filter must match both `warning:` and `warning[EXXXX]:` forms; decreases at legitimately deleted sites are expected and attributed by baseline multiset diff, never counted as violations.
+
+# Revision 3 (2026-10-11) — mechanism re-rank + user decision package
+
+## R3.0 Evidence re-read — corrections to the Rev-2 ledger
+
+Verified this turn from `/tmp/opencode/repro_snake_r1.log` (and coder transcript for the tetris twin):
+
+1. **All forensics so far are post-mortem.** The *first* probe section already prints `VM status: paused (shutdown)`. Timeline: the driver burns ≤40 s waiting for a `rose>` prompt (which the kernel never terminates with a newline), then sends the app keypresses, then `PHASES="wait:8;probe;…"`. Guest death therefore occurred **before the first probe (~t+48 s)**, i.e. within a few seconds of app spawn — consistent with the ~13 s-after-spawn estimate, and the rendered-board stdout proves spawn/gameplay preceded death. Consequence: R1's "region all zeros" remains valid as a **snapshot at time of death** (death does not zero memory), but **zero live-time samples exist**. Every timeline-based inference in Rev-2 that depended on "sampled while running" is void.
+2. **Corpse state:** all GPRs `0x0`, `RIP=0`, `RSP=0x20000013b90`, `RFL=0x206` (IF set), region `0x20000013a90–0x20000013f00` all zeros except one word `0x0200000000000000` @ `0x20000013d98` (unattributed; note `0x13d98 − 0x13b90 = 0x208`, which corrects Rev-2's provisional `+0x50` arithmetic — leave unattributed).
+3. **Frame-size math (new, from `cpu.rs`):** a saved/restored frame is exactly **16 words**: `initialize_stack` writes `entry_point` + 15 sentinel GPR words (`0x15` down to `0x0f`, plus `param1/param2` in the rdi/rsi slots); `context_switching.S` pops 15 GPRs and `ret`s into word 16. The corpse (15 zero GPRs, `RIP=0`, SP consistent with the final `ret`'s frame boundary) is exactly **one 16-word frame-pop over zeroed memory**. Sentinels would be `0x0f`–`0x15` if `initialize_stack` had written that slot; a legitimate save-side push would write real register values. Therefore **the fatal slot was never written, or was written and then zeroed** — and the only in-tree zero-writer of a 16 KiB stack region is `Task::new`'s zero-init (`kernel/src/task.rs:73`), which runs when a **freshly allocated** `Box<Task>` lands at that address.
+4. **Cross-build invariance corrected:** the fatal **data** SP (`0x20000013b90`) is identical across both apps and across the R3a rebuild; the last-tick **code** IP is build-specific (`0x22de47` pre-R3a vs `0x28b870`/`0x288310` after). The invariance that matters is the data address ⇒ deterministic allocation-layout-dependent corruption, not race-timing coincidence. Rev-2's "identical tick anchor" phrasing overstated; retracted.
+5. Standing facts unchanged: R3a RED byte-identical (H1 flag is not the carrier); KernelCell re-entrancy depth=2 proven, first occurrence at boot before any tick (one-shot readout consumed); tick-vs-terminate attribution unknown.
+
+## R3.1 Mechanism re-rank
+
+| Rank | Mechanism | Status against artifacts |
+|---|---|---|
+| **M1** | **Save-side slot/aliasing corruption.** `get_task_stack_pointer_ref` deliberately outlives its borrow (`kernel/src/state.rs:38-41`, `:55-58`); the raw `*mut usize` is written by asm `swap_context` during the open interrupt window. If a stale/aliased ref (recycled `Box<Task>` slot) receives the save, a live SP value lands in a dead/recycled box; the matching load later reads an SP whose 16-word slot was since **zero-initialized by `Task::new` at the same address** (`task.rs:73`). | **Leads.** Explains all five signatures simultaneously: cross-app/cross-build determinism (allocation pattern), zeroed payload (zero-init is the only zero-writer), non-zero bogus SP passing the D2 guard, boot-time re-entrancy as accomplice, fault timing independent of the R3a flag. **Falsified** if D1+D2 (below) show the fatal value never resident in any live structure and live probes never corrupt. |
+| M2 | ISR-initiated switch with outer borrow live (Rev-2 carrier theory). | **Demoted to accomplice.** Re-entrancy is proven (depth=2) but R3a survived ⇒ not sufficient alone; it only widens the M1 window. Any solo theory had to survive R3a; only payload-side theories did. |
+| M3 | First-run on raw stack top. | **Falsified in strict form:** first-run frames carry sentinels `0x0f`–`0x15` (`cpu.rs:85-113`), the corpse slot is zeros. Survives only as "sentinels written, then reallocation zeroed them" — a sub-case of M1. |
+| M4 | Tick-storm / MLFQ duplicate-queueing. | Dead: Step-1 dedup shipped; fault byte-identical. |
+| — | rflags not in saved frame (no iret) ⇒ restored tasks inherit IF from the switch site (`RFL=0x206` at death). | Not this fault; record as latent portability trap that constrains FIX-C design. |
+
+## R3.2 Options
+
+### DIAG-D — live-time forensics (no gate; scratch rules of D3 apply)
+- **D1 live dense-probe (both apps, sequential QEMU):**
+  `KERNEL=/home/ghisi/git/rosx/target/rosx/debug/rosx PHASES="wait:2;probe;wait:2;probe;wait:2;probe;wait:2;probe;wait:2;probe;wait:2;probe;wait:2;probe;wait:2;probe" PROBE_EXTRA=0x20000013b00,0x20000013c80 timeout 170s python3 -u /tmp/opencode/repro_triple_fault.py snake`
+  Evidence: per-probe `info registers` RSP line + window dump. Machine test: the first probe index at which the fatal SP value appears, vs the tick stream. Note: each probe pauses/resumes the guest (timing perturbation, acceptable; `124` = inconclusive rerun per R2.2).
+- **D2 stale-copy scan:** same run shape, single wide `PROBE_EXTRA=0x2000000e000,0x20000014800`. Binding machine test (POSIX grep, on the tee'd log): `grep -c '20000013b' LOG` restricted to **word-data lines** (exclude the SP register line) — a hit at address `A` identifies the structure holding the stale SP; report `A` and its field offset. Zero hits on a **pre-fault** probe falsifies M1's planted-early form.
+- **D3 (fallback only)** per-phase re-entrancy readout — scratch KernelCell counter re-installed, now with the disclosed **second touch at `kernel/src/kernel.rs:286`** (chained `borrow_mut().borrow_task_mut(...)` is E0716 otherwise). Reading the counter's address into the monitor needs `nm` — **`unverified`** (Context Map does not confirm `nm` availability); route to orchestrator baseline pass before this variant is binding.
+- Revert gate after every D3 edit: `grep -E 'DEPTH|high_water' kernel/src/kernel_cell.rs` empty and diff byte-equal to `/tmp/opencode/rosx_pre_r3a.diff`.
+
+### FIX-E (NEW, recommended first fix) — slot-staged save, kernel-only, **no USER-GATE**
+- Contract: add one private field `swap_save_slot: usize` to `ExecutionState` (lives inside the static `Kernel`, reachable exactly as `kernel.rs:37` already reaches `execution_state`); every `Cpu::swap_context` call site passes `&mut self.swap_save_slot`-stable pointer as `stack_pointer_to_store` **instead of** an arena-derived raw pointer; each switch method (`switch_to_task`, `switch_to_scheduler`) writes the slot back to the **outgoing** task's `stack_pointer` field at its existing epilogue, through the Option-guarded accessor (D2 guard preserved) using the handle it already holds/captures before the swap.
+- Interfaces: **no signature changes** — `swap_context(stack_pointer_to_store: *mut usize, stack_pointer_to_load: usize)` (`cpu.rs:169`) already accepts any stable `*mut usize`. Kernel-only; no arch edit; no x86_32 impact.
+- Expected fix power: high against M1's write side (the asm can no longer scribble into the arena); does **not** repair an already-corrupt load value ⇒ DIAG-D/D2 is the arbiter of boot-plant severity.
+- Verification: `cargo xtask build && cargo test -p kernel -- --test-threads=1` (189 + new) then the R2.2 GREEN runs both apps.
+
+### FIX-C — explicit IF ownership (USER-GATE: arch + interrupt timing)
+Remove `sti` at `context_switching.S:40`; explicit `enable_interrupts()` owners at the switch epilogues (`state.rs` both methods, both resume sides) and audit `syscall.S`/SFMask path. Honest scope statement: does **not** move where switches occur (preempt still fires from ISR, `interrupts.rs:112`) and does **not** change boot-time IF ⇒ expected fix power for **this** fault is low; classify as hygiene, bundle only if the user wants the rflags-inheritance trap closed. Must preserve: `initialize_stack` has no rflags slot, so every first-run site needs the explicit-enable contract.
+
+### FIX-B — ISR-deferred preemption (partial USER-GATE: arch + `Cpu` trait)
+Timer ISR (verbatim current tail: `kernel().preempt();` at `interrupts.rs:112`) replaced by setting an arch-side `AtomicBool PREEMPT_REQUESTED` after EOI; new `Cpu` trait method `take_preemption_request(&self) -> bool`; consumed at the scheduler loop boundary (`kernel/src/scheduler/mod.rs:42-46`) and syscall return. Removes the entire class of ISR-initiated switches with outer borrow live (the proven depth-2 context). Gate scope: `arch/x86_64/src/interrupts.rs` **and** the `Cpu` trait ⇒ **`cargo build -p rosx-x86` from `arch/x86_32/` becomes a required parity gate** (x86_32 impl must implement the new method). Fairness regression accepted (notification/input-driven workload).
+
+## R3.3 Decision trees
+- **After D1+D2:** stale copy found pre-fault (or corrupt-at-spawn) ⇒ boot-planted M1 ⇒ **FIX-E now**. Corruption first visible at probe k during gameplay ⇒ window-dependent M1/M2 ⇒ FIX-E first anyway (write-side is where values get planted), FIX-B only if FIX-E is RED. No live corruption ever observed with death still occurring ⇒ re-frame to restore-site theories; escalate, no speculative fix.
+- **After FIX-E:** GREEN ⇒ ship gate (R3.4); FIX-C/FIX-B become optional user hygiene. RED with byte-identical corpse ⇒ M1 falsified ⇒ FIX-B (request USER-GATE explicitly, including x86_32 parity build) as the single next attempt.
+- **After FIX-B:** GREEN ⇒ ship gate + record fairness change. RED ⇒ invoke **R2.5 stop rule**: halt, full evidence report, no third speculative fix.
+
+## R3.4 Standing bar (unchanged, restated verbatim-binding)
+- GREEN (both apps, sequential): `KERNEL=/home/ghisi/git/rosx/target/rosx/debug/rosx PHASES="wait:35" timeout 110s python3 -u /tmp/opencode/repro_triple_fault.py <app>`; with `TMP=$(grep '^tmp:' LOG | tail -n1 | awk '{print $2}')`: `grep -c -E 'Triple fault' "$TMP/exc.log"` == 0 (binding), `grep -c '!!! PANIC !!!' LOG` == 0, `v=0e`/`v=08` == 0; `resets:` line void; `-9` = completed; `124` = inconclusive rerun (+50 s).
+- `cargo xtask build` green; `cargo test -p kernel -- --test-threads=1` = 189 passed; `boot_and_shell` 4; `ipc_random` 1; warnings **Δ-new = 0** vs recorded fingerprint (kernel lib 65 / rosx bin 26 / shell lib 5 + 1 manifest), counting filter matching both `warning:` and `warning[EXXXX]:`; decreases at deleted sites expected, never violations.
+- Scratch discipline: nothing diagnostic committed; post-scratch tree byte-equal to saved pre-R3a diff; `no_std`, no new deps, no comments (AGENTS.md).
+- `unverified` and routed to orchestrator baseline: `nm`-based readouts (D3 only). All gates above use tools the Context Map confirms (`cargo`, `python3`, POSIX `grep`; no `rg`).
+
+# Revision 4 (2026-10-11) — live-witness forensics on the load side (user option C)
+
+Root cause only. Fixes frozen (FIX-B/FIX-C remain USER-GATE'd and untouched). Witness instrumentation is **scratch, never committed** (D3 discipline), tree restored byte-equal via the saved-diff technique. QEMU budget: **max 4 runs, strictly one at a time**. Rev-1…3 stand; nothing here repeats them.
+
+## R4.0 Facts established by read (contract basis)
+
+- **`Task` knows its stack at runtime — seed concern resolved, zero new fields.** The stack is inline: `stack: [usize; 2048], //16KB on 64bit systems` (`kernel/src/task.rs:56`); `Task::new` sets SP to `task.stack.as_mut_ptr().add(task.stack.len()).addr()` (task.rs:78). Base/top derive from the field itself with `usize` arithmetic only. Knowledge boundary: `prepare_entry` (task.rs:141-150) calls `cpu.initialize_stack(self.stack_pointer(), …)` and stores the returned SP back — **the kernel owns the SP value at every point in time; no `Cpu` trait change, no `arch/` edit.**
+- **Swap-site audit (complete):** exactly three `swap_context` call sites — `state.rs:42` (switch_to_task), `state.rs:72` (switch_to_scheduler), `kernel.rs:179` (boot swap, still `null_mut()` save slot — pre-FIX-E path, itself a witness candidate). The trait def is `kernel/src/cpu.rs:22`; `memory/memory_manager.rs:129` is a test stub; `ports::driven::ForSwitchingTaskContext::switch_to_task` is a different trait (not a swap site).
+- **Panic reaches the captured stream:** `handle_panic` prints `"\n!!! PANIC !!!"`, `"Panic at {}:{}:{}"`, `"Message: {}"`, `"System halted."` via `kprintln!` (`kernel/src/panic.rs:4-16`), then `loop {}`. Kernel console output is what the repro captures (boot banners, `[MEMORY]` lines, rendered boards are in the logs), and the R2.2 contract already greps `'!!! PANIC !!!'` in LOG — reachability is proven by the harness itself.
+- **`KernelCell` has no reentrancy guard** — bare `UnsafeCell`, `borrow`/`borrow_mut` are unchecked derefs (`kernel/src/kernel_cell.rs:17-26`). Witness ordering rule follows (§R4.2: conviction line before any borrow).
+- **Two seed corrections (binding):**
+  1. Seed check (ii) "word at [SP] nonzero" is **wrong for mid-life frames** — `[SP]` is the saved rax slot; a legit rax can be 0. The guaranteed-nonzero word exists only in first-run frames (`initialize_stack` writes entry_point at the top slot). Replaced by: hard check = **16-word frame fully inside the target task's inline `[base, top)` window** (legit SP is always strictly inside; raw-top first-run SP = `top` ⇒ fires, which is the M3 conviction we want); soft check = zero-frame sampler (below).
+  2. "Dump all live tasks" is **not expressible today**: `GenerationalArena` exposes only `add/borrow/borrow_mut/remove/replace` (`collections/src/generational_arena.rs:77-115`) — no iteration. Requires a scratch `#[cfg(debug_assertions)]`-gated iterator in `collections` (§W1.1). `Handle` fields `pub index: u16, pub generation: u16` (generational_arena.rs:7-9) print directly.
+
+## R4.1 Witness contract (all under `#[cfg(debug_assertions)]`; the debug build `target/rosx/debug/rosx` has `debug_assertions` on — the existing `debug_assert!` at `state.rs:31` lives in that same build)
+
+**Helper** `witness_check(direction: &'static str, handle: TaskHandle, sp: usize)` in `state.rs`:
+- **No dereference before range validation** (a bogus SP may be unmapped; a deref would turn witness into fault). Order: (1) resolve target range via one `services().task_manager.borrow()`; handle-not-resolving ⇒ **hard fire** with `sp=unresolved`. (2) **HARD violation** := `sp < base || sp >= top` (note `>=`, so raw-top fires). On hard: print the conviction line **first, with no borrow held beyond field copies**, then the dump, then `panic!` — because KernelCell is unchecked (§R4.0), a dump that trips a nested borrow must never be able to swallow the conviction line.
+- **SOFT violation** := `sp` in range but sampled frame is zero: `(read_volatile(sp) | read_volatile(sp + 8) | read_volatile(sp + 0x78)) == 0`, and only if `sp + 0x80 <= top`, then confirm full 16-word OR before printing (this is the corpse's "never-saved zero slot" signature, made SP-value-agnostic). Soft **prints only** (`WITNESS SOFT …`), never panics; at most one soft line per site via `AtomicBool` — false-positive-tolerant by design.
+- One-shot overall: `static WITNESS_FIRED: AtomicBool` gates the hard path's dump; the conviction line always prints, panic halts after first hard fire.
+- **Silent path cost:** two comparisons + (when in range) three `read_volatile` + OR. No `println` on the silent path. No new imports beyond `kprintln!`, `core::sync::atomic::{AtomicBool, Ordering}`, `TaskState` display (exists, task.rs:28-48).
+
+**Sites** (direction strings verbatim, greppable):
+| Site | File:anchor | Direction | Hard rule |
+|---|---|---|---|
+| L1 | `state.rs:42` pre-swap | `LOAD-TASK` | `sp` in scheduler… **incoming** handle's range |
+| L2 | `state.rs:72` pre-swap | `LOAD-SCHED` | `scheduler_stack_pointer` in scheduler handle's range |
+| L3 | `kernel.rs:179` pre-swap | `LOAD-BOOT` | `scheduler_thread_stack_pointer` in `main_thread_handle`'s range |
+| S1 | `state.rs:45-48` write-back | `SAVE-BACK` | `saved_stack_pointer` in `outgoing_handle`'s range |
+| S2 | `state.rs:60-63` write-back | `SAVE-SCHED` | `saved_scheduler_stack_pointer` in scheduler range |
+
+S1/S2 are the **M1 planting detectors** (Rev-3 R3.1): they convert "stale save misroutes into the arena" from inference into an observed event. Borrow-safety at all five sites was audited: no outer `task_manager` borrow survives across any swap (`state.rs:24-27` temps drop pre-`:42`; `kernel.rs:37` borrows at `:38/:40` occur post-switch; `preempt` `kernel.rs:251-255` releases each `borrow_mut` before `switch_to_scheduler()`; `enqueue`/`schedule` release before returning to the scheduler loop).
+
+**Line formats** (machine-greppable `WITNESS` prefix; panic message = the hard line):
+- hard: `WITNESS HARD <direction> handle=<idx>.<gen> sp=0x<hex> task=<name> state=<TaskState>`
+- soft: `WITNESS SOFT <direction> handle=<idx>.<gen> sp=0x<hex>`
+- dump (per live task, via scratch arena iterator): `WITNESS TASK idx=<n> gen=<n> name=<s> state=<s> base=0x<hex> top=0x<hex> sp=0x<hex> owns=<bool>` where `owns` = hard-checked `sp` of the **bogus value** lies in that task's window — this names the owner of `0x…13b90`-equivalent at the crime moment.
+
+**Scratch accessors:** `Task::stack_base()/stack_top()` (usize, from `stack` field); `GenerationalArena::for_each_live(&self, f: &mut impl FnMut(u16, u16, &T))` in `collections` (occupied slots, index order, yields slot index, slot generation, item ref — implementer reads the struct at generational_arena.rs:56-61 for the real field names). Marker convention: every inserted symbol contains `witness` or `WITNESS` (revert grep anchor). No comments added (scratch, but keep style); `no_std` respected; **hard boundary: zero bytes under `arch/`.**
+
+## R4.2 Steps
+
+**W0 — baseline snapshot (no QEMU).** `git diff > /tmp/opencode/rosx_pre_w4.diff && git status --porcelain` (record; this is the restore oracle — the current tree already contains D1+D2+FIX-E, 4 files +176/−23, 191 green per orchestrator).
+
+**W1 — witness build (scratch; expected files touched: `kernel/src/state.rs`, `kernel/src/kernel.rs`, `kernel/src/task.rs`, `kernel/src/task_manager.rs`, `collections/src/generational_arena.rs`).** Gates, all existing commands:
+1. `cargo xtask build --debug` green (release-parity compile check too: `cargo xtask build` must compile with `debug_assertions` off — all witness code excluded, no unused warnings).
+2. `cargo test -p kernel -- --test-threads=1` = **191 passed** (witness code compiles under host cfg(test) — `state.rs` already does; no test executes a swap, so no witness call).
+3. `cargo test -p collections` green (arena scratch fn compiles; count unchanged).
+4. x86_32 parity: `cargo build -p rosx-x86` from `arch/x86_32/` (shared `kernel/` change, portable usize code only).
+
+**W2 — snake live run (run 1 of 4):**
+`KERNEL=/home/ghisi/git/rosx/target/rosx/debug/rosx PHASES="wait:35" timeout 110s python3 -u /tmp/opencode/repro_triple_fault.py snake 2>&1 | tee /tmp/opencode/w2_snake.log`
+Capture: `grep -E 'WITNESS|!!! PANIC !!!' /tmp/opencode/w2_snake.log`; first-fire tick stamp from the surrounding `v=` stream. `resets:` void; exit `-9` normal teardown; `124` ⇒ inconclusive, one rerun allowed inside budget.
+
+**W3 — tetris twin (run 2 of 4):** same invocation, `tetris`, `tee /tmp/opencode/w3_tetris.log`. Run even if W2 fires, unless W2's hard dump already fully convicts (architect call at stop-rule W4); run only if W2 was ambiguous.
+
+**W4 — decision table (orchestrator+architect interpret before anything else — STOP RULE):**
+
+- **(a) HARD witness FIRES** (`!!! PANIC !!!` + `WITNESS HARD` + dump table in stdout = **SUCCESS**). The `owns=` column names which task's inline stack contains the bogus SP; the direction names load vs save side; the tick stamp names the phase. Conviction is complete **iff** either (i) a `SAVE-*` hard fire shows a save landing outside its outgoing task's window (M1 planted red-handed), or (ii) the dump shows the bogus SP owned by a task other than the load target / an `sp` collision between two tasks. If only L-side fired and dump is thin, **one optional run (3 of 4)** re-runs snake with `WITNESS TASK` extended to print `entry_point` per task (scratch increment, architect-approved). **No fix ideas in this revision.**
+- **(b) Witness NEVER fires, guest still triple-faults** (R2.2 `grep -c -E 'Triple fault' "$TMP/exc.log"` > 0 in the witness build). The binary split **is the verdict**: the bogus load does not pass through any kernel-side SP consumption with an out-of-range value — remaining candidates, in order, all kernel-internal first: (b1) `ExecutionState` static itself torn (witness candidate: snapshot-compare `current_task`/`scheduler`/`swap_save_slot` at each of the 5 sites; `swap_save_slot` tearing is prime suspect since FIX-E made every save flow through it — note S1/S2 already check its **value**, a torn **field address** would not be caught); (b2) double-read compare — reread `get_task_stack_pointer(handle)` immediately before each `swap_context` and panic on mismatch (catches check→use corruption); (b3) `iretq`/sysret-frame corruption — arch territory ⇒ stops at USER-GATE, report only.
+- **(c) Fires EARLY/boot** (before first gameplay tick; cf. depth-2-at-boot, Rev-3 R3.0): that first fire is the prime corruption moment; capture full context, same stop rule, no fixes.
+- If **only SOFT fires** and no hard, fault persists: SOFT line(s) + tick stamp + dump-on-next-hard are themselves evidence (zero-frame restore witnessed live); proceed as (a)-thin.
+
+**W5 — revert + attestation (always last, no QEMU).** Reverse the witness to the W0 snapshot: remove/restore to `/tmp/opencode/rosx_pre_w4.diff`; then machine gates: `grep -rE 'witness|WITNESS' kernel/src collections/src` → **empty**; `git diff | cmp - /tmp/opencode/rosx_pre_w4.diff` → byte-equal; `cargo xtask build --debug` + `cargo test -p kernel -- --test-threads=1` = 191. Nothing committed at any point in R4.
+
+**Report spec (coder → orchestrator):** verbatim PANIC block (all four banner lines + `WITNESS HARD` line) **or** the explicit negative "no WITNESS line across <N> runs; fault still present per R2.2 greps"; full `WITNESS TASK` dump table; first-fire tick stamp (`v=` neighbor) and wall phase; `TMP` dir per `tmp:` line; per-run exit codes with R2.2 greps (`Triple fault` count in `exc.log`, `!!! PANIC !!!` count, `v=0e`/`v=08` counts); `git status --porcelain` final; byte-equal attestation; every `124` rerun declared.
+
+## R4.3 Interpretation rules (binding)
+
+- The witness **changes code layout** — the fatal SP will likely move off `0x20000013b90` (cf. the +0x10 scratch shift already recorded). Irrelevant: checks are range/zero-frame based, SP-value-agnostic. The invariant is "frame never written in the target's own stack", not the address.
+- A `!!! PANIC !!!` banner in W2/W3 stdout is the **success signal** for the experiment, not a red gate. R2.2's `PANIC == 0` gate applies only to **fix-candidate** runs, never to witness runs.
+- `-9` = normal teardown; `resets:` void; `124` = inconclusive, one rerun.
+
+## R4.4 Standing bar (unchanged, briefly)
+
+R2.2 GREEN contract verbatim (binding = `grep -c -E 'Triple fault' "$TMP/exc.log"` == 0 etc.) — **not** applied to witness runs per R4.3; unit baseline now **191 passed** (`cargo test -p kernel -- --test-threads=1`); warning posture **Δ-new = 0** vs fingerprint `{kernel lib 65, rosx bin 26, shell lib 5, +1 manifest}`, filter matching both `warning:` and `warning[EXXXX]:`, decreases at deleted sites expected not violations; `cargo xtask build --debug` green; scratch never committed; `arch/` untouched; kernel `no_std`, no comments, no new deps.
+
+## R5 — Witness interpretation + decisive experiment
+
+### R5.1 Timeline reconciliation — the paradox does not exist; the fire WAS the fatal load
+
+Read directly this turn from `/tmp/opencode/w2_snake.log` (94 lines total) and `/tmp/rosx-repro-h7s5m6k4/exc.log` (63421 lines):
+
+1. **stdout ends at the fire.** Line 44 (`WITNESS SOFT LOAD-TASK handle=1.0 sp=0x20000013b10`) is the last kernel output before the captured fault dump; markers `game_over_snake: False`, `goodbye: False`. No board frame exists after the fire in either app (tetris: fire = stdout line 35, same structure).
+2. **exc.log event numbers are QEMU's from-reset exception counter, not post-spawn survival.** Event 0 is already `v=20` (PIT runs from machine reset); events 10–2849 are ~28 s of ticks at `IP=0x22cde6 SP=0x20000013d48` (halt loop), event 2850 is the last tick on the game's stack (`SP=0x2000000f008`), event 2851 is the single `v=0e` (`RIP=0 SP=0x13b90`), event 2852 `v=08` (`check_exception old: 0xe new 0xb` precedes both), then `Triple fault`. The whole life of the guest is 2851 ticks; the fire is stdout-conterminous with event 2851.
+3. **Verdict:** guest survival after the SOFT print was ~1 scheduling step — swap executed, pop-15-zeros + `ret`-to-0, `#PF→#DF→triple fault` one tick after the announced load. Option C got exactly what it was built for: the crime witnessed in life, once, and it is the death itself. (The "~1400 events later" figure was an event-counter misread; the 40-s prompt-burn model is likewise dead — `prompt_seen: True`.)
+4. **Consequence for the one-shot latch:** a survived zero-frame load is physically impossible (RIP=0 is instant), so the first (and only) SOFT fire at site L1 **is** the first and only zero-frame load — there is no hidden earlier benign fire.
+
+### R5.2 What is now established (beyond Rev-3/4)
+
+- **E1 — the poison is a field VALUE, not an unmapped SP, and no save ever executed at it.** SOFT proved: in-range, 16-word window all-zero, at the load instant. S1/S2 saw every write-back with a nonzero (real) frame — so no legitimate save ever produced or touched `[0x20000013b10, +0x80)`. A real save at an SP always leaves that window nonzero (15 register words + the return-address word on the CPU stack at entry). 
+- **E2 — FIX-E persistence remains the strongest structural fact.** Current tree writes `Task::stack_pointer` only through setters (`Task::new` task.rs:79; `prepare_entry` task.rs:148; S1 `set_task_stack_pointer(outgoing, swap_save_slot)` state.rs:45-48; S2 scheduler write-back state.rs:59-63). The asm no longer writes through arena refs at all — and the corpse is byte-identical pre/post-FIX-E. **Any theory whose mechanism is the removed save-side raw-ref is dead.** Common factors across both trees shrink to: boot/spawn-time frame materialization (`initialize_stack`/`prepare_entry`), the scheduler's value plumbing (`swap_save_slot` contents), and the heap itself.
+- **E3 — identity arithmetic points at the idle task, not the game (coder's label unverified).** The soft line carries no task name. The halt stream ran ~28 s at `0x13d48`; if that window's top is `0x13d90`, the first-run frame is `[0x13d10, 0x13d90)` and **poison = first-run-SP − exactly 0x200 = exactly four 16-word frames**, still inside the same window (consistent with the witness's in-range finding) but 0x200 below the deepest address the halt loop ever used — genuinely never-executed territory. The task the scheduler would pick right after the game blocks (no further input in the repro) is precisely the idle task. This must be **named, not assumed** — R5.4 W-a does it.
+- **E4 — determinism is now a writer constraint:** snake vs tetris differ in game size/code yet produce the identical poison value at the identical relative moment (first pick of handle 1.0 after the game blocks). The poison does not depend on game content, only on boot/spawn allocation order and scheduling structure.
+
+### R5.3 Ranked mechanisms (each with the falsifier run 3 settles)
+
+- **C1 — Re-zeroing of a legitimately written frame: overlapping `Box<Task>` allocation.** `Task::new`'s `stack: [0; 2048]` (task.rs:73) is the tree's only zero-writer of a 16 KiB stack region; if the freelist (memory/memory_manager.rs) ever hands out a chunk overlapping a live task's window (coalescing/split bug), the fresh `Task::new` zero-inits over the live task's first-run frame while gen-0 handles stay valid (no free needed — double-hand-out is enough). The spawn burst at ~t+27 s (ELF bytes box, image, task box) is the natural trigger; poison visible at first re-pick afterwards. **Falsified if** run-3 boot/spawn PREP witness reports `frame_or == 0` already at write time (C2), or the run-4 overlap trace is empty across the whole life.
+- **C2 — Frame never materialized: `prepare_entry`/`initialize_stack` wrote elsewhere or twice.** If the 16 sentinel writes (`0x0f..0x15` + entry, cpu.rs:82-113) did not land at `[returned_sp, returned_sp+0x80)` of the same box whose field received `returned_sp` — wrong top, double `prepare_entry` (second call re-derives from the field: `top−0x80` then `top−0x100`, leaving the field's old frame value orphaned — check call count), or box identity confusion — the frame region stays zero-init forever. **Falsified if** the PREP witness prints nonzero `frame_or` at every prepare, for handle 1.0.
+- **C3 — Phantom direct write to the field bypassing setters (residual alias).** Weakened hard by E2 (FIX-E removed the asm path) but not eliminated: `get_task_stack_pointer_ref`-style refs still exist; any stale pointer write is invisible to range-validated setters. **Falsified by** run-3 shadow/field mismatch staying silent (shadow == field at every load ⇒ no direct writes).
+- **C4 — Handle/value mix-up inside scheduler bookkeeping (a setter run with correct target but value belonging to another world).** A write-back whose `self.current_task` names idle while the running context was elsewhere would plant some other context's rsp — but any such rsp lands in *that* context's window; the poison is in **idle's** window at a never-executed address, which a live rsp cannot be (E1). Kept last. **Falsified by** run-3 writer-tag: last legit writer for handle 1 shows what was written and when.
+- **C5 (dead) — timing/ISR theories, recycled-slot theories.** R3a (Rev-3), byte-identical corpse under FIX-E (E2), and gen 0 never recycled (Rev-4 fact 4) kill all three. **Implication: FIX-B/FIX-C are evidence-dead ends** — both change ISR timing; the poison is a data-planted-at-boot/spawn artifact that fires on an ordinary scheduler pick. Recommend formally demoting both gates unless run 3 unexpectedly resurrects a timing dependency.
+
+### R5.4 Run 3 (of 4) — witness v2: name the writer at the crime scene
+
+Scratch rules unchanged (`#[cfg(debug_assertions)]`, `witness`/`WITNESS` markers, D3 discipline, save `/tmp/opencode/rosx_pre_r5.diff` from the current 191-green tree, revert + byte-equal attestation after). Additions to the v1 site set (keep L1/L2/L3/S1/S2 exactly as in Rev-4):
+
+- **W-a PREP witness** (kernel-only; `prepare_entry` is the single funnel, task.rs:141-150): after `set_stack_pointer(new_stack_pointer)`, OR the 16 words at `[new_stack_pointer, +0x80)` and print `WITNESS PREP idx=<n> gen=<n> name=<s> sp=0x<hex> frame_or=0x<hex> call_n=<n>` (per-handle call counter; ≤ ~8 lines total per run). This is the **C1-vs-C2 binary split**: nonzero at write + zero at death ⇒ re-zeroed (C1); zero at write (or repeated `call_n`) ⇒ never materialized (C2).
+- **W-b writer tag + shadow** (kernel-only): static `WITNESS_TAG/WITNESS_SHADOW` indexed by handle index; updated inside the four legitimate writers (Task::new, prepare_entry, `set_task_stack_pointer`); at L1 (before load) print on **every** check-visit… no — print only when `shadow != field` (`WITNESS DRIFT idx=<n> shadow=0x… field=0x… tag=<writer id>`), which is the C3 detector: a mismatch can only come from a direct memory write bypassing setters. Silent otherwise.
+- **W-c soft dump extension:** change the SOFT branch to fire **once globally** and, on that fire, print the existing task-table dump (re-use the v1 hard dump fn) **plus** the raw 32-word hex window around `sp` (±0x100, via existing volatile reads) and handle 1.0's PREP line replay. One fire, one run, full provenance: owner names + ranges (settles E3's identity question: does `[0x13b10, 0x13b90)` live in the window of the task that halted at `0x13d48`, and is `0x13b90` that window's `top − 0x200`?), plus whatever residue neighbors the zero frame.
+- Build gates identical to W1 (Rev-4): `cargo xtask build --debug`, `cargo xtask build` (release-parity), `cargo test -p kernel -- --test-threads=1` = **191**, `cargo test -p collections` = 21, x86_32 parity from `arch/x86_32/`. Run command unchanged: `KERNEL=/home/ghisi/git/rosx/target/rosx/debug/rosx PHASES="wait:35" timeout 110s python3 -u /tmp/opencode/repro_triple_fault.py snake 2>&1 | tee /tmp/opencode/w5_snake.log`. **Run snake only**; keep tetris + one reserve for run 4.
+- **IP mapping: not needed before run 3.** `0x22cde6`/`0x2aa053`/`0x227c1a` attribution (scratch rebuild + `addr2line` on host binutils — worked earlier per session facts) is post-hoc and must not spend QEMU time.
+
+**Run-3 decision tree → run 4:**
+- **X — PREP nonzero for handle 1, DRIFT silent, soft dump zero-window at death ⇒ C1 convicted.** Run 4: allocator overlap trace (scratch: at every `alloc ≥ 0x1000`, compare the returned chunk against the recorded ranges of all live task windows; print `WITNESS OVERLAP` on any hit; free-path tag for C1's coalescing variant). Expect the overlap event between spawn and death. **Fix path then is kernel-only (`memory/memory_manager.rs`) — no USER-GATE, and FIX-B/FIX-C stay dead.**
+- **Y — PREP zero (or double `call_n`) ⇒ C2 convicted.** Run 4: pin the write target — print box addr, `stack` field addr, `sp` in/out of `prepare_entry`, and a sentinel read-back at boot for the idle task specifically. If the culprit turns out to be inside `initialize_stack` (arch), the **fix** needs a USER-GATE — but run 3/4 remain kernel-only.
+- **Z — DRIFT fires ⇒ C3 convicted;** tag + shadow-vs-field names the last legit writer; run 4 = pre/post snapshot around that writer to expose the stale-ref holder. Kernel-only fix likely.
+- **W — none of the above (PREP nonzero, no drift, soft shows a NONZERO window at death — i.e., SOFT itself stops firing):** means the zero state is not persistent ⇒ layout-sensitive race; only then do we reopen timing and re-consult the FIX-B/FIX-C gates. Unlikely given E4 determinism.
+- **Stop rule (R2.5 unchanged):** if run 4 also fails to convict, halt and report; no fifth run, no speculative fix.
+
+### R5.5 Fix stance + standing bar
+
+- **No kernel-only fix is defensible today** — the writer is unnamed (X/Y/Z decide which); FIX-B/FIX-C are formally demoted per R5.3 with the W-branch exception.
+- Standing bar unchanged: R2.2 contract verbatim (binding `grep -c -E 'Triple fault' "$TMP/exc.log"`, `resets:` void, `-9` teardown, `124` = one rerun); unit baseline **191**; collections 21; warning posture **Δ-new = 0** vs fingerprint `{kernel lib 65, rosx bin 26, shell lib 5, +1 manifest}`, both `warning:` and `warning[EXXXX]:` forms counted; scratch revert = grep-clean `witness|WITNESS` + `git diff | cmp -` byte-equal to the saved pre-run diff; one QEMU at a time; `arch/` untouched; no commits; kernel `no_std`, no comments, no new deps.
+
+## R7 — Allocator audit: the convicted defect + fix contract
+
+**Scope read:** `kernel/src/memory/free_list_allocator.rs` (full), `kernel/src/memory/memory_manager.rs` (full), `kernel/src/task.rs`, `kernel/src/task_manager.rs`, `kernel/src/syscall.rs`, `kernel/src/elf/mod.rs`, `kernel/src/ipc/*`, `kernel/src/future.rs`, `kernel/src/keyboard.rs`, `collections/src/generational_arena.rs`, `usrlib/src/syscall.rs`, app `#[global_allocator]` sites, and the run-4 trace `/tmp/rosx-repro-c1wn_yxh/stdout_full.log`. (`BitmapChunkAllocator` exists but is not compiled into the active path; the single static allocator is `MemoryManager → FreeListAllocator`.)
+
+### 1. Header identity and the 8-byte skew — settled
+
+`free_list_allocator.rs:7-8`: `const BLOCK_HDR: usize = 16;` and `const ALLOC_HDR: usize = 32;`. The 0x28 base observed in run-4 prints (`FREE p=… base=p+0x28`) is **not header arithmetic**: geometry proves printed `p` is the *usable pointer* and printed `sz` the Rust *layout size* — base = p+0x28 is the `stack` array offset inside the 0x4030-byte `Task` (`task.rs:56-58` `stack: [usize; 2048]`). Consequences: (a) the sub-minimum `FREE sz=0x8/0x10/0x18/0x20` churn at `0x1e308`/`0x1e3d8` is **legal** small-object traffic, not direct corruption proof; (b) the 8-byte skew between the frame writer and slot reader is a **write-site offset mismatch**, not header/alignment; the allocator's own split math (`allocate` :77-100, `remaining >= BLOCK_HDR` guard) is exonerated.
+
+### 2. Convicted defect: unvalidated free path in `FreeListAllocator` (F1 + F2 + F3)
+
+**F1 — `deallocate` (`free_list_allocator.rs:104-122`) performs no membership validation, and its unlink writes the list even on a miss.** Verbatim shape of the unlink:
+
+```rust
+let mut prev: *mut AllocHeader = core::ptr::null_mut();
+let mut current = self.alloc_head;
+while !current.is_null() {
+    if current == header { break; }
+    prev = current;
+    current = unsafe { (*current).next };
+}
+if !prev.is_null() { unsafe { (*prev).next = (*header).next; } }
+else { self.alloc_head = unsafe { (*header).next }; }
+```
+
+A double free of a recycled pointer misses the walk with `current == null` and `prev` = tail node, then `(*prev).next = (*header).next` **plants whatever `next` the reused memory now holds into the tail of the alloc list** (or into `self.alloc_head` when the list held only that node). `insert_free_block` is then called **unconditionally** — the corruption of the alloc list survives even if the free insert were guarded.
+
+**F2 — `insert_free_block` (`:142-176`) has no duplicate/overlap rejection.** Coalescing tests only exact adjacency (`:163` `block_end == next as usize`, `:171` `prev_end == start`). A second descriptor over an already-live range is inserted, and `allocate` first-fit (`:62-100`) then hands the same bytes out while the first owner still uses them.
+
+**F3 — reachability.** `SyscallNum::Dealloc` (`syscall.rs:70-74`) passes a user-controlled pointer into `MEMORY_MANAGER` with no owner/range check, and every ELF app installs a `#[global_allocator]` proxying user `Box`/`Vec` traffic into this **one shared kernel heap** (`apps/snake/src/main.rs:15-20`, `apps/tetris/src/main.rs:14-19`, also shell/conway/hello_elf). Owner enforcement is dead code: `memory_manager.rs:83` hardcodes `BlockOwner::Kernel`, and `deallocate_by_owner` (`free_list_allocator.rs:124-140`) has zero production callers.
+
+**Mechanism for the run-4 crimes.** The only bulk zero writers in reach: `Task::new` `stack: [0; 2048]` (`task.rs:73`) and the ELF image buffers `vec![0u8; max_addr as usize]` (`elf/mod.rs:85`, `:140`) with `copy_from_slice` fills (`:92-93`, `:147-148`). One stale double free of a recycled chunk (snake-startup **task box, layout 0x4030**, at the `0x13a90` region — the same arena-reused slots that became idx2/idx3) re-enters the free list; a later allocation overlaps `[0x13a90, ~0x13e00]` and:
+
+- **2a:** `Task::new` zeroes the reused region including the sp slot (initial `stack_offset` 0). The frame writer's zero-guard (`kernel_cell.rs:181-190`) then publishes the Idle frame at `*slot == 0` → `base + 0x208` = **legit-looking sp 0x13b10, fully zeroed incl. the RIP slot**; overlapping re-zeroing later leaves the pattern all-zero (consistent with run-4), and the corpse top = `base + 0x208 + 0x28` = **0x13b38** ✓.
+- **2b:** one overlap chunk ≥0x370 spanning `[0x13a90, ~0x13e00]` covers idx2 `name@0` + sp@+0x20 and idx3's header → `name=''`, idx2 `sp=0x0`, tops intact (overlap tail lands mid-region) ✓.
+- **No 2c DRIFT** because sp was zeroed *through memory*, never via setters: a zeroed-sp idx2 returns at the `switch_to_task` zero-guard before `witness_drift_check` ✓.
+
+### 3. Ranked competing defects, each with falsifier
+
+1. **F1/F2 (convicted)** — falsifier: post-fix build still triple-faults at the same RIP.
+2. **Free-list-node overflow** (inline metadata, 8-byte overrun from an adjacent live block writing node `next` fields) — falsifier: same as above; this is the escalation theory if (1) survives its own fix. Falsifier triggers one confirmation run.
+3. **Frame-writer/slot-reader 8-byte skew as an independent memory bug** — falsifier: unit-level — frame writes land exactly in `stack[2047]`-down slots; post-fix GREEN with the guard at `kernel_cell.rs:181-190` untouched.
+4. **Exonerated by reading** (no falsifier owed): `allocate` split arithmetic; `GenerationalArena` (`remove`/`replace` generation-guarded; `add` not bumping gen is intended); `task_manager::remove_task`; `Kernel::wait_future` single `consume` (`kernel.rs:225-233`); keyboard/IPC/mailbox `Box` lifecycles (leak risks only); `Dealloc` arg order `(ptr,size,align)` matches `usrlib/src/syscall.rs:77-82`.
+
+**Code conviction suffices — no extra forensic run.** F1/F2 are validation absences provable by reading, and the fix is self-attesting: rejection converts the first bad free into a `BAD-FREE` log line at the call site, so the ship gates double as confirmation. Forensic budget stays 4/4. Only falsifier (1)→(2) would justify one window-filtered raised-cap run.
+
+### 4. Minimal fix contract (kernel-only, `kernel/src/memory/free_list_allocator.rs`)
+
+1. **`deallocate` — walk with `prev_next: *mut *mut AllocHeader`** (init `&mut self.alloc_head`, advance `&mut (*current).next`), so a miss *cannot* write the list. On miss: `kprintln!("BAD-FREE ptr=0x{:x} size=0x{:x}", …)`, `debug_assert!(false, …)`, `return` with **no list mutation**. Pre-validate before any arithmetic: non-null, `BLOCK_ALIGN`-aligned, `(*header).size >= ALLOC_HDR + BLOCK_ALIGN` (= 0x28); any violation → same BAD-FREE rejection path.
+2. **`insert_free_block`** — return `bool`; reject (no mutation) if the new range overlaps **any** free entry (`start < e_end && e_start < end`, which subsumes duplicates) or `size < BLOCK_HDR`. Exact-adjacency coalescing (`:147-151`, `:163`, `:171`) unchanged.
+3. **Validation is unconditional** — active in release too (corruption must not survive a `--release` ship build).
+4. **`memory_manager.rs` unchanged.** `used` bookkeeping (`:107`) will drift by rejected sizes — cosmetic; do not "fix" unless trivially clean. `SyscallNum::Dealloc` owner tagging is advisory follow-up, **out of scope**.
+5. Optional: `#[cfg(debug_assertions)]` disjointness helper over alloc/free lists for test assertion.
+6. Formatting `0x{:x}` only (output backend verified non-allocating — a `{}`-path that allocates inside `deallocate` would self-recuse).
+
+### 5. Unit-test additions (`#[cfg(test)]` in `free_list_allocator.rs`)
+
+Extend existing tests with: (a) **split adjacency** — post-split alloc+free ranges partition the block exactly, no overlap; (b) **coalesce exact-adjacency** — left/right merges yield exactly one entry of expected size. New, **must fail today, pass post-fix**: (c) `stale_double_free_after_realloc_does_not_release_live_block` — alloc A, free A, re-alloc (recycles over A), free A again → rejected, second owner's bytes never re-issued; (d) `double_free_rejected_and_allocations_stay_disjoint`; (e) `dealloc_foreign_pointer_leaves_allocator_intact` (lists byte-identical); (f) `corrupted_header_size_rejected` (`size < 0x28`, misaligned, null); (g) deterministic LCG stress: every live alloc pair disjoint, free ⊥ alloc.
+
+### 6. Acceptance (standing bar, unchanged)
+
+- `cargo test -p kernel -- --test-threads=1` — baseline claim 191 passed (pre-change baseline multiset; new tests add on top); `cargo test -p collections` (21, baseline claim).
+- `cargo xtask build --debug` **and** `cargo xtask build` (release carries the same validation — §4.3); `cargo build -p rosx-x86` from `arch/x86_32/` — **parity mandatory**, `memory/**` is shared by both arches.
+- Warnings: **Δ-new = 0** vs recorded fingerprint {kernel lib 65, rosx bin 26, shell lib 5, +1 manifest}, matching both `warning:` and `warning[EXXXX]:`; decreases at deleted sites expected, attributed by multiset diff, never violations.
+- §R2.2 gate, both apps GREEN: `KERNEL=/home/ghisi/git/rosx/target/rosx/debug/rosx PHASES="wait:35" timeout 110s python3 -u /tmp/opencode/repro_triple_fault.py <app>`; then `TMP=$(grep '^tmp:' LOG | tail -n1 | awk '{print $2}')` and `grep -c -E 'Triple fault' "$TMP/exc.log"` == 0, `!!! PANIC !!!` == 0, `v=0e`/`v=08` == 0; exit `124` → rerun +50s; sequential QEMU only.
+- Ship gate: un-`#[ignore]` `app_lifecycle` 2 (`tests-integration/tests/app_lifecycle.rs:16`, `:58`) → **app_lifecycle 2 passed**, plus `boot_and_shell` 4 + `ipc_random` 1. Exact `cargo xtask test --integration` flag set remains **unverified** — orchestrator baseline must establish the verbatim command before binding.
+
+### 7. Dispositions
+
+- **FIX-E: KEEP** (tree state in `state.rs` is the witness plumbing; unrelated to convicted path).
+- **FIX-B / FIX-C: DEAD** — never implemented; formally retired by this audit; no gates owed.
+- **`Task::stack_pointer_mut` (`task.rs:90`): REMOVE**, grep gate: only the definition survives (all production readers go through the switch path); zero writers were found — removal is the grep-provable claim.
+- D1 (MLFQ dedup) / D2 (Option SP guard): **KEEP**.
+
+
+## ORCHESTRATOR ERRATUM on R7 (2026-10-11, appended with verification)
+
+- R7 section 2's illustrative mechanism paragraph cites a "frame writer's zero-guard (kernel_cell.rs:181-190)" — that file is 33 lines total and contains no such guard; frame saves are performed by `arch/x86_64/src/context_switching.S` asm. Its corpse arithmetic target 0x13b38 does not match the observed 0x13b90. That paragraph is NOT endorsed; do not build on it.
+- The F1/F2/F3 convictions themselves are INDEPENDENT of that paragraph and were re-verified read-only by the orchestrator: deallocate's unlink writes `(*prev).next = (*header).next` / `self.alloc_head` even when the walk misses (`kernel/src/memory/free_list_allocator.rs:104-122`), then calls `insert_free_block` unconditionally; `insert_free_block` (:142-176) has no duplicate/overlap rejection and coalesces only on exact adjacency; `SyscallNum::Dealloc` (`kernel/src/syscall.rs:70-74`) takes an unvalidated user pointer into the shared kernel heap; `BlockOwner::Kernel` is hardcoded (`kernel/src/memory/memory_manager.rs:83`); `deallocate_by_owner` has no production callers in the active allocator (matches exist only in `bitmap_chunk_allocator.rs`, which is not on the active path).
+- The fix idiom for F1 already exists in the same file: `deallocate_by_owner` (:124-140) uses the correct `prev_next: *mut *mut AllocHeader` walk. `deallocate` should follow it.
+- The escalation clause (BAD-FREE never appearing post-fix ⇒ defect (2), one confirmation run) stands.
+
+## SCOPE REVISION (user directive, 2026-10-12) — memory-only ship
+
+- The ship scope is the R7 memory-management fix ONLY (`kernel/src/memory/free_list_allocator.rs`).
+- D1 + D2 + FIX-E are REVERTED from the working tree (tree byte-clean at `97be6b7`, unit baseline back to 182). They are parked as future work: `plans/scheduler-lifecycle-hardening.md` + code snapshot `plans/scheduler-lifecycle-hardening.patch` (verified `git apply --check` clean on the reverted tree). R7 §7's "KEEP D1/D2" disposition is superseded by this directive.
+- Fix-round gates unchanged except the unit baseline is now **182** (+ new freelist tests on top).
+
+## R8 — Post-R7 verdict: dealloc path exonerated by silence; single-run discriminator
+
+### 1. Interpretation — what the three facts jointly imply
+
+BAD-FREE=0 (entry validation silent), debug-only (release GREEN on **unfixed** HEAD), zeroing-signature (bulk `Task::new`/ELF zero-init landing on live memory) jointly say: **the poison never passes through `deallocate`/`insert_free_block` as an argument** — it is either (a) handed out by `allocate` while still owned, or (b) written out-of-band. The re-entrancy hypothesis: **refuted from source, with one residual tail** — verify, don't assume:
+
+- `memory_manager.rs:71-92/:94-111` (quoted shape): every entry reads IF and `cli`s before the walk when IF=1. Task-mode walks (IF=1→cli) are IRQ-safe; IRQ-context walks (timer path genuinely allocates: `timer.rs:25` `entry(deadline).or_insert_with(Vec::new)`, `pop_expired` returning `Vec`, `wake_tasks(alloc::vec![...])`, `scheduler.rs:111` `interrupt_drain_buf` growth) run with IF=0 on entry — so nesting is blocked there too. Syscall entries are IF=0 by `SFMask::write(INTERRUPT_FLAG)` (`arch/x86_64/src/cpu.rs:52`); `are_interrupts_enabled` is a genuine pushfq read (`cpu.rs:64-66`); the only `sti` in arch is `context_switching.S:40`, which fires on the **target** task's stack after the switch (switch path is non-allocating). Single CPU ⇒ mid-walk IRQ re-entry is impossible.
+- Residuals: (i) the check→cli window (`:72-75`) is real but only ever produces **sequential** handler-then-walk overlap (harmless); (ii) a faulting walk enables true mid-walk re-entry via the exception handler — but that needs pre-existing corruption, so it cannot be the first cause; (iii) prior "KernelCell depth ≥4" measured **all** cells (nested cpu/state borrows inside `alloc`'s own windows, `:73/:75/:86`), not allocator-cell exclusivity — it is not evidence of allocator re-entry.
+
+Ranked hypotheses:
+- **H1 — allocate-side double-handout** (structural, no bad free; activated by debug-specific sizes/fragmentation: split boundary, `remaining` edge, region adjacency). Fits everything: entry guards never convict, `Task::new`'s `[0;2048]` (`task.rs:73`) or `vec![0u8; max_addr]` (`elf/mod.rs:85,:140`) is the zero writer into the overlapping live range, release survives because debug layouts/sequence differ. **Current front-runner.**
+- **H2 — out-of-band writer bypassing the allocator** (debug-fat task-stack frames overflowing the 16 KiB `stack: [usize;2048]`; ELF `copy_from_slice` overrun). Classic debug-only discriminator. Weakness: overruns write non-zero frame data, while the crime scene is zeroed.
+- **H3 — in-walk re-entry** (orchestrator's candidate). Source-refuted above; keep a zero-cost latch in the run to seal (i)/(ii) empirically.
+- **H4 — `is_setup=false` boot-window walks** (`:72` short-circuit): unguarded, but boot is pre-IDT single-threaded and boot-phase tests are green. Refuted by timing; no run cost.
+
+### 2. One-run confirmation spec (snake, debug, scratch; revert after, byte-equal attestation per Rev-4/5)
+
+Kernel-side only (no `arch/` edits — USER-GATE stays untested). Coder: save pre-hashes of touched files + `/tmp/opencode/rosx_pre_r8.diff` oracle first. Four hooks, all cheap, latch-and-continue, hard print caps, nothing inside the list walk itself:
+
+1. **Re-entry latch** (`MemoryManager::alloc/dealloc`): `static ALLOC_DEPTH: AtomicUsize` incr/decr; on entry if depth>1: latch counter, print at most 3 lines `R8-REENTRY d=.. ptr=0x{:x} if=..`; final depth high-water printed once at fault/shutdown path.
+2. **Big-handout disjointness gate** (wrap the `Ok(ptr)` arm at `:88-91`, after interrupts restored): scratch table of live ranges (append on alloc, mark dead on dealloc, fixed capacity, drop-oldest). For **allocations ≥0x1000 only** (Task box 0x4030, ELF image buffers — the convicted zero writers) scan all live entries; on overlap print once `R8-HANDOUT new=0x{:x}-0x{:x} old=0x{:x}-0x{:x} sz=0x{:x}`, latch. Small allocs: skipped (timing budget). Also print every big handout, capped 40 lines: `R8-BIG ptr=0x{:x} sz=0x{:x}` — timestamps `Task::new` zero-init against the fault window in stdout order.
+3. **Correlation ring**: last 32 ops `(op, ptr, size)`; existing base-witness prints (v2 infra) dump the ring on the fatal path.
+4. **SP low-watermark**: in the kernel switch path before `swap_context`, compare incoming sp vs the task's stack-array base; print once per task `R8-SPLOW sp=0x{:x} base=0x{:x}`.
+
+Run: existing §R2.2 command unchanged (`PHASES="wait:35"`, snake debug). Expect corruption to still occur — this run diagnoses, it does not fix.
+
+### 3. Verdict table
+
+| Run output | Convicts | Refutes | Next |
+|---|---|---|---|
+| `R8-HANDOUT` line with two owners | **H1** (allocate double-handout) | H2, H3 | R9: targeted `allocate`/split/free-list audit at logged sizes; kernel-only |
+| `R8-REENTRY` latch | **H3** (residual (i)/(ii) live after all) | H1 if no HANDOUT | Fix = unconditional cli-at-entry in `MemoryManager` (kernel-only, trait exists) — no arch change unless mechanism traces into `syscall.S`/IDT → then **USER-GATE request** |
+| `R8-SPLOW` | **H2** (stack overflow) | H1 (verify no HANDOUT co-fires) | Enlarge stack / debug-frame diet, kernel-only; guard-page needs page tables → **USER-GATE flag** |
+| Nothing fires, base witness still shows zeroing + identical corpse | All in-allocator mechanisms | — | Out-of-band stores confirmed; poison-sweep escalation = **second run — budget spent → stop-and-report per D4** |
+
+### 4. Disposition
+
+- **KEEP the +270/−9 validated-deallocate fix** in the tree during the confirmation: silent BAD-FREE proves zero false rejects, tests green, and the dealloc-path exoneration depends on it staying in place.
+- FIX-B/FIX-C: remain dead; nothing in this round touches `arch/`. Any guard-page/IDT/`.S` follow-up is a **USER-GATE request**, flagged as such, never a written contract.
+- Unit bar: **192** kernel (`cargo test -p kernel -- --test-threads=1`) + 21 collections, Δ-new=0 vs recorded fingerprint, debug+release+x86_32 parity — enforced on the **committed** tree only; while scratch hooks are in the tree, no gate runs except the diagnostic itself. Scratch fully reverted after with byte-equal attestation (file hashes vs pre-hashes, `git status --porcelain kernel/` empty).
+
+### 5. Gate posture
+
+If the run convicts H1 → R9 is kernel-only `free_list_allocator.rs` work, no user gate. If it convicts H3 with a syscall/IDT-side mechanism, or if mitigation requires a stack guard page (page-table edit): I will **frame the user-gate request** (what changes in `arch/`, minimal diff, why kernel-side is impossible) rather than contract it. No commits from this round; budget after this run: **0 — D4 applies on any null result.**

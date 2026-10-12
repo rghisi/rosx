@@ -1,0 +1,318 @@
+diff --git a/kernel/src/kernel.rs b/kernel/src/kernel.rs
+index 5e23b6b..cdbba23 100644
+--- a/kernel/src/kernel.rs
++++ b/kernel/src/kernel.rs
+@@ -140,6 +140,7 @@ impl Kernel {
+                 preemption_enabled: false,
+                 execution_context: ExecutionContext::Kernel,
+                 cpu,
++                swap_save_slot: 0,
+             },
+         }
+     }
+@@ -169,7 +170,8 @@ impl Kernel {
+         let scheduler_thread_stack_pointer = services()
+             .task_manager
+             .borrow()
+-            .get_task_stack_pointer(main_thread_handle);
++            .get_task_stack_pointer(main_thread_handle)
++            .expect("main thread task must always resolve to a live stack pointer");
+         self.cpu.enable_interrupts();
+         self.execution_state.preemption_enabled = false;
+         let state_pointer = &mut self.execution_state as *mut ExecutionState as *mut usize;
+diff --git a/kernel/src/scheduler/mlfq_strategy.rs b/kernel/src/scheduler/mlfq_strategy.rs
+index a96dca0..d959b9f 100644
+--- a/kernel/src/scheduler/mlfq_strategy.rs
++++ b/kernel/src/scheduler/mlfq_strategy.rs
+@@ -42,6 +42,12 @@ impl MlfqStrategy {
+             Some(YieldReason::Preempted) => (current + 1).min(NUM_QUEUES - 1),
+         }
+     }
++
++    fn contains_handle(&self, handle: TaskHandle) -> bool {
++        self.queues
++            .iter()
++            .any(|queue| queue.iter().any(|&h| h == handle))
++    }
+ }
+ 
+ impl SchedulingAlgorithm for MlfqStrategy {
+@@ -63,15 +69,19 @@ impl SchedulingAlgorithm for MlfqStrategy {
+     }
+ 
+     fn requeue_after_run(&mut self, handle: TaskHandle) {
+-        if let Some(info) = self.yield_info.remove(&handle) {
+-            let new_priority = Self::next_priority(info.priority, Some(info.yield_reason));
++        let new_priority = match self.yield_info.remove(&handle) {
++            Some(info) => Self::next_priority(info.priority, Some(info.yield_reason)),
++            None => 0,
++        };
++        if !self.contains_handle(handle) {
+             self.queues[new_priority].push_back(handle);
+-        } else {
+-            self.queues[0].push_back(handle);
+         }
+     }
+ 
+     fn push_ready(&mut self, handle: TaskHandle) {
++        if self.contains_handle(handle) {
++            return;
++        }
+         self.queues[0].push_back(handle);
+     }
+ 
+@@ -86,7 +96,7 @@ impl SchedulingAlgorithm for MlfqStrategy {
+ 
+     fn on_task_terminate(&mut self, handle: TaskHandle) {
+         for queue in &mut self.queues {
+-            if let Some(pos) = queue.iter().position(|&h| h == handle) {
++            while let Some(pos) = queue.iter().position(|&h| h == handle) {
+                 queue.remove(pos);
+             }
+         }
+@@ -515,4 +525,81 @@ mod tests {
+         strategy.on_task_terminate(h); // should not panic
+         assert!(strategy.pick_next().is_none());
+     }
++
++    fn total_occurrences(strategy: &MlfqStrategy, handle: TaskHandle) -> usize {
++        strategy
++            .queues
++            .iter()
++            .map(|queue| queue.iter().filter(|&&h| h == handle).count())
++            .sum()
++    }
++
++    #[test]
++    fn push_ready_is_idempotent_for_same_handle() {
++        let mut strategy = MlfqStrategy::new();
++        let h = make_handle(1, 0);
++
++        strategy.push_ready(h);
++        strategy.push_ready(h);
++
++        assert_eq!(strategy.queues[0].len(), 1);
++        assert_eq!(total_occurrences(&strategy, h), 1);
++    }
++
++    #[test]
++    fn push_ready_skips_handle_already_queued_in_lower_queue() {
++        let mut strategy = MlfqStrategy::new();
++        let h = make_handle(1, 0);
++
++        strategy.queues[2].push_back(h);
++        strategy.push_ready(h);
++
++        assert_eq!(strategy.queues[0].len(), 0);
++        assert_eq!(strategy.queues[2].len(), 1);
++    }
++
++    #[test]
++    fn requeue_after_run_does_not_duplicate_already_queued_handle() {
++        let mut strategy = MlfqStrategy::new();
++        let h = make_handle(1, 0);
++
++        strategy.push_ready(h);
++        strategy.record_yield(h, YieldReason::Preempted);
++        strategy.requeue_after_run(h);
++
++        assert_eq!(total_occurrences(&strategy, h), 1);
++        assert!(!strategy.yield_info.contains_key(&h));
++    }
++
++    #[test]
++    fn on_task_terminate_removes_every_duplicate_occurrence() {
++        let mut strategy = MlfqStrategy::new();
++        let h = make_handle(1, 0);
++
++        strategy.push_ready(h);
++        strategy.queues[1].push_back(h);
++        strategy.record_yield(h, YieldReason::Voluntary);
++
++        assert_eq!(total_occurrences(&strategy, h), 2);
++
++        strategy.on_task_terminate(h);
++
++        assert_eq!(total_occurrences(&strategy, h), 0);
++        assert!(!strategy.yield_info.contains_key(&h));
++        assert!(strategy.pick_next().is_none());
++    }
++
++    #[test]
++    fn pick_next_after_terminate_never_returns_dead_handle() {
++        let mut strategy = MlfqStrategy::new();
++        let h1 = make_handle(1, 0);
++        let h2 = make_handle(2, 0);
++
++        strategy.push_ready(h1);
++        strategy.push_ready(h2);
++        strategy.on_task_terminate(h1);
++
++        assert_eq!(strategy.pick_next(), Some(h2));
++        assert!(strategy.pick_next().is_none());
++    }
+ }
+diff --git a/kernel/src/state.rs b/kernel/src/state.rs
+index 670d4ca..160315b 100644
+--- a/kernel/src/state.rs
++++ b/kernel/src/state.rs
+@@ -15,24 +15,38 @@ pub struct ExecutionState {
+     pub(crate) preemption_enabled: bool,
+     pub(crate) execution_context: ExecutionContext,
+     pub(crate) cpu: &'static dyn Cpu,
++    pub(crate) swap_save_slot: usize,
+ }
+ 
+ impl ExecutionState {
+     #[inline(always)]
+     pub(crate) fn switch_to_task(&mut self, task_handle: TaskHandle) -> TaskHandle {
+-        let task_stack_pointer = services()
++        let resolved_stack_pointer = services()
+             .task_manager
+             .borrow()
+             .get_task_stack_pointer(task_handle);
++        let task_stack_pointer = match resolved_stack_pointer {
++            Some(stack_pointer) if stack_pointer != 0 => stack_pointer,
++            _ => {
++                debug_assert!(
++                    false,
++                    "switch_to_task: handle does not resolve to a live entry-prepared task"
++                );
++                return task_handle;
++            }
++        };
+         self.current_task = Some(task_handle);
+-        let scheduler_stack_pointer_pointer = services()
+-            .task_manager
+-            .borrow_mut()
+-            .get_task_stack_pointer_ref(self.scheduler);
+         self.execution_context = ExecutionContext::UserTask;
+         self.preemption_enabled = true;
+         let state_pointer = self as *mut ExecutionState as *mut usize;
+-        self.cpu.swap_context(state_pointer, scheduler_stack_pointer_pointer, task_stack_pointer);
++        self.cpu.swap_context(state_pointer, &mut self.swap_save_slot, task_stack_pointer);
++        if let Some(outgoing_handle) = self.current_task {
++            let saved_stack_pointer = self.swap_save_slot;
++            services()
++                .task_manager
++                .borrow_mut()
++                .set_task_stack_pointer(outgoing_handle, saved_stack_pointer);
++        }
+         self.preemption_enabled = false;
+         self.execution_context = ExecutionContext::Kernel;
+ 
+@@ -42,18 +56,20 @@ impl ExecutionState {
+     #[inline(always)]
+     pub(crate) fn switch_to_scheduler(&mut self) {
+         if let Some(task_handle) = self.current_task.take() {
+-            let task_stack_pointer_reference = services()
++            let saved_scheduler_stack_pointer = self.swap_save_slot;
++            services()
+                 .task_manager
+                 .borrow_mut()
+-                .get_task_stack_pointer_ref(task_handle);
++                .set_task_stack_pointer(self.scheduler, saved_scheduler_stack_pointer);
+             self.preemption_enabled = false;
+             self.execution_context = ExecutionContext::Kernel;
+             self.current_task = Some(task_handle);
+             let scheduler_stack_pointer = services().task_manager
+                 .borrow()
+-                .get_task_stack_pointer(self.scheduler);
++                .get_task_stack_pointer(self.scheduler)
++                .expect("scheduler task must always resolve to a live stack pointer");
+             let state_pointer = self as *mut ExecutionState as *mut usize;
+-            self.cpu.swap_context(state_pointer, task_stack_pointer_reference, scheduler_stack_pointer);
++            self.cpu.swap_context(state_pointer, &mut self.swap_save_slot, scheduler_stack_pointer);
+             self.execution_context = ExecutionContext::UserTask;
+             self.preemption_enabled = true;
+         }
+diff --git a/kernel/src/task_manager.rs b/kernel/src/task_manager.rs
+index a76558d..2742b85 100644
+--- a/kernel/src/task_manager.rs
++++ b/kernel/src/task_manager.rs
+@@ -1,7 +1,6 @@
+ use collections::generational_arena::GenerationalArena;
+ use crate::task::TaskState::Terminated;
+ use crate::task::{SharedTask, Task, TaskHandle, TaskState, YieldReason};
+-use core::ptr::null_mut;
+ use system::future::FutureHandle;
+ 
+ pub(crate) struct TaskManager {
+@@ -66,17 +65,25 @@ impl TaskManager {
+         }
+     }
+ 
+-    pub(crate) fn get_task_stack_pointer(&self, handle: TaskHandle) -> usize {
++    pub(crate) fn get_task_stack_pointer(&self, handle: TaskHandle) -> Option<usize> {
+         match self.tasks.borrow(handle) {
+-            Ok(task) => task.stack_pointer(),
+-            Err(_) => 0,
++            Ok(task) => Some(task.stack_pointer()),
++            Err(_) => None,
+         }
+     }
+ 
+-    pub(crate) fn get_task_stack_pointer_ref(&mut self, handle: TaskHandle) -> *mut usize {
++    pub(crate) fn set_task_stack_pointer(
++        &mut self,
++        handle: TaskHandle,
++        stack_pointer: usize,
++    ) -> Option<usize> {
+         match self.tasks.borrow_mut(handle) {
+-            Ok(task) => task.stack_pointer_mut(),
+-            Err(_) => null_mut(),
++            Ok(task) => {
++                let previous_stack_pointer = task.stack_pointer();
++                task.set_stack_pointer(stack_pointer);
++                Some(previous_stack_pointer)
++            }
++            Err(_) => None,
+         }
+     }
+ 
+@@ -122,4 +129,45 @@ mod tests {
+         manager.set_completion_future(handle, fh);
+         assert_eq!(manager.get_completion_future(handle), Some(fh));
+     }
++
++    #[test]
++    fn get_task_stack_pointer_is_some_and_nonzero_for_added_task() {
++        let mut manager = TaskManager::new();
++        let task = Task::new("test", 0, 0);
++        let handle = manager.add_task(task).unwrap();
++        match manager.get_task_stack_pointer(handle) {
++            Some(stack_pointer) => assert_ne!(stack_pointer, 0),
++            None => panic!("added task must resolve to a stack pointer"),
++        }
++    }
++
++    #[test]
++    fn get_task_stack_pointer_is_none_after_remove() {
++        let mut manager = TaskManager::new();
++        let task = Task::new("test", 0, 0);
++        let handle = manager.add_task(task).unwrap();
++        manager.remove_task(handle);
++        assert_eq!(manager.get_task_stack_pointer(handle), None);
++        assert_eq!(manager.get_state(handle), Terminated);
++    }
++
++    #[test]
++    fn set_task_stack_pointer_returns_previous_and_persists() {
++        let mut manager = TaskManager::new();
++        let task = Task::new("test", 0, 0);
++        let handle = manager.add_task(task).unwrap();
++        let previous = manager.get_task_stack_pointer(handle).unwrap();
++        let returned_previous = manager.set_task_stack_pointer(handle, 0x2000_1000);
++        assert_eq!(returned_previous, Some(previous));
++        assert_eq!(manager.get_task_stack_pointer(handle), Some(0x2000_1000));
++    }
++
++    #[test]
++    fn set_task_stack_pointer_is_none_for_dead_handle() {
++        let mut manager = TaskManager::new();
++        let task = Task::new("test", 0, 0);
++        let handle = manager.add_task(task).unwrap();
++        manager.remove_task(handle);
++        assert_eq!(manager.set_task_stack_pointer(handle, 0xdead_beef), None);
++    }
+ }
