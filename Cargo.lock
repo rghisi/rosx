@@ -96,10 +96,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
-name = "collections"
-version = "0.1.0"
-
-[[package]]
 name = "const_fn"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -183,7 +179,6 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 name = "kernel"
 version = "0.1.0"
 dependencies = [
- "collections",
  "lazy_static",
  "system",
 ]
@@ -468,9 +463,6 @@ dependencies = [
 [[package]]
 name = "system"
 version = "0.1.0"
-dependencies = [
- "collections",
-]
 
 [[package]]
 name = "tap"
@@ -545,7 +537,6 @@ checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
 name = "usrlib"
 version = "0.1.0"
 dependencies = [
- "collections",
  "system",
 ]
 

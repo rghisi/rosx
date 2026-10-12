@@ -36,10 +36,13 @@ impl RandomGeneratorServer {
     fn run(&mut self) {
         if let Ok(binding) = Syscall::ipc_bind("RANDOM") {
             loop {
-                let fh = Syscall::ipc_accept_message(binding);
-                if let Ok(envelope) = Syscall::wait_for_message(fh) {
-                    let value = self.next() as usize;
-                    let _ = ipc_send_value(envelope.conn(), value);
+                if let Some(fh) = Syscall::ipc_accept_message(binding) {
+                    if let Ok(received) = Syscall::wait_for_message(fh) {
+                        let value = self.next() as usize;
+                        if let Some(connection) = received.connection() {
+                            let _ = ipc_send_value(connection, value);
+                        }
+                    }
                 }
             }
         }

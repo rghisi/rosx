@@ -10,8 +10,10 @@ use crate::scheduler::SchedulerPorts;
 use crate::scheduler::TimerManager;
 use crate::task_manager::TaskManager;
 use crate::ports::driven::{ForNotifyingFutures, ForWakingTasks, ForCompletingExpiredTimers};
-use system::future::{self, Future, FutureHandle};
-use system::ipc::{IpcMessageFuture, IpcReceiveError, Message};
+use crate::future::Future;
+use crate::handle::FutureHandle;
+use crate::ipc::message_future::IpcMessageFuture;
+use system::ipc::Message;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 

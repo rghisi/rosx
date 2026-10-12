@@ -1,8 +1,8 @@
-use collections::generational_arena::GenerationalArena;
+use crate::collections::arena::GenerationalArena;
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, TaskState, YieldReason};
 use core::ptr::null_mut;
-use system::future::FutureHandle;
+use crate::handle::FutureHandle;
 
 pub(crate) struct TaskManager {
     tasks: GenerationalArena<SharedTask, 256>,
@@ -23,72 +23,72 @@ impl TaskManager {
 
     pub(crate) fn add_task(&mut self, task: SharedTask) -> Result<TaskHandle, Error> {
         match self.tasks.add(task) {
-            Ok(handle) => Ok(handle),
+            Ok(handle) => Ok(TaskHandle::from(handle)),
             Err(_) => Err(Error::TaskCannotBeAdded),
         }
     }
 
     pub(crate) fn remove_task(&mut self, handle: TaskHandle) {
-        let _ = self.tasks.remove(handle);
+        let _ = self.tasks.remove(handle.into());
     }
     
 
     pub(crate) fn borrow_task_mut(&mut self, handle: TaskHandle) -> Result<&mut Task, Error> {
-        match self.tasks.borrow_mut(handle) {
+        match self.tasks.borrow_mut(handle.into()) {
             Ok(task) => Ok(task),
             Err(_) => Err(Error::TaskNotFound),
         }
     }
 
     pub(crate) fn get_state(&self, handle: TaskHandle) -> TaskState {
-        match self.tasks.borrow(handle) {
+        match self.tasks.borrow(handle.into()) {
             Ok(task) => task.state(),
             Err(_) => Terminated,
         }
     }
 
     pub(crate) fn set_state(&mut self, handle: TaskHandle, state: TaskState) {
-        if let Ok(task) = self.tasks.borrow_mut(handle) {
+        if let Ok(task) = self.tasks.borrow_mut(handle.into()) {
             task.set_state(state)
         }
     }
 
     pub(crate) fn set_yield_reason(&mut self, handle: TaskHandle, reason: YieldReason) {
-        if let Ok(task) = self.tasks.borrow_mut(handle) {
+        if let Ok(task) = self.tasks.borrow_mut(handle.into()) {
             task.set_yield_reason(reason)
         }
     }
 
     pub(crate) fn get_yield_reason(&self, handle: TaskHandle) -> Option<YieldReason> {
-        match self.tasks.borrow(handle) {
+        match self.tasks.borrow(handle.into()) {
             Ok(task) => task.yield_reason(),
             Err(_) => None,
         }
     }
 
     pub(crate) fn get_task_stack_pointer(&self, handle: TaskHandle) -> usize {
-        match self.tasks.borrow(handle) {
+        match self.tasks.borrow(handle.into()) {
             Ok(task) => task.stack_pointer(),
             Err(_) => 0,
         }
     }
 
     pub(crate) fn get_task_stack_pointer_ref(&mut self, handle: TaskHandle) -> *mut usize {
-        match self.tasks.borrow_mut(handle) {
+        match self.tasks.borrow_mut(handle.into()) {
             Ok(task) => task.stack_pointer_mut(),
             Err(_) => null_mut(),
         }
     }
 
     pub(crate) fn get_completion_future(&self, handle: TaskHandle) -> Option<FutureHandle> {
-        match self.tasks.borrow(handle) {
+        match self.tasks.borrow(handle.into()) {
             Ok(task) => task.completion_future(),
             Err(_) => None,
         }
     }
 
     pub(crate) fn set_completion_future(&mut self, handle: TaskHandle, future_handle: FutureHandle) {
-        if let Ok(task) = self.tasks.borrow_mut(handle) {
+        if let Ok(task) = self.tasks.borrow_mut(handle.into()) {
             task.set_completion_future(future_handle);
         }
     }
@@ -98,11 +98,11 @@ impl TaskManager {
 mod tests {
     use super::*;
     use crate::task::Task;
-    use collections::generational_arena::GenerationalArena;
+    use crate::collections::arena::GenerationalArena;
 
     fn make_future_handle() -> FutureHandle {
         let mut arena: GenerationalArena<u8, 1> = GenerationalArena::new();
-        arena.add(0u8).unwrap()
+        FutureHandle::from(arena.add(0u8).unwrap())
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use system::future::FutureHandle;
+use crate::handle::FutureHandle;
 use crate::kernel_services::services;
 
 pub struct TimerManager {
@@ -36,10 +36,9 @@ impl TimerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use collections::generational_arena::Handle;
 
     fn handle(index: u16) -> FutureHandle {
-        Handle::new(index, 0)
+        FutureHandle::new(index, 0)
     }
 
     #[test]
@@ -95,7 +94,7 @@ mod tests {
         timer.add_sleep(0, 10, handle(1));
         timer.add_sleep(0, 10, handle(2));
         let mut expired = timer.pop_expired(10).unwrap();
-        expired.sort_by_key(|h| h.index);
+        expired.sort_by_key(|h| h.index());
         assert_eq!(expired, alloc::vec![handle(1), handle(2)]);
     }
 
@@ -105,7 +104,7 @@ mod tests {
         timer.add_sleep(0, 10, handle(1));
         timer.add_sleep(0, 20, handle(2));
         let mut expired = timer.pop_expired(20).unwrap();
-        expired.sort_by_key(|h| h.index);
+        expired.sort_by_key(|h| h.index());
         assert_eq!(expired, alloc::vec![handle(1), handle(2)]);
     }
 

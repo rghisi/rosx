@@ -1,7 +1,8 @@
-use crate::ipc::{IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError};
-use collections::generational_arena::Handle;
+pub const ERROR_BIT: usize = 1 << 31;
 
-pub use collections::generational_arena::ERROR_BIT;
+pub const fn is_token(raw: usize) -> bool {
+    raw < ERROR_BIT
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u32)]
@@ -37,82 +38,9 @@ impl ErrorCode {
     }
 }
 
-mod private {
-    pub trait Sealed {}
-}
-
-pub trait ErrorCodeOf: private::Sealed {
-    fn to_error_code(&self) -> ErrorCode;
-}
-
-impl private::Sealed for IpcConnectionError {}
-
-impl ErrorCodeOf for IpcConnectionError {
-    fn to_error_code(&self) -> ErrorCode {
-        match self {
-            IpcConnectionError::ServerNotFound => ErrorCode::IpcServerNotFound,
-            IpcConnectionError::ConnectionCannotBeEstablished => {
-                ErrorCode::IpcConnectionCannotBeEstablished
-            }
-        }
-    }
-}
-
-impl private::Sealed for IpcBindingError {}
-
-impl ErrorCodeOf for IpcBindingError {
-    fn to_error_code(&self) -> ErrorCode {
-        match self {
-            IpcBindingError::AlreadyBound => ErrorCode::IpcAlreadyBound,
-        }
-    }
-}
-
-impl private::Sealed for IpcSendError {}
-
-impl ErrorCodeOf for IpcSendError {
-    fn to_error_code(&self) -> ErrorCode {
-        match self {
-            IpcSendError::ConnectionNotFound => ErrorCode::IpcSendConnectionNotFound,
-            IpcSendError::ConnectionCongested => ErrorCode::IpcSendConnectionCongested,
-        }
-    }
-}
-
-impl private::Sealed for IpcReceiveError {}
-
-impl ErrorCodeOf for IpcReceiveError {
-    fn to_error_code(&self) -> ErrorCode {
-        match self {
-            IpcReceiveError::ConnectionNotFound => ErrorCode::IpcReceiveConnectionNotFound,
-            IpcReceiveError::NoMessagesAvailable => ErrorCode::IpcReceiveNoMessagesAvailable,
-            IpcReceiveError::MailboxNotAvailable => ErrorCode::IpcMailboxNotAvailable,
-        }
-    }
-}
-
-pub fn into_reg<E: ErrorCodeOf>(result: Result<Handle, E>) -> usize {
-    match result {
-        Ok(handle) => handle.pack(),
-        Err(error) => error.to_error_code().to_reg(),
-    }
-}
-
-pub fn from_reg(raw: usize) -> Result<Handle, ErrorCode> {
-    if raw & ERROR_BIT != 0 {
-        return Err(ErrorCode::from_code(raw));
-    }
-    if Handle::is_handle(raw) {
-        return Ok(Handle::unpack(raw));
-    }
-    Err(ErrorCode::Unknown)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const EDGE_HANDLES: [(u16, u16); 4] = [(0, 0), (65535, 0), (0, 32767), (65535, 32767)];
 
     const ALL_ERROR_CODES: [ErrorCode; 9] = [
         ErrorCode::IpcServerNotFound,
@@ -127,93 +55,12 @@ mod tests {
     ];
 
     #[test]
-    fn from_reg_of_into_reg_roundtrips_ok_handles() {
-        for (index, generation) in EDGE_HANDLES {
-            let handle = Handle::new(index, generation);
-            let raw = into_reg::<IpcConnectionError>(Ok(handle));
-            assert_eq!(from_reg(raw), Ok(handle));
-        }
-    }
-
-    #[test]
     fn every_error_code_variant_roundtrips_through_the_register_codec() {
         for code in ALL_ERROR_CODES {
             let raw = code.to_reg();
             assert_ne!(raw & ERROR_BIT, 0);
-            assert_eq!(from_reg(raw), Err(code));
+            assert!(!is_token(raw));
             assert_eq!(ErrorCode::from_code(raw), code);
-        }
-    }
-
-    #[test]
-    fn connection_error_variants_map_to_reserved_codes_and_decode_as_errors() {
-        for error in [
-            IpcConnectionError::ServerNotFound,
-            IpcConnectionError::ConnectionCannotBeEstablished,
-        ] {
-            let raw = into_reg(Err(error));
-            assert!(from_reg(raw).is_err());
-            assert_eq!(
-                error.to_error_code(),
-                match error {
-                    IpcConnectionError::ServerNotFound => ErrorCode::IpcServerNotFound,
-                    IpcConnectionError::ConnectionCannotBeEstablished => {
-                        ErrorCode::IpcConnectionCannotBeEstablished
-                    }
-                }
-            );
-            assert_eq!(ErrorCode::from_code(raw), error.to_error_code());
-        }
-    }
-
-    #[test]
-    fn binding_error_variants_map_to_reserved_codes_and_decode_as_errors() {
-        for error in [IpcBindingError::AlreadyBound] {
-            let raw = into_reg(Err(error));
-            assert!(from_reg(raw).is_err());
-            assert_eq!(error.to_error_code(), ErrorCode::IpcAlreadyBound);
-            assert_eq!(ErrorCode::from_code(raw), error.to_error_code());
-        }
-    }
-
-    #[test]
-    fn send_error_variants_map_to_reserved_codes_and_decode_as_errors() {
-        for error in [
-            IpcSendError::ConnectionNotFound,
-            IpcSendError::ConnectionCongested,
-        ] {
-            let raw = into_reg(Err(error.clone()));
-            assert!(from_reg(raw).is_err());
-            assert_eq!(
-                error.to_error_code(),
-                match error {
-                    IpcSendError::ConnectionNotFound => ErrorCode::IpcSendConnectionNotFound,
-                    IpcSendError::ConnectionCongested => ErrorCode::IpcSendConnectionCongested,
-                }
-            );
-            assert_eq!(ErrorCode::from_code(raw), error.to_error_code());
-        }
-    }
-
-    #[test]
-    fn receive_error_variants_map_to_reserved_codes_and_decode_as_errors() {
-        for error in [
-            IpcReceiveError::ConnectionNotFound,
-            IpcReceiveError::NoMessagesAvailable,
-            IpcReceiveError::MailboxNotAvailable,
-        ] {
-            let raw = into_reg(Err(error));
-            assert!(from_reg(raw).is_err());
-            assert_eq!(
-                error.to_error_code(),
-                match error {
-                    IpcReceiveError::ConnectionNotFound => ErrorCode::IpcReceiveConnectionNotFound,
-                    IpcReceiveError::NoMessagesAvailable =>
-                        ErrorCode::IpcReceiveNoMessagesAvailable,
-                    IpcReceiveError::MailboxNotAvailable => ErrorCode::IpcMailboxNotAvailable,
-                }
-            );
-            assert_eq!(ErrorCode::from_code(raw), error.to_error_code());
         }
     }
 
@@ -226,8 +73,8 @@ mod tests {
     }
 
     #[test]
-    fn from_reg_rejects_high_bit_garbage_and_exec_sentinel_as_unknown() {
-        assert_eq!(from_reg(1usize << 40), Err(ErrorCode::Unknown));
-        assert_eq!(from_reg(u64::MAX as usize), Err(ErrorCode::Unknown));
+    fn is_token_rejects_high_bit_garbage_and_exec_sentinel() {
+        assert!(!is_token(1usize << 40));
+        assert!(!is_token(u64::MAX as usize));
     }
 }

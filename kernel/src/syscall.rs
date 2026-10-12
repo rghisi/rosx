@@ -4,9 +4,10 @@ use crate::kernel::kernel;
 use crate::kernel_services::services;
 use crate::default_output::print;
 use system::syscall_numbers::SyscallNum;
-use system::error::into_reg;
-use system::future::FutureHandle;
-use system::ipc::{IpcConnectionHandle, IpcBindingHandle, Message, IpcMessageFuture};
+use system::error::ErrorCode;
+use system::ipc::Message;
+use crate::handle::{FutureHandle, IpcConnectionHandle, IpcBindingHandle};
+use crate::ipc::message_future::IpcMessageFuture;
 use crate::task::{new_elf_task, new_entrypoint_task};
 
 #[cfg(not(test))]
@@ -47,20 +48,20 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             crate::keyboard::pop_key().map_or(0, |c| c as usize)
         }
         Ok(SyscallNum::WaitFuture) => {
-            let handle = FutureHandle::unpack(arg1 as usize);
+            let Some(handle) = FutureHandle::from_packed(arg1 as usize) else { return 0 };
             let out_ptr = arg2;
             let future = kernel().wait_future(handle).unwrap();
             match future.as_any().downcast_ref::<IpcMessageFuture>() {
                 Some(ipc) => match ipc.result() {
                     Ok(message) if out_ptr != 0 => { unsafe { core::ptr::write(out_ptr as *mut Message, message) }; 0 }
                     Ok(_) => 0,
-                    Err(e) => e.to_reg(),
+                    Err(e) => ErrorCode::from(e).to_reg(),
                 },
                 None => 0,
             }
         }
         Ok(SyscallNum::IsFutureCompleted) => {
-            let handle = FutureHandle::unpack(arg1 as usize);
+            let Some(handle) = FutureHandle::from_packed(arg1 as usize) else { return 0 };
             if kernel().is_future_completed(handle) { 1 } else { 0 }
         }
         Ok(SyscallNum::Alloc) => {
@@ -85,26 +86,39 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::IpcConnect) => {
             let service: &str = unsafe { *Box::from_raw(arg1 as *mut &str) };
-            into_reg(services().ipc_manager.borrow_mut().connect(service, kernel().execution_state.current_task()))
+            match services().ipc_manager.borrow_mut().connect(service, kernel().execution_state.current_task()) {
+                Ok(handle) => handle.pack(),
+                Err(e) => ErrorCode::from(e).to_reg(),
+            }
         }
         Ok(SyscallNum::IpcDisconnect) => {
-            let connection_handle = IpcConnectionHandle::unpack(arg1);
-            let result = services().ipc_manager.borrow_mut().disconnect(connection_handle);
+            if let Some(connection_handle) = IpcConnectionHandle::from_packed(arg1) {
+                services().ipc_manager.borrow_mut().disconnect(connection_handle);
+            }
             0usize
         }
         Ok(SyscallNum::IpcBind) => {
             let service: &str = unsafe { *Box::from_raw(arg1 as *mut &str) };
-            into_reg(services().ipc_manager.borrow_mut().bind_service(service))
+            match services().ipc_manager.borrow_mut().bind_service(service) {
+                Ok(handle) => handle.pack(),
+                Err(e) => ErrorCode::from(e).to_reg(),
+            }
         }
         Ok(SyscallNum::IpcSendMessage) => {
             let envelope = unsafe { &*(arg1 as *const Message) };
             match services().ipc_manager.borrow_mut().send_message(kernel().execution_state.current_task(), envelope) {
                 Ok(()) => 0,
-                Err(e) => e.to_reg(),
+                Err(e) => ErrorCode::from(e).to_reg(),
             }
         }
-        Ok(SyscallNum::IpcReceiveMessage) => services().ipc_manager.borrow_mut().receive_message_async(IpcConnectionHandle::unpack(arg1)).pack(),
-        Ok(SyscallNum::IpcAcceptMessage) => services().ipc_manager.borrow_mut().accept_message_async(IpcBindingHandle::unpack(arg1)).pack(),
+        Ok(SyscallNum::IpcReceiveMessage) => match IpcConnectionHandle::from_packed(arg1) {
+            Some(connection_handle) => services().ipc_manager.borrow_mut().receive_message_async(connection_handle).pack(),
+            None => ErrorCode::Unknown.to_reg(),
+        },
+        Ok(SyscallNum::IpcAcceptMessage) => match IpcBindingHandle::from_packed(arg1) {
+            Some(binding_handle) => services().ipc_manager.borrow_mut().accept_message_async(binding_handle).pack(),
+            None => ErrorCode::Unknown.to_reg(),
+        },
         Err(_) => 0,
     }
 }

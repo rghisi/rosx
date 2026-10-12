@@ -1,6 +1,7 @@
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
+use crate::handle::FutureHandle;
 use crate::messages::HardwareInterrupt;
 use crate::scheduler::algorithm::SchedulingAlgorithm;
 use crate::task::{TaskHandle, TaskState};
@@ -14,7 +15,7 @@ use crate::ports::driven::SwitchOutcome;
 
 struct NoopTimerHandler;
 impl ForCompletingExpiredTimers for NoopTimerHandler {
-    fn complete_timer_future(&self, _handle: system::future::FutureHandle) {}
+    fn complete_timer_future(&self, _handle: FutureHandle) {}
 }
 
 static NOOP_TIMER_HANDLER: NoopTimerHandler = NoopTimerHandler;
@@ -27,7 +28,7 @@ static NOOP_TIME_SOURCE: NoopTimeSource = NoopTimeSource;
 
 struct NoopTimerExpiry;
 impl ForExpiringTimers for NoopTimerExpiry {
-    fn pop_expired(&self, _now: u64) -> Option<Vec<system::future::FutureHandle>> { None }
+    fn pop_expired(&self, _now: u64) -> Option<Vec<FutureHandle>> { None }
 }
 static NOOP_TIMER_EXPIRY: NoopTimerExpiry = NoopTimerExpiry;
 
@@ -216,12 +217,10 @@ impl Scheduler {
 mod tests {
     use super::*;
     use crate::task::YieldReason;
-    use collections::generational_arena::Handle;
     use crate::task::TaskState as KS;
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
-    use system::future::FutureHandle;
 
     #[derive(Clone)]
     struct FakeTaskManager {
@@ -246,7 +245,7 @@ mod tests {
         }
 
         fn next_handle(&self) -> TaskHandle {
-            Handle::new(self.counter.fetch_add(1, Ordering::SeqCst) as u16, 0)
+            TaskHandle::new(self.counter.fetch_add(1, Ordering::SeqCst) as u16, 0)
         }
 
         fn seed(&self, handle: TaskHandle, state: TaskState) {
@@ -500,7 +499,7 @@ mod tests {
     #[test]
     fn fake_algorithm_returns_value_once_then_none() {
         let mut fake = FakeAlgorithm::new();
-        let h = Handle::new(1, 0);
+        let h = TaskHandle::new(1, 0);
         fake.next = Some(h);
 
         assert_eq!(fake.pick_next(), Some(h));
@@ -510,7 +509,7 @@ mod tests {
     #[test]
     fn fake_algorithm_tracks_yield_records() {
         let mut fake = FakeAlgorithm::new();
-        let h = Handle::new(5, 0);
+        let h = TaskHandle::new(5, 0);
 
         fake.record_yield(h, YieldReason::Voluntary);
         fake.record_yield(h, YieldReason::Preempted);
@@ -524,9 +523,9 @@ mod tests {
     #[test]
     fn fake_algorithm_tracks_on_task_start_handles() {
         let mut fake = FakeAlgorithm::new();
-        let h0 = Handle::new(10, 0);
-        let h1 = Handle::new(20, 0);
-        let h2 = Handle::new(30, 0);
+        let h0 = TaskHandle::new(10, 0);
+        let h1 = TaskHandle::new(20, 0);
+        let h2 = TaskHandle::new(30, 0);
 
         fake.on_task_start(h0);
         fake.on_task_start(h1);
@@ -538,8 +537,8 @@ mod tests {
     #[test]
     fn fake_algorithm_tracks_requeued_tasks() {
         let mut fake = FakeAlgorithm::new();
-        let h1 = Handle::new(10, 0);
-        let h2 = Handle::new(20, 0);
+        let h1 = TaskHandle::new(10, 0);
+        let h2 = TaskHandle::new(20, 0);
 
         fake.requeue_after_run(h1);
         fake.requeue_after_run(h2);
@@ -550,8 +549,8 @@ mod tests {
     #[test]
     fn fake_algorithm_tracks_pushed_ready_tasks() {
         let mut fake = FakeAlgorithm::new();
-        let h1 = Handle::new(30, 0);
-        let h2 = Handle::new(40, 0);
+        let h1 = TaskHandle::new(30, 0);
+        let h2 = TaskHandle::new(40, 0);
 
         fake.push_ready(h1);
         fake.push_ready(h2);
@@ -872,7 +871,7 @@ mod tests {
         let completed = Arc::new(Mutex::new(Vec::new()));
         let calls = Arc::new(Mutex::new(Vec::new()));
 
-        let fh = Handle::new(1, 0);
+        let fh = FutureHandle::new(1, 0);
         let irq = Box::leak(Box::new(StepInterruptHandler { handled: handled.clone(), log: log.clone() }));
         let time = Box::leak(Box::new(FakeTimeSource { now: 100 }));
         let expiry = Box::leak(Box::new(StepExpiry { handles: Some(vec![fh]), seen_now: seen_now.clone(), log: log.clone() }));
@@ -907,8 +906,8 @@ mod tests {
     #[test]
     fn step_completes_expired_timer_futures() {
         let fm = FakeTaskManager::new();
-        let fh1 = Handle::new(1, 0);
-        let fh2 = Handle::new(2, 0);
+        let fh1 = FutureHandle::new(1, 0);
+        let fh2 = FutureHandle::new(2, 0);
 
         let log = new_call_log();
         let seen_now = Arc::new(Mutex::new(Vec::new()));

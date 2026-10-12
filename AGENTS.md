@@ -29,9 +29,9 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 ├── kernel/                  # Platform-agnostic core (see submodules below)
 │    scheduler/ (SchedulingAlgorithm: MLFQ + FIFO)
 │    memory/   (global allocator; FreeList + BitmapChunk)
+│    collections/ (arena)  handle/ (4 newtypes: task/future/ipc-connection/ipc-binding)
 │    elf/ ipc/ (mailbox) future/ syscall/ keyboard/ task*  cpu (HAL trait)  kconfig
-├── system/      # Abstractions: Future, syscall numbers, IPC types
-├── collections/ # generational_arena
+├── system/      # ABI treaty: syscall numbers, wire layout, error numbers
 ├── usrlib/      # User-space libc: syscall, out, arch/{x86_64,x86_32}
 ├── arch/
 │    x86_64/        # entry, cpu, interrupts, framebuffer, terminal_fonts, *.S (global_asm)
@@ -71,7 +71,6 @@ bash arch/x86_32/build-image.sh   # GRUB bootable image (needs grub-mkrescue, xo
 ```bash
 cargo xtask test               # all workspace unit tests
 cargo test                     # default-members only
-cargo test -p collections      # generational_arena
 cargo test -p kernel -- --test-threads=1   # scheduler, memory, elf, ipc, future
 ```
 
@@ -79,7 +78,7 @@ cargo test -p kernel -- --test-threads=1   # scheduler, memory, elf, ipc, future
 ```bash
 cargo xtask build [--debug]    # Build ELF apps + x86_64 kernel + disk image
 cargo xtask apps               # Build ELF apps only
-cargo xtask test [--integration] # Run unit tests; --integration is reserved
+cargo xtask test [--skip-integration] # Run unit tests; --skip-integration excludes the QEMU tests-integration suite
 ```
 
 ## Development Guidelines
@@ -133,6 +132,15 @@ cargo xtask test [--integration] # Run unit tests; --integration is reserved
 - **Scheduling is pluggable (implemented):** the strategy is a `SchedulingAlgorithm` (MLFQ + FIFO) chosen at boot via `scheduler_factory` in `KConfig` (`kernel/src/kconfig.rs`).
 - **Memory is NOT pluggable (yet):** a single static `global_allocator` (`MemoryManager` → `FreeListAllocator`) is active; a `BitmapChunkAllocator` exists but is not wired in. Making the allocator selectable is a stated **low-priority goal**.
 - Prefer trait-based design so subsystems can be swapped at boot time, not compile time.
+
+**Architecture Principles (who owns what):**
+- **Domain knowledge is owned by the allocating subsystem.** A kernel resource's identity, layout, and validity rules live with the subsystem that allocates and validates it; OS policy must not live in infrastructure crates.
+- **The kernel is the single authority on invariants.** Validation happens once, kernel-side; user space carries opaque tokens and neither re-checks nor duplicates kernel invariants.
+- **The shared treaty holds the contract, not the mechanism.** `system` contains numbers and layouts only: a type that describes *how the kernel works* is in the wrong crate; a type that describes *what the boundary contract says* belongs in `system`.
+- **Translation lives at the boundaries.** The kernel edge encodes domain→wire and the user edge decodes wire→user-view; the shared crate cannot own either translation — the dependency arrows forbid it.
+- **User-visible APIs expose no kernel internals.** Debug aids are kernel-side and never part of the ABI.
+
+These principles are the regression guard: the very inversion this rework removed survived many runs because no document stated who owns handle semantics, while the HAL rule — written down — has been obeyed throughout.
 
 **Kernel Subsystems (current invariants):**
 - `future/` + `ipc/` — **notification-driven** futures (time, task-completion, keyboard) and a mailbox IPC manager (bind/connect/send/receive); no polling on the preemption cycle.
@@ -203,7 +211,7 @@ This is the MOST CRITICAL guideline for working on RosX:
 
 - **CRITICAL: Minimize `unsafe` usage** - Use Rust's safe abstractions whenever possible; `unsafe` only when truly unavoidable
 - **CRITICAL: Hardware abstraction required** - All platform-specific code must go through HAL traits (like `Cpu`), never directly in kernel code
-- **CRITICAL: kernel/ is `no_std`** - std is forbidden; dependencies are limited to the workspace crates `collections` + `system` and `lazy_static`. No other third-party crates.
+- **CRITICAL: kernel/ is `no_std`** - std is forbidden; dependencies are limited to the workspace crate `system` plus `lazy_static`. No other third-party crates.
 - **CRITICAL: No comments, ever** - Write self-explanatory code with clear names instead
 - **CRITICAL: Write unit tests** - All kernel modules should have comprehensive unit tests (see `kernel/src/scheduler/mlfq_strategy.rs` as a reference)
 - Multi-platform support is a goal - keep kernel code portable and platform-agnostic

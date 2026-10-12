@@ -1,13 +1,12 @@
-use collections::generational_arena::Handle;
 use crate::cpu::Cpu;
 use crate::kernel::{kernel};
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
 use crate::elf::load_elf;
-use system::future::FutureHandle;
+use crate::handle::FutureHandle;
 
-pub(crate) type TaskHandle = Handle;
+pub use crate::handle::TaskHandle;
 pub type SharedTask = Box<Task>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -194,11 +193,11 @@ pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use collections::generational_arena::GenerationalArena;
+    use crate::collections::arena::GenerationalArena;
 
     fn make_future_handle() -> FutureHandle {
         let mut arena: GenerationalArena<u8, 1> = GenerationalArena::new();
-        arena.add(0u8).unwrap()
+        FutureHandle::from(arena.add(0u8).unwrap())
     }
 
     #[test]
