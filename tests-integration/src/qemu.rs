@@ -20,7 +20,7 @@ const DROP_REAP_CAP: Duration = Duration::from_secs(5);
 const DROP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub struct QemuSession {
-    child: Child,
+    child: Mutex<Child>,
     output: SharedOutput,
     stderr_tail: Arc<Mutex<String>>,
     monitor: Option<Monitor>,
@@ -91,7 +91,7 @@ impl QemuSession {
         }
 
         QemuSession {
-            child,
+            child: Mutex::new(child),
             output,
             stderr_tail,
             monitor: None,
@@ -104,6 +104,11 @@ impl QemuSession {
             .as_ref()
             .expect("temp dir is only released during drop")
             .path()
+    }
+
+    pub fn is_running(&self) -> bool {
+        let mut child = self.child.lock().unwrap_or_else(|err| err.into_inner());
+        matches!(child.try_wait(), Ok(None))
     }
 
     pub fn expect_output(&self, substr: &str, timeout: Duration) {
@@ -216,19 +221,25 @@ impl QemuSession {
     fn reap_child(&mut self) {
         let deadline = Instant::now() + DROP_REAP_CAP;
         loop {
-            match self.child.try_wait() {
+            let status = {
+                let mut child = self.child.lock().unwrap_or_else(|err| err.into_inner());
+                child.try_wait()
+            };
+            match status {
                 Ok(Some(_)) => return,
                 Ok(None) => {
                     if Instant::now() >= deadline {
-                        let _ = self.child.kill();
-                        let _ = self.child.wait();
+                        let mut child = self.child.lock().unwrap_or_else(|err| err.into_inner());
+                        let _ = child.kill();
+                        let _ = child.wait();
                         return;
                     }
                     thread::sleep(DROP_POLL_INTERVAL);
                 }
                 Err(_) => {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
+                    let mut child = self.child.lock().unwrap_or_else(|err| err.into_inner());
+                    let _ = child.kill();
+                    let _ = child.wait();
                     return;
                 }
             }
