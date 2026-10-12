@@ -1,5 +1,6 @@
 use core::alloc::Layout;
 use core::ptr;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::memory::MemoryBlocks;
 
@@ -33,10 +34,24 @@ pub(crate) enum AllocError {
 pub struct FreeListAllocator {
     head: *mut FreeBlock,
     alloc_head: *mut AllocHeader,
+    regions: MemoryBlocks,
 }
 
 fn align_up(addr: usize, align: usize) -> usize {
     (addr + align - 1) & !(align - 1)
+}
+
+static BAD_FREE_COUNT: AtomicUsize = AtomicUsize::new(0);
+const BAD_FREE_PRINT_LIMIT: usize = 10;
+
+fn bad_free(reason: &'static str, p: usize, size: usize) {
+    let count = BAD_FREE_COUNT.fetch_add(1, Ordering::Relaxed);
+    #[cfg(not(test))]
+    if count < BAD_FREE_PRINT_LIMIT {
+        crate::kprintln!("BAD-FREE {} p=0x{:x} sz=0x{:x}", reason, p, size);
+    }
+    #[cfg(test)]
+    let _ = (reason, count);
 }
 
 impl FreeListAllocator {
@@ -56,7 +71,11 @@ impl FreeListAllocator {
                 head = fb;
             }
         }
-        FreeListAllocator { head, alloc_head: ptr::null_mut() }
+        FreeListAllocator {
+            head,
+            alloc_head: ptr::null_mut(),
+            regions: *memory_blocks,
+        }
     }
 
     pub unsafe fn allocate(&mut self, layout: Layout, owner: BlockOwner) -> Result<*mut u8, AllocError> {
@@ -102,23 +121,51 @@ impl FreeListAllocator {
     }
 
     pub unsafe fn deallocate(&mut self, ptr: *mut u8) {
-        let start = ptr as usize - ALLOC_HDR;
+        let Some(start) = (ptr as usize).checked_sub(ALLOC_HDR) else {
+            bad_free("invalid-pointer", ptr as usize, 0);
+            return;
+        };
+        if start % BLOCK_ALIGN != 0 {
+            bad_free("unaligned-pointer", ptr as usize, 0);
+            return;
+        }
+        if !self.region_contains(start, ALLOC_HDR) {
+            bad_free("outside-regions", ptr as usize, 0);
+            return;
+        }
         let header = start as *mut AllocHeader;
         let block_size = (*header).size;
+        if block_size < ALLOC_HDR || !self.region_contains(start, block_size) {
+            bad_free("insane-header-size", ptr as usize, block_size);
+            return;
+        }
 
-        let mut prev: *mut AllocHeader = ptr::null_mut();
+        let mut prev_next: *mut *mut AllocHeader = &mut self.alloc_head;
         let mut current = self.alloc_head;
         while !current.is_null() && current != header {
-            prev = current;
+            prev_next = &mut (*current).next;
             current = (*current).next;
         }
-        if prev.is_null() {
-            self.alloc_head = (*header).next;
-        } else {
-            (*prev).next = (*header).next;
+        if current.is_null() {
+            bad_free("not-in-alloc-list", ptr as usize, block_size);
+            return;
         }
+        *prev_next = (*header).next;
 
         self.insert_free_block(start, block_size);
+    }
+
+    fn region_contains(&self, start: usize, size: usize) -> bool {
+        let Some(end) = start.checked_add(size) else {
+            return false;
+        };
+        self.regions.blocks[..self.regions.count]
+            .iter()
+            .any(|region| {
+                region.size > 0
+                    && start >= region.start
+                    && end <= region.start.saturating_add(region.size)
+            })
     }
 
     pub unsafe fn deallocate_by_owner(&mut self, task_id: usize) {
@@ -139,7 +186,26 @@ impl FreeListAllocator {
         }
     }
 
-    unsafe fn insert_free_block(&mut self, start: usize, block_size: usize) {
+    unsafe fn insert_free_block(&mut self, start: usize, block_size: usize) -> bool {
+        if block_size < BLOCK_HDR {
+            bad_free("size-below-header", start, block_size);
+            return false;
+        }
+        let Some(end) = start.checked_add(block_size) else {
+            bad_free("size-overflow", start, block_size);
+            return false;
+        };
+        let mut probe = self.head;
+        while !probe.is_null() {
+            let probe_start = probe as usize;
+            let probe_size = unsafe { (*probe).size };
+            if start < probe_start.saturating_add(probe_size) && probe_start < end {
+                bad_free("overlaps-free-entry", start, block_size);
+                return false;
+            }
+            probe = unsafe { (*probe).next };
+        }
+
         let block = start as *mut FreeBlock;
         (*block).size = block_size;
 
@@ -173,6 +239,7 @@ impl FreeListAllocator {
                 (*prev).next = (*block).next;
             }
         }
+        true
     }
 }
 
@@ -372,5 +439,199 @@ mod tests {
             unsafe { alloc.allocate(layout, BlockOwner::Kernel) },
             Err(AllocError::OutOfMemory)
         ));
+    }
+
+    fn free_entries(alloc: &FreeListAllocator) -> Vec<(usize, usize)> {
+        let mut entries = Vec::new();
+        let mut current = alloc.head;
+        while !current.is_null() {
+            unsafe {
+                entries.push((current as usize, (*current).size));
+                current = (*current).next;
+            }
+        }
+        entries
+    }
+
+    fn alloc_entries(alloc: &FreeListAllocator) -> Vec<usize> {
+        let mut entries = Vec::new();
+        let mut current = alloc.alloc_head;
+        while !current.is_null() {
+            unsafe {
+                entries.push(current as usize);
+                current = (*current).next;
+            }
+        }
+        entries
+    }
+
+    fn emptied_allocator(region_size: usize) -> (Vec<u8>, FreeListAllocator, usize) {
+        let mut memory = vec![0u8; region_size];
+        let base = memory.as_mut_ptr() as usize;
+        let aligned = align_up(base, BLOCK_ALIGN);
+        let mut alloc = make_allocator(&[(base, region_size)]);
+        let whole = Layout::from_size_align(region_size - (aligned - base) - ALLOC_HDR, 8).unwrap();
+        let _big = unsafe { alloc.allocate(whole, BlockOwner::Kernel) }.unwrap();
+        assert!(free_entries(&alloc).is_empty());
+        (memory, alloc, aligned)
+    }
+
+    #[test]
+    fn deallocate_rejects_null_pointer() {
+        let mut memory = vec![0u8; 4096];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = make_allocator(&[(base, 4096)]);
+        let bad_before = BAD_FREE_COUNT.load(Ordering::Relaxed);
+        unsafe { alloc.deallocate(ptr::null_mut()) };
+        assert_eq!(BAD_FREE_COUNT.load(Ordering::Relaxed), bad_before + 1);
+        assert_eq!(alloc_entries(&alloc), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn deallocate_rejects_unaligned_pointer_inside_region() {
+        let mut memory = vec![0u8; 4096];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = make_allocator(&[(base, 4096)]);
+        let bogus = (align_up(base, BLOCK_ALIGN) + ALLOC_HDR + 1) as *mut u8;
+        let free_before = free_entries(&alloc);
+        let bad_before = BAD_FREE_COUNT.load(Ordering::Relaxed);
+        unsafe { alloc.deallocate(bogus) };
+        assert_eq!(BAD_FREE_COUNT.load(Ordering::Relaxed), bad_before + 1);
+        assert_eq!(free_entries(&alloc), free_before);
+    }
+
+    #[test]
+    fn deallocate_rejects_pointer_outside_regions() {
+        let mut memory = vec![0u8; 4096];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = make_allocator(&[(base, 4096)]);
+        #[repr(align(64))]
+        struct Foreign([usize; 8]);
+        let foreign = Foreign([0; 8]);
+        let bogus = core::ptr::addr_of!(foreign).cast::<u8>() as usize;
+        assert!(!alloc.region_contains(bogus, ALLOC_HDR));
+        let free_before = free_entries(&alloc);
+        let bad_before = BAD_FREE_COUNT.load(Ordering::Relaxed);
+        unsafe { alloc.deallocate((bogus + ALLOC_HDR) as *mut u8) };
+        assert_eq!(BAD_FREE_COUNT.load(Ordering::Relaxed), bad_before + 1);
+        assert_eq!(free_entries(&alloc), free_before);
+    }
+
+    #[test]
+    fn deallocate_rejects_double_free_and_keeps_lists_intact() {
+        let mut memory = vec![0u8; 4096];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = make_allocator(&[(base, 4096)]);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let first = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        let _second = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        unsafe { alloc.deallocate(first) };
+        let free_before = free_entries(&alloc);
+        let alloc_before = alloc_entries(&alloc);
+        let bad_before = BAD_FREE_COUNT.load(Ordering::Relaxed);
+        unsafe { alloc.deallocate(first) };
+        assert_eq!(BAD_FREE_COUNT.load(Ordering::Relaxed), bad_before + 1);
+        assert_eq!(free_entries(&alloc), free_before);
+        assert_eq!(alloc_entries(&alloc), alloc_before);
+        let first_start = first as usize - ALLOC_HDR;
+        let duplicates = free_entries(&alloc)
+            .iter()
+            .filter(|(start, _)| *start == first_start)
+            .count();
+        assert_eq!(duplicates, 1);
+        let recycled = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        assert_eq!(recycled, first);
+        unsafe { alloc.deallocate(recycled) };
+        let free_after_recycle = free_entries(&alloc);
+        let alloc_after_recycle = alloc_entries(&alloc);
+        let bad_after_recycle = BAD_FREE_COUNT.load(Ordering::Relaxed);
+        unsafe { alloc.deallocate(recycled) };
+        assert_eq!(
+            BAD_FREE_COUNT.load(Ordering::Relaxed),
+            bad_after_recycle + 1
+        );
+        assert_eq!(free_entries(&alloc), free_after_recycle);
+        assert_eq!(alloc_entries(&alloc), alloc_after_recycle);
+        assert!(unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_ok());
+    }
+
+    #[test]
+    fn insert_free_block_rejects_size_below_header() {
+        let (_memory, mut alloc, aligned) = emptied_allocator(4096);
+        let bad_before = BAD_FREE_COUNT.load(Ordering::Relaxed);
+        assert!(!unsafe { alloc.insert_free_block(aligned + 640, BLOCK_HDR - BLOCK_ALIGN) });
+        assert_eq!(BAD_FREE_COUNT.load(Ordering::Relaxed), bad_before + 1);
+        assert!(free_entries(&alloc).is_empty());
+    }
+
+    #[test]
+    fn insert_free_block_rejects_duplicate_entry() {
+        let (_memory, mut alloc, aligned) = emptied_allocator(4096);
+        assert!(unsafe { alloc.insert_free_block(aligned + 256, 128) });
+        let snapshot = free_entries(&alloc);
+        let bad_before = BAD_FREE_COUNT.load(Ordering::Relaxed);
+        assert!(!unsafe { alloc.insert_free_block(aligned + 256, 128) });
+        assert_eq!(BAD_FREE_COUNT.load(Ordering::Relaxed), bad_before + 1);
+        assert_eq!(free_entries(&alloc), snapshot);
+    }
+
+    #[test]
+    fn insert_free_block_rejects_overlapping_entry() {
+        let (_memory, mut alloc, aligned) = emptied_allocator(4096);
+        assert!(unsafe { alloc.insert_free_block(aligned + 256, 128) });
+        let snapshot = free_entries(&alloc);
+        let bad_before = BAD_FREE_COUNT.load(Ordering::Relaxed);
+        assert!(!unsafe { alloc.insert_free_block(aligned + 320, 128) });
+        assert_eq!(BAD_FREE_COUNT.load(Ordering::Relaxed), bad_before + 1);
+        assert_eq!(free_entries(&alloc), snapshot);
+    }
+
+    #[test]
+    fn insert_free_block_accepts_exact_header_size() {
+        let (_memory, mut alloc, aligned) = emptied_allocator(4096);
+        assert!(unsafe { alloc.insert_free_block(aligned + 512, BLOCK_HDR) });
+        assert_eq!(free_entries(&alloc), vec![(aligned + 512, BLOCK_HDR)]);
+    }
+
+    #[test]
+    fn deallocate_coalesces_adjacent_blocks_into_single_entry() {
+        let mut memory = vec![0u8; 4096];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = make_allocator(&[(base, 4096)]);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let first = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        let second = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        let bad_before = BAD_FREE_COUNT.load(Ordering::Relaxed);
+        unsafe { alloc.deallocate(first) };
+        unsafe { alloc.deallocate(second) };
+        assert_eq!(BAD_FREE_COUNT.load(Ordering::Relaxed), bad_before);
+        let aligned = align_up(base, BLOCK_ALIGN);
+        let entries = free_entries(&alloc);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, aligned);
+        assert_eq!(entries[0].1, 4096 - (aligned - base));
+        assert!(
+            unsafe { alloc.allocate(Layout::from_size_align(80, 8).unwrap(), BlockOwner::Kernel) }
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn alloc_dealloc_roundtrip_on_exact_fit_region() {
+        let region_size = needed_for(8);
+        let mut memory = vec![0u8; region_size];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = make_allocator(&[(base, region_size)]);
+        let aligned = align_up(base, BLOCK_ALIGN);
+        let layout = Layout::from_size_align(8, 8).unwrap();
+        let ptr = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        assert_eq!(ptr as usize, aligned + ALLOC_HDR);
+        assert!(free_entries(&alloc).is_empty());
+        let bad_before = BAD_FREE_COUNT.load(Ordering::Relaxed);
+        unsafe { alloc.deallocate(ptr) };
+        assert_eq!(BAD_FREE_COUNT.load(Ordering::Relaxed), bad_before);
+        let entries = free_entries(&alloc);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].1, region_size - (aligned - base));
     }
 }
