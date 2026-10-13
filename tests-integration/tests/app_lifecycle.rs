@@ -13,7 +13,6 @@ const MIN_TETRIS_REPAINTS: usize = 3;
 const DIAGNOSTIC_TAIL_CHARS: usize = 2000;
 
 #[test]
-#[ignore = "red: deterministic triple fault after launching tetris with no further input; see 2026-10-11 investigation"]
 fn tetris_survives_idle() {
     let booted_at = Instant::now();
     let mut session = QemuSession::spawn();
@@ -55,7 +54,6 @@ fn tetris_survives_idle() {
 }
 
 #[test]
-#[ignore = "red: deterministic triple fault after launching snake with no further input; see 2026-10-11 investigation"]
 fn snake_survives_idle() {
     let booted_at = Instant::now();
     let mut session = QemuSession::spawn();
