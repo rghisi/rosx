@@ -58,9 +58,41 @@ jobs:
           path: target/rosx/release/rosx-x86_64.img
           if-no-files-found: error
 
+  integration:
+    name: Integration Tests (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [dev, release]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-int-${{ matrix.profile }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-int-${{ matrix.profile }}-
+
+      - name: Test (${{ matrix.profile }} kernel)
+        run: cargo test -p tests-integration -- --test-threads=1
+        env:
+          ROSX_QEMU_PROFILE: ${{ matrix.profile }}
+
   release:
     name: Create Release
-    needs: [test, build]
+    needs: [test, build, integration]
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
     permissions:
