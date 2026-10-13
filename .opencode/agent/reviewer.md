@@ -21,7 +21,7 @@ Review the provided diff and changed files against the plan, and audit the Verif
 - Edge cases: empty or null inputs, bounds, concurrency, error propagation.
 - Style and conventions consistent with the surrounding code.
 - Tests: do the acceptance criteria actually verify the change?
-- Verification evidence: treat the Coder's and Verifier's exit codes and snippets as claims to confirm or refute against the diff; a criterion with no execution evidence is a required fix, and a criterion you cannot assess is flagged unverified.
+- Verification evidence: treat the Coder's and Verifier's exit codes and snippets as claims to confirm or refute against the diff; a criterion with no execution evidence is a required fix, and a criterion you cannot assess is flagged unverified. Before ruling evidence missing, consult the delegation's per-gate evidence map and read the named verifier/coder artifacts to their end; a required fix for missing evidence must name the map entry or artifact location checked.
 
 ## Output
 
