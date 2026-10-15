@@ -9,6 +9,8 @@ members = [
     "apps/dummy",
     "apps/hello_elf",
     "apps/random_gen_server",
+    "apps/bulk_echo",
+    "apps/bulk_client",
     "apps/snake",
     "apps/tetris",
     "apps/conway",
