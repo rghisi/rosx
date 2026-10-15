@@ -1,6 +1,6 @@
 use crate::arch;
-use crate::error::{IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError};
-use crate::handle::{UserBindingHandle, UserConnectionHandle, UserFutureHandle};
+use crate::error::{DataError, IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError};
+use crate::handle::{UserBindingHandle, UserConnectionHandle, UserFutureHandle, UserDataHandle};
 use crate::ipc::ReceivedMessage;
 use alloc::boxed::Box;
 use core::fmt;
@@ -156,5 +156,35 @@ impl Syscall {
             0,
         );
         UserFutureHandle::from_token(raw)
+    }
+
+    pub fn ipc_data_write(
+        connection: UserConnectionHandle,
+        payload: &[u8],
+    ) -> Result<UserDataHandle, DataError> {
+        let raw = arch::raw_syscall(
+            SyscallNum::IpcDataWrite as usize,
+            connection.packed() as usize,
+            payload.as_ptr() as usize,
+            payload.len(),
+        );
+        match UserDataHandle::from_token(raw) {
+            Some(handle) => Ok(handle),
+            None => Err(DataError::from(ErrorCode::from_code(raw))),
+        }
+    }
+
+    pub fn ipc_data_read(token: usize, dst: &mut [u8]) -> Result<usize, DataError> {
+        let raw = arch::raw_syscall(
+            SyscallNum::IpcDataRead as usize,
+            token,
+            dst.as_mut_ptr() as usize,
+            dst.len(),
+        );
+        if is_token(raw) {
+            Ok(raw)
+        } else {
+            Err(DataError::from(ErrorCode::from_code(raw)))
+        }
     }
 }

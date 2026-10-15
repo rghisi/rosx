@@ -97,6 +97,36 @@ impl Display for IpcReceiveError {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum DataError {
+    TooLarge,
+    BudgetExceeded,
+    NotFound,
+    NotReadable,
+}
+
+impl From<ErrorCode> for DataError {
+    fn from(code: ErrorCode) -> Self {
+        match code {
+            ErrorCode::IpcDataTooLarge => Self::TooLarge,
+            ErrorCode::IpcDataBudgetExceeded => Self::BudgetExceeded,
+            ErrorCode::IpcDataNotReadable => Self::NotReadable,
+            _ => Self::NotFound,
+        }
+    }
+}
+
+impl Display for DataError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            DataError::TooLarge => write!(f, "Data object too large"),
+            DataError::BudgetExceeded => write!(f, "Data budget exceeded"),
+            DataError::NotFound => write!(f, "Data object not found"),
+            DataError::NotReadable => write!(f, "Data object not readable"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,6 +154,7 @@ mod tests {
             let binding = IpcBindingError::from(code);
             let send = IpcSendError::from(code);
             let receive = IpcReceiveError::from(code);
+            let data = DataError::from(code);
 
             let expected_connection = match code {
                 ErrorCode::IpcConnectionCannotBeEstablished => {
@@ -140,11 +171,18 @@ mod tests {
                 ErrorCode::IpcMailboxNotAvailable => IpcReceiveError::MailboxNotAvailable,
                 _ => IpcReceiveError::ConnectionNotFound,
             };
+            let expected_data = match code {
+                ErrorCode::IpcDataTooLarge => DataError::TooLarge,
+                ErrorCode::IpcDataBudgetExceeded => DataError::BudgetExceeded,
+                ErrorCode::IpcDataNotReadable => DataError::NotReadable,
+                _ => DataError::NotFound,
+            };
 
             assert_eq!(connection, expected_connection);
             assert_eq!(binding, IpcBindingError::AlreadyBound);
             assert_eq!(send, expected_send);
             assert_eq!(receive, expected_receive);
+            assert_eq!(data, expected_data);
         }
     }
 
@@ -166,5 +204,6 @@ mod tests {
             IpcReceiveError::from(ErrorCode::Unknown),
             IpcReceiveError::ConnectionNotFound
         );
+        assert_eq!(DataError::from(ErrorCode::Unknown), DataError::NotFound);
     }
 }
