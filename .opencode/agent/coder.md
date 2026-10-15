@@ -23,6 +23,8 @@ Implement the plan step by step, in order.
 - Exercise every edge case the plan names, plus the failure-shaped inputs of the changed interface: no arguments, invalid flags, empty input.
 - Never judge pass/fail from output piped through `tail`/`head`; capture each command's exit code directly.
 - When a failure or lint finding looks unrelated to your change, prove it exists on the untouched baseline (`git stash`, or piping `git show HEAD:<file>` through the checker), report the proof, and never silently fix it.
+- When instrumenting a hot path or interrupt window to catch a fault, latch evidence into an atomic ring buffer or flag and print later at a safe context; never print at the probe site — console I/O inside an interrupt window can self-livelock the guest.
+- Wrap long builds, tests, and git operations in an explicit unit-suffixed `timeout` literal written in the command line itself (e.g. `timeout 900s`); a tool-layer timeout parameter can silently arrive as milliseconds and kill the operation mid-run — disclose and re-run any such self-kill.
 - If compilation or tests fail: read the errors, fix the code, and re-run until everything passes or you are certain the plan itself is faulty.
 - Do not commit. Do not touch files outside the scope of the plan.
 
