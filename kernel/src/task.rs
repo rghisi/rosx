@@ -3,13 +3,9 @@ use crate::kernel::{kernel};
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
-use core::mem::{size_of, MaybeUninit};
-use core::ptr::{addr_of_mut, write, write_bytes};
 use crate::elf::load_elf;
 use crate::handle::FutureHandle;
-
-const STACK_WORDS: usize = 2048;
-type TaskStack = [usize; STACK_WORDS];
+use crate::task_stack::TaskStack;
 
 pub use crate::handle::TaskHandle;
 pub type SharedTask = Box<Task>;
@@ -57,6 +53,7 @@ pub struct Task {
     stack_pointer: usize,
     entry_point: usize,
     entry_param: usize,
+    #[allow(dead_code)]
     stack: TaskStack,
     completion_future: Option<FutureHandle>,
 }
@@ -67,22 +64,18 @@ impl Task {
         entry_point: usize,
         entry_param: usize,
     ) -> SharedTask {
-        let mut task: Box<MaybeUninit<Task>> = Box::new_uninit();
-        let task_ptr: *mut Task = Box::as_mut_ptr(&mut task).cast();
-        // Safety: every Task field is written exactly once below before assume_init; all fields are Copy with no Drop impl.
-        unsafe {
-            let stack_ptr = addr_of_mut!((*task_ptr).stack);
-            let stack_pointer = stack_ptr.addr() + size_of::<TaskStack>();
-            write(addr_of_mut!((*task_ptr).name), name);
-            write(addr_of_mut!((*task_ptr).state), Created);
-            write(addr_of_mut!((*task_ptr).yield_reason), None);
-            write(addr_of_mut!((*task_ptr).stack_pointer), stack_pointer);
-            write(addr_of_mut!((*task_ptr).entry_point), entry_point);
-            write(addr_of_mut!((*task_ptr).entry_param), entry_param);
-            write_bytes(stack_ptr.cast::<u8>(), 0, size_of::<TaskStack>());
-            write(addr_of_mut!((*task_ptr).completion_future), None);
-            task.assume_init()
-        }
+        let stack = TaskStack::new();
+        let stack_pointer = stack.top();
+        Box::new(Task {
+            name,
+            state: Created,
+            yield_reason: None,
+            stack_pointer,
+            entry_point,
+            entry_param,
+            stack,
+            completion_future: None,
+        })
     }
     pub fn name(&self) -> &'static str {
         self.name
@@ -214,11 +207,8 @@ mod tests {
         assert!(task.yield_reason().is_none());
         assert!(task.completion_future().is_none());
         assert_ne!(task.stack_pointer(), 0);
-        assert_eq!(
-            task.stack_pointer(),
-            task.stack.as_ptr().addr() + core::mem::size_of_val(&task.stack),
-        );
-        assert!(task.stack.iter().all(|w| *w == 0));
+        assert_eq!(task.stack_pointer(), task.stack.top());
+        assert!(task.stack.words().iter().all(|w| *w == 0));
     }
 
     #[test]
