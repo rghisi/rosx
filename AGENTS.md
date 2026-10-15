@@ -30,7 +30,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    scheduler/ (SchedulingAlgorithm: MLFQ + FIFO)
 │    memory/   (global allocator; FreeList + BitmapChunk)
 │    collections/ (arena)  handle/ (4 newtypes: task/future/ipc-connection/ipc-binding)
-│    elf/ ipc/ (mailbox) future/ syscall/ keyboard/ task*  cpu (HAL trait)  kconfig
+│    elf/ ipc/ (mailbox, data) future/ syscall/ keyboard/ task*  cpu (HAL trait)  kconfig
 ├── system/      # ABI treaty: syscall numbers, wire layout, error numbers
 ├── usrlib/      # User-space libc: syscall, out, arch/{x86_64,x86_32}
 ├── arch/
@@ -144,6 +144,7 @@ These principles are the regression guard: the very inversion this rework remove
 
 **Kernel Subsystems (current invariants):**
 - `future/` + `ipc/` — **notification-driven** futures (time, task-completion, keyboard) and a mailbox IPC manager (bind/connect/send/receive); no polling on the preemption cycle.
+- `ipc/` data family — messages signal; data rides the connection out-of-band via write/read/release tokens; the kernel never interprets message payloads.
 - `elf/` — loads standalone user-space ELF binaries into tasks (`new_elf_task`).
 - `task/` + `task_manager/` — task lifecycle, context switch, preemption.
 
