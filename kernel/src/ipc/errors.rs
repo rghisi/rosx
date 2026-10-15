@@ -24,6 +24,15 @@ pub(crate) enum IpcReceiveError {
     MailboxNotAvailable,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) enum DataError {
+    ConnectionNotFound,
+    TooLarge,
+    BudgetExceeded,
+    NotFound,
+    NotReadable,
+}
+
 impl From<IpcConnectionError> for ErrorCode {
     fn from(error: IpcConnectionError) -> Self {
         match error {
@@ -58,6 +67,18 @@ impl From<IpcReceiveError> for ErrorCode {
             IpcReceiveError::ConnectionNotFound => ErrorCode::IpcReceiveConnectionNotFound,
             IpcReceiveError::NoMessagesAvailable => ErrorCode::IpcReceiveNoMessagesAvailable,
             IpcReceiveError::MailboxNotAvailable => ErrorCode::IpcMailboxNotAvailable,
+        }
+    }
+}
+
+impl From<DataError> for ErrorCode {
+    fn from(error: DataError) -> Self {
+        match error {
+            DataError::ConnectionNotFound => ErrorCode::IpcSendConnectionNotFound,
+            DataError::TooLarge => ErrorCode::IpcDataTooLarge,
+            DataError::BudgetExceeded => ErrorCode::IpcDataBudgetExceeded,
+            DataError::NotFound => ErrorCode::IpcDataNotFound,
+            DataError::NotReadable => ErrorCode::IpcDataNotReadable,
         }
     }
 }
@@ -133,6 +154,31 @@ mod tests {
                     IpcReceiveError::NoMessagesAvailable =>
                         ErrorCode::IpcReceiveNoMessagesAvailable,
                     IpcReceiveError::MailboxNotAvailable => ErrorCode::IpcMailboxNotAvailable,
+                }
+            );
+            assert_eq!(ErrorCode::from_code(raw), ErrorCode::from(error));
+        }
+    }
+
+    #[test]
+    fn data_error_variants_map_to_reserved_codes_and_decode_as_errors() {
+        for error in [
+            DataError::ConnectionNotFound,
+            DataError::TooLarge,
+            DataError::BudgetExceeded,
+            DataError::NotFound,
+            DataError::NotReadable,
+        ] {
+            let raw = ErrorCode::from(error).to_reg();
+            assert_ne!(raw & ERROR_BIT, 0);
+            assert_eq!(
+                ErrorCode::from(error),
+                match error {
+                    DataError::ConnectionNotFound => ErrorCode::IpcSendConnectionNotFound,
+                    DataError::TooLarge => ErrorCode::IpcDataTooLarge,
+                    DataError::BudgetExceeded => ErrorCode::IpcDataBudgetExceeded,
+                    DataError::NotFound => ErrorCode::IpcDataNotFound,
+                    DataError::NotReadable => ErrorCode::IpcDataNotReadable,
                 }
             );
             assert_eq!(ErrorCode::from_code(raw), ErrorCode::from(error));
