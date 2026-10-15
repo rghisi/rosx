@@ -208,6 +208,48 @@ impl From<IpcBindingHandle> for Handle {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct IpcDataHandle(Handle);
+
+#[allow(dead_code)]
+impl IpcDataHandle {
+    pub(crate) const fn new(index: u16, generation: u16) -> Self {
+        Self(Handle::new(index, generation))
+    }
+
+    pub(crate) fn pack(self) -> usize {
+        self.0.pack()
+    }
+
+    pub(crate) fn from_packed(raw: usize) -> Option<Self> {
+        if is_token(raw) {
+            Some(Self(Handle::split(raw)))
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn index(self) -> u16 {
+        self.0.index
+    }
+
+    pub(crate) fn generation(self) -> u16 {
+        self.0.generation
+    }
+}
+
+impl From<Handle> for IpcDataHandle {
+    fn from(handle: Handle) -> Self {
+        Self(handle)
+    }
+}
+
+impl From<IpcDataHandle> for Handle {
+    fn from(handle: IpcDataHandle) -> Self {
+        handle.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,5 +386,60 @@ mod tests {
             assert_ne!(raw & ERROR_BIT, 0);
             assert!(!is_token(raw));
         }
+    }
+
+    #[test]
+    fn ipc_data_handle_pack_should_encode_generation_in_bits_30_to_16_and_index_in_bits_15_to_0() {
+        assert_eq!(IpcDataHandle::new(5, 10).pack(), (10usize << 16) | 5);
+    }
+
+    #[test]
+    fn ipc_data_handle_pack_from_packed_should_roundtrip() {
+        let original = IpcDataHandle::new(42, 7);
+        assert_eq!(IpcDataHandle::from_packed(original.pack()), Some(original));
+    }
+
+    #[test]
+    fn ipc_data_handle_pack_from_packed_should_roundtrip_edge_handles() {
+        for (index, generation) in [(0u16, 0u16), (65535, 0), (0, 32767), (65535, 32767)] {
+            let handle = IpcDataHandle::new(index, generation);
+            assert_eq!(IpcDataHandle::from_packed(handle.pack()), Some(handle));
+        }
+    }
+
+    #[test]
+    fn ipc_data_handle_pack_should_never_set_error_bit() {
+        let mut index = 0u16;
+        loop {
+            let mut generation = 0u16;
+            loop {
+                assert_eq!(IpcDataHandle::new(index, generation).pack() & ERROR_BIT, 0);
+                if generation >= 0x7FFF {
+                    break;
+                }
+                generation = generation.saturating_add(997).min(0x7FFF);
+            }
+            if index >= 65535 {
+                break;
+            }
+            index = index.saturating_add(997).min(65535);
+        }
+    }
+
+    #[test]
+    fn ipc_data_handle_from_packed_should_accept_only_wellformed_packed_values() {
+        assert!(IpcDataHandle::from_packed(0).is_some());
+        assert!(IpcDataHandle::from_packed(0x7FFF_FFFF).is_some());
+        assert!(IpcDataHandle::from_packed(ERROR_BIT).is_none());
+        assert!(IpcDataHandle::from_packed(ERROR_BIT | 1).is_none());
+        assert!(IpcDataHandle::from_packed(1usize << 32).is_none());
+        assert!(IpcDataHandle::from_packed(usize::MAX).is_none());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "generation outside 15-bit handle space")]
+    fn ipc_data_handle_new_should_panic_on_generation_above_the_15_bit_domain() {
+        IpcDataHandle::new(0, 0xFFFF);
     }
 }
