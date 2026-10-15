@@ -119,6 +119,9 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             Some(binding_handle) => services().ipc_manager.borrow_mut().accept_message_async(binding_handle).pack(),
             None => ErrorCode::Unknown.to_reg(),
         },
+        Ok(SyscallNum::IpcDataWrite | SyscallNum::IpcDataRead | SyscallNum::IpcDataRelease) => {
+            ErrorCode::Unknown.to_reg()
+        }
         Err(_) => 0,
     }
 }

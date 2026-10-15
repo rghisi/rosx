@@ -18,6 +18,9 @@ pub enum SyscallNum {
     IpcSendMessage = 20,
     IpcReceiveMessage = 22,
     IpcAcceptMessage = 23,
+    IpcDataWrite = 24,
+    IpcDataRead = 25,
+    IpcDataRelease = 26,
 }
 
 impl TryFrom<usize> for SyscallNum {
@@ -42,6 +45,9 @@ impl TryFrom<usize> for SyscallNum {
             20 => Ok(Self::IpcSendMessage),
             22 => Ok(Self::IpcReceiveMessage),
             23 => Ok(Self::IpcAcceptMessage),
+            24 => Ok(Self::IpcDataWrite),
+            25 => Ok(Self::IpcDataRead),
+            26 => Ok(Self::IpcDataRelease),
             _ => Err(()),
         }
     }

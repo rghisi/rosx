@@ -15,6 +15,10 @@ pub enum ErrorCode {
     IpcReceiveConnectionNotFound = 0x0106,
     IpcReceiveNoMessagesAvailable = 0x0107,
     IpcMailboxNotAvailable = 0x0108,
+    IpcDataTooLarge = 0x0109,
+    IpcDataBudgetExceeded = 0x010A,
+    IpcDataNotFound = 0x010B,
+    IpcDataNotReadable = 0x010C,
     Unknown = 0x7FFF_FFFF,
 }
 
@@ -33,6 +37,10 @@ impl ErrorCode {
             0x0106 => ErrorCode::IpcReceiveConnectionNotFound,
             0x0107 => ErrorCode::IpcReceiveNoMessagesAvailable,
             0x0108 => ErrorCode::IpcMailboxNotAvailable,
+            0x0109 => ErrorCode::IpcDataTooLarge,
+            0x010A => ErrorCode::IpcDataBudgetExceeded,
+            0x010B => ErrorCode::IpcDataNotFound,
+            0x010C => ErrorCode::IpcDataNotReadable,
             _ => ErrorCode::Unknown,
         }
     }
@@ -42,7 +50,7 @@ impl ErrorCode {
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 9] = [
+    const ALL_ERROR_CODES: [ErrorCode; 13] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -51,6 +59,10 @@ mod tests {
         ErrorCode::IpcReceiveConnectionNotFound,
         ErrorCode::IpcReceiveNoMessagesAvailable,
         ErrorCode::IpcMailboxNotAvailable,
+        ErrorCode::IpcDataTooLarge,
+        ErrorCode::IpcDataBudgetExceeded,
+        ErrorCode::IpcDataNotFound,
+        ErrorCode::IpcDataNotReadable,
         ErrorCode::Unknown,
     ];
 

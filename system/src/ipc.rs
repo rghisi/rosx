@@ -62,6 +62,10 @@ mod tests {
             ErrorCode::IpcReceiveConnectionNotFound,
             ErrorCode::IpcReceiveNoMessagesAvailable,
             ErrorCode::IpcMailboxNotAvailable,
+            ErrorCode::IpcDataTooLarge,
+            ErrorCode::IpcDataBudgetExceeded,
+            ErrorCode::IpcDataNotFound,
+            ErrorCode::IpcDataNotReadable,
             ErrorCode::Unknown,
         ] {
             let raw = code.to_reg();
