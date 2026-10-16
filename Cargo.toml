@@ -11,6 +11,8 @@ members = [
     "apps/random_gen_server",
     "apps/bulk_echo",
     "apps/bulk_client",
+    "apps/ping_server",
+    "apps/ping_client",
     "apps/snake",
     "apps/tetris",
     "apps/conway",
