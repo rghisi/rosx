@@ -27,21 +27,30 @@ static CONWAY_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/con
 #[cfg(target_arch = "x86")]
 static CONWAY_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/conway");
 
+#[cfg(target_arch = "x86_64")]
+static PING_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/ping_client");
+
 static PROMPT: &str = "\x1B[32mrose>\x1B[m ";
 
 lazy_static! {
-    static ref COMMANDS: BTreeMap<String, fn()> = BTreeMap::from([
-        (String::from("ls"), ls as fn()),
-        (String::from("clear"), clear as fn()),
-        (String::from("rose"), rose as fn()),
-        (String::from("pi"), pi as fn()),
-        (String::from("snake"), snake as fn()),
-        (String::from("tests"), tests as fn()),
-        (String::from("tetris"), tetris as fn()),
-        (String::from("conway"), conway as fn()),
-        (String::from("sleep"), sleep as fn()),
-        (String::from("random"), random as fn()),
-    ]);
+    static ref COMMANDS: BTreeMap<String, fn()> = {
+        #[allow(unused_mut)]
+        let mut commands: BTreeMap<String, fn()> = BTreeMap::from([
+            (String::from("ls"), ls as fn()),
+            (String::from("clear"), clear as fn()),
+            (String::from("rose"), rose as fn()),
+            (String::from("pi"), pi as fn()),
+            (String::from("snake"), snake as fn()),
+            (String::from("tests"), tests as fn()),
+            (String::from("tetris"), tetris as fn()),
+            (String::from("conway"), conway as fn()),
+            (String::from("sleep"), sleep as fn()),
+            (String::from("random"), random as fn()),
+        ]);
+        #[cfg(target_arch = "x86_64")]
+        commands.insert(String::from("ping"), ping as fn());
+        commands
+    };
 }
 
 pub fn main() {
@@ -124,6 +133,13 @@ fn tetris() {
 
 fn conway() {
     if let Some(fh) = Syscall::load(CONWAY_ELF) {
+        Syscall::wait_future(fh);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn ping() {
+    if let Some(fh) = Syscall::load(PING_ELF) {
         Syscall::wait_future(fh);
     }
 }
