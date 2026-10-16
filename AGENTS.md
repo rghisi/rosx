@@ -29,7 +29,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 ├── kernel/                  # Platform-agnostic core (see submodules below)
 │    scheduler/ (SchedulingAlgorithm: MLFQ + FIFO)
 │    memory/   (global allocator; FreeList + BitmapChunk)
-│    collections/ (arena)  handle/ (4 newtypes: task/future/ipc-connection/ipc-binding)
+│    collections/ (arena)  handle/ (5 newtypes: task/future/ipc-connection/ipc-binding/ipc-data)
 │    elf/ ipc/ (mailbox, data) future/ syscall/ keyboard/ task*  cpu (HAL trait)  kconfig
 ├── system/      # ABI treaty: syscall numbers, wire layout, error numbers
 ├── usrlib/      # User-space libc: syscall, out, arch/{x86_64,x86_32}
@@ -38,7 +38,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
 │    x86_64-runner/ # standalone: BiosBoot → QEMU (NOT bootimage)
 └── apps/
-     [workspace members]  shell, dummy, hello_elf, random_gen_server, snake, tetris, conway, test_suite
+     [workspace members]  shell, dummy, hello_elf, random_gen_server, bulk_echo, bulk_client, snake, tetris, conway, test_suite
 ```
 
 ---
