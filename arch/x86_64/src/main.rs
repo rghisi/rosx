@@ -77,6 +77,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let _ = kernel.schedule(new_elf_task(BULK_ECHO_ELF));
     static BULK_CLIENT_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/bulk_client");
     let _ = kernel.schedule(new_elf_task(BULK_CLIENT_ELF));
+    static PING_SERVER_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/ping_server");
+    let _ = kernel.schedule(new_elf_task(PING_SERVER_ELF));
     let _ = kernel.schedule(FunctionTask::new("Shell", shell::shell::main));
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
     // kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));

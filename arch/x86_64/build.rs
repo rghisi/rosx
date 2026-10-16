@@ -10,6 +10,9 @@ fn main() {
     println!("cargo::rerun-if-changed=../../apps/bulk_client/src");
     println!("cargo::rerun-if-changed=../../apps/bulk_client/Cargo.toml");
     println!("cargo::rerun-if-changed=../../apps/bulk_client/linker.ld");
+    println!("cargo::rerun-if-changed=../../apps/ping_server/src");
+    println!("cargo::rerun-if-changed=../../apps/ping_server/Cargo.toml");
+    println!("cargo::rerun-if-changed=../../apps/ping_server/linker.ld");
 
     let elf_path = "../../target/rosx-user/release/random_gen_server";
     if !Path::new(elf_path).exists() {
@@ -22,5 +25,9 @@ fn main() {
     let bulk_client_path = "../../target/rosx-user/release/bulk_client";
     if !Path::new(bulk_client_path).exists() {
         panic!("missing user ELF {bulk_client_path}; run `cargo xtask apps` first");
+    }
+    let ping_server_path = "../../target/rosx-user/release/ping_server";
+    if !Path::new(ping_server_path).exists() {
+        panic!("missing user ELF {ping_server_path}; run `cargo xtask apps` first");
     }
 }
