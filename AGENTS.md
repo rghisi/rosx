@@ -38,7 +38,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
 │    x86_64-runner/ # standalone: BiosBoot → QEMU (NOT bootimage)
 └── apps/
-     [workspace members]  shell, dummy, hello_elf, random_gen_server, bulk_echo, bulk_client, snake, tetris, conway, test_suite
+     [workspace members]  shell, dummy, hello_elf, random_gen_server, bulk_echo, bulk_client, ping_server, ping_client, snake, tetris, conway, test_suite
 ```
 
 ---
