@@ -581,6 +581,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vfs_server"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+ "vfs-protocol",
+]
+
+[[package]]
 name = "volatile"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
