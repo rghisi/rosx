@@ -1,5 +1,8 @@
+use crate::arch;
+use crate::error::DataError;
 use core::fmt::{Debug, Display, Formatter};
-use system::error::is_token;
+use system::error::{ErrorCode, is_token};
+use system::syscall_numbers::SyscallNum;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct UserFutureHandle {
@@ -94,6 +97,66 @@ impl Display for UserBindingHandle {
     }
 }
 
+pub struct UserDataHandle {
+    packed: Option<u32>,
+}
+
+impl UserDataHandle {
+    pub(crate) fn packed(&self) -> u32 {
+        match self.packed {
+            Some(token) => token,
+            None => 0,
+        }
+    }
+
+    pub(crate) fn from_token(raw: usize) -> Option<Self> {
+        if is_token(raw) {
+            Some(Self {
+                packed: Some(raw as u32),
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn release(&mut self) -> Result<(), DataError> {
+        let Some(raw) = self.packed.take() else {
+            return Ok(());
+        };
+        let result =
+            arch::raw_syscall(SyscallNum::IpcDataRelease as usize, raw as usize, 0, 0);
+        if is_token(result) {
+            Ok(())
+        } else {
+            Err(DataError::from(ErrorCode::from_code(result)))
+        }
+    }
+}
+
+impl Drop for UserDataHandle {
+    fn drop(&mut self) {
+        let _ = self.release();
+    }
+}
+
+impl Debug for UserDataHandle {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self.packed {
+            Some(packed) => write!(f, "{:08x}", packed),
+            None => write!(f, "released"),
+        }
+    }
+}
+
+impl Display for UserDataHandle {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self.packed {
+            Some(packed) => write!(f, "{:08x}", packed),
+            None => write!(f, "released"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +201,28 @@ mod tests {
             UserConnectionHandle::from_token(0x0012_3456usize).unwrap()
         );
         assert_eq!(displayed, "00123456");
+    }
+
+    #[test]
+    fn data_handle_release_on_released_token_is_ok_and_idempotent() {
+        let mut handle = UserDataHandle { packed: None };
+        assert_eq!(handle.release(), Ok(()));
+        assert_eq!(handle.release(), Ok(()));
+    }
+
+    #[test]
+    fn released_data_handle_renders_as_released_and_packs_to_zero() {
+        let mut handle = UserDataHandle { packed: None };
+        assert_eq!(format!("{:?}", handle), "released");
+        assert_eq!(format!("{}", handle), "released");
+        assert_eq!(handle.packed(), 0);
+        assert_eq!(handle.release(), Ok(()));
+    }
+
+    #[test]
+    fn data_handle_from_token_rejects_high_bit_garbage() {
+        assert!(UserDataHandle::from_token(0x8000_0000usize).is_none());
+        assert!(UserDataHandle::from_token(0x8000_0001usize).is_none());
+        assert!(UserDataHandle::from_token(usize::MAX).is_none());
     }
 }

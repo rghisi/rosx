@@ -1,0 +1,15 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "ping_client"
+publish = false
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "ping_client"
+bench = false
+test = false
+
+[dependencies]
+system = { path = "../../system" }
+usrlib = { path = "../../usrlib" }

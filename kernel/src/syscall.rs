@@ -6,7 +6,7 @@ use crate::default_output::print;
 use system::syscall_numbers::SyscallNum;
 use system::error::ErrorCode;
 use system::ipc::Message;
-use crate::handle::{FutureHandle, IpcConnectionHandle, IpcBindingHandle};
+use crate::handle::{FutureHandle, IpcConnectionHandle, IpcBindingHandle, IpcDataHandle};
 use crate::ipc::message_future::IpcMessageFuture;
 use crate::task::{new_elf_task, new_entrypoint_task};
 
@@ -119,6 +119,35 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             Some(binding_handle) => services().ipc_manager.borrow_mut().accept_message_async(binding_handle).pack(),
             None => ErrorCode::Unknown.to_reg(),
         },
+        Ok(SyscallNum::IpcDataWrite) => {
+            let Some(connection) = IpcConnectionHandle::from_packed(arg1) else {
+                return ErrorCode::IpcSendConnectionNotFound.to_reg();
+            };
+            let payload = unsafe { core::slice::from_raw_parts(arg2 as *const u8, arg3) };
+            match services().ipc_manager.borrow_mut().write_data(kernel().execution_state.current_task(), connection, payload) {
+                Ok(handle) => handle.pack(),
+                Err(e) => ErrorCode::from(e).to_reg(),
+            }
+        }
+        Ok(SyscallNum::IpcDataRead) => {
+            let Some(token) = IpcDataHandle::from_packed(arg1) else {
+                return ErrorCode::IpcDataNotFound.to_reg();
+            };
+            let dst = unsafe { core::slice::from_raw_parts_mut(arg2 as *mut u8, arg3) };
+            match services().ipc_manager.borrow_mut().read_data(kernel().execution_state.current_task(), token, dst) {
+                Ok(bytes_copied) => bytes_copied,
+                Err(e) => ErrorCode::from(e).to_reg(),
+            }
+        }
+        Ok(SyscallNum::IpcDataRelease) => {
+            let Some(token) = IpcDataHandle::from_packed(arg1) else {
+                return ErrorCode::IpcDataNotFound.to_reg();
+            };
+            match services().ipc_manager.borrow_mut().release_data(kernel().execution_state.current_task(), token) {
+                Ok(()) => 0,
+                Err(e) => ErrorCode::from(e).to_reg(),
+            }
+        }
         Err(_) => 0,
     }
 }

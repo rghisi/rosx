@@ -3,8 +3,9 @@ use alloc::string::String;
 use alloc::boxed::Box;
 use crate::collections::arena::GenerationalArena;
 use crate::future::Future;
-use crate::handle::{FutureHandle, IpcBindingHandle, IpcConnectionHandle};
-use crate::ipc::errors::{IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError};
+use crate::handle::{FutureHandle, IpcBindingHandle, IpcConnectionHandle, IpcDataHandle};
+use crate::ipc::data_manager::IpcDataManager;
+use crate::ipc::errors::{DataError, IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError};
 use crate::ipc::message_future::IpcMessageFuture;
 use system::ipc::Message;
 use crate::ipc::mailbox_manager::{MailboxManager, MailboxHandle};
@@ -49,6 +50,7 @@ pub(crate) struct IpcManager {
     connections: GenerationalArena<IpcConnection, 256>,
     registry: BTreeMap<String, IpcBindingHandle>,
     notifier: &'static dyn ForNotifyingFutures,
+    data_manager: IpcDataManager,
 }
 
 impl IpcManager {
@@ -60,6 +62,7 @@ impl IpcManager {
             connections: GenerationalArena::new(),
             registry: BTreeMap::new(),
             notifier: &NOOP_IPC_NOTIFIER,
+            data_manager: IpcDataManager::new(),
         }
     }
 
@@ -70,6 +73,7 @@ impl IpcManager {
             connections: GenerationalArena::new(),
             registry: BTreeMap::new(),
             notifier,
+            data_manager: IpcDataManager::new(),
         }
     }
 
@@ -116,6 +120,7 @@ impl IpcManager {
         };
         self.mailbox_manager.remove(client_mailbox);
         let _ = self.connections.remove(connection_handle.into());
+        self.data_manager.gc_connection(connection_handle);
     }
 
     pub(crate) fn send_message(&mut self, caller: TaskHandle, envelope: &Message) -> Result<(), IpcSendError> {
@@ -158,6 +163,47 @@ impl IpcManager {
     }
 }
 
+#[allow(dead_code)]
+impl IpcManager {
+
+    pub(crate) fn write_data(
+        &mut self,
+        caller: TaskHandle,
+        connection: IpcConnectionHandle,
+        payload: &[u8],
+    ) -> Result<IpcDataHandle, DataError> {
+        self.connections
+            .borrow(connection.into())
+            .map_err(|_| DataError::ConnectionNotFound)?;
+        self.data_manager.write(caller, connection, payload)
+    }
+
+    pub(crate) fn read_data(
+        &mut self,
+        caller: TaskHandle,
+        token: IpcDataHandle,
+        dst: &mut [u8],
+    ) -> Result<usize, DataError> {
+        let (connection, writer) = self.data_manager.locate(caller, token)?;
+        let conn = self
+            .connections
+            .borrow(connection.into())
+            .map_err(|_| DataError::NotReadable)?;
+        if caller != conn.client_task && writer != conn.client_task {
+            return Err(DataError::NotReadable);
+        }
+        Ok(self.data_manager.copy_out(token, dst))
+    }
+
+    pub(crate) fn release_data(
+        &mut self,
+        caller: TaskHandle,
+        token: IpcDataHandle,
+    ) -> Result<(), DataError> {
+        self.data_manager.release(caller, token)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,10 +211,12 @@ mod tests {
     use crate::kernel_services::services;
     use crate::kernel_services::FutureRegistryNotifierUseCase;
     use crate::ports::driven::ForNotifyingFutures;
+    use alloc::vec;
     use system::ipc::MESSAGE_PAYLOAD_BYTES;
 
     const CLIENT_TASK: TaskHandle = TaskHandle::new(1, 1);
     const SERVER_TASK: TaskHandle = TaskHandle::new(2, 1);
+    const INTRUDER: TaskHandle = TaskHandle::new(3, 1);
 
     fn manager_with_notifier() -> IpcManager {
         init_services();
@@ -371,5 +419,59 @@ mod tests {
             ipc_future.result(),
             Err(IpcReceiveError::ConnectionNotFound)
         ));
+    }
+
+    #[test]
+    fn disconnect_gc_frees_objects_and_refunds_budget() {
+        let mut manager = IpcManager::new();
+        let (_binding, connection) = bind_and_connect(&mut manager, "DATA-GC");
+        let chunk = vec![3u8; 64 * 1024];
+        let first = manager.write_data(CLIENT_TASK, connection, &chunk).unwrap();
+        let second = manager.write_data(CLIENT_TASK, connection, &chunk).unwrap();
+        manager.disconnect(connection);
+
+        let mut dst = [0u8; 16];
+        assert_eq!(manager.read_data(SERVER_TASK, first, &mut dst), Err(DataError::NotFound));
+        assert_eq!(manager.read_data(SERVER_TASK, second, &mut dst), Err(DataError::NotFound));
+
+        let reconnected = manager.connect("DATA-GC", CLIENT_TASK).unwrap();
+        for _ in 0..4 {
+            assert!(manager.write_data(CLIENT_TASK, reconnected, &chunk).is_ok());
+        }
+    }
+
+    #[test]
+    fn write_on_dead_connection_is_connection_not_found() {
+        let mut manager = IpcManager::new();
+        let (_binding, connection) = bind_and_connect(&mut manager, "DATA-DEAD");
+        manager.disconnect(connection);
+        assert_eq!(
+            manager.write_data(CLIENT_TASK, connection, b"payload"),
+            Err(DataError::ConnectionNotFound)
+        );
+    }
+
+    #[test]
+    fn read_membership_rejects_non_client_intruder() {
+        let mut manager = IpcManager::new();
+        let (_binding, connection) = bind_and_connect(&mut manager, "DATA-MEMBER");
+        let token = manager.write_data(SERVER_TASK, connection, b"server written").unwrap();
+
+        let mut dst = [0u8; 16];
+        assert_eq!(manager.read_data(INTRUDER, token, &mut dst), Err(DataError::NotReadable));
+
+        let copied = manager.read_data(CLIENT_TASK, token, &mut dst).unwrap();
+        assert_eq!(&dst[..copied], b"server written");
+    }
+
+    #[test]
+    fn client_written_object_readable_by_server_task() {
+        let mut manager = IpcManager::new();
+        let (_binding, connection) = bind_and_connect(&mut manager, "DATA-PAIR");
+        let token = manager.write_data(CLIENT_TASK, connection, b"client written").unwrap();
+
+        let mut dst = [0u8; 16];
+        let copied = manager.read_data(SERVER_TASK, token, &mut dst).unwrap();
+        assert_eq!(&dst[..copied], b"client written");
     }
 }

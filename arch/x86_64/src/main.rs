@@ -73,6 +73,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // kernel.schedule(FunctionTask::new("4", dummy::app::main4));
     static RANDOM_GEN_SERVER_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/random_gen_server");
     let _ = kernel.schedule(new_elf_task(RANDOM_GEN_SERVER_ELF));
+    static BULK_ECHO_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/bulk_echo");
+    let _ = kernel.schedule(new_elf_task(BULK_ECHO_ELF));
+    static BULK_CLIENT_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/bulk_client");
+    let _ = kernel.schedule(new_elf_task(BULK_CLIENT_ELF));
+    static PING_SERVER_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/ping_server");
+    let _ = kernel.schedule(new_elf_task(PING_SERVER_ELF));
     let _ = kernel.schedule(FunctionTask::new("Shell", shell::shell::main));
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
     // kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));

@@ -1,3 +1,4 @@
+pub(crate) mod data_manager;
 pub(crate) mod errors;
 pub(crate) mod ipc_manager;
 pub(crate) mod mailbox_manager;

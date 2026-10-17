@@ -84,6 +84,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c074a3d1075b26ed77e502d6af8ab1263abbdc3d026c166e46480f973287293"
 
 [[package]]
+name = "bulk_client"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
+name = "bulk_echo"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
 name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -258,6 +274,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62d9a86c292b165f757e47e7fd66855def189b2564609bc4203727b27c33db22"
 dependencies = [
  "x86_64",
+]
+
+[[package]]
+name = "ping_client"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
+name = "ping_server"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
 ]
 
 [[package]]
