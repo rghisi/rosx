@@ -1,31 +1,13 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
 use alloc::vec;
 use alloc::vec::Vec;
-use core::alloc::{GlobalAlloc, Layout};
-use core::panic::PanicInfo;
 use usrlib::println;
 use usrlib::syscall::Syscall;
 use vfs_protocol::client::{ClientError, Vfs, MODE_CREATE, MODE_WRITE};
 use vfs_protocol::wire::VfsError;
-
-struct SyscallAllocator;
-
-unsafe impl GlobalAlloc for SyscallAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        Syscall::alloc(layout.size(), layout.align())
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        Syscall::dealloc(ptr, layout.size(), layout.align());
-    }
-}
-
-#[global_allocator]
-static ALLOCATOR: SyscallAllocator = SyscallAllocator;
 
 const NOTES_BYTES: usize = 9216;
 const HOLE_END: usize = 8192;
@@ -225,8 +207,7 @@ fn run(vfs: &Vfs) -> bool {
     true
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn _start() {
+fn main() {
     println!("[ELF] VFS Client");
     let Ok(vfs) = Vfs::connect() else {
         println!("vfs error: connect");
@@ -237,10 +218,4 @@ pub extern "C" fn _start() {
     if passed {
         println!("vfs done");
     }
-}
-
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    println!("[VFS Client] Panic!");
-    loop {}
 }

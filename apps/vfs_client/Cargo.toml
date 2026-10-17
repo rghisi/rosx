@@ -14,3 +14,6 @@ test = false
 system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }
 vfs-protocol = { path = "../../vfs-protocol" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+usrlib = { path = "../../usrlib", features = ["runtime"] }
