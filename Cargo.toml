@@ -15,6 +15,7 @@ members = [
     "apps/ping_server",
     "apps/ping_client",
     "apps/vfs_server",
+    "apps/vfs_client",
     "apps/snake",
     "apps/tetris",
     "apps/conway",

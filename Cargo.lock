@@ -581,6 +581,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vfs_client"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+ "vfs-protocol",
+]
+
+[[package]]
 name = "vfs_server"
 version = "0.1.0"
 dependencies = [
