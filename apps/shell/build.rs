@@ -4,11 +4,11 @@ fn main() {
     for app in &["hello_elf", "snake", "tetris", "conway"] {
         println!("cargo::rerun-if-changed=../../apps/{app}/src");
         println!("cargo::rerun-if-changed=../../apps/{app}/Cargo.toml");
-        println!("cargo::rerun-if-changed=../../apps/{app}/linker.ld");
     }
     println!("cargo::rerun-if-changed=../../apps/ping_client/src");
     println!("cargo::rerun-if-changed=../../apps/ping_client/Cargo.toml");
-    println!("cargo::rerun-if-changed=../../apps/ping_client/linker.ld");
+    println!("cargo::rerun-if-changed=../../usrlib/linker.ld");
+    println!("cargo::rerun-if-changed=../../.cargo/config.toml");
 
     let arch: String = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
     let base = match arch.as_str() {
