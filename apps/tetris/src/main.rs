@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
@@ -273,7 +272,6 @@ fn play(rng: &mut Rng) -> bool {
     }
 }
 
-#[unsafe(no_mangle)]
 fn main() {
     let mut rng = Rng::new(0xDEAD_BEEF_CAFE_BABE);
 

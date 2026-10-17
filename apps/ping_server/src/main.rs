@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
@@ -87,7 +86,6 @@ impl PingServer {
     }
 }
 
-#[unsafe(no_mangle)]
 fn main() {
     println!("[IPC Server] Ping");
     let mut server = PingServer::new();

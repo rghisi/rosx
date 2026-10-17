@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
@@ -37,7 +36,6 @@ impl RandomGeneratorServer {
     }
 }
 
-#[unsafe(no_mangle)]
 fn main() {
     println!("[IPC Server] Random");
     let mut server = RandomGeneratorServer::new(0xFACADA);

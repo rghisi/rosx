@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
@@ -38,7 +37,6 @@ impl BulkEchoServer {
     }
 }
 
-#[unsafe(no_mangle)]
 fn main() {
     println!("[IPC Server] BulkEcho");
     let server = BulkEchoServer;

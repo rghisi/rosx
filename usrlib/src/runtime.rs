@@ -19,6 +19,17 @@ unsafe impl GlobalAlloc for SyscallAllocator {
 #[global_allocator]
 static RUNTIME_ALLOCATOR: SyscallAllocator = SyscallAllocator;
 
+#[lang = "start"]
+fn start<T: 'static>(
+    main: fn() -> T,
+    _argc: isize,
+    _argv: *const *const u8,
+    _sigpipe: u8,
+) -> isize {
+    main();
+    0
+}
+
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     match info.location() {

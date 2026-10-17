@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
@@ -98,7 +97,6 @@ fn ping_round(connection: UserConnectionHandle, size: usize) {
     let _ = ping_handle.release();
 }
 
-#[unsafe(no_mangle)]
 fn main() {
     let connection = connect_to_ping_server();
     for size in PING_SIZES {

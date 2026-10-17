@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
@@ -93,7 +92,6 @@ fn verification_round(connection: UserConnectionHandle) {
     }
 }
 
-#[unsafe(no_mangle)]
 fn main() {
     Syscall::sleep(STARTUP_DELAY_MS);
     let connection = connect_to_bulk_echo();

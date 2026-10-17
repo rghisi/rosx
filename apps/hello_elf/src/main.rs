@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
@@ -9,7 +8,6 @@ use usrlib::{print, println};
 
 const DIGITS: usize = 20000;
 
-#[unsafe(no_mangle)]
 fn main() {
     // We need a slightly larger array to account for the mathematical bounds.
     // The size roughly correlates to (10/3) * N.

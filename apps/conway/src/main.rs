@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
@@ -105,7 +104,6 @@ fn render(grid: &Grid, generation: usize, population: usize, delay_ms: u64, paus
     }
 }
 
-#[unsafe(no_mangle)]
 fn main() {
     print!("\x1B[2J\x1B[H");
 

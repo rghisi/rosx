@@ -1,3 +1,5 @@
+#![cfg_attr(all(not(test), feature = "runtime"), feature(lang_items))]
+#![cfg_attr(all(not(test), feature = "runtime"), allow(internal_features))]
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
