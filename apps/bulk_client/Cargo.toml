@@ -13,3 +13,6 @@ test = false
 [dependencies]
 system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+usrlib = { path = "../../usrlib", features = ["runtime"] }

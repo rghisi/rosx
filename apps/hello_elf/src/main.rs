@@ -5,30 +5,12 @@ extern crate alloc;
 
 use alloc::vec;
 use alloc::vec::Vec;
-use core::alloc::{GlobalAlloc, Layout};
-use core::panic::PanicInfo;
 use usrlib::{print, println};
-use usrlib::syscall::Syscall;
-
-struct SyscallAllocator;
-
-unsafe impl GlobalAlloc for SyscallAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        Syscall::alloc(layout.size(), layout.align())
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        Syscall::dealloc(ptr, layout.size(), layout.align());
-    }
-}
-
-#[global_allocator]
-static ALLOCATOR: SyscallAllocator = SyscallAllocator;
 
 const DIGITS: usize = 20000;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn _start() {
+fn main() {
     // We need a slightly larger array to account for the mathematical bounds.
     // The size roughly correlates to (10/3) * N.
     let n = DIGITS;
@@ -108,10 +90,4 @@ pub extern "C" fn _start() {
         // io::stdout().flush().unwrap();
     }
     println!();
-
-}
-
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    loop {}
 }

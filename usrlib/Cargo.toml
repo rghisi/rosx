@@ -7,3 +7,6 @@ edition.workspace = true
 
 [dependencies]
 system = { path = "../system" }
+
+[features]
+runtime = []
