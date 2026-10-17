@@ -30,6 +30,9 @@ static CONWAY_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/releas
 #[cfg(target_arch = "x86_64")]
 static PING_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/ping_client");
 
+#[cfg(target_arch = "x86_64")]
+static VFS_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/vfs_client");
+
 static PROMPT: &str = "\x1B[32mrose>\x1B[m ";
 
 lazy_static! {
@@ -49,6 +52,8 @@ lazy_static! {
         ]);
         #[cfg(target_arch = "x86_64")]
         commands.insert(String::from("ping"), ping as fn());
+        #[cfg(target_arch = "x86_64")]
+        commands.insert(String::from("vfs"), vfs as fn());
         commands
     };
 }
@@ -140,6 +145,13 @@ fn conway() {
 #[cfg(target_arch = "x86_64")]
 fn ping() {
     if let Some(fh) = Syscall::load(PING_ELF) {
+        Syscall::wait_future(fh);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn vfs() {
+    if let Some(fh) = Syscall::load(VFS_ELF) {
         Syscall::wait_future(fh);
     }
 }
