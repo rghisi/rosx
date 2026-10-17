@@ -1,27 +1,9 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
-use core::alloc::{GlobalAlloc, Layout};
-use core::panic::PanicInfo;
 use usrlib::{print, println};
 use usrlib::syscall::Syscall;
-
-struct SyscallAllocator;
-
-unsafe impl GlobalAlloc for SyscallAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        Syscall::alloc(layout.size(), layout.align())
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        Syscall::dealloc(ptr, layout.size(), layout.align());
-    }
-}
-
-#[global_allocator]
-static ALLOCATOR: SyscallAllocator = SyscallAllocator;
 
 const COLS: usize = 80;
 const ROWS: usize = 23;
@@ -122,8 +104,7 @@ fn render(grid: &Grid, generation: usize, population: usize, delay_ms: u64, paus
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn _start() {
+fn main() {
     print!("\x1B[2J\x1B[H");
 
     let mut rng = Rng::new(0xDEAD_BEEF_CAFE_BABE);
@@ -163,9 +144,4 @@ pub extern "C" fn _start() {
             generation += 1;
         }
     }
-}
-
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    loop {}
 }

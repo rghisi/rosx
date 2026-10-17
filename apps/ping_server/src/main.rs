@@ -1,32 +1,14 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
 use alloc::format;
 use alloc::vec::Vec;
-use core::alloc::{GlobalAlloc, Layout};
-use core::panic::PanicInfo;
 use system::ipc::MESSAGE_PAYLOAD_BYTES;
 use usrlib::handle::UserDataHandle;
 use usrlib::ipc::receive_data;
 use usrlib::println;
 use usrlib::syscall::Syscall;
-
-struct SyscallAllocator;
-
-unsafe impl GlobalAlloc for SyscallAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        Syscall::alloc(layout.size(), layout.align())
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        Syscall::dealloc(ptr, layout.size(), layout.align());
-    }
-}
-
-#[global_allocator]
-static ALLOCATOR: SyscallAllocator = SyscallAllocator;
 
 fn checksum(payload: &[u8]) -> u32 {
     payload
@@ -104,15 +86,8 @@ impl PingServer {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn _start() {
+fn main() {
     println!("[IPC Server] Ping");
     let mut server = PingServer::new();
     server.run();
-}
-
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    println!("[IPC Server] Ping - Panic!");
-    loop {}
 }

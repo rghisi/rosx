@@ -1,32 +1,14 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
 use alloc::vec;
 use alloc::vec::Vec;
-use core::alloc::{GlobalAlloc, Layout};
-use core::panic::PanicInfo;
 use usrlib::error::DataError;
 use usrlib::handle::{UserConnectionHandle, UserDataHandle};
 use usrlib::ipc::{ipc_receive_value, send_data};
 use usrlib::println;
 use usrlib::syscall::Syscall;
-
-struct SyscallAllocator;
-
-unsafe impl GlobalAlloc for SyscallAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        Syscall::alloc(layout.size(), layout.align())
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        Syscall::dealloc(ptr, layout.size(), layout.align());
-    }
-}
-
-#[global_allocator]
-static ALLOCATOR: SyscallAllocator = SyscallAllocator;
 
 const MAX_DATA_BYTES: usize = 64 * 1024;
 const OBJECT_LENGTHS: [usize; 3] = [32768, 32768, 8192];
@@ -110,8 +92,7 @@ fn verification_round(connection: UserConnectionHandle) {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn _start() {
+fn main() {
     Syscall::sleep(STARTUP_DELAY_MS);
     let connection = connect_to_bulk_echo();
     probe_oversized_write(connection);
@@ -121,13 +102,5 @@ pub extern "C" fn _start() {
     println!("BULK Done");
     loop {
         Syscall::sleep(1000);
-    }
-}
-
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    println!("[BULK Client] Panic!");
-    loop {
-
     }
 }

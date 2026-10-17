@@ -1,11 +1,11 @@
-ENTRY(_start)
+ENTRY(main)
 
 SECTIONS
 {
     . = 0;
 
     .text : {
-        *(.text._start)
+        *(.text.main)
         *(.text .text.*)
     }
 

@@ -1,32 +1,14 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
 use alloc::format;
 use alloc::vec::Vec;
-use core::alloc::{GlobalAlloc, Layout};
-use core::panic::PanicInfo;
 use system::ipc::MESSAGE_PAYLOAD_BYTES;
 use usrlib::handle::{UserConnectionHandle, UserDataHandle};
 use usrlib::ipc::receive_data;
 use usrlib::println;
 use usrlib::syscall::Syscall;
-
-struct SyscallAllocator;
-
-unsafe impl GlobalAlloc for SyscallAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        Syscall::alloc(layout.size(), layout.align())
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        Syscall::dealloc(ptr, layout.size(), layout.align());
-    }
-}
-
-#[global_allocator]
-static ALLOCATOR: SyscallAllocator = SyscallAllocator;
 
 const MAX_DATA_BYTES: usize = 64 * 1024;
 const PING_SIZES: [usize; 3] = [64, 4096, MAX_DATA_BYTES];
@@ -115,17 +97,10 @@ fn ping_round(connection: UserConnectionHandle, size: usize) {
     let _ = ping_handle.release();
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn _start() {
+fn main() {
     let connection = connect_to_ping_server();
     for size in PING_SIZES {
         ping_round(connection, size);
     }
     Syscall::ipc_disconnect(connection);
-}
-
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    println!("[PING Client] Panic!");
-    loop {}
 }
