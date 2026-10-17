@@ -87,7 +87,7 @@ impl RamFs {
             return Err(VfsError::NotPermitted);
         }
         let start = offset as usize;
-        let end = start + payload.len();
+        let end = start.saturating_add(payload.len());
         if file.len() < end {
             file.resize(end, 0);
         }

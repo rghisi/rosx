@@ -82,10 +82,10 @@ impl VfsServer {
         };
         let owner = conn_token(connection);
         self.release_held_for(owner);
-        let Some(request) = wire::decode_request(received.data()) else {
-            return;
+        let reply = match wire::decode_request(received.data()) {
+            Ok(request) => self.dispatch(connection, owner, request),
+            Err(error) => wire::encode_err(error),
         };
-        let reply = self.dispatch(connection, owner, request);
         let _ = Syscall::ipc_send(connection, &reply);
     }
 

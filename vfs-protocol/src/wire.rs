@@ -188,44 +188,56 @@ pub fn encode_listed(token: u32, total: u32) -> [u8; FRAME_BYTES] {
     frame
 }
 
-pub fn decode_request(frame: &[u8; FRAME_BYTES]) -> Option<Request<'_>> {
+pub fn decode_request(frame: &[u8; FRAME_BYTES]) -> Result<Request<'_>, VfsError> {
     match frame[0] {
         OPEN => {
             let mode = frame[1];
             let name = decode_name(frame, 3, frame[2] as usize)?;
-            Some(Request::Open { mode, name })
+            Ok(Request::Open { mode, name })
         }
-        READ => Some(Request::Read {
-            handle: u32::from_le_bytes(frame[1..5].try_into().ok()?),
-            offset: u64::from_le_bytes(frame[5..13].try_into().ok()?),
-            count: u32::from_le_bytes(frame[13..17].try_into().ok()?),
+        READ => Ok(Request::Read {
+            handle: read_u32(frame, 1),
+            offset: read_u64(frame, 5),
+            count: read_u32(frame, 13),
         }),
-        WRITE => Some(Request::Write {
-            handle: u32::from_le_bytes(frame[1..5].try_into().ok()?),
-            offset: u64::from_le_bytes(frame[5..13].try_into().ok()?),
-            token: u32::from_le_bytes(frame[13..17].try_into().ok()?),
+        WRITE => Ok(Request::Write {
+            handle: read_u32(frame, 1),
+            offset: read_u64(frame, 5),
+            token: read_u32(frame, 13),
         }),
-        CLOSE => Some(Request::Close {
-            handle: u32::from_le_bytes(frame[1..5].try_into().ok()?),
+        CLOSE => Ok(Request::Close {
+            handle: read_u32(frame, 1),
         }),
         DELETE => {
             let name = decode_name(frame, 2, frame[1] as usize)?;
-            Some(Request::Delete { name })
+            Ok(Request::Delete { name })
         }
-        LIST => Some(Request::List),
-        _ => None,
+        LIST => Ok(Request::List),
+        _ => Err(VfsError::Protocol),
     }
 }
 
-fn decode_name<'a>(frame: &'a [u8; FRAME_BYTES], offset: usize, name_len: usize) -> Option<&'a str> {
+fn decode_name<'a>(
+    frame: &'a [u8; FRAME_BYTES],
+    offset: usize,
+    name_len: usize,
+) -> Result<&'a str, VfsError> {
     if name_len == 0 || name_len > MAX_NAME_BYTES {
-        return None;
+        return Err(VfsError::InvalidPath);
     }
     let end = offset + name_len;
     if end > FRAME_BYTES {
-        return None;
+        return Err(VfsError::InvalidPath);
     }
-    core::str::from_utf8(&frame[offset..end]).ok()
+    core::str::from_utf8(&frame[offset..end]).map_err(|_| VfsError::InvalidPath)
+}
+
+fn read_u32(frame: &[u8; FRAME_BYTES], at: usize) -> u32 {
+    u32::from_le_bytes(frame[at..at + 4].try_into().unwrap())
+}
+
+fn read_u64(frame: &[u8; FRAME_BYTES], at: usize) -> u64 {
+    u64::from_le_bytes(frame[at..at + 8].try_into().unwrap())
 }
 
 pub fn decode_reply(frame: &[u8; FRAME_BYTES], expect: Expect) -> Result<Reply, ()> {
@@ -389,7 +401,7 @@ mod tests {
         let frame = encode_open(MODE_WRITE, "notes.txt").unwrap();
         assert_eq!(
             decode_request(&frame),
-            Some(Request::Open {
+            Ok(Request::Open {
                 mode: MODE_WRITE,
                 name: "notes.txt"
             })
@@ -400,7 +412,7 @@ mod tests {
     fn open_request_roundtrips_maximum_name() {
         let name = name_of_len(MAX_NAME_BYTES);
         let frame = encode_open(0, &name).unwrap();
-        assert_eq!(decode_request(&frame), Some(Request::Open { mode: 0, name: &name }));
+        assert_eq!(decode_request(&frame), Ok(Request::Open { mode: 0, name: &name }));
     }
 
     #[test]
@@ -408,7 +420,7 @@ mod tests {
         let frame = encode_read(9, 0xFFFF_FFFF_FFFF_FF00, 65536);
         assert_eq!(
             decode_request(&frame),
-            Some(Request::Read {
+            Ok(Request::Read {
                 handle: 9,
                 offset: 0xFFFF_FFFF_FFFF_FF00,
                 count: 65536
@@ -421,7 +433,7 @@ mod tests {
         let frame = encode_write(3, 4096, 0x0001_0000);
         assert_eq!(
             decode_request(&frame),
-            Some(Request::Write {
+            Ok(Request::Write {
                 handle: 3,
                 offset: 4096,
                 token: 0x0001_0000
@@ -432,7 +444,7 @@ mod tests {
     #[test]
     fn close_request_roundtrips() {
         let frame = encode_close(1);
-        assert_eq!(decode_request(&frame), Some(Request::Close { handle: 1 }));
+        assert_eq!(decode_request(&frame), Ok(Request::Close { handle: 1 }));
     }
 
     #[test]
@@ -440,13 +452,13 @@ mod tests {
         let frame = encode_delete("blob.bin").unwrap();
         assert_eq!(
             decode_request(&frame),
-            Some(Request::Delete { name: "blob.bin" })
+            Ok(Request::Delete { name: "blob.bin" })
         );
     }
 
     #[test]
     fn list_request_roundtrips() {
-        assert_eq!(decode_request(&encode_list()), Some(Request::List));
+        assert_eq!(decode_request(&encode_list()), Ok(Request::List));
     }
 
     #[test]
@@ -454,7 +466,11 @@ mod tests {
         for op in [0u8, 7, 255] {
             let mut frame = encode_list();
             frame[0] = op;
-            assert_eq!(decode_request(&frame), None, "op byte {op} accepted");
+            assert_eq!(
+                decode_request(&frame),
+                Err(VfsError::Protocol),
+                "op byte {op} accepted"
+            );
         }
     }
 
@@ -462,20 +478,20 @@ mod tests {
     fn decode_request_rejects_zero_name_len() {
         let mut open_frame = encode_open(0, "x").unwrap();
         open_frame[2] = 0;
-        assert_eq!(decode_request(&open_frame), None);
+        assert_eq!(decode_request(&open_frame), Err(VfsError::InvalidPath));
         let mut delete_frame = encode_delete("x").unwrap();
         delete_frame[1] = 0;
-        assert_eq!(decode_request(&delete_frame), None);
+        assert_eq!(decode_request(&delete_frame), Err(VfsError::InvalidPath));
     }
 
     #[test]
     fn decode_request_rejects_name_len_beyond_limit() {
         let mut open_frame = encode_open(0, "x").unwrap();
         open_frame[2] = 58;
-        assert_eq!(decode_request(&open_frame), None);
+        assert_eq!(decode_request(&open_frame), Err(VfsError::InvalidPath));
         let mut delete_frame = encode_delete("x").unwrap();
         delete_frame[1] = 58;
-        assert_eq!(decode_request(&delete_frame), None);
+        assert_eq!(decode_request(&delete_frame), Err(VfsError::InvalidPath));
     }
 
     #[test]
@@ -483,18 +499,26 @@ mod tests {
         let mut frame = [0u8; FRAME_BYTES];
         frame[0] = OPEN;
         frame[2] = 255;
-        assert_eq!(decode_request(&frame), None);
+        assert_eq!(decode_request(&frame), Err(VfsError::InvalidPath));
         let mut delete_frame = [0u8; FRAME_BYTES];
         delete_frame[0] = DELETE;
         delete_frame[1] = 255;
-        assert_eq!(decode_request(&delete_frame), None);
+        assert_eq!(decode_request(&delete_frame), Err(VfsError::InvalidPath));
     }
 
     #[test]
     fn decode_request_rejects_invalid_utf8_name() {
         let mut frame = encode_open(0, "abc").unwrap();
         frame[4] = 0xFF;
-        assert_eq!(decode_request(&frame), None);
+        assert_eq!(decode_request(&frame), Err(VfsError::InvalidPath));
+    }
+
+    #[test]
+    fn decode_request_unknown_op_outranks_bad_name() {
+        let mut frame = encode_delete("x").unwrap();
+        frame[0] = 200;
+        frame[1] = 255;
+        assert_eq!(decode_request(&frame), Err(VfsError::Protocol));
     }
 
     #[test]
@@ -674,6 +698,18 @@ mod tests {
         }
         assert_eq!(VfsError::NotFound.to_byte(), 1);
         assert_eq!(VfsError::ServerResource.to_byte(), 7);
+        assert_eq!(VfsError::Protocol.to_byte(), 255);
+    }
+
+    #[test]
+    fn protocol_error_frame_carries_byte_255_and_decodes_back() {
+        let frame = encode_err(VfsError::Protocol);
+        assert_eq!(frame[0], STATUS_ERR);
+        assert_eq!(frame[1], 255);
+        assert_eq!(
+            decode_reply(&frame, Expect::Ack),
+            Ok(Reply::Err(VfsError::Protocol))
+        );
     }
 
     #[test]
