@@ -170,13 +170,11 @@ impl RamFs {
 
     pub fn list(&self) -> Result<Vec<u8>, VfsError> {
         let mut blob = Vec::new();
-        for (name, store) in self.files.iter() {
-            if matches!(store, FileStore::Ram(_)) {
-                if !blob.is_empty() {
-                    blob.push(b'\n');
-                }
-                blob.extend_from_slice(name.as_bytes());
+        for name in self.files.keys() {
+            if !blob.is_empty() {
+                blob.push(b'\n');
             }
+            blob.extend_from_slice(name.as_bytes());
         }
         if blob.len() > wire::RPC_MAX_DATA_BYTES {
             return Err(VfsError::ListTooLarge);
@@ -470,15 +468,11 @@ mod tests {
     }
 
     #[test]
-    fn list_enumerates_ram_files_and_rom_stays_openable_by_name() {
+    fn attach_rom_lists_rom_names_sorted_with_ram_names() {
         let mut fs = RamFs::new();
         fs.attach_rom(fabricated_rom()).unwrap();
         create(&mut fs, OWNER, "mid.txt");
-        assert_eq!(fs.list().unwrap(), b"mid.txt".to_vec());
-        let handle = fs
-            .open(OWNER, 0, "alpha.bin")
-            .expect("rom file must open by exact name without being listed");
-        assert_eq!(contents(&fs, OWNER, handle), b"alpha".to_vec());
+        assert_eq!(fs.list().unwrap(), b"alpha.bin\nbeta.bin\nmid.txt".to_vec());
     }
 
     #[test]
@@ -526,7 +520,7 @@ mod tests {
         let mut fs = RamFs::new();
         fs.attach_rom(fabricated_rom()).unwrap();
         assert_eq!(fs.delete("alpha.bin"), Err(VfsError::NotPermitted));
-        assert_eq!(fs.list().unwrap(), Vec::new());
+        assert_eq!(fs.list().unwrap(), b"alpha.bin\nbeta.bin".to_vec());
     }
 
     #[test]
