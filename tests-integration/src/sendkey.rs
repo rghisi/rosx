@@ -46,7 +46,7 @@ pub fn token_for(c: char) -> Option<&'static str> {
     }
     match c {
         '\n' => Some("ret"),
-        ' ' => Some("sp"),
+        ' ' => Some("spc"),
         '\t' => Some("tab"),
         '\x08' => Some("backspace"),
         '-' => Some("minus"),
@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn special_characters_map_to_named_tokens() {
         assert_eq!(token_for('\n'), Some("ret"));
-        assert_eq!(token_for(' '), Some("sp"));
+        assert_eq!(token_for(' '), Some("spc"));
         assert_eq!(token_for('\t'), Some("tab"));
         assert_eq!(token_for('\x08'), Some("backspace"));
         assert_eq!(token_for('-'), Some("minus"));
