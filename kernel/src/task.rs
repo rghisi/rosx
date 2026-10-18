@@ -2,6 +2,7 @@ use crate::cpu::Cpu;
 use crate::kernel::{kernel};
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::fmt::{Display, Formatter};
 use crate::elf::load_elf;
 use crate::handle::FutureHandle;
@@ -172,9 +173,54 @@ pub fn new_entrypoint_task(entrypoint: usize) -> SharedTask {
     Task::new("EPT", task_wrapper as usize, entrypoint)
 }
 
+pub struct ElfTaskContext {
+    elf_bytes: &'static [u8],
+    argument_strings: Vec<u8>,
+    argument_pointers: Vec<*const u8>,
+}
+
+impl ElfTaskContext {
+    fn new(elf_bytes: &'static [u8], arguments: &[&str]) -> Box<ElfTaskContext> {
+        let mut argument_strings: Vec<u8> = Vec::new();
+        for argument in arguments {
+            argument_strings.extend_from_slice(argument.as_bytes());
+            argument_strings.push(0);
+        }
+        let mut context = Box::new(ElfTaskContext {
+            elf_bytes,
+            argument_strings,
+            argument_pointers: Vec::new(),
+        });
+        context.install_argument_pointers();
+        context
+    }
+
+    fn install_argument_pointers(&mut self) {
+        let base = self.argument_strings.as_ptr();
+        let mut start = 0;
+        while start < self.argument_strings.len() {
+            self.argument_pointers.push(unsafe { base.add(start) });
+            let argument_len = self.argument_strings[start..]
+                .iter()
+                .position(|byte| *byte == 0)
+                .unwrap();
+            start += argument_len + 1;
+        }
+        self.argument_pointers.push(core::ptr::null());
+    }
+
+    fn argc(&self) -> i32 {
+        self.argument_pointers.len() as i32 - 1
+    }
+
+    fn argv(&self) -> *const *const u8 {
+        self.argument_pointers.as_ptr()
+    }
+}
+
 pub fn new_elf_task(elf: &'static [u8]) -> SharedTask {
-    let elf_ptr = Box::into_raw(Box::new(elf)) as usize;
-    Task::new("ELF", elf_task_wrapper as usize, elf_ptr)
+    let context = ElfTaskContext::new(elf, &["ELF"]);
+    Task::new("ELF", elf_task_wrapper as usize, Box::into_raw(context) as usize)
 }
 
 pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
@@ -224,11 +270,55 @@ mod tests {
         task.set_completion_future(fh);
         assert_eq!(task.completion_future(), Some(fh));
     }
+
+    fn read_c_string(pointer: *const u8) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut index = 0;
+        while unsafe { *pointer.add(index) } != 0 {
+            bytes.push(unsafe { *pointer.add(index) });
+            index += 1;
+        }
+        bytes
+    }
+
+    #[test]
+    fn elf_task_context_stores_arguments_as_nul_terminated_strings() {
+        let context = ElfTaskContext::new(&[], &["hello", "world"]);
+        assert_eq!(context.argument_strings, b"hello\0world\0");
+    }
+
+    #[test]
+    fn elf_task_context_without_arguments_holds_no_strings() {
+        let context = ElfTaskContext::new(&[], &[]);
+        assert!(context.argument_strings.is_empty());
+        assert_eq!(context.argc(), 0);
+        assert!(unsafe { context.argv().read().is_null() });
+    }
+
+    #[test]
+    fn elf_task_context_argument_pointers_address_their_own_strings() {
+        let context = ElfTaskContext::new(&[], &["hello", "", "x86_64"]);
+        let argv = context.argv();
+        assert_eq!(context.argc(), 3);
+        assert_eq!(unsafe { argv.read() }, context.argument_strings.as_ptr());
+        assert_eq!(read_c_string(unsafe { argv.add(0).read() }), b"hello");
+        assert_eq!(read_c_string(unsafe { argv.add(1).read() }), b"");
+        assert_eq!(read_c_string(unsafe { argv.add(2).read() }), b"x86_64");
+        assert!(unsafe { argv.add(3).read().is_null() });
+    }
+
+    #[test]
+    fn elf_task_context_keeps_strings_beyond_pointer_installation() {
+        let context = ElfTaskContext::new(&[1, 2, 3], &["pi"]);
+        let moved = context;
+        assert_eq!(read_c_string(unsafe { moved.argv().read() }), b"pi");
+        assert_eq!(moved.elf_bytes, &[1, 2, 3]);
+    }
 }
 
-pub(crate) extern "C" fn elf_task_wrapper(elf: usize) {
-    let elf_bytes: &[u8] = unsafe { *Box::from_raw(elf as *mut &[u8]) };
-    let image = load_elf(elf_bytes, kernel().elf_arch).unwrap();
+pub(crate) extern "C" fn elf_task_wrapper(context: usize) {
+    let context = unsafe { Box::from_raw(context as *mut ElfTaskContext) };
+    let image = load_elf(context.elf_bytes, kernel().elf_arch).unwrap();
     let task_entry_point: fn() = unsafe { core::mem::transmute(image.entry) };
 
     kernel().execution_state.preemption_enabled = true;
@@ -236,6 +326,7 @@ pub(crate) extern "C" fn elf_task_wrapper(elf: usize) {
     task_entry_point();
 
     drop(image);
+    drop(context);
 
     kernel().terminate_and_yield();
 }
