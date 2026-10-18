@@ -3,6 +3,8 @@ use usrlib::handle::UserConnectionHandle;
 use usrlib::ipc::{ipc_receive_value, ipc_send_value};
 use usrlib::syscall::Syscall;
 use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
 use alloc::collections::BTreeMap;
 use lazy_static::lazy_static;
 use crate::command::Command;
@@ -36,24 +38,24 @@ static VFS_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/vfs_cl
 static PROMPT: &str = "\x1B[32mrose>\x1B[m ";
 
 lazy_static! {
-    static ref COMMANDS: BTreeMap<String, fn()> = {
+    static ref COMMANDS: BTreeMap<String, fn(&Command)> = {
         #[allow(unused_mut)]
-        let mut commands: BTreeMap<String, fn()> = BTreeMap::from([
-            (String::from("ls"), ls as fn()),
-            (String::from("clear"), clear as fn()),
-            (String::from("rose"), rose as fn()),
-            (String::from("pi"), pi as fn()),
-            (String::from("snake"), snake as fn()),
-            (String::from("tests"), tests as fn()),
-            (String::from("tetris"), tetris as fn()),
-            (String::from("conway"), conway as fn()),
-            (String::from("sleep"), sleep as fn()),
-            (String::from("random"), random as fn()),
+        let mut commands: BTreeMap<String, fn(&Command)> = BTreeMap::from([
+            (String::from("ls"), ls as fn(&Command)),
+            (String::from("clear"), clear as fn(&Command)),
+            (String::from("rose"), rose as fn(&Command)),
+            (String::from("pi"), pi as fn(&Command)),
+            (String::from("snake"), snake as fn(&Command)),
+            (String::from("tests"), tests as fn(&Command)),
+            (String::from("tetris"), tetris as fn(&Command)),
+            (String::from("conway"), conway as fn(&Command)),
+            (String::from("sleep"), sleep as fn(&Command)),
+            (String::from("random"), random as fn(&Command)),
         ]);
         #[cfg(target_arch = "x86_64")]
-        commands.insert(String::from("ping"), ping as fn());
+        commands.insert(String::from("ping"), ping as fn(&Command));
         #[cfg(target_arch = "x86_64")]
-        commands.insert(String::from("vfs"), vfs as fn());
+        commands.insert(String::from("vfs"), vfs as fn(&Command));
         commands
     };
 }
@@ -61,7 +63,7 @@ lazy_static! {
 pub fn main() {
 
     println!("ROSE Shell");
-    rose();
+    rose(&Command { name: String::from("rose"), args: Vec::new() });
     prompt();
     
     let mut buffer = String::new();
@@ -74,7 +76,7 @@ pub fn main() {
 
             if let Some(cmd) = Command::parse(&buffer) {
                 if let Some(command) = COMMANDS.get(&cmd.name) {
-                    command();
+                    command(&cmd);
                 } else {
                     println!("Unknown command: {}", cmd.name);
                 }
@@ -98,7 +100,7 @@ fn prompt() {
     print!("{}", PROMPT);
 }
 
-fn rose() {
+fn rose(_cmd: &Command) {
     println!("\x1B[40m\x1B[31m       _");
     println!("\x1B[40m\x1B[31m     _( )_");
     println!("\x1B[40m\x1B[31m    (_(%)_)    \x1B[32m_");
@@ -109,64 +111,60 @@ fn rose() {
     println!("\x1B[40m\x1B[32m           |");
 }
 
-fn clear() {
+fn clear(_cmd: &Command) {
     print!("\x1B[2J\x1B[H");
 }
 
-fn ls() {
+fn ls(_cmd: &Command) {
     COMMANDS.iter().for_each(|(command, _)| print!("{}\t", command));
     println!();
 }
 
-fn pi() {
-    if let Some(fh) = Syscall::load(PI_ELF) {
+fn spawn(elf: &'static [u8], cmd: &Command) {
+    let mut argv = vec![cmd.name.clone()];
+    argv.extend_from_slice(&cmd.args);
+    if let Some(fh) = Syscall::load_with_args(elf, &argv) {
         Syscall::wait_future(fh);
     }
 }
 
-fn snake() {
-    if let Some(fh) = Syscall::load(SNAKE_ELF) {
-        Syscall::wait_future(fh);
-    }
+fn pi(_cmd: &Command) {
+    spawn(PI_ELF, _cmd);
 }
 
-fn tetris() {
-    if let Some(fh) = Syscall::load(TETRIS_ELF) {
-        Syscall::wait_future(fh);
-    }
+fn snake(_cmd: &Command) {
+    spawn(SNAKE_ELF, _cmd);
 }
 
-fn conway() {
-    if let Some(fh) = Syscall::load(CONWAY_ELF) {
-        Syscall::wait_future(fh);
-    }
+fn tetris(_cmd: &Command) {
+    spawn(TETRIS_ELF, _cmd);
 }
 
-#[cfg(target_arch = "x86_64")]
-fn ping() {
-    if let Some(fh) = Syscall::load(PING_ELF) {
-        Syscall::wait_future(fh);
-    }
+fn conway(_cmd: &Command) {
+    spawn(CONWAY_ELF, _cmd);
 }
 
 #[cfg(target_arch = "x86_64")]
-fn vfs() {
-    if let Some(fh) = Syscall::load(VFS_ELF) {
-        Syscall::wait_future(fh);
-    }
+fn ping(_cmd: &Command) {
+    spawn(PING_ELF, _cmd);
 }
 
-fn tests() {
+#[cfg(target_arch = "x86_64")]
+fn vfs(_cmd: &Command) {
+    spawn(VFS_ELF, _cmd);
+}
+
+fn tests(_cmd: &Command) {
     if let Some(fh) = Syscall::exec(test_suite::app::main as usize) {
         Syscall::wait_future(fh);
     }
 }
 
-fn sleep() {
+fn sleep(_cmd: &Command) {
     Syscall::sleep(1000);
 }
 
-fn random() {
+fn random(_cmd: &Command) {
     let mut first: Option<UserConnectionHandle> = None;
     for _ in 1..260 {
         let ipc_connection_result = Syscall::ipc_connect("RANDOM");
