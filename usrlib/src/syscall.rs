@@ -3,6 +3,7 @@ use crate::error::{DataError, IpcBindingError, IpcConnectionError, IpcReceiveErr
 use crate::handle::{UserBindingHandle, UserConnectionHandle, UserFutureHandle, UserDataHandle};
 use crate::ipc::ReceivedMessage;
 use alloc::boxed::Box;
+use alloc::string::String;
 use core::fmt;
 use system::error::{ErrorCode, is_token};
 use system::ipc::{MESSAGE_PAYLOAD_BYTES, Message};
@@ -17,8 +18,18 @@ impl Syscall {
     }
 
     pub fn load(elf: &'static [u8]) -> Option<UserFutureHandle> {
+        Self::load_with_args(elf, &[])
+    }
+
+    pub fn load_with_args(elf: &'static [u8], args: &[String]) -> Option<UserFutureHandle> {
         let elf_ptr = Box::into_raw(Box::new(elf)) as usize;
-        let raw = arch::raw_syscall(SyscallNum::LoadElf as usize, elf_ptr as usize, 0, 0);
+        let blob = system::args::encode(args);
+        let (blob_ptr, blob_len) = if blob.is_empty() {
+            (0, 0)
+        } else {
+            (blob.as_ptr() as usize, blob.len())
+        };
+        let raw = arch::raw_syscall(SyscallNum::LoadElf as usize, elf_ptr, blob_ptr, blob_len);
         UserFutureHandle::from_token(raw)
     }
 
