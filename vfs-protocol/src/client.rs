@@ -1,4 +1,4 @@
-use crate::wire::{self, Reply, VfsError};
+use crate::wire::{self, Reply, Request, VfsError};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -40,9 +40,10 @@ fn drain_data_object(token: u32) -> Result<Vec<u8>, ClientError> {
 
 fn transact(
     connection: UserConnectionHandle,
-    frame: &[u8; wire::FRAME_BYTES],
+    request: Request<'_>,
 ) -> Result<Reply, ClientError> {
-    Syscall::ipc_send(connection, frame).map_err(|_| ClientError::Transport)?;
+    let frame = request.encode().map_err(ClientError::Vfs)?;
+    Syscall::ipc_send(connection, &frame).map_err(|_| ClientError::Transport)?;
     let future = Syscall::ipc_receive_message(connection).ok_or(ClientError::Transport)?;
     let received = Syscall::wait_for_message(future).map_err(|_| ClientError::Transport)?;
     if received.connection().is_none() {
@@ -67,10 +68,8 @@ impl Vfs {
     }
 
     pub fn open(&self, name: &str, mode: u8) -> Result<VfsFile, ClientError> {
-        let frame = wire::Request::Open { mode, name }
-            .encode()
-            .map_err(ClientError::Vfs)?;
-        match transact(self.connection, &frame)? {
+        let request = wire::Request::Open { mode, name };
+        match transact(self.connection, request)? {
             Reply::Opened { handle } => Ok(VfsFile {
                 connection: self.connection,
                 handle,
@@ -82,10 +81,8 @@ impl Vfs {
     }
 
     pub fn delete(&self, name: &str) -> Result<(), ClientError> {
-        let frame = wire::Request::Delete { name }
-            .encode()
-            .map_err(ClientError::Vfs)?;
-        match transact(self.connection, &frame)? {
+        let request = wire::Request::Delete { name };
+        match transact(self.connection, request)? {
             Reply::Ack => Ok(()),
             Reply::Err(error) => Err(ClientError::Vfs(error)),
             _ => Err(ClientError::Protocol),
@@ -93,8 +90,8 @@ impl Vfs {
     }
 
     pub fn list(&self) -> Result<Vec<String>, ClientError> {
-        let frame = wire::Request::List.encode().map_err(ClientError::Vfs)?;
-        match transact(self.connection, &frame)? {
+        let request = wire::Request::List;
+        match transact(self.connection, request)? {
             Reply::Eof => Ok(Vec::new()),
             Reply::Listed { token, total } => {
                 let payload = drain_data_object(token)?;
@@ -125,14 +122,12 @@ impl VfsFile {
         let mut total = 0usize;
         while total < buf.len() {
             let requested = min(buf.len() - total, wire::RPC_MAX_DATA_BYTES) as u32;
-            let frame = wire::Request::Read {
+            let request = wire::Request::Read {
                 handle: self.handle,
                 offset: self.offset,
                 count: requested,
-            }
-            .encode()
-            .map_err(ClientError::Vfs)?;
-            match transact(self.connection, &frame)? {
+            };
+            match transact(self.connection, request)? {
                 Reply::Eof => break,
                 Reply::ReadData { token, count } => {
                     let chunk = drain_data_object(token)?;
@@ -156,14 +151,12 @@ impl VfsFile {
             let end = min(written + wire::RPC_MAX_DATA_BYTES, data.len());
             let chunk = &data[written..end];
             let mut object = Syscall::ipc_data_write(self.connection, chunk).map_err(ClientError::Data)?;
-            let frame = wire::Request::Write {
+            let request = wire::Request::Write {
                 handle: self.handle,
                 offset: self.offset,
                 token: data_token(&object),
-            }
-            .encode()
-            .map_err(ClientError::Vfs)?;
-            let reply = transact(self.connection, &frame);
+            };
+            let reply = transact(self.connection, request);
             let _ = object.release();
             match reply? {
                 Reply::Written { bytes } => {
@@ -191,10 +184,8 @@ impl VfsFile {
     }
 
     pub fn close(self) -> Result<(), ClientError> {
-        let frame = wire::Request::Close { handle: self.handle }
-            .encode()
-            .map_err(ClientError::Vfs)?;
-        match transact(self.connection, &frame)? {
+        let request = wire::Request::Close { handle: self.handle };
+        match transact(self.connection, request)? {
             Reply::Ack => Ok(()),
             Reply::Err(error) => Err(ClientError::Vfs(error)),
             _ => Err(ClientError::Protocol),
