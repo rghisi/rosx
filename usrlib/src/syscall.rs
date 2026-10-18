@@ -187,4 +187,13 @@ impl Syscall {
             Err(DataError::from(ErrorCode::from_code(raw)))
         }
     }
+
+    pub fn rom_read(offset: u64, dst: &mut [u8]) -> usize {
+        arch::raw_syscall(
+            SyscallNum::RomRead as usize,
+            offset as usize,
+            dst.as_mut_ptr() as usize,
+            dst.len(),
+        )
+    }
 }

@@ -21,6 +21,7 @@ pub enum SyscallNum {
     IpcDataWrite = 24,
     IpcDataRead = 25,
     IpcDataRelease = 26,
+    RomRead = 27,
 }
 
 impl TryFrom<usize> for SyscallNum {
@@ -48,6 +49,7 @@ impl TryFrom<usize> for SyscallNum {
             24 => Ok(Self::IpcDataWrite),
             25 => Ok(Self::IpcDataRead),
             26 => Ok(Self::IpcDataRelease),
+            27 => Ok(Self::RomRead),
             _ => Err(()),
         }
     }
