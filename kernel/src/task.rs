@@ -319,11 +319,12 @@ mod tests {
 pub(crate) extern "C" fn elf_task_wrapper(context: usize) {
     let context = unsafe { Box::from_raw(context as *mut ElfTaskContext) };
     let image = load_elf(context.elf_bytes, kernel().elf_arch).unwrap();
-    let task_entry_point: fn() = unsafe { core::mem::transmute(image.entry) };
+    let task_entry_point: extern "C" fn(i32, *const *const u8) -> i32 =
+        unsafe { core::mem::transmute(image.entry) };
 
     kernel().execution_state.preemption_enabled = true;
 
-    task_entry_point();
+    task_entry_point(context.argc(), context.argv());
 
     drop(image);
     drop(context);
