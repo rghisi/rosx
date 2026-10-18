@@ -1,4 +1,4 @@
-use crate::wire::{self, Expect, Reply, VfsError};
+use crate::wire::{self, Reply, VfsError};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -41,7 +41,6 @@ fn drain_data_object(token: u32) -> Result<Vec<u8>, ClientError> {
 fn rpc(
     connection: UserConnectionHandle,
     frame: &[u8; wire::FRAME_BYTES],
-    expect: Expect,
 ) -> Result<Reply, ClientError> {
     Syscall::ipc_send(connection, frame).map_err(|_| ClientError::Transport)?;
     let future = Syscall::ipc_receive_message(connection).ok_or(ClientError::Transport)?;
@@ -49,7 +48,7 @@ fn rpc(
     if received.connection().is_none() {
         return Err(ClientError::NoConnection);
     }
-    wire::decode_reply(received.data(), expect).map_err(|_| ClientError::Protocol)
+    Reply::decode(received.data()).map_err(|_| ClientError::Protocol)
 }
 
 pub struct Vfs {
@@ -68,10 +67,10 @@ impl Vfs {
     }
 
     pub fn open(&self, name: &str, mode: u8) -> Result<VfsFile, ClientError> {
-        let Some(frame) = wire::encode_open(mode, name) else {
-            return Err(ClientError::Vfs(VfsError::InvalidPath));
-        };
-        match rpc(self.connection, &frame, Expect::Opened)? {
+        let frame = wire::Request::Open { mode, name }
+            .encode()
+            .map_err(ClientError::Vfs)?;
+        match rpc(self.connection, &frame)? {
             Reply::Opened { handle } => Ok(VfsFile {
                 connection: self.connection,
                 handle,
@@ -83,10 +82,10 @@ impl Vfs {
     }
 
     pub fn delete(&self, name: &str) -> Result<(), ClientError> {
-        let Some(frame) = wire::encode_delete(name) else {
-            return Err(ClientError::Vfs(VfsError::InvalidPath));
-        };
-        match rpc(self.connection, &frame, Expect::Ack)? {
+        let frame = wire::Request::Delete { name }
+            .encode()
+            .map_err(ClientError::Vfs)?;
+        match rpc(self.connection, &frame)? {
             Reply::Ack => Ok(()),
             Reply::Err(error) => Err(ClientError::Vfs(error)),
             _ => Err(ClientError::Protocol),
@@ -94,8 +93,8 @@ impl Vfs {
     }
 
     pub fn list(&self) -> Result<Vec<String>, ClientError> {
-        let frame = wire::encode_list();
-        match rpc(self.connection, &frame, Expect::Listed)? {
+        let frame = wire::Request::List.encode().map_err(ClientError::Vfs)?;
+        match rpc(self.connection, &frame)? {
             Reply::Eof => Ok(Vec::new()),
             Reply::Listed { token, total } => {
                 let payload = drain_data_object(token)?;
@@ -126,8 +125,14 @@ impl VfsFile {
         let mut total = 0usize;
         while total < buf.len() {
             let requested = min(buf.len() - total, wire::RPC_MAX_DATA_BYTES) as u32;
-            let frame = wire::encode_read(self.handle, self.offset, requested);
-            match rpc(self.connection, &frame, Expect::ReadData)? {
+            let frame = wire::Request::Read {
+                handle: self.handle,
+                offset: self.offset,
+                count: requested,
+            }
+            .encode()
+            .map_err(ClientError::Vfs)?;
+            match rpc(self.connection, &frame)? {
                 Reply::Eof => break,
                 Reply::ReadData { token, count } => {
                     let chunk = drain_data_object(token)?;
@@ -151,8 +156,14 @@ impl VfsFile {
             let end = min(written + wire::RPC_MAX_DATA_BYTES, data.len());
             let chunk = &data[written..end];
             let mut object = Syscall::ipc_data_write(self.connection, chunk).map_err(ClientError::Data)?;
-            let frame = wire::encode_write(self.handle, self.offset, data_token(&object));
-            let reply = rpc(self.connection, &frame, Expect::Written);
+            let frame = wire::Request::Write {
+                handle: self.handle,
+                offset: self.offset,
+                token: data_token(&object),
+            }
+            .encode()
+            .map_err(ClientError::Vfs)?;
+            let reply = rpc(self.connection, &frame);
             let _ = object.release();
             match reply? {
                 Reply::Written { bytes } => {
@@ -180,8 +191,10 @@ impl VfsFile {
     }
 
     pub fn close(self) -> Result<(), ClientError> {
-        let frame = wire::encode_close(self.handle);
-        match rpc(self.connection, &frame, Expect::Ack)? {
+        let frame = wire::Request::Close { handle: self.handle }
+            .encode()
+            .map_err(ClientError::Vfs)?;
+        match rpc(self.connection, &frame)? {
             Reply::Ack => Ok(()),
             Reply::Err(error) => Err(ClientError::Vfs(error)),
             _ => Err(ClientError::Protocol),
