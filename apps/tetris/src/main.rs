@@ -273,7 +273,8 @@ fn play(rng: &mut Rng) -> bool {
     }
 }
 
-usrlib::app_main! { fn main(_args: Vec<String>) {
+#[unsafe(no_mangle)]
+pub extern "C" fn main(_args_ptr: usize, _args_len: usize) -> isize {
     let mut rng = Rng::new(0xDEAD_BEEF_CAFE_BABE);
 
     loop {
@@ -281,7 +282,7 @@ usrlib::app_main! { fn main(_args: Vec<String>) {
         let quit = play(&mut rng);
         if quit {
             println!("Goodbye!");
-            return;
+            return 0;
         }
     }
-} }
+}

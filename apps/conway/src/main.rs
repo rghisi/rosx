@@ -105,7 +105,8 @@ fn render(grid: &Grid, generation: usize, population: usize, delay_ms: u64, paus
     }
 }
 
-usrlib::app_main! { fn main(_args: Vec<String>) {
+#[unsafe(no_mangle)]
+pub extern "C" fn main(_args_ptr: usize, _args_len: usize) -> isize {
     print!("\x1B[2J\x1B[H");
 
     let mut rng = Rng::new(0xDEAD_BEEF_CAFE_BABE);
@@ -134,7 +135,7 @@ usrlib::app_main! { fn main(_args: Vec<String>) {
                     generation = 0;
                     population = 0;
                 }
-                'q' | 'Q' => return,
+                'q' | 'Q' => return 0,
                 _ => {}
             }
         }
@@ -145,4 +146,4 @@ usrlib::app_main! { fn main(_args: Vec<String>) {
             generation += 1;
         }
     }
-} }
+}

@@ -98,10 +98,12 @@ fn ping_round(connection: UserConnectionHandle, size: usize) {
     let _ = ping_handle.release();
 }
 
-usrlib::app_main! { fn main(_args: Vec<String>) {
+#[unsafe(no_mangle)]
+pub extern "C" fn main(_args_ptr: usize, _args_len: usize) -> isize {
     let connection = connect_to_ping_server();
     for size in PING_SIZES {
         ping_round(connection, size);
     }
     Syscall::ipc_disconnect(connection);
-} }
+    0
+}

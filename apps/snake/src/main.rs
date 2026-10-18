@@ -190,7 +190,8 @@ fn play(rng: &mut Rng) -> bool {
     }
 }
 
-usrlib::app_main! { fn main(_args: Vec<String>) {
+#[unsafe(no_mangle)]
+pub extern "C" fn main(_args_ptr: usize, _args_len: usize) -> isize {
     let mut rng = Rng::new(0xDEAD_BEEF_CAFE_BABE);
 
     print!("\x1B[2J\x1B[H");
@@ -200,7 +201,7 @@ usrlib::app_main! { fn main(_args: Vec<String>) {
 
         if quit {
             println!("Goodbye!");
-            return;
+            return 0;
         }
 
         loop {
@@ -209,7 +210,7 @@ usrlib::app_main! { fn main(_args: Vec<String>) {
                 'r' | 'R' => break,
                 'q' | 'Q' => {
                     println!("Goodbye!");
-                    return;
+                    return 0;
                 }
                 _ => {}
             }
@@ -217,4 +218,4 @@ usrlib::app_main! { fn main(_args: Vec<String>) {
 
         print!("\x1B[2J\x1B[H");
     }
-} }
+}

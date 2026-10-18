@@ -87,8 +87,10 @@ impl PingServer {
     }
 }
 
-usrlib::app_main! { fn main(_args: Vec<String>) {
+#[unsafe(no_mangle)]
+pub extern "C" fn main(_args_ptr: usize, _args_len: usize) -> isize {
     println!("[IPC Server] Ping");
     let mut server = PingServer::new();
     server.run();
-} }
+    0
+}

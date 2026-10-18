@@ -37,8 +37,10 @@ impl RandomGeneratorServer {
     }
 }
 
-usrlib::app_main! { fn main(_args: Vec<String>) {
+#[unsafe(no_mangle)]
+pub extern "C" fn main(_args_ptr: usize, _args_len: usize) -> isize {
     println!("[IPC Server] Random");
     let mut server = RandomGeneratorServer::new(0xFACADA);
     server.run();
-} }
+    0
+}

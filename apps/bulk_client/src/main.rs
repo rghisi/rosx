@@ -93,7 +93,8 @@ fn verification_round(connection: UserConnectionHandle) {
     }
 }
 
-usrlib::app_main! { fn main(_args: Vec<String>) {
+#[unsafe(no_mangle)]
+pub extern "C" fn main(_args_ptr: usize, _args_len: usize) -> isize {
     Syscall::sleep(STARTUP_DELAY_MS);
     let connection = connect_to_bulk_echo();
     probe_oversized_write(connection);
@@ -104,4 +105,4 @@ usrlib::app_main! { fn main(_args: Vec<String>) {
     loop {
         Syscall::sleep(1000);
     }
-} }
+}

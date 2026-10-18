@@ -9,7 +9,8 @@ use usrlib::{print, println};
 
 const DIGITS: usize = 20000;
 
-usrlib::app_main! { fn main(_args: Vec<String>) {
+#[unsafe(no_mangle)]
+pub extern "C" fn main(_args_ptr: usize, _args_len: usize) -> isize {
     // We need a slightly larger array to account for the mathematical bounds.
     // The size roughly correlates to (10/3) * N.
     let n = DIGITS;
@@ -89,4 +90,5 @@ usrlib::app_main! { fn main(_args: Vec<String>) {
         // io::stdout().flush().unwrap();
     }
     println!();
-} }
+    0
+}

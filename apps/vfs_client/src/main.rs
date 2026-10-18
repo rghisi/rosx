@@ -208,15 +208,17 @@ fn run(vfs: &Vfs) -> bool {
     true
 }
 
-usrlib::app_main! { fn main(_args: Vec<String>) {
+#[unsafe(no_mangle)]
+pub extern "C" fn main(_args_ptr: usize, _args_len: usize) -> isize {
     println!("[ELF] VFS Client");
     let Ok(vfs) = Vfs::connect() else {
         println!("vfs error: connect");
-        return;
+        return 0;
     };
     let passed = run(&vfs);
     vfs.disconnect();
     if passed {
         println!("vfs done");
     }
-} }
+    0
+}
