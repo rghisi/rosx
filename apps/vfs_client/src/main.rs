@@ -126,7 +126,7 @@ fn run(vfs: &Vfs) -> bool {
     }
 
     match vfs.list() {
-        Ok(names) if listed(&names, "notes.txt") => {}
+        Ok(names) if listed(&names, "notes.txt") => println!("vfs list: {}", names.join(" ")),
         _ => return failed("list got notes.txt"),
     }
     println!("vfs ok: list got notes.txt");
@@ -176,7 +176,9 @@ fn run(vfs: &Vfs) -> bool {
     }
 
     match vfs.list() {
-        Ok(names) if listed(&names, "blob.bin") && listed(&names, "notes.txt") => {}
+        Ok(names) if listed(&names, "blob.bin") && listed(&names, "notes.txt") => {
+            println!("vfs list: {}", names.join(" "))
+        }
         _ => return failed("list got blob.bin notes.txt"),
     }
     println!("vfs ok: list got blob.bin notes.txt");
@@ -193,7 +195,9 @@ fn run(vfs: &Vfs) -> bool {
     println!("vfs ok: delete twice denied");
 
     match vfs.list() {
-        Ok(names) if listed(&names, "blob.bin") && !listed(&names, "notes.txt") => {}
+        Ok(names) if listed(&names, "blob.bin") && !listed(&names, "notes.txt") => {
+            println!("vfs list: {}", names.join(" "))
+        }
         _ => return failed("list got blob.bin"),
     }
     println!("vfs ok: list got blob.bin");
@@ -204,7 +208,9 @@ fn run(vfs: &Vfs) -> bool {
     println!("vfs ok: delete blob.bin");
 
     match vfs.list() {
-        Ok(names) if !listed(&names, "notes.txt") && !listed(&names, "blob.bin") => {}
+        Ok(names) if !listed(&names, "notes.txt") && !listed(&names, "blob.bin") => {
+            println!("vfs list: {}", names.join(" "))
+        }
         _ => return failed("list empty"),
     }
     println!("vfs ok: list empty");
