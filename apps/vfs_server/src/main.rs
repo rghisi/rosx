@@ -8,7 +8,7 @@ use core::cmp::min;
 use usrlib::handle::{UserConnectionHandle, UserDataHandle};
 use usrlib::println;
 use usrlib::syscall::Syscall;
-use vfs_protocol::wire::{self, Request, VfsError};
+use vfs_protocol::wire::{self, Reply, Request, VfsError};
 use vfs_server::fs::RamFs;
 
 const INCOMING_READ_CHUNK_BYTES: usize = 4096;
@@ -64,11 +64,11 @@ impl VfsServer {
         };
         let owner = conn_token(connection);
         self.release_held_for(owner);
-        let reply = match wire::decode_request(received.data()) {
+        let reply = match Request::decode(received.data()) {
             Ok(request) => self.dispatch(connection, owner, request),
-            Err(error) => wire::encode_err(error),
+            Err(error) => Reply::Err(error),
         };
-        let _ = Syscall::ipc_send(connection, &reply);
+        let _ = Syscall::ipc_send(connection, &reply.encode());
     }
 
     fn release_held_for(&mut self, owner: u32) {
@@ -87,11 +87,11 @@ impl VfsServer {
         connection: UserConnectionHandle,
         owner: u32,
         request: Request<'_>,
-    ) -> [u8; wire::FRAME_BYTES] {
+    ) -> Reply {
         match request {
             Request::Open { mode, name } => match self.fs.open(owner, mode, name) {
-                Ok(handle) => wire::encode_opened(handle),
-                Err(error) => wire::encode_err(error),
+                Ok(handle) => Reply::Opened { handle },
+                Err(error) => Reply::Err(error),
             },
             Request::Read {
                 handle,
@@ -104,12 +104,12 @@ impl VfsServer {
                 token,
             } => self.write_reply(owner, handle, offset, token),
             Request::Close { handle } => match self.fs.close(owner, handle) {
-                Ok(()) => wire::encode_ack(),
-                Err(error) => wire::encode_err(error),
+                Ok(()) => Reply::Ack,
+                Err(error) => Reply::Err(error),
             },
             Request::Delete { name } => match self.fs.delete(name) {
-                Ok(()) => wire::encode_ack(),
-                Err(error) => wire::encode_err(error),
+                Ok(()) => Reply::Ack,
+                Err(error) => Reply::Err(error),
             },
             Request::List => self.list_reply(connection, owner),
         }
@@ -122,34 +122,38 @@ impl VfsServer {
         handle: u32,
         offset: u64,
         count: u32,
-    ) -> [u8; wire::FRAME_BYTES] {
+    ) -> Reply {
         if count == 0 {
-            return wire::encode_eof();
+            return Reply::Eof;
         }
         let bounded = min(count as usize, wire::RPC_MAX_DATA_BYTES);
         let data = match self.fs.read(owner, handle, offset, bounded) {
-            Err(error) => return wire::encode_err(error),
+            Err(error) => return Reply::Err(error),
             Ok(data) => data,
         };
         if data.is_empty() {
-            return wire::encode_eof();
+            return Reply::Eof;
         }
-        self.attach_payload(connection, owner, &data, wire::encode_read_data)
+        self.attach_payload(connection, owner, &data, |token, total| {
+            Reply::ReadData { token, count: total }
+        })
     }
 
     fn list_reply(
         &mut self,
         connection: UserConnectionHandle,
         owner: u32,
-    ) -> [u8; wire::FRAME_BYTES] {
+    ) -> Reply {
         let blob = match self.fs.list() {
-            Err(error) => return wire::encode_err(error),
+            Err(error) => return Reply::Err(error),
             Ok(blob) => blob,
         };
         if blob.is_empty() {
-            return wire::encode_eof();
+            return Reply::Eof;
         }
-        self.attach_payload(connection, owner, &blob, wire::encode_listed)
+        self.attach_payload(connection, owner, &blob, |token, total| {
+            Reply::Listed { token, total }
+        })
     }
 
     fn attach_payload(
@@ -157,15 +161,15 @@ impl VfsServer {
         connection: UserConnectionHandle,
         owner: u32,
         payload: &[u8],
-        frame_with: fn(u32, u32) -> [u8; wire::FRAME_BYTES],
-    ) -> [u8; wire::FRAME_BYTES] {
+        reply_with: fn(u32, u32) -> Reply,
+    ) -> Reply {
         match Syscall::ipc_data_write(connection, payload) {
-            Err(_) => wire::encode_err(VfsError::ServerResource),
+            Err(_) => Reply::Err(VfsError::ServerResource),
             Ok(object) => {
                 let token = data_token(&object);
-                let frame = frame_with(token, payload.len() as u32);
+                let reply = reply_with(token, payload.len() as u32);
                 self.held.push((owner, object));
-                frame
+                reply
             }
         }
     }
@@ -176,14 +180,14 @@ impl VfsServer {
         handle: u32,
         offset: u64,
         token: u32,
-    ) -> [u8; wire::FRAME_BYTES] {
+    ) -> Reply {
         let payload = match drain_incoming(token) {
-            None => return wire::encode_err(VfsError::BadHandle),
+            None => return Reply::Err(VfsError::BadHandle),
             Some(payload) => payload,
         };
         match self.fs.write(owner, handle, offset, &payload) {
-            Ok(written) => wire::encode_written(written as u32),
-            Err(error) => wire::encode_err(error),
+            Ok(written) => Reply::Written { bytes: written as u32 },
+            Err(error) => Reply::Err(error),
         }
     }
 }
