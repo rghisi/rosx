@@ -2,6 +2,7 @@ use crate::cpu::Cpu;
 use crate::kernel::{kernel};
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::fmt::{Display, Formatter};
 use crate::elf::load_elf;
 use crate::handle::FutureHandle;
@@ -172,9 +173,9 @@ pub fn new_entrypoint_task(entrypoint: usize) -> SharedTask {
     Task::new("EPT", task_wrapper as usize, entrypoint)
 }
 
-pub fn new_elf_task(elf: &'static [u8]) -> SharedTask {
-    let elf_ptr = Box::into_raw(Box::new(elf)) as usize;
-    Task::new("ELF", elf_task_wrapper as usize, elf_ptr)
+pub fn new_elf_task(elf: &'static [u8], args: Vec<u8>) -> SharedTask {
+    let entry_param = Box::into_raw(Box::new((elf, args))) as usize;
+    Task::new("ELF", elf_task_wrapper as usize, entry_param)
 }
 
 pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
@@ -226,14 +227,16 @@ mod tests {
     }
 }
 
-pub(crate) extern "C" fn elf_task_wrapper(elf: usize) {
-    let elf_bytes: &[u8] = unsafe { *Box::from_raw(elf as *mut &[u8]) };
+pub(crate) extern "C" fn elf_task_wrapper(entry_param: usize) {
+    let (elf_bytes, args): (&[u8], Vec<u8>) =
+        unsafe { *Box::from_raw(entry_param as *mut (&[u8], Vec<u8>)) };
     let image = load_elf(elf_bytes, kernel().elf_arch).unwrap();
-    let task_entry_point: fn() = unsafe { core::mem::transmute(image.entry) };
+    let task_entry_point: extern "C" fn(usize, usize) -> isize =
+        unsafe { core::mem::transmute(image.entry) };
 
     kernel().execution_state.preemption_enabled = true;
 
-    task_entry_point();
+    task_entry_point(args.as_ptr() as usize, args.len());
 
     drop(image);
 

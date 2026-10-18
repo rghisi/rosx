@@ -79,7 +79,12 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         Ok(SyscallNum::LoadElf) => {
             let elf_ptr = arg1;
             let elf_bytes: &[u8] = unsafe { *Box::from_raw(elf_ptr as *mut &[u8]) };
-            match kernel().schedule(new_elf_task(elf_bytes)).ok() {
+            let args: alloc::vec::Vec<u8> = if arg2 != 0 && arg3 != 0 {
+                unsafe { core::slice::from_raw_parts(arg2 as *const u8, arg3) }.to_vec()
+            } else {
+                alloc::vec::Vec::new()
+            };
+            match kernel().schedule(new_elf_task(elf_bytes, args)).ok() {
                 Some(handle) => handle.pack(),
                 None => u64::MAX as usize,
             }
