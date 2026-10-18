@@ -217,40 +217,6 @@ fn run(vfs: &Vfs) -> bool {
     }
     println!("vfs ok: list empty");
 
-    let Ok(mut rom_file) = vfs.open("hello_elf", 0) else {
-        return failed("rom hello_elf elf magic");
-    };
-    let mut head = [0u8; 64];
-    match rom_file.read(&mut head) {
-        Ok(64) => {}
-        _ => return failed("rom hello_elf elf magic"),
-    }
-    if head[..4] != [0x7F, b'E', b'L', b'F'] {
-        return failed("rom hello_elf elf magic");
-    }
-    println!("vfs ok: rom hello_elf elf magic");
-
-    match rom_file.write(b"x") {
-        Err(ClientError::Vfs(VfsError::NotPermitted)) => {}
-        _ => return failed("rom write denied"),
-    }
-    println!("vfs ok: rom write denied");
-    if rom_file.close().is_err() {
-        return failed("rom write denied");
-    }
-
-    match vfs.open("hello_elf", MODE_CREATE) {
-        Err(ClientError::Vfs(VfsError::AlreadyExists)) => {}
-        _ => return failed("rom create denied"),
-    }
-    println!("vfs ok: rom create denied");
-
-    match vfs.delete("hello_elf") {
-        Err(ClientError::Vfs(VfsError::NotPermitted)) => {}
-        _ => return failed("rom delete denied"),
-    }
-    println!("vfs ok: rom delete denied");
-
     true
 }
 

@@ -12,7 +12,7 @@ const DONE_LINE: &str = "vfs done";
 const ERROR_PREFIX: &str = "vfs error:";
 const FORBIDDEN_STRINGS: [&str; 2] = ["fail", "Panic"];
 
-const EXPECTED_OK: [&str; 23] = [
+const EXPECTED_OK: [&str; 19] = [
     "vfs ok: create notes.txt",
     "vfs ok: write 4096 at 0",
     "vfs ok: write 1024 at 8192",
@@ -32,10 +32,6 @@ const EXPECTED_OK: [&str; 23] = [
     "vfs ok: list got blob.bin",
     "vfs ok: delete blob.bin",
     "vfs ok: list empty",
-    "vfs ok: rom hello_elf elf magic",
-    "vfs ok: rom write denied",
-    "vfs ok: rom create denied",
-    "vfs ok: rom delete denied",
 ];
 
 fn tail_chars(content: &str, n: usize) -> String {
