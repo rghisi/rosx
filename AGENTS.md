@@ -30,8 +30,8 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    scheduler/ (SchedulingAlgorithm: MLFQ + FIFO)
 │    memory/   (global allocator; FreeList + BitmapChunk)
 │    collections/ (arena)  handle/ (5 newtypes: task/future/ipc-connection/ipc-binding/ipc-data)
-│    elf/ ipc/ (mailbox, data) future/ syscall/ keyboard/ task*  cpu (HAL trait)  kconfig
-├── system/      # ABI treaty: syscall numbers, wire layout, error numbers
+│    elf/ ipc/ (mailbox, data) future/ syscall/ keyboard/ task*  cpu (HAL trait)  kconfig  rom/
+├── system/      # ABI treaty: syscall numbers, wire layout, ROM image layout, error numbers
 ├── usrlib/      # User-space libc: syscall, out, arch/{x86_64,x86_32}
 ├── vfs-protocol/# VFS wire codec + typed client (user-space RPC treaty)
 ├── arch/
@@ -50,8 +50,9 @@ Canonical recipes: `.github/workflows/ci.yml` (build + test) and `build-artifact
 
 ### x86_64
 ```bash
-cargo xtask build              # ELF apps + kernel + disk image
+cargo xtask build              # ELF apps + ROM image + kernel + disk image
 cargo xtask apps               # ELF apps only
+cargo xtask rom                # ROM image from built apps
 cargo xtask test               # all host unit tests
 cargo build -p rosx            # kernel only (from arch/x86_64 directory or with target)
 cargo run -p rosx              # run.sh -> arch/x86_64-runner -> BiosBoot disk image -> QEMU
@@ -77,8 +78,9 @@ cargo test -p kernel -- --test-threads=1   # scheduler, memory, elf, ipc, future
 
 ### xtask commands
 ```bash
-cargo xtask build [--debug]    # Build ELF apps + x86_64 kernel + disk image
+cargo xtask build [--debug]    # Build ELF apps + ROM image + x86_64 kernel + disk image
 cargo xtask apps               # Build ELF apps only
+cargo xtask rom                # Pack target/rosx-user/rom.img from the built user ELFs
 cargo xtask test [--skip-integration] # Run unit tests; --skip-integration excludes the QEMU tests-integration suite
 ```
 
@@ -148,6 +150,7 @@ These principles are the regression guard: the very inversion this rework remove
 - `ipc/` data family — messages signal; data rides the connection out-of-band via write/read/release tokens; the kernel never interprets message payloads.
 - `elf/` — loads standalone user-space ELF binaries into tasks (`new_elf_task`).
 - `task/` + `task_manager/` — task lifecycle, context switch, preemption.
+- `rom/` — boot-registered immutable ROM image exposed via the opaque `RomRead` syscall; the kernel stays VFS-agnostic, `vfs_server` owns mount semantics.
 
 **Documentation & Comments:**
 - **CRITICAL: No comments, ever** — the code is the source of truth; make it self-explanatory
