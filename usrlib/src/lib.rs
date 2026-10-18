@@ -6,7 +6,7 @@ extern crate alloc;
 extern crate system;
 
 #[cfg(all(feature = "runtime", not(test)))]
-mod runtime;
+pub mod runtime;
 pub mod out;
 pub mod arch;
 pub mod error;
