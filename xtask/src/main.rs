@@ -72,8 +72,34 @@ fn build_image(debug: bool, launch_qemu: bool) {
     run(&mut cmd, "create x86_64 disk image");
 }
 
+fn pack_rom() {
+    let mut files: Vec<(&str, Vec<u8>)> = Vec::new();
+    for name in USER_APPS {
+        let path = workspace_root()
+            .join("target")
+            .join("rosx-user")
+            .join("release")
+            .join(name);
+        let Ok(bytes) = std::fs::read(&path) else {
+            eprintln!("missing user ELF {}; run `cargo xtask apps` first", path.display());
+            process::exit(1);
+        };
+        files.push((name, bytes));
+    }
+    files.sort_by_key(|(name, _)| *name);
+    let pairs: Vec<(&str, &[u8])> = files
+        .iter()
+        .map(|(name, bytes)| (*name, bytes.as_slice()))
+        .collect();
+    let image = system::rom::encode(&pairs);
+    let rom_path = workspace_root().join("target").join("rosx-user").join("rom.img");
+    std::fs::write(&rom_path, image).expect("failed to write ROM image");
+    println!("==> packed ROM image {}", rom_path.display());
+}
+
 fn run_tests(skip_integration: bool) {
     build_apps();
+    pack_rom();
     let mut cmd = cargo();
     cmd.arg("test").arg("--workspace");
     let description = if skip_integration {
@@ -88,7 +114,7 @@ fn run_tests(skip_integration: bool) {
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [--debug] | run [x86_64] [--debug] | apps | test [--skip-integration]>"
+        "usage: cargo xtask <build [--debug] | run [x86_64] [--debug] | apps | rom | test [--skip-integration]>"
     );
 }
 
@@ -122,6 +148,7 @@ fn main() {
         "build" => {
             let debug = parse_optional_flag(extras, "--debug");
             build_apps();
+            pack_rom();
             build_kernel(debug);
             build_image(debug, false);
         }
@@ -139,8 +166,17 @@ fn main() {
             };
             let debug = parse_optional_flag(extras, "--debug");
             build_apps();
+            pack_rom();
             build_kernel(debug);
             build_image(debug, true);
+        }
+        "rom" => {
+            if let Some(arg) = extras.first() {
+                eprintln!("unknown flag: {arg}");
+                usage();
+                process::exit(2);
+            }
+            pack_rom();
         }
         "test" => {
             let skip_integration = parse_optional_flag(extras, "--skip-integration");
