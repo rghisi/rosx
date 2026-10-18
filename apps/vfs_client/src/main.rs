@@ -2,7 +2,6 @@
 
 extern crate alloc;
 
-use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use usrlib::println;
@@ -18,24 +17,12 @@ fn vfs_byte(file_offset: usize) -> u8 {
     (file_offset as u64).wrapping_mul(29).wrapping_add(11) as u8
 }
 
-fn ram_only<'a>(names: &'a [String], baseline: &[String]) -> Vec<&'a str> {
-    names
-        .iter()
-        .map(String::as_str)
-        .filter(|name| !baseline.iter().any(|boot| boot == name))
-        .collect()
-}
-
 fn failed(check: &str) -> bool {
     println!("vfs error: {check}");
     false
 }
 
 fn run(vfs: &Vfs) -> bool {
-    let Ok(baseline) = vfs.list() else {
-        return failed("baseline list");
-    };
-
     let Ok(mut notes) = vfs.open("notes.txt", MODE_WRITE | MODE_CREATE) else {
         return failed("create notes.txt");
     };
@@ -134,7 +121,7 @@ fn run(vfs: &Vfs) -> bool {
     }
 
     match vfs.list() {
-        Ok(names) if ram_only(&names, &baseline) == ["notes.txt"] => {}
+        Ok(names) if names == ["notes.txt"] => {}
         _ => return failed("list got notes.txt"),
     }
     println!("vfs ok: list got notes.txt");
@@ -184,7 +171,7 @@ fn run(vfs: &Vfs) -> bool {
     }
 
     match vfs.list() {
-        Ok(names) if ram_only(&names, &baseline) == ["blob.bin", "notes.txt"] => {}
+        Ok(names) if names == ["blob.bin", "notes.txt"] => {}
         _ => return failed("list got blob.bin notes.txt"),
     }
     println!("vfs ok: list got blob.bin notes.txt");
@@ -201,7 +188,7 @@ fn run(vfs: &Vfs) -> bool {
     println!("vfs ok: delete twice denied");
 
     match vfs.list() {
-        Ok(names) if ram_only(&names, &baseline) == ["blob.bin"] => {}
+        Ok(names) if names == ["blob.bin"] => {}
         _ => return failed("list got blob.bin"),
     }
     println!("vfs ok: list got blob.bin");
@@ -212,7 +199,7 @@ fn run(vfs: &Vfs) -> bool {
     println!("vfs ok: delete blob.bin");
 
     match vfs.list() {
-        Ok(names) if ram_only(&names, &baseline).is_empty() => {}
+        Ok(names) if names.is_empty() => {}
         _ => return failed("list empty"),
     }
     println!("vfs ok: list empty");
