@@ -1,6 +1,7 @@
 use crate::arch;
 use crate::syscall::Syscall;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::alloc::{GlobalAlloc, Layout};
 use core::panic::PanicInfo;
 use system::syscall_numbers::SyscallNum;
@@ -20,27 +21,12 @@ unsafe impl GlobalAlloc for SyscallAllocator {
 #[global_allocator]
 static RUNTIME_ALLOCATOR: SyscallAllocator = SyscallAllocator;
 
-#[macro_export]
-macro_rules! app_main {
-    (fn main($args:ident : Vec < String >) $body:block) => {
-        fn rosx_app_entry($args: ::alloc::vec::Vec<::alloc::string::String>) $body
-
-        #[unsafe(no_mangle)]
-        pub extern "C" fn main(args_ptr: usize, args_len: usize) -> isize {
-            $crate::runtime::start(rosx_app_entry, args_ptr, args_len)
-        }
-    };
-}
-
-pub fn start(entry: fn(alloc::vec::Vec<String>), args_ptr: usize, args_len: usize) -> isize {
-    let args = if args_len == 0 {
-        alloc::vec::Vec::new()
-    } else {
-        let blob = unsafe { core::slice::from_raw_parts(args_ptr as *const u8, args_len) };
-        system::args::decode(blob)
-    };
-    entry(args);
-    0
+pub fn args(args_ptr: usize, args_len: usize) -> Vec<String> {
+    if args_len == 0 {
+        return Vec::new();
+    }
+    let blob = unsafe { core::slice::from_raw_parts(args_ptr as *const u8, args_len) };
+    system::args::decode(blob)
 }
 
 #[panic_handler]
