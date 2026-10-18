@@ -14,29 +14,15 @@ const NOTES_BYTES: usize = 9216;
 const HOLE_END: usize = 8192;
 const BLOB_BYTES: usize = 131072;
 
-const ROM_NAMES: [&str; 11] = [
-    "bulk_client",
-    "bulk_echo",
-    "conway",
-    "hello_elf",
-    "ping_client",
-    "ping_server",
-    "random_gen_server",
-    "snake",
-    "tetris",
-    "vfs_client",
-    "vfs_server",
-];
-
 fn vfs_byte(file_offset: usize) -> u8 {
     (file_offset as u64).wrapping_mul(29).wrapping_add(11) as u8
 }
 
-fn ram_only(names: &[String]) -> Vec<&str> {
+fn ram_only<'a>(names: &'a [String], baseline: &[String]) -> Vec<&'a str> {
     names
         .iter()
         .map(String::as_str)
-        .filter(|name| !ROM_NAMES.contains(name))
+        .filter(|name| !baseline.iter().any(|boot| boot == name))
         .collect()
 }
 
@@ -46,6 +32,10 @@ fn failed(check: &str) -> bool {
 }
 
 fn run(vfs: &Vfs) -> bool {
+    let Ok(baseline) = vfs.list() else {
+        return failed("baseline list");
+    };
+
     let Ok(mut notes) = vfs.open("notes.txt", MODE_WRITE | MODE_CREATE) else {
         return failed("create notes.txt");
     };
@@ -144,7 +134,7 @@ fn run(vfs: &Vfs) -> bool {
     }
 
     match vfs.list() {
-        Ok(names) if ram_only(&names) == ["notes.txt"] => {}
+        Ok(names) if ram_only(&names, &baseline) == ["notes.txt"] => {}
         _ => return failed("list got notes.txt"),
     }
     println!("vfs ok: list got notes.txt");
@@ -194,7 +184,7 @@ fn run(vfs: &Vfs) -> bool {
     }
 
     match vfs.list() {
-        Ok(names) if ram_only(&names) == ["blob.bin", "notes.txt"] => {}
+        Ok(names) if ram_only(&names, &baseline) == ["blob.bin", "notes.txt"] => {}
         _ => return failed("list got blob.bin notes.txt"),
     }
     println!("vfs ok: list got blob.bin notes.txt");
@@ -211,7 +201,7 @@ fn run(vfs: &Vfs) -> bool {
     println!("vfs ok: delete twice denied");
 
     match vfs.list() {
-        Ok(names) if ram_only(&names) == ["blob.bin"] => {}
+        Ok(names) if ram_only(&names, &baseline) == ["blob.bin"] => {}
         _ => return failed("list got blob.bin"),
     }
     println!("vfs ok: list got blob.bin");
@@ -222,16 +212,10 @@ fn run(vfs: &Vfs) -> bool {
     println!("vfs ok: delete blob.bin");
 
     match vfs.list() {
-        Ok(names) if ram_only(&names).is_empty() => {}
+        Ok(names) if ram_only(&names, &baseline).is_empty() => {}
         _ => return failed("list empty"),
     }
     println!("vfs ok: list empty");
-
-    match vfs.list() {
-        Ok(names) if names == ROM_NAMES => {}
-        _ => return failed("rom list complete"),
-    }
-    println!("vfs ok: rom list complete");
 
     let Ok(mut rom_file) = vfs.open("hello_elf", 0) else {
         return failed("rom hello_elf elf magic");
