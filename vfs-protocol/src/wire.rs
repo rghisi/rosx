@@ -17,6 +17,14 @@ pub const STATUS_OK: u8 = 0;
 pub const STATUS_ERR: u8 = 1;
 pub const STATUS_EOF: u8 = 2;
 
+pub const REPLY_ACK: u8 = 0x10;
+pub const REPLY_ERROR: u8 = 0x11;
+pub const REPLY_EOF: u8 = 0x12;
+pub const REPLY_OPENED: u8 = 0x13;
+pub const REPLY_READ_DATA: u8 = 0x14;
+pub const REPLY_WRITTEN: u8 = 0x15;
+pub const REPLY_LISTED: u8 = 0x16;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum VfsError {
@@ -188,6 +196,90 @@ pub fn encode_listed(token: u32, total: u32) -> [u8; FRAME_BYTES] {
     frame
 }
 
+impl Request<'_> {
+    pub fn encode(&self) -> Result<[u8; FRAME_BYTES], VfsError> {
+        match self {
+            Request::Open { mode, name } => {
+                if !valid_name(name) {
+                    return Err(VfsError::InvalidPath);
+                }
+                let mut frame = [0u8; FRAME_BYTES];
+                frame[0] = OPEN;
+                frame[1] = *mode;
+                frame[2] = name.len() as u8;
+                frame[3..3 + name.len()].copy_from_slice(name.as_bytes());
+                Ok(frame)
+            }
+            Request::Read { handle, offset, count } => {
+                let mut frame = [0u8; FRAME_BYTES];
+                frame[0] = READ;
+                frame[1..5].copy_from_slice(&handle.to_le_bytes());
+                frame[5..13].copy_from_slice(&offset.to_le_bytes());
+                frame[13..17].copy_from_slice(&count.to_le_bytes());
+                Ok(frame)
+            }
+            Request::Write { handle, offset, token } => {
+                let mut frame = [0u8; FRAME_BYTES];
+                frame[0] = WRITE;
+                frame[1..5].copy_from_slice(&handle.to_le_bytes());
+                frame[5..13].copy_from_slice(&offset.to_le_bytes());
+                frame[13..17].copy_from_slice(&token.to_le_bytes());
+                Ok(frame)
+            }
+            Request::Close { handle } => {
+                let mut frame = [0u8; FRAME_BYTES];
+                frame[0] = CLOSE;
+                frame[1..5].copy_from_slice(&handle.to_le_bytes());
+                Ok(frame)
+            }
+            Request::Delete { name } => {
+                if !valid_name(name) {
+                    return Err(VfsError::InvalidPath);
+                }
+                let mut frame = [0u8; FRAME_BYTES];
+                frame[0] = DELETE;
+                frame[1] = name.len() as u8;
+                frame[2..2 + name.len()].copy_from_slice(name.as_bytes());
+                Ok(frame)
+            }
+            Request::List => {
+                let mut frame = [0u8; FRAME_BYTES];
+                frame[0] = LIST;
+                Ok(frame)
+            }
+        }
+    }
+
+    pub fn decode(frame: &[u8; FRAME_BYTES]) -> Result<Request<'_>, VfsError> {
+        match frame[0] {
+            OPEN => {
+                let mode = frame[1];
+                let name = decode_name(frame, 3, frame[2] as usize)?;
+                Ok(Request::Open { mode, name })
+            }
+            READ => Ok(Request::Read {
+                handle: read_u32(frame, 1),
+                offset: read_u64(frame, 5),
+                count: read_u32(frame, 13),
+            }),
+            WRITE => Ok(Request::Write {
+                handle: read_u32(frame, 1),
+                offset: read_u64(frame, 5),
+                token: read_u32(frame, 13),
+            }),
+            CLOSE => Ok(Request::Close {
+                handle: read_u32(frame, 1),
+            }),
+            DELETE => {
+                let name = decode_name(frame, 2, frame[1] as usize)?;
+                Ok(Request::Delete { name })
+            }
+            LIST => Ok(Request::List),
+            _ => Err(VfsError::Protocol),
+        }
+    }
+}
+
 pub fn decode_request(frame: &[u8; FRAME_BYTES]) -> Result<Request<'_>, VfsError> {
     match frame[0] {
         OPEN => {
@@ -238,6 +330,86 @@ fn read_u32(frame: &[u8; FRAME_BYTES], at: usize) -> u32 {
 
 fn read_u64(frame: &[u8; FRAME_BYTES], at: usize) -> u64 {
     u64::from_le_bytes(frame[at..at + 8].try_into().unwrap())
+}
+
+impl Reply {
+    pub fn encode(&self) -> [u8; FRAME_BYTES] {
+        let mut frame = [0u8; FRAME_BYTES];
+        match self {
+            Reply::Ack => frame[0] = REPLY_ACK,
+            Reply::Err(error) => {
+                frame[0] = REPLY_ERROR;
+                frame[1] = error.to_byte();
+            }
+            Reply::Eof => frame[0] = REPLY_EOF,
+            Reply::Opened { handle } => {
+                frame[0] = REPLY_OPENED;
+                frame[1..5].copy_from_slice(&handle.to_le_bytes());
+            }
+            Reply::ReadData { token, count } => {
+                frame[0] = REPLY_READ_DATA;
+                frame[1..5].copy_from_slice(&token.to_le_bytes());
+                frame[5..9].copy_from_slice(&count.to_le_bytes());
+            }
+            Reply::Written { bytes } => {
+                frame[0] = REPLY_WRITTEN;
+                frame[1..5].copy_from_slice(&bytes.to_le_bytes());
+            }
+            Reply::Listed { token, total } => {
+                frame[0] = REPLY_LISTED;
+                frame[1..5].copy_from_slice(&token.to_le_bytes());
+                frame[5..9].copy_from_slice(&total.to_le_bytes());
+            }
+        }
+        frame
+    }
+
+    pub fn decode(frame: &[u8; FRAME_BYTES]) -> Result<Reply, ()> {
+        match frame[0] {
+            REPLY_ACK => {
+                zero_tail(frame, 1)?;
+                Ok(Reply::Ack)
+            }
+            REPLY_ERROR => Ok(Reply::Err(VfsError::from_byte(frame[1]))),
+            REPLY_EOF => {
+                zero_tail(frame, 1)?;
+                Ok(Reply::Eof)
+            }
+            REPLY_OPENED => {
+                let handle = read_u32(frame, 1);
+                if handle == 0 {
+                    return Err(());
+                }
+                Ok(Reply::Opened { handle })
+            }
+            REPLY_READ_DATA => {
+                let token = read_u32(frame, 1);
+                let count = read_u32(frame, 5);
+                if count == 0 {
+                    return Err(());
+                }
+                Ok(Reply::ReadData { token, count })
+            }
+            REPLY_WRITTEN => Ok(Reply::Written { bytes: read_u32(frame, 1) }),
+            REPLY_LISTED => {
+                let token = read_u32(frame, 1);
+                let total = read_u32(frame, 5);
+                if total == 0 {
+                    return Err(());
+                }
+                Ok(Reply::Listed { token, total })
+            }
+            _ => Err(()),
+        }
+    }
+}
+
+fn zero_tail(frame: &[u8; FRAME_BYTES], from: usize) -> Result<(), ()> {
+    if frame[from..].iter().any(|byte| *byte != 0) {
+        Err(())
+    } else {
+        Ok(())
+    }
 }
 
 pub fn decode_reply(frame: &[u8; FRAME_BYTES], expect: Expect) -> Result<Reply, ()> {
@@ -717,5 +889,189 @@ mod tests {
         for byte in [0u8, 8, 200, 254] {
             assert_eq!(VfsError::from_byte(byte), VfsError::Protocol);
         }
+    }
+
+    #[test]
+    fn reply_tag_constants_are_pinned() {
+        assert_eq!(REPLY_ACK, 0x10);
+        assert_eq!(REPLY_ERROR, 0x11);
+        assert_eq!(REPLY_EOF, 0x12);
+        assert_eq!(REPLY_OPENED, 0x13);
+        assert_eq!(REPLY_READ_DATA, 0x14);
+        assert_eq!(REPLY_WRITTEN, 0x15);
+        assert_eq!(REPLY_LISTED, 0x16);
+        assert_eq!(OPEN, 1);
+        assert_eq!(READ, 2);
+        assert_eq!(WRITE, 3);
+        assert_eq!(CLOSE, 4);
+        assert_eq!(DELETE, 5);
+        assert_eq!(LIST, 6);
+        let opcodes = [OPEN, READ, WRITE, CLOSE, DELETE, LIST];
+        let tags = [
+            REPLY_ACK,
+            REPLY_ERROR,
+            REPLY_EOF,
+            REPLY_OPENED,
+            REPLY_READ_DATA,
+            REPLY_WRITTEN,
+            REPLY_LISTED,
+        ];
+        for tag in tags {
+            assert!(!opcodes.contains(&tag), "tag {tag:#04x} collides with opcode");
+        }
+    }
+
+    #[test]
+    fn ack_reply_pins_tag_and_zero_tail() {
+        let frame = Reply::Ack.encode();
+        assert_eq!(frame[0], REPLY_ACK);
+        assert!(frame[1..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn err_reply_pins_tag_and_error_byte() {
+        let frame = Reply::Err(VfsError::BadHandle).encode();
+        assert_eq!(frame[0], REPLY_ERROR);
+        assert_eq!(frame[1], 4);
+        let protocol = Reply::Err(VfsError::Protocol).encode();
+        assert_eq!(protocol[0], REPLY_ERROR);
+        assert_eq!(protocol[1], 255);
+    }
+
+    #[test]
+    fn eof_reply_pins_tag_and_zero_tail() {
+        let frame = Reply::Eof.encode();
+        assert_eq!(frame[0], REPLY_EOF);
+        assert!(frame[1..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn opened_reply_pins_tag_and_handle_offset() {
+        let frame = Reply::Opened { handle: 0x0102_0304 }.encode();
+        assert_eq!(frame[0], REPLY_OPENED);
+        assert_eq!(&frame[1..5], &[0x04, 0x03, 0x02, 0x01]);
+        assert!(frame[5..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn read_data_reply_pins_tag_and_field_offsets() {
+        let frame = Reply::ReadData {
+            token: 0x0000_0100,
+            count: 0x0000_2000,
+        }
+        .encode();
+        assert_eq!(frame[0], REPLY_READ_DATA);
+        assert_eq!(&frame[1..5], &[0x00, 0x01, 0x00, 0x00]);
+        assert_eq!(&frame[5..9], &[0x00, 0x20, 0x00, 0x00]);
+        assert!(frame[9..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn written_reply_pins_tag_and_bytes_offset() {
+        let frame = Reply::Written { bytes: 1024 }.encode();
+        assert_eq!(frame[0], REPLY_WRITTEN);
+        assert_eq!(&frame[1..5], &[0x00, 0x04, 0x00, 0x00]);
+        assert!(frame[5..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn listed_reply_pins_tag_and_total_offset() {
+        let frame = Reply::Listed {
+            token: 0x0102_0304,
+            total: 0x0000_1D6A,
+        }
+        .encode();
+        assert_eq!(frame[0], REPLY_LISTED);
+        assert_eq!(&frame[1..5], &[0x04, 0x03, 0x02, 0x01]);
+        assert_eq!(&frame[5..9], &[0x6A, 0x1D, 0x00, 0x00]);
+        assert!(frame[9..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn reply_all_variants_roundtrip() {
+        let replies = [
+            Reply::Ack,
+            Reply::Err(VfsError::NotFound),
+            Reply::Eof,
+            Reply::Opened { handle: 7 },
+            Reply::ReadData {
+                token: 11,
+                count: 4096,
+            },
+            Reply::Written { bytes: 1024 },
+            Reply::Listed { token: 5, total: 9 },
+        ];
+        for reply in replies {
+            assert_eq!(Reply::decode(&reply.encode()), Ok(reply));
+        }
+    }
+
+    #[test]
+    fn reply_decode_rejects_unknown_tag() {
+        for tag in [0x00u8, 0x0F, 0x17, 0xFF] {
+            let mut frame = [0u8; FRAME_BYTES];
+            frame[0] = tag;
+            assert_eq!(Reply::decode(&frame), Err(()), "tag {tag:#04x} accepted");
+        }
+    }
+
+    #[test]
+    fn reply_decode_rejects_nonzero_ack_tail() {
+        let mut frame = Reply::Ack.encode();
+        frame[7] = 0x40;
+        assert_eq!(Reply::decode(&frame), Err(()));
+    }
+
+    #[test]
+    fn reply_decode_rejects_nonzero_eof_tail() {
+        let mut frame = Reply::Eof.encode();
+        frame[9] = 1;
+        assert_eq!(Reply::decode(&frame), Err(()));
+    }
+
+    #[test]
+    fn reply_decode_rejects_zero_handle() {
+        let mut frame = [0u8; FRAME_BYTES];
+        frame[0] = REPLY_OPENED;
+        assert_eq!(Reply::decode(&frame), Err(()));
+    }
+
+    #[test]
+    fn reply_decode_rejects_zero_count() {
+        let mut frame = [0u8; FRAME_BYTES];
+        frame[0] = REPLY_READ_DATA;
+        frame[1..5].copy_from_slice(&7u32.to_le_bytes());
+        assert_eq!(Reply::decode(&frame), Err(()));
+    }
+
+    #[test]
+    fn reply_decode_rejects_zero_total() {
+        let mut frame = [0u8; FRAME_BYTES];
+        frame[0] = REPLY_LISTED;
+        frame[1..5].copy_from_slice(&123u32.to_le_bytes());
+        assert_eq!(Reply::decode(&frame), Err(()));
+    }
+
+    #[test]
+    fn reply_decode_accepts_zero_bytes_written() {
+        let frame = Reply::Written { bytes: 0 }.encode();
+        assert_eq!(Reply::decode(&frame), Ok(Reply::Written { bytes: 0 }));
+    }
+
+    #[test]
+    fn reply_decode_accepts_zero_read_token() {
+        let frame = Reply::ReadData { token: 0, count: 1 }.encode();
+        assert_eq!(
+            Reply::decode(&frame),
+            Ok(Reply::ReadData { token: 0, count: 1 })
+        );
+    }
+
+    #[test]
+    fn reply_decode_accepts_err_under_protocol_byte() {
+        let mut frame = [0u8; FRAME_BYTES];
+        frame[0] = REPLY_ERROR;
+        frame[1] = 255;
+        assert_eq!(Reply::decode(&frame), Ok(Reply::Err(VfsError::Protocol)));
     }
 }
