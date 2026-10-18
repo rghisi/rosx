@@ -38,7 +38,7 @@ fn drain_data_object(token: u32) -> Result<Vec<u8>, ClientError> {
     }
 }
 
-fn rpc(
+fn transact(
     connection: UserConnectionHandle,
     frame: &[u8; wire::FRAME_BYTES],
 ) -> Result<Reply, ClientError> {
@@ -70,7 +70,7 @@ impl Vfs {
         let frame = wire::Request::Open { mode, name }
             .encode()
             .map_err(ClientError::Vfs)?;
-        match rpc(self.connection, &frame)? {
+        match transact(self.connection, &frame)? {
             Reply::Opened { handle } => Ok(VfsFile {
                 connection: self.connection,
                 handle,
@@ -85,7 +85,7 @@ impl Vfs {
         let frame = wire::Request::Delete { name }
             .encode()
             .map_err(ClientError::Vfs)?;
-        match rpc(self.connection, &frame)? {
+        match transact(self.connection, &frame)? {
             Reply::Ack => Ok(()),
             Reply::Err(error) => Err(ClientError::Vfs(error)),
             _ => Err(ClientError::Protocol),
@@ -94,7 +94,7 @@ impl Vfs {
 
     pub fn list(&self) -> Result<Vec<String>, ClientError> {
         let frame = wire::Request::List.encode().map_err(ClientError::Vfs)?;
-        match rpc(self.connection, &frame)? {
+        match transact(self.connection, &frame)? {
             Reply::Eof => Ok(Vec::new()),
             Reply::Listed { token, total } => {
                 let payload = drain_data_object(token)?;
@@ -132,7 +132,7 @@ impl VfsFile {
             }
             .encode()
             .map_err(ClientError::Vfs)?;
-            match rpc(self.connection, &frame)? {
+            match transact(self.connection, &frame)? {
                 Reply::Eof => break,
                 Reply::ReadData { token, count } => {
                     let chunk = drain_data_object(token)?;
@@ -163,7 +163,7 @@ impl VfsFile {
             }
             .encode()
             .map_err(ClientError::Vfs)?;
-            let reply = rpc(self.connection, &frame);
+            let reply = transact(self.connection, &frame);
             let _ = object.release();
             match reply? {
                 Reply::Written { bytes } => {
@@ -194,7 +194,7 @@ impl VfsFile {
         let frame = wire::Request::Close { handle: self.handle }
             .encode()
             .map_err(ClientError::Vfs)?;
-        match rpc(self.connection, &frame)? {
+        match transact(self.connection, &frame)? {
             Reply::Ack => Ok(()),
             Reply::Err(error) => Err(ClientError::Vfs(error)),
             _ => Err(ClientError::Protocol),
