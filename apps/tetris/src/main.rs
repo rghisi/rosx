@@ -1,4 +1,5 @@
 #![no_std]
+#![no_main]
 
 extern crate alloc;
 
@@ -272,7 +273,7 @@ fn play(rng: &mut Rng) -> bool {
     }
 }
 
-fn main() {
+usrlib::app_main! { fn main(_args: Vec<String>) {
     let mut rng = Rng::new(0xDEAD_BEEF_CAFE_BABE);
 
     loop {
@@ -283,4 +284,4 @@ fn main() {
             return;
         }
     }
-}
+} }

@@ -1,4 +1,5 @@
 #![no_std]
+#![no_main]
 
 extern crate alloc;
 
@@ -8,7 +9,7 @@ use usrlib::{print, println};
 
 const DIGITS: usize = 20000;
 
-fn main() {
+usrlib::app_main! { fn main(_args: Vec<String>) {
     // We need a slightly larger array to account for the mathematical bounds.
     // The size roughly correlates to (10/3) * N.
     let n = DIGITS;
@@ -88,4 +89,4 @@ fn main() {
         // io::stdout().flush().unwrap();
     }
     println!();
-}
+} }

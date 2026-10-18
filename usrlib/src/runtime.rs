@@ -20,21 +20,10 @@ unsafe impl GlobalAlloc for SyscallAllocator {
 #[global_allocator]
 static RUNTIME_ALLOCATOR: SyscallAllocator = SyscallAllocator;
 
-#[lang = "start"]
-fn lang_start<T: 'static>(
-    main: fn() -> T,
-    _argc: isize,
-    _argv: *const *const u8,
-    _sigpipe: u8,
-) -> isize {
-    main();
-    0
-}
-
 #[macro_export]
 macro_rules! app_main {
     (fn main($args:ident : Vec < String >) $body:block) => {
-        fn rosx_app_entry($args: ::alloc::vec::Vec<String>) $body
+        fn rosx_app_entry($args: ::alloc::vec::Vec<::alloc::string::String>) $body
 
         #[unsafe(no_mangle)]
         pub extern "C" fn main(args_ptr: usize, args_len: usize) -> isize {

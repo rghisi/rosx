@@ -1,4 +1,5 @@
 #![no_std]
+#![no_main]
 
 extern crate alloc;
 
@@ -104,7 +105,7 @@ fn render(grid: &Grid, generation: usize, population: usize, delay_ms: u64, paus
     }
 }
 
-fn main() {
+usrlib::app_main! { fn main(_args: Vec<String>) {
     print!("\x1B[2J\x1B[H");
 
     let mut rng = Rng::new(0xDEAD_BEEF_CAFE_BABE);
@@ -144,4 +145,4 @@ fn main() {
             generation += 1;
         }
     }
-}
+} }

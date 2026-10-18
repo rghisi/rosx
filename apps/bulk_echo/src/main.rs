@@ -1,4 +1,5 @@
 #![no_std]
+#![no_main]
 
 extern crate alloc;
 
@@ -37,8 +38,8 @@ impl BulkEchoServer {
     }
 }
 
-fn main() {
+usrlib::app_main! { fn main(_args: Vec<String>) {
     println!("[IPC Server] BulkEcho");
     let server = BulkEchoServer;
     server.run();
-}
+} }

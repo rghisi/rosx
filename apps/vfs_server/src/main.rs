@@ -1,4 +1,5 @@
 #![no_std]
+#![no_main]
 
 extern crate alloc;
 
@@ -192,8 +193,8 @@ impl VfsServer {
     }
 }
 
-fn main() {
+usrlib::app_main! { fn main(_args: Vec<String>) {
     println!("[IPC Server] VFS");
     let mut server = VfsServer::new();
     server.run();
-}
+} }

@@ -1,4 +1,5 @@
 #![no_std]
+#![no_main]
 
 extern crate alloc;
 
@@ -92,7 +93,7 @@ fn verification_round(connection: UserConnectionHandle) {
     }
 }
 
-fn main() {
+usrlib::app_main! { fn main(_args: Vec<String>) {
     Syscall::sleep(STARTUP_DELAY_MS);
     let connection = connect_to_bulk_echo();
     probe_oversized_write(connection);
@@ -103,4 +104,4 @@ fn main() {
     loop {
         Syscall::sleep(1000);
     }
-}
+} }

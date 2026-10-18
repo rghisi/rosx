@@ -1,4 +1,5 @@
 #![no_std]
+#![no_main]
 
 extern crate alloc;
 
@@ -86,8 +87,8 @@ impl PingServer {
     }
 }
 
-fn main() {
+usrlib::app_main! { fn main(_args: Vec<String>) {
     println!("[IPC Server] Ping");
     let mut server = PingServer::new();
     server.run();
-}
+} }

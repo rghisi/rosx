@@ -1,4 +1,5 @@
 #![no_std]
+#![no_main]
 
 extern crate alloc;
 
@@ -207,7 +208,7 @@ fn run(vfs: &Vfs) -> bool {
     true
 }
 
-fn main() {
+usrlib::app_main! { fn main(_args: Vec<String>) {
     println!("[ELF] VFS Client");
     let Ok(vfs) = Vfs::connect() else {
         println!("vfs error: connect");
@@ -218,4 +219,4 @@ fn main() {
     if passed {
         println!("vfs done");
     }
-}
+} }
