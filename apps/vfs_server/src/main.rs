@@ -33,6 +33,20 @@ fn drain_incoming(token: u32) -> Option<Vec<u8>> {
     }
 }
 
+fn read_rom_image() -> Vec<u8> {
+    let mut image = Vec::new();
+    let mut offset: u64 = 0;
+    loop {
+        let mut chunk = [0u8; INCOMING_READ_CHUNK_BYTES];
+        let copied = Syscall::rom_read(offset, &mut chunk);
+        if copied == 0 {
+            return image;
+        }
+        image.extend_from_slice(&chunk[..copied]);
+        offset += copied as u64;
+    }
+}
+
 struct VfsServer {
     fs: RamFs,
     held: Vec<(u32, UserDataHandle)>,
@@ -43,6 +57,16 @@ impl VfsServer {
         VfsServer {
             fs: RamFs::new(),
             held: Vec::new(),
+        }
+    }
+
+    fn mount_rom(&mut self) {
+        let image = read_rom_image();
+        if image.is_empty() {
+            return;
+        }
+        if let Err(err) = self.fs.attach_rom(image) {
+            panic!("VFS rom mount error: {err:?}");
         }
     }
 
@@ -195,5 +219,6 @@ impl VfsServer {
 fn main() {
     println!("[IPC Server] VFS");
     let mut server = VfsServer::new();
+    server.mount_rom();
     server.run();
 }

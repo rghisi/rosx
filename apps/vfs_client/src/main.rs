@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use usrlib::println;
@@ -13,8 +14,30 @@ const NOTES_BYTES: usize = 9216;
 const HOLE_END: usize = 8192;
 const BLOB_BYTES: usize = 131072;
 
+const ROM_NAMES: [&str; 11] = [
+    "bulk_client",
+    "bulk_echo",
+    "conway",
+    "hello_elf",
+    "ping_client",
+    "ping_server",
+    "random_gen_server",
+    "snake",
+    "tetris",
+    "vfs_client",
+    "vfs_server",
+];
+
 fn vfs_byte(file_offset: usize) -> u8 {
     (file_offset as u64).wrapping_mul(29).wrapping_add(11) as u8
+}
+
+fn ram_only(names: &[String]) -> Vec<&str> {
+    names
+        .iter()
+        .map(String::as_str)
+        .filter(|name| !ROM_NAMES.contains(name))
+        .collect()
 }
 
 fn failed(check: &str) -> bool {
@@ -121,7 +144,7 @@ fn run(vfs: &Vfs) -> bool {
     }
 
     match vfs.list() {
-        Ok(names) if names == ["notes.txt"] => {}
+        Ok(names) if ram_only(&names) == ["notes.txt"] => {}
         _ => return failed("list got notes.txt"),
     }
     println!("vfs ok: list got notes.txt");
@@ -171,7 +194,7 @@ fn run(vfs: &Vfs) -> bool {
     }
 
     match vfs.list() {
-        Ok(names) if names == ["blob.bin", "notes.txt"] => {}
+        Ok(names) if ram_only(&names) == ["blob.bin", "notes.txt"] => {}
         _ => return failed("list got blob.bin notes.txt"),
     }
     println!("vfs ok: list got blob.bin notes.txt");
@@ -188,7 +211,7 @@ fn run(vfs: &Vfs) -> bool {
     println!("vfs ok: delete twice denied");
 
     match vfs.list() {
-        Ok(names) if names == ["blob.bin"] => {}
+        Ok(names) if ram_only(&names) == ["blob.bin"] => {}
         _ => return failed("list got blob.bin"),
     }
     println!("vfs ok: list got blob.bin");
@@ -199,10 +222,50 @@ fn run(vfs: &Vfs) -> bool {
     println!("vfs ok: delete blob.bin");
 
     match vfs.list() {
-        Ok(names) if names.is_empty() => {}
+        Ok(names) if ram_only(&names).is_empty() => {}
         _ => return failed("list empty"),
     }
     println!("vfs ok: list empty");
+
+    match vfs.list() {
+        Ok(names) if names == ROM_NAMES => {}
+        _ => return failed("rom list complete"),
+    }
+    println!("vfs ok: rom list complete");
+
+    let Ok(mut rom_file) = vfs.open("hello_elf", 0) else {
+        return failed("rom hello_elf elf magic");
+    };
+    let mut head = [0u8; 64];
+    match rom_file.read(&mut head) {
+        Ok(64) => {}
+        _ => return failed("rom hello_elf elf magic"),
+    }
+    if head[..4] != [0x7F, b'E', b'L', b'F'] {
+        return failed("rom hello_elf elf magic");
+    }
+    println!("vfs ok: rom hello_elf elf magic");
+
+    match rom_file.write(b"x") {
+        Err(ClientError::Vfs(VfsError::NotPermitted)) => {}
+        _ => return failed("rom write denied"),
+    }
+    println!("vfs ok: rom write denied");
+    if rom_file.close().is_err() {
+        return failed("rom write denied");
+    }
+
+    match vfs.open("hello_elf", MODE_CREATE) {
+        Err(ClientError::Vfs(VfsError::AlreadyExists)) => {}
+        _ => return failed("rom create denied"),
+    }
+    println!("vfs ok: rom create denied");
+
+    match vfs.delete("hello_elf") {
+        Err(ClientError::Vfs(VfsError::NotPermitted)) => {}
+        _ => return failed("rom delete denied"),
+    }
+    println!("vfs ok: rom delete denied");
 
     true
 }
