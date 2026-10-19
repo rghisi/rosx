@@ -28,3 +28,9 @@ Evaluate [`rust_arkitect`](https://crates.io/crates/rust_arkitect) (ArchUnit/php
 ## Related open gap (decided, not yet done)
 
 Neither idea is wired in today, so `checks/compile_fail.sh` remains a manual gate; at minimum it deserves a CI invocation and an AGENTS.md mention until idea 1 lands.
+
+## Deferred hardening: ELF load failure must not panic the kernel (decided 2026-10-19)
+
+`elf_task_wrapper` (`kernel/src/task.rs`) calls `load_elf(...).unwrap()` when the task first runs. That is safe today because every schedulable ELF is baked in at build time (`include_bytes!` boot roster and shell statics). Once the shell dispatches unknown commands as files (`rose> snake fast` resolves ROM/VFS bytes at runtime), any name becomes schedulable: `rose> notes.txt` or a corrupted blob turns a typo at the prompt into a kernel panic. Deferred out of the shell-launches-from-ROM work by explicit decision; must land before any untrusted-bytes source (RAM files are already writable).
+
+**Sketch.** `elf_task_wrapper` matches on the `load_elf` result instead of unwrapping: on `Err`, print a diagnostic (task name and `ElfError` debug) through the kernel output and terminate the task without entering the entry point; only `Ok(image)` proceeds. Proven by kernel build plus a QEMU run scheduling a non-ELF blob; host-testable pieces of the decision logic get unit tests per house style.
