@@ -7,6 +7,8 @@ extern crate system;
 
 #[cfg(all(feature = "runtime", not(test)))]
 mod runtime;
+#[cfg(all(feature = "runtime", not(test)))]
+pub use runtime::{args, argc, argv};
 pub mod out;
 pub mod arch;
 pub mod error;

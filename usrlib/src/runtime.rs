@@ -1,7 +1,10 @@
 use crate::arch;
 use crate::syscall::Syscall;
+use alloc::vec::Vec;
 use core::alloc::{GlobalAlloc, Layout};
+use core::ffi::CStr;
 use core::panic::PanicInfo;
+use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 use system::syscall_numbers::SyscallNum;
 
 struct SyscallAllocator;
@@ -19,15 +22,42 @@ unsafe impl GlobalAlloc for SyscallAllocator {
 #[global_allocator]
 static RUNTIME_ALLOCATOR: SyscallAllocator = SyscallAllocator;
 
+static ARGUMENT_COUNT: AtomicI32 = AtomicI32::new(0);
+static ARGUMENT_VECTORS: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
+
 #[lang = "start"]
 fn start<T: 'static>(
     main: fn() -> T,
-    _argc: isize,
-    _argv: *const *const u8,
+    argc: isize,
+    argv: *const *const u8,
     _sigpipe: u8,
 ) -> isize {
+    ARGUMENT_COUNT.store(argc as i32, Ordering::Relaxed);
+    ARGUMENT_VECTORS.store(argv as *mut u8, Ordering::Relaxed);
     main();
     0
+}
+
+pub fn argc() -> i32 {
+    ARGUMENT_COUNT.load(Ordering::Relaxed)
+}
+
+pub fn argv() -> *const *const u8 {
+    ARGUMENT_VECTORS.load(Ordering::Relaxed) as *const *const u8
+}
+
+pub fn args() -> Vec<&'static str> {
+    let argv = argv();
+    if argv.is_null() {
+        return Vec::new();
+    }
+    (0..argc())
+        .filter_map(|index| {
+            unsafe { CStr::from_ptr(argv.add(index as usize).read() as *const i8) }
+                .to_str()
+                .ok()
+        })
+        .collect()
 }
 
 #[panic_handler]

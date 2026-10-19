@@ -9,6 +9,8 @@ use usrlib::{print, println};
 const DIGITS: usize = 20000;
 
 fn main() {
+    println!("args({}): {:?}", usrlib::argc(), usrlib::args());
+
     // We need a slightly larger array to account for the mathematical bounds.
     // The size roughly correlates to (10/3) * N.
     let n = DIGITS;
