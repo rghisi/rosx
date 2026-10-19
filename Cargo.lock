@@ -339,7 +339,6 @@ dependencies = [
  "kernel",
  "lazy_static",
  "pic8259",
- "shell",
  "spin 0.10.0",
  "system",
  "test_suite",
@@ -354,7 +353,6 @@ version = "0.1.0"
 dependencies = [
  "kernel",
  "lazy_static",
- "shell",
  "spin 0.10.0",
  "system",
  "volatile 0.2.7",

@@ -38,6 +38,15 @@ fn build_apps() {
     cmd.arg("--target").arg("arch/x86_64/rosx-user.json");
     cmd.args(UNSTABLE);
     run(&mut cmd, "build user-space ELF apps");
+    let mut shell = cargo();
+    shell
+        .arg("build")
+        .arg("--release")
+        .arg("-p")
+        .arg("shell");
+    shell.arg("--target").arg("arch/x86_64/rosx-user.json");
+    shell.args(UNSTABLE);
+    run(&mut shell, "build shell ELF after the app ELFs it embeds");
 }
 
 fn build_kernel(debug: bool) {

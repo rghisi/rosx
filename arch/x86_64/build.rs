@@ -14,6 +14,7 @@ fn main() {
     println!("cargo::rerun-if-changed=../../usrlib/linker.ld");
     println!("cargo::rerun-if-changed=../../.cargo/config.toml");
     println!("cargo::rerun-if-changed=../../target/rosx-user/rom.img");
+    println!("cargo::rerun-if-changed=../../target/rosx-user/release/shell");
 
     let elf_path = "../../target/rosx-user/release/random_gen_server";
     if !Path::new(elf_path).exists() {
@@ -38,5 +39,9 @@ fn main() {
     let rom_path = "../../target/rosx-user/rom.img";
     if !Path::new(rom_path).exists() {
         panic!("missing ROM image {rom_path}; run `cargo xtask build` first");
+    }
+    let shell_path = "../../target/rosx-user/release/shell";
+    if !Path::new(shell_path).exists() {
+        panic!("missing user ELF {shell_path}; run `cargo xtask apps` first");
     }
 }
