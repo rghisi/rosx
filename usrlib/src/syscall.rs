@@ -3,6 +3,8 @@ use crate::error::{DataError, IpcBindingError, IpcConnectionError, IpcReceiveErr
 use crate::handle::{UserBindingHandle, UserConnectionHandle, UserFutureHandle, UserDataHandle};
 use crate::ipc::ReceivedMessage;
 use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 use system::error::{ErrorCode, is_token};
 use system::ipc::{MESSAGE_PAYLOAD_BYTES, Message};
@@ -19,6 +21,14 @@ impl Syscall {
     pub fn load(elf: &'static [u8]) -> Option<UserFutureHandle> {
         let elf_ptr = Box::into_raw(Box::new(elf)) as usize;
         let raw = arch::raw_syscall(SyscallNum::LoadElf as usize, elf_ptr as usize, 0, 0);
+        UserFutureHandle::from_token(raw)
+    }
+
+    pub fn load_with_args(elf: &'static [u8], args: &[String]) -> Option<UserFutureHandle> {
+        let elf_ptr = Box::into_raw(Box::new(elf)) as usize;
+        let blob = encode_arguments(args);
+        let (blob_ptr, blob_len) = wire_pair(&blob);
+        let raw = arch::raw_syscall(SyscallNum::LoadElf as usize, elf_ptr, blob_ptr, blob_len);
         UserFutureHandle::from_token(raw)
     }
 
@@ -186,5 +196,63 @@ impl Syscall {
         } else {
             Err(DataError::from(ErrorCode::from_code(raw)))
         }
+    }
+}
+
+fn encode_arguments(args: &[String]) -> Vec<u8> {
+    let mut blob = Vec::new();
+    for argument in args {
+        blob.extend_from_slice(argument.as_bytes());
+        blob.push(0);
+    }
+    blob
+}
+
+fn wire_pair(blob: &[u8]) -> (usize, usize) {
+    if blob.is_empty() {
+        (0, 0)
+    } else {
+        (blob.as_ptr() as usize, blob.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_arguments_encodes_to_empty_blob_and_zero_zero_wire_pair() {
+        let blob = encode_arguments(&[]);
+        assert!(blob.is_empty());
+        assert_eq!(wire_pair(&blob), (0, 0));
+    }
+
+    #[test]
+    fn non_empty_blob_pairs_a_live_pointer_with_its_full_length() {
+        let blob = encode_arguments(&[String::from("a")]);
+        let (blob_ptr, blob_len) = wire_pair(&blob);
+        assert_ne!(blob_ptr, 0);
+        assert_ne!(blob_len, 0);
+        assert_eq!(blob_len, blob.len());
+    }
+
+    #[test]
+    fn two_arguments_encode_with_one_terminator_each() {
+        let args = [String::from("a"), String::from("b")];
+        assert_eq!(encode_arguments(&args), *b"a\0b\0");
+    }
+
+    #[test]
+    fn encoded_size_is_argument_bytes_plus_argument_count() {
+        let args = [
+            String::from("pi"),
+            String::from("alpha"),
+            String::from("beta"),
+        ];
+        let blob = encode_arguments(&args);
+        assert_eq!(blob, *b"pi\0alpha\0beta\0");
+        let expected: usize = args.iter().map(String::len).sum::<usize>() + args.len();
+        assert_eq!(blob.len(), expected);
+        assert_eq!(blob.len(), 2 + 5 + 4 + 3);
     }
 }
