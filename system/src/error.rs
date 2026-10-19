@@ -19,6 +19,8 @@ pub enum ErrorCode {
     IpcDataBudgetExceeded = 0x010A,
     IpcDataNotFound = 0x010B,
     IpcDataNotReadable = 0x010C,
+    ElfArgumentLimitExceeded = 0x0201,
+    ElfArgumentBlobMalformed = 0x0202,
     Unknown = 0x7FFF_FFFF,
 }
 
@@ -41,6 +43,8 @@ impl ErrorCode {
             0x010A => ErrorCode::IpcDataBudgetExceeded,
             0x010B => ErrorCode::IpcDataNotFound,
             0x010C => ErrorCode::IpcDataNotReadable,
+            0x0201 => ErrorCode::ElfArgumentLimitExceeded,
+            0x0202 => ErrorCode::ElfArgumentBlobMalformed,
             _ => ErrorCode::Unknown,
         }
     }
@@ -50,7 +54,7 @@ impl ErrorCode {
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 13] = [
+    const ALL_ERROR_CODES: [ErrorCode; 15] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -63,6 +67,8 @@ mod tests {
         ErrorCode::IpcDataBudgetExceeded,
         ErrorCode::IpcDataNotFound,
         ErrorCode::IpcDataNotReadable,
+        ErrorCode::ElfArgumentLimitExceeded,
+        ErrorCode::ElfArgumentBlobMalformed,
         ErrorCode::Unknown,
     ];
 
