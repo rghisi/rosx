@@ -7,6 +7,8 @@ use core::fmt::{Display, Formatter};
 use crate::elf::load_elf;
 use crate::handle::FutureHandle;
 use crate::task_stack::TaskStack;
+use system::args::{MAX_ARGUMENT_BYTES, MAX_ARGUMENT_COUNT};
+use system::error::ErrorCode;
 
 pub use crate::handle::TaskHandle;
 pub type SharedTask = Box<Task>;
@@ -186,6 +188,10 @@ impl ElfTaskContext {
             argument_strings.extend_from_slice(argument.as_bytes());
             argument_strings.push(0);
         }
+        ElfTaskContext::with_blob(elf_bytes, argument_strings)
+    }
+
+    fn with_blob(elf_bytes: &'static [u8], argument_strings: Vec<u8>) -> Box<ElfTaskContext> {
         let mut context = Box::new(ElfTaskContext {
             elf_bytes,
             argument_strings,
@@ -218,8 +224,29 @@ impl ElfTaskContext {
     }
 }
 
+pub fn validate_arguments_blob(blob: &[u8]) -> Result<(), ErrorCode> {
+    if blob.len() > MAX_ARGUMENT_BYTES {
+        return Err(ErrorCode::ElfArgumentLimitExceeded);
+    }
+    if blob.iter().filter(|byte| **byte == 0).count() > MAX_ARGUMENT_COUNT {
+        return Err(ErrorCode::ElfArgumentLimitExceeded);
+    }
+    if blob.is_empty() || blob[blob.len() - 1] != 0 || blob[0] == 0 {
+        return Err(ErrorCode::ElfArgumentBlobMalformed);
+    }
+    if blob.windows(2).any(|pair| pair[0] == 0 && pair[1] == 0) {
+        return Err(ErrorCode::ElfArgumentBlobMalformed);
+    }
+    Ok(())
+}
+
 pub fn new_elf_task(elf: &'static [u8]) -> SharedTask {
     let context = ElfTaskContext::new(elf, &["ELF"]);
+    Task::new("ELF", elf_task_wrapper as usize, Box::into_raw(context) as usize)
+}
+
+pub fn new_elf_task_with_arguments(elf: &'static [u8], arguments_blob: Vec<u8>) -> SharedTask {
+    let context = ElfTaskContext::with_blob(elf, arguments_blob);
     Task::new("ELF", elf_task_wrapper as usize, Box::into_raw(context) as usize)
 }
 
@@ -313,6 +340,124 @@ mod tests {
         let moved = context;
         assert_eq!(read_c_string(unsafe { moved.argv().read() }), b"pi");
         assert_eq!(moved.elf_bytes, &[1, 2, 3]);
+    }
+
+    #[test]
+    fn with_blob_builds_context_with_three_arguments_and_null_terminator() {
+        let context = ElfTaskContext::with_blob(&[], b"a\0b\0c\0".to_vec());
+        assert_eq!(context.argc(), 3);
+        let argv = context.argv();
+        assert_eq!(read_c_string(unsafe { argv.add(0).read() }), b"a");
+        assert_eq!(read_c_string(unsafe { argv.add(1).read() }), b"b");
+        assert_eq!(read_c_string(unsafe { argv.add(2).read() }), b"c");
+        assert!(unsafe { argv.add(3).read().is_null() });
+    }
+
+    #[test]
+    fn validate_rejects_blob_without_trailing_nul_as_malformed() {
+        assert_eq!(
+            validate_arguments_blob(b"a\0b"),
+            Err(ErrorCode::ElfArgumentBlobMalformed)
+        );
+    }
+
+    #[test]
+    fn validate_rejects_blob_with_double_nul_as_malformed() {
+        assert_eq!(
+            validate_arguments_blob(b"a\0\0b\0"),
+            Err(ErrorCode::ElfArgumentBlobMalformed)
+        );
+    }
+
+    #[test]
+    fn validate_rejects_blob_with_leading_nul_as_malformed() {
+        assert_eq!(
+            validate_arguments_blob(b"\0a\0"),
+            Err(ErrorCode::ElfArgumentBlobMalformed)
+        );
+    }
+
+    #[test]
+    fn validate_rejects_empty_blob_as_malformed() {
+        assert_eq!(
+            validate_arguments_blob(b""),
+            Err(ErrorCode::ElfArgumentBlobMalformed)
+        );
+    }
+
+    #[test]
+    fn validate_accepts_canonical_three_argument_blob() {
+        assert_eq!(validate_arguments_blob(b"a\0b\0c\0"), Ok(()));
+    }
+
+    #[test]
+    fn validate_rejects_seventeen_arguments_as_limit_exceeded() {
+        let blob = b"a\0".repeat(17);
+        assert_eq!(
+            validate_arguments_blob(&blob),
+            Err(ErrorCode::ElfArgumentLimitExceeded)
+        );
+    }
+
+    #[test]
+    fn validate_rejects_blob_over_max_bytes_as_limit_exceeded() {
+        let mut blob = vec![b'a'; MAX_ARGUMENT_BYTES + 1];
+        blob.push(0);
+        assert!(blob.len() > MAX_ARGUMENT_BYTES);
+        assert_eq!(
+            validate_arguments_blob(&blob),
+            Err(ErrorCode::ElfArgumentLimitExceeded)
+        );
+    }
+
+    #[test]
+    fn validate_accepts_exactly_max_argument_count() {
+        let blob = b"a\0".repeat(MAX_ARGUMENT_COUNT);
+        assert_eq!(validate_arguments_blob(&blob), Ok(()));
+    }
+
+    #[test]
+    fn validate_accepts_exactly_max_argument_bytes() {
+        let mut blob = vec![b'a'; MAX_ARGUMENT_BYTES - 1];
+        blob.push(0);
+        assert_eq!(blob.len(), MAX_ARGUMENT_BYTES);
+        assert_eq!(validate_arguments_blob(&blob), Ok(()));
+    }
+
+    #[test]
+    fn new_elf_task_default_context_argv_remains_placeholder() {
+        let task = new_elf_task(&[7]);
+        assert_eq!(task.name(), "ELF");
+        let context = unsafe { Box::from_raw(task.entry_param() as *mut ElfTaskContext) };
+        assert_eq!(context.argc(), 1);
+        assert_eq!(read_c_string(unsafe { context.argv().read() }), b"ELF");
+        assert!(unsafe { context.argv().add(1).read().is_null() });
+    }
+
+    #[test]
+    fn new_elf_task_with_arguments_wires_blob_into_task_context() {
+        let task = new_elf_task_with_arguments(&[9], b"pi\0alpha\0".to_vec());
+        let context = unsafe { Box::from_raw(task.entry_param() as *mut ElfTaskContext) };
+        assert_eq!(context.argc(), 2);
+        assert_eq!(read_c_string(unsafe { context.argv().read() }), b"pi");
+        assert_eq!(
+            read_c_string(unsafe { context.argv().add(1).read() }),
+            b"alpha"
+        );
+    }
+
+    #[test]
+    fn new_and_with_blob_produce_equal_contexts_for_joined_arguments() {
+        let arguments = ["alpha", "beta", "gamma"];
+        let joined = ElfTaskContext::new(&[], &arguments);
+        let mut blob = Vec::new();
+        for argument in arguments {
+            blob.extend_from_slice(argument.as_bytes());
+            blob.push(0);
+        }
+        let moved = ElfTaskContext::with_blob(&[], blob);
+        assert_eq!(joined.argument_strings, moved.argument_strings);
+        assert_eq!(joined.argc(), moved.argc());
     }
 }
 

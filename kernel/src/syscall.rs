@@ -1,5 +1,6 @@
 use core::alloc::{GlobalAlloc, Layout};
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use crate::kernel::kernel;
 use crate::kernel_services::services;
 use crate::default_output::print;
@@ -8,7 +9,7 @@ use system::error::ErrorCode;
 use system::ipc::Message;
 use crate::handle::{FutureHandle, IpcConnectionHandle, IpcBindingHandle, IpcDataHandle};
 use crate::ipc::message_future::IpcMessageFuture;
-use crate::task::{new_elf_task, new_entrypoint_task};
+use crate::task::{new_elf_task, new_elf_task_with_arguments, new_entrypoint_task, validate_arguments_blob};
 
 #[cfg(not(test))]
 pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usize {
@@ -77,9 +78,19 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             crate::keyboard::pop_key().map_or(0, |c| c as usize)
         }
         Ok(SyscallNum::LoadElf) => {
-            let elf_ptr = arg1;
-            let elf_bytes: &[u8] = unsafe { *Box::from_raw(elf_ptr as *mut &[u8]) };
-            match kernel().schedule(new_elf_task(elf_bytes)).ok() {
+            if arg1 == 0 { return u64::MAX as usize; }
+            let elf_bytes: &[u8] = unsafe { *Box::from_raw(arg1 as *mut &[u8]) };
+            if arg2 == 0 && arg3 == 0 {
+                return match kernel().schedule(new_elf_task(elf_bytes)).ok() {
+                    Some(handle) => handle.pack(),
+                    None => u64::MAX as usize,
+                };
+            }
+            if arg3 > system::args::MAX_ARGUMENT_BYTES { return ErrorCode::ElfArgumentLimitExceeded.to_reg(); }
+            if arg2 == 0 || arg3 == 0 { return ErrorCode::ElfArgumentBlobMalformed.to_reg(); }
+            let blob = unsafe { core::slice::from_raw_parts(arg2 as *const u8, arg3) };
+            if let Err(code) = validate_arguments_blob(blob) { return code.to_reg(); }
+            match kernel().schedule(new_elf_task_with_arguments(elf_bytes, Vec::from(blob))).ok() {
                 Some(handle) => handle.pack(),
                 None => u64::MAX as usize,
             }
