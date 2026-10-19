@@ -8,7 +8,7 @@ const DIAGNOSTIC_TAIL_CHARS: usize = 2000;
 const CLIENT_PREFIX: &str = "ping sent: ";
 const SERVER_PREFIX: &str = "PONG ";
 const SERVER_MATCHED: &str = " matched ";
-const LAST_SWEEP_LINE: &str = "ping sent: 65536";
+const LAST_SWEEP_LINE: &str = "ping sent: 65536 ok received: 65536 ok";
 const FORBIDDEN_STRINGS: [&str; 2] = ["fail", "Panic"];
 
 fn count_prefixes(content: &str, prefix: &str) -> usize {

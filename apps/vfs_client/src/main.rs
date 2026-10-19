@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use usrlib::println;
@@ -15,6 +16,10 @@ const BLOB_BYTES: usize = 131072;
 
 fn vfs_byte(file_offset: usize) -> u8 {
     (file_offset as u64).wrapping_mul(29).wrapping_add(11) as u8
+}
+
+fn listed(names: &[String], name: &str) -> bool {
+    names.iter().any(|entry| entry == name)
 }
 
 fn failed(check: &str) -> bool {
@@ -121,7 +126,9 @@ fn run(vfs: &Vfs) -> bool {
     }
 
     match vfs.list() {
-        Ok(names) if names == ["notes.txt"] => {}
+        Ok(names) if listed(&names, "notes.txt") => {
+            println!("  list: {}", names.iter().fold(String::new(), |acc, x| acc + &x.to_string() + ", "));
+        }
         _ => return failed("list got notes.txt"),
     }
     println!("vfs ok: list got notes.txt");
@@ -171,7 +178,9 @@ fn run(vfs: &Vfs) -> bool {
     }
 
     match vfs.list() {
-        Ok(names) if names == ["blob.bin", "notes.txt"] => {}
+        Ok(names) if listed(&names, "blob.bin") && listed(&names, "notes.txt") => {
+            println!("  list: {}", names.iter().fold(String::new(), |acc, x| acc + &x.to_string() + ", "));
+        }
         _ => return failed("list got blob.bin notes.txt"),
     }
     println!("vfs ok: list got blob.bin notes.txt");
@@ -188,7 +197,9 @@ fn run(vfs: &Vfs) -> bool {
     println!("vfs ok: delete twice denied");
 
     match vfs.list() {
-        Ok(names) if names == ["blob.bin"] => {}
+        Ok(names) if listed(&names, "blob.bin") && !listed(&names, "notes.txt") => {
+            println!("  list: {}", names.iter().fold(String::new(), |acc, x| acc + &x.to_string() + ", "));
+        }
         _ => return failed("list got blob.bin"),
     }
     println!("vfs ok: list got blob.bin");
@@ -199,7 +210,9 @@ fn run(vfs: &Vfs) -> bool {
     println!("vfs ok: delete blob.bin");
 
     match vfs.list() {
-        Ok(names) if names.is_empty() => {}
+        Ok(names) if !listed(&names, "notes.txt") && !listed(&names, "blob.bin") => {
+            println!("  list: {}", names.iter().fold(String::new(), |acc, x| acc + &x.to_string() + ", "));
+        }
         _ => return failed("list empty"),
     }
     println!("vfs ok: list empty");

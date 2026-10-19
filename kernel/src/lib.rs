@@ -22,6 +22,7 @@ pub mod messages;
 pub mod once;
 pub mod panic;
 pub mod ports;
+pub mod rom;
 pub mod scheduler;
 pub(crate) mod state;
 pub mod syscall;

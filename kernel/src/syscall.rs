@@ -148,6 +148,10 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
                 Err(e) => ErrorCode::from(e).to_reg(),
             }
         }
+        Ok(SyscallNum::RomRead) => {
+            let dst = unsafe { core::slice::from_raw_parts_mut(arg2 as *mut u8, arg3) };
+            crate::rom::read(arg1 as u64, dst)
+        }
         Err(_) => 0,
     }
 }
