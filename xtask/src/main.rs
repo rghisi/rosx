@@ -2,7 +2,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::{self, Command};
 
-const USER_APPS: [&str; 11] = ["hello_elf", "random_gen_server", "snake", "tetris", "conway", "bulk_echo", "bulk_client", "ping_server", "ping_client", "vfs_server", "vfs_client"];
+const USER_APPS: [&str; 11] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "vfsd", "vfs", "snake", "tetris", "conway"];
 
 const UNSTABLE: [&str; 3] = [
     "-Zbuild-std=core,alloc,compiler_builtins",
@@ -35,18 +35,10 @@ fn build_apps() {
     for app in USER_APPS {
         cmd.arg("-p").arg(app);
     }
+    cmd.arg("-p").arg("shell");
     cmd.arg("--target").arg("arch/x86_64/rosx-user.json");
     cmd.args(UNSTABLE);
     run(&mut cmd, "build user-space ELF apps");
-    let mut shell = cargo();
-    shell
-        .arg("build")
-        .arg("--release")
-        .arg("-p")
-        .arg("shell");
-    shell.arg("--target").arg("arch/x86_64/rosx-user.json");
-    shell.args(UNSTABLE);
-    run(&mut shell, "build shell ELF after the app ELFs it embeds");
 }
 
 fn build_kernel(debug: bool) {

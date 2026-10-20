@@ -1,18 +1,19 @@
 [package]
 authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
-name = "bulk_echo"
+name = "vfs"
 publish = false
 version = "0.1.0"
 edition.workspace = true
 
 [[bin]]
-name = "bulk_echo"
+name = "vfs"
 bench = false
 test = false
 
 [dependencies]
 system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }
+vfs-protocol = { path = "../../vfs-protocol" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 usrlib = { path = "../../usrlib", features = ["runtime"] }

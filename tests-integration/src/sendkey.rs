@@ -50,6 +50,7 @@ pub fn token_for(c: char) -> Option<&'static str> {
         '\t' => Some("tab"),
         '\x08' => Some("backspace"),
         '-' => Some("minus"),
+        '_' => Some("shift-minus"),
         '=' => Some("equal"),
         '.' => Some("dot"),
         ',' => Some("comma"),
@@ -97,6 +98,7 @@ mod tests {
         assert_eq!(token_for('\t'), Some("tab"));
         assert_eq!(token_for('\x08'), Some("backspace"));
         assert_eq!(token_for('-'), Some("minus"));
+        assert_eq!(token_for('_'), Some("shift-minus"));
         assert_eq!(token_for('='), Some("equal"));
         assert_eq!(token_for('.'), Some("dot"));
         assert_eq!(token_for(','), Some("comma"));

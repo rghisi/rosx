@@ -1,19 +1,18 @@
 [package]
 authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
-name = "vfs_client"
+name = "pi"
 publish = false
 version = "0.1.0"
 edition.workspace = true
 
 [[bin]]
-name = "vfs_client"
+name = "pi"
 bench = false
 test = false
 
 [dependencies]
 system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }
-vfs-protocol = { path = "../../vfs-protocol" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 usrlib = { path = "../../usrlib", features = ["runtime"] }

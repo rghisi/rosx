@@ -31,7 +31,7 @@ fn verdict_word(ok: bool) -> &'static str {
     if ok { "ok" } else { "fail" }
 }
 
-fn connect_to_ping_server() -> UserConnectionHandle {
+fn connect_to_pong() -> UserConnectionHandle {
     loop {
         if let Ok(connection) = Syscall::ipc_connect("PING") {
             return connection;
@@ -98,7 +98,7 @@ fn ping_round(connection: UserConnectionHandle, size: usize) {
 }
 
 fn main() {
-    let connection = connect_to_ping_server();
+    let connection = connect_to_pong();
     for size in PING_SIZES {
         ping_round(connection, size);
     }

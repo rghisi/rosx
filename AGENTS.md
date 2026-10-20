@@ -39,7 +39,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
 │    x86_64-runner/ # standalone: BiosBoot → QEMU (NOT bootimage)
 └── apps/
-     [workspace members]  shell, dummy, hello_elf, random_gen_server, bulk_echo, bulk_client, ping_server, ping_client, snake, tetris, conway, test_suite, vfs_server, vfs_client
+     [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, vfsd, vfs, snake, tetris, conway, test_suite
 ```
 
 ---
@@ -59,7 +59,7 @@ cargo run -p rosx              # run.sh -> arch/x86_64-runner -> BiosBoot disk i
 ```
 - `cargo run` uses the **custom runner** (`.cargo/config.toml` → `./run.sh`), which invokes `arch/x86_64-runner` to make a BIOS disk image with the `bootloader` crate's `BiosBoot`, then starts `qemu-system-x86_64`. **Not bootimage.**
 - Target spec: `arch/x86_64/rosx.json` — bare-metal `no_std`, `build-std` = core/alloc/compiler_builtins.
-- User-space ELF apps (hello_elf, random_gen_server, snake, tetris, conway) are workspace members; build with `cargo xtask apps` or `cargo xtask build`.
+- User-space ELF apps (pi, randomd, snake, tetris, conway) are workspace members; build with `cargo xtask apps` or `cargo xtask build`.
 - `cargo build --workspace` is intentionally unsupported: bare-metal bins and PIE apps cannot compile for the host.
 
 ### x86_32
@@ -150,7 +150,7 @@ These principles are the regression guard: the very inversion this rework remove
 - `ipc/` data family — messages signal; data rides the connection out-of-band via write/read/release tokens; the kernel never interprets message payloads.
 - `elf/` — loads standalone user-space ELF binaries into tasks (`new_elf_task`).
 - `task/` + `task_manager/` — task lifecycle, context switch, preemption.
-- `rom/` — boot-registered immutable ROM image exposed via the opaque `RomRead` syscall; the kernel stays VFS-agnostic, `vfs_server` owns mount semantics.
+- `rom/` — boot-registered immutable ROM image exposed via the opaque `RomRead` syscall; the kernel stays VFS-agnostic, `vfsd` owns mount semantics.
 
 **Documentation & Comments:**
 - **CRITICAL: No comments, ever** — the code is the source of truth; make it self-explanatory

@@ -1,12 +1,12 @@
 [package]
 authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
-name = "hello_elf"
+name = "pong"
 publish = false
 version = "0.1.0"
 edition.workspace = true
 
 [[bin]]
-name = "hello_elf"
+name = "pong"
 bench = false
 test = false
 

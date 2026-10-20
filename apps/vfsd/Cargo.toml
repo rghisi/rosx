@@ -1,18 +1,23 @@
 [package]
 authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
-name = "ping_client"
+name = "vfsd"
 publish = false
 version = "0.1.0"
 edition.workspace = true
 
+[lib]
+name = "vfsd"
+path = "src/lib.rs"
+
 [[bin]]
-name = "ping_client"
+name = "vfsd"
 bench = false
 test = false
 
 [dependencies]
 system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }
+vfs-protocol = { path = "../../vfs-protocol" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 usrlib = { path = "../../usrlib", features = ["runtime"] }

@@ -18,6 +18,7 @@ test = false
 test_suite = { path = "../test_suite" }
 system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }
+vfs-protocol = { path = "../../vfs-protocol" }
 
 [dependencies.lazy_static]
 version = "1.0"
