@@ -60,6 +60,7 @@ cargo run -p rosx              # run.sh -> arch/x86_64-runner -> BiosBoot disk i
 - `cargo run` uses the **custom runner** (`.cargo/config.toml` → `./run.sh`), which invokes `arch/x86_64-runner` to make a BIOS disk image with the `bootloader` crate's `BiosBoot`, then starts `qemu-system-x86_64`. **Not bootimage.**
 - Target spec: `arch/x86_64/rosx.json` — bare-metal `no_std`, `build-std` = core/alloc/compiler_builtins.
 - User-space ELF apps (pi, randomd, snake, tetris, conway) are workspace members; build with `cargo xtask apps` or `cargo xtask build`.
+- The shell is a user ELF: each arch port embeds `target/rosx-user/release/shell` with `include_bytes!` and boots it via `new_elf_task`. It keeps six built-ins (`ls clear rose tests sleep random`) and resolves every other prompt name through VFS, so ROM/RAM files execute by name with arguments (`rose> snake fast`).
 - `cargo build --workspace` is intentionally unsupported: bare-metal bins and PIE apps cannot compile for the host.
 
 ### x86_32
@@ -67,7 +68,7 @@ cargo run -p rosx              # run.sh -> arch/x86_64-runner -> BiosBoot disk i
 cargo build -p rosx-x86        # kernel (Multiboot2, boot.S); run from arch/x86_32/ — its .cargo/config.toml supplies the rosx-i686 custom target
 bash arch/x86_32/build-image.sh   # GRUB bootable image (needs grub-mkrescue, xorriso, mtools)
 ```
-- x86_32 builds are untouched by xtask. Build user apps for x86_32 with the explicit `-Z` flags shown in CI.
+- x86_32 builds are untouched by xtask. The kernel embeds the shell ELF from `target/rosx-i686-user/release/shell`; build it for `rosx-i686-user` first with the explicit `-Z` build-std flags xtask uses for x86_64. No `vfsd` runs on x86_32, so running a program by name reports `No filesystem` after connect retries.
 
 ### Unit tests (run on host)
 ```bash
@@ -150,7 +151,7 @@ These principles are the regression guard: the very inversion this rework remove
 - `ipc/` data family — messages signal; data rides the connection out-of-band via write/read/release tokens; the kernel never interprets message payloads.
 - `elf/` — loads standalone user-space ELF binaries into tasks (`new_elf_task`).
 - `task/` + `task_manager/` — task lifecycle, context switch, preemption.
-- `rom/` — boot-registered immutable ROM image exposed via the opaque `RomRead` syscall; the kernel stays VFS-agnostic, `vfsd` owns mount semantics.
+- `rom/` — boot-registered immutable ROM image exposed via the opaque `RomRead` syscall; the kernel stays VFS-agnostic, `vfsd` owns mount semantics. The ROM carries the eleven app ELFs (not the shell); its roster holds only underscore-free names because the kernel keyboard drops shift state (see `docs/todo.md`).
 
 **Documentation & Comments:**
 - **CRITICAL: No comments, ever** — the code is the source of truth; make it self-explanatory
