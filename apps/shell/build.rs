@@ -9,6 +9,8 @@ fn main() {
     println!("cargo::rerun-if-changed=../../apps/ping_client/Cargo.toml");
     println!("cargo::rerun-if-changed=../../apps/vfs_client/src");
     println!("cargo::rerun-if-changed=../../apps/vfs_client/Cargo.toml");
+    println!("cargo::rerun-if-changed=../../apps/thread_demo/src");
+    println!("cargo::rerun-if-changed=../../apps/thread_demo/Cargo.toml");
     println!("cargo::rerun-if-changed=../../usrlib/linker.ld");
     println!("cargo::rerun-if-changed=../../.cargo/config.toml");
 
@@ -34,6 +36,10 @@ fn main() {
         let vfs_path = format!("{base}/vfs_client");
         if !Path::new(&vfs_path).exists() {
             panic!("missing user ELF {vfs_path}; run `cargo xtask apps` first");
+        }
+        let thread_demo_path = format!("{base}/thread_demo");
+        if !Path::new(&thread_demo_path).exists() {
+            panic!("missing user ELF {thread_demo_path}; run `cargo xtask apps` first");
         }
     }
 }
