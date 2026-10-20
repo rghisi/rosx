@@ -2,22 +2,30 @@
 
 extern crate alloc;
 
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use alloc::boxed::Box;
+use core::ptr::null_mut;
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
+use usrlib::handle::UserConnectionHandle;
+use usrlib::ipc::ipc_send_value;
 use usrlib::syscall::Syscall;
 use usrlib::{print, println};
 
 static SHARED_COUNTER: AtomicUsize = AtomicUsize::new(0);
 static S2_STOP: AtomicBool = AtomicBool::new(false);
 static S2_SPIN_TICKS: AtomicUsize = AtomicUsize::new(0);
+static SHARED_CONNECTION: AtomicPtr<UserConnectionHandle> = AtomicPtr::new(null_mut());
 
 const INCREMENTS_PER_WORKER: usize = 1000;
 const YIELD_EVERY: usize = 100;
 const PROGRESS_EVERY: usize = 250;
 const S2_PROGRESS_EVERY: usize = 5_000_000;
+const S3_WORKER_SEND_TAG: usize = 698_366;
+const S3_MAIN_SEND_TAG: usize = 999_991;
 
 fn main() {
     scenario_shared_counter_spawn_and_join();
     scenario_spin_wait_cost();
+    scenario_shared_connection_ownership();
 }
 
 fn scenario_shared_counter_spawn_and_join() {
@@ -68,6 +76,57 @@ fn worker_spin_on_flag() {
         }
     }
     S2_SPIN_TICKS.store(spins, Ordering::SeqCst);
+}
+
+fn scenario_shared_connection_ownership() {
+    let Ok(connection) = Syscall::ipc_connect("RANDOM") else {
+        println!("S3 SKIP no RANDOM server");
+        return;
+    };
+    println!("S3 CONNECTED {}", connection);
+    let leaked = Box::leak(Box::new(connection));
+    SHARED_CONNECTION.store(leaked as *mut UserConnectionHandle, Ordering::SeqCst);
+    let worker = Syscall::exec(worker_sends_on_shared_connection as usize);
+    if let Some(handle) = worker {
+        Syscall::wait_future(handle);
+    }
+    match ipc_send_value(connection, S3_MAIN_SEND_TAG) {
+        Ok(()) => println!("S3 MAIN_SEND=ok"),
+        Err(e) => println!("S3 MAIN_SEND={}", e),
+    }
+    match receive_if_pending(connection) {
+        Some(S3_WORKER_SEND_TAG) => println!(
+            "S3 CLIENT_MAILBOX_FIRST={} worker_message_misrouted_not_rejected",
+            S3_WORKER_SEND_TAG
+        ),
+        Some(value) => println!("S3 CLIENT_MAILBOX_FIRST={}", value),
+        None => println!("S3 CLIENT_MAILBOX_EMPTY"),
+    }
+    Syscall::ipc_disconnect(connection);
+}
+
+fn receive_if_pending(connection: UserConnectionHandle) -> Option<usize> {
+    let handle = Syscall::ipc_receive_message(connection)?;
+    if !Syscall::is_future_completed(handle) {
+        return None;
+    }
+    let message = Syscall::wait_for_message(handle).ok()?;
+    let mut bytes = [0u8; core::mem::size_of::<usize>()];
+    bytes.copy_from_slice(&message.data()[..core::mem::size_of::<usize>()]);
+    Some(usize::from_ne_bytes(bytes))
+}
+
+fn worker_sends_on_shared_connection() {
+    let shared = SHARED_CONNECTION.load(Ordering::SeqCst);
+    if shared.is_null() {
+        println!("S3 WORKER_NO_CONNECTION");
+        return;
+    }
+    let connection = unsafe { *shared };
+    match ipc_send_value(connection, S3_WORKER_SEND_TAG) {
+        Ok(()) => println!("S3 WORKER_SEND=ok"),
+        Err(e) => println!("S3 WORKER_SEND={}", e),
+    }
 }
 
 fn increment_shared_counter(worker: char) {
