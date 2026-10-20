@@ -35,6 +35,9 @@ static PING_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/ping_
 #[cfg(target_arch = "x86_64")]
 static VFS_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/vfs_client");
 
+#[cfg(target_arch = "x86_64")]
+static THREAD_DEMO_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/thread_demo");
+
 static PROMPT: &str = "\x1B[32mrose>\x1B[m ";
 
 lazy_static! {
@@ -56,6 +59,8 @@ lazy_static! {
         commands.insert(String::from("ping"), ping as fn(&Command));
         #[cfg(target_arch = "x86_64")]
         commands.insert(String::from("vfs"), vfs as fn(&Command));
+        #[cfg(target_arch = "x86_64")]
+        commands.insert(String::from("threads"), threads as fn(&Command));
         commands
     };
 }
@@ -170,6 +175,11 @@ fn ping(cmd: &Command) {
 #[cfg(target_arch = "x86_64")]
 fn vfs(cmd: &Command) {
     spawn(VFS_ELF, cmd);
+}
+
+#[cfg(target_arch = "x86_64")]
+fn threads(cmd: &Command) {
+    spawn(THREAD_DEMO_ELF, cmd);
 }
 
 fn tests(_cmd: &Command) {
