@@ -21,8 +21,17 @@ const PROGRESS_EVERY: usize = 250;
 const S2_PROGRESS_EVERY: usize = 5_000_000;
 const S3_WORKER_SEND_TAG: usize = 698_366;
 const S3_MAIN_SEND_TAG: usize = 999_991;
+const S4_WORKER_LAPS: usize = 20;
+const S4_SLEEP_MS: u64 = 200;
 
 fn main() {
+    match usrlib::args().get(1).copied() {
+        Some("hazard") => scenario_image_lifetime_hazard(),
+        _ => run_safe_scenarios(),
+    }
+}
+
+fn run_safe_scenarios() {
     scenario_shared_counter_spawn_and_join();
     scenario_spin_wait_cost();
     scenario_shared_connection_ownership();
@@ -127,6 +136,20 @@ fn worker_sends_on_shared_connection() {
         Ok(()) => println!("S3 WORKER_SEND=ok"),
         Err(e) => println!("S3 WORKER_SEND={}", e),
     }
+}
+
+fn scenario_image_lifetime_hazard() {
+    println!("S4 SPAWN worker that outlives main without join");
+    Syscall::exec(worker_outliving_main as usize);
+    println!("S4 MAIN_EXITING");
+}
+
+fn worker_outliving_main() {
+    for lap in 1..=S4_WORKER_LAPS {
+        println!("S4 WORKER_ALIVE {}", lap);
+        Syscall::sleep(S4_SLEEP_MS);
+    }
+    println!("S4 WORKER_DONE");
 }
 
 fn increment_shared_counter(worker: char) {
