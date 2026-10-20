@@ -8,6 +8,7 @@ use alloc::collections::BTreeMap;
 use lazy_static::lazy_static;
 use crate::command::Command;
 use crate::launcher;
+use vfs_protocol::client::Vfs;
 
 static PROMPT: &str = "\x1B[32mrose>\x1B[m ";
 
@@ -82,6 +83,21 @@ fn clear(_cmd: &Command) {
 fn ls(_cmd: &Command) {
     COMMANDS.iter().for_each(|(command, _)| print!("{}\t", command));
     println!();
+    match Vfs::connect() {
+        Ok(vfs) => {
+            match vfs.list() {
+                Ok(names) => {
+                    if !names.is_empty() {
+                        names.iter().for_each(|name| print!("{}\t", name));
+                        println!();
+                    }
+                }
+                Err(error) => println!("Cannot list files: {:?}", error),
+            }
+            vfs.disconnect();
+        }
+        Err(error) => println!("No filesystem: {:?}", error),
+    }
 }
 
 fn tests(_cmd: &Command) {

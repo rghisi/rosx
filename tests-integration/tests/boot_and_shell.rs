@@ -30,7 +30,7 @@ fn shell_ls_and_unknown_command() {
     let after_prompt = session.mark();
     session.send_line("ls");
     session.expect_output_since(after_prompt, "clear", Duration::from_secs(10));
-    session.expect_output_since(after_prompt, "sleep", Duration::from_secs(10));
+    session.expect_output_since(after_prompt, "tetris", Duration::from_secs(10));
     session.expect_output_since(after_prompt, "rose>", Duration::from_secs(10));
     let after_ls = session.mark();
     session.send_line("foo");
