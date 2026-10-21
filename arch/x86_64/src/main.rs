@@ -3,6 +3,7 @@
 #![feature(abi_x86_interrupt)]
 
 extern crate alloc;
+mod apic;
 mod cpu;
 mod debug_console;
 mod elf_arch;
@@ -63,6 +64,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
     let phys_offset = boot_info.physical_memory_offset.into_option().unwrap();
     unsafe { cpu::clear_nx_bits(phys_offset); }
+    apic::set_phys_offset(phys_offset);
     let memory_blocks = build_memory_blocks(boot_info, phys_offset);
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kprintln!("[KERNEL] Initializing");

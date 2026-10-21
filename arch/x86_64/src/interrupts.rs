@@ -1,5 +1,6 @@
 use crate::cpu::syscall_handler_entry;
 use crate::interrupt_controller::PicController;
+use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering::Relaxed;
 use kernel::interrupt::{self, InterruptController};
@@ -18,6 +19,7 @@ const PIT_DIVISOR: u16 = (PIT_FREQUENCY / TICK_RATE_HZ) as u16;
 const MS_PER_TICK: u64 = 10;
 
 pub(crate) static SYSTEM_TIME_MS: AtomicU64 = AtomicU64::new(0);
+static USING_LOCAL_APIC: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -54,7 +56,14 @@ lazy_static! {
 
 pub fn init() {
     IDT.load();
-    interrupt::install::<PicController>();
+    if crate::apic::cpu_supports_local_apic() {
+        kernel::kprintln!("[KERNEL] Interrupt controller: Local APIC + I/O APIC");
+        USING_LOCAL_APIC.store(true, Relaxed);
+        interrupt::install::<crate::apic::LocalApic>();
+    } else {
+        kernel::kprintln!("[KERNEL] Interrupt controller: 8259 PIC");
+        interrupt::install::<PicController>();
+    }
     let _ = interrupt::register_handler(InterruptIndex::Timer.as_irq(), timer_handler);
     let _ = interrupt::register_handler(InterruptIndex::Keyboard.as_irq(), keyboard_handler);
 }
@@ -68,8 +77,12 @@ pub fn enable_keyboard() {
 }
 
 pub fn enable_timer() {
-    set_frequency_to_100hz();
-    let _ = interrupt::unmask(InterruptIndex::Timer.as_irq());
+    if USING_LOCAL_APIC.load(Relaxed) {
+        crate::apic::arm_periodic_tick(MS_PER_TICK as u32);
+    } else {
+        set_frequency_to_100hz();
+        let _ = interrupt::unmask(InterruptIndex::Timer.as_irq());
+    }
 }
 
 fn set_frequency_to_100hz() {
