@@ -6,6 +6,7 @@ extern crate alloc;
 mod cpu;
 mod debug_console;
 mod elf_arch;
+mod interrupt_controller;
 mod interrupts;
 mod vga_buffer;
 mod terminal_fonts;

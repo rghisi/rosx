@@ -100,6 +100,7 @@ fn dispatch_via<C: InterruptController + 'static>(irq: u32) {
     C::eoi(controller.borrow_mut(), irq);
     if let Some(handler) = HANDLERS.borrow().get(irq as usize).copied().flatten() {
         handler(irq);
+        let _ = C::unmask(controller.borrow_mut(), irq);
     }
 }
 
@@ -207,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_masks_then_eoi_then_handles() {
+    fn dispatch_masks_then_eoi_then_handles_then_rearms() {
         reset_state();
         install::<MockController>();
         register_handler(TIMER_IRQ, mock_handler).unwrap();
@@ -217,7 +218,7 @@ mod tests {
 
         assert_eq!(
             recorded_ops(),
-            alloc::vec![NEW_OP, MASK_OP, EOI_OP, HANDLER_OP]
+            alloc::vec![NEW_OP, MASK_OP, EOI_OP, HANDLER_OP, UNMASK_OP]
         );
     }
 
@@ -259,7 +260,10 @@ mod tests {
 
         dispatch_irq(TIMER_IRQ);
 
-        assert_eq!(recorded_ops(), alloc::vec![NEW_OP, EOI_OP, HANDLER_OP]);
+        assert_eq!(
+            recorded_ops(),
+            alloc::vec![NEW_OP, EOI_OP, HANDLER_OP, UNMASK_OP]
+        );
     }
 
     #[test]
