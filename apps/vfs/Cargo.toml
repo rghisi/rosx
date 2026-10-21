@@ -1,12 +1,12 @@
 [package]
 authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
-name = "vfs_client"
+name = "vfs"
 publish = false
 version = "0.1.0"
 edition.workspace = true
 
 [[bin]]
-name = "vfs_client"
+name = "vfs"
 bench = false
 test = false
 

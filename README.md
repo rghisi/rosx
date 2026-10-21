@@ -173,8 +173,8 @@ rosx/
 │   │   └── elf/            # ELF binary loader
 ├── apps/                   # User-space applications (workspace members)
 │   ├── shell/              # Command-line shell
-│   ├── hello_elf/          # Simple ELF test program
-│   ├── random_gen_server/  # Random number generator server
+│   ├── pi/                 # Simple ELF test program (pi digits spigot)
+│   ├── randomd/            # Random number generator server
 │   ├── snake/              # Snake game
 │   ├── tetris/             # Tetris game
 │   ├── conway/             # Conway's Game of Life

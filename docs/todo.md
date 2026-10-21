@@ -28,3 +28,15 @@ Evaluate [`rust_arkitect`](https://crates.io/crates/rust_arkitect) (ArchUnit/php
 ## Related open gap (decided, not yet done)
 
 Neither idea is wired in today, so `checks/compile_fail.sh` remains a manual gate; at minimum it deserves a CI invocation and an AGENTS.md mention until idea 1 lands.
+
+## Deferred keyboard: shifted characters are not typeable (decided 2026-10-20)
+
+`kernel/src/keyboard.rs` decodes through a stateless `KeyboardEvent::from_key`, and `Key::from_scancode_set1` masks the release bit (`value & 0x7F`), so shift state is dropped: `_`, `!`, `@`, uppercase letters and every other shifted character can never reach the keyboard buffer. Physical keyboards and QEMU `sendkey shift-minus` both deliver the correct PS/2 sequence (`0x2A 0x0C 0xAA`) — the guest decodes plain `-`. Discovered while typing the ROM app names (`hello_elf`) in the integration suite; the apps were renamed to underscore-free names instead (2026-10-20 decision), which masks the gap for today's roster but not for any future file or app name that wants a shifted character.
+
+**Sketch.** A raw-scancode entry point in `kernel::keyboard` that keeps the `0x80` release bit: explicit left/right shift press/release state, `from_key` gaining a shifted US overlay (at minimum `-` → `_`, digits → symbols, letters → uppercase), releases emitting no character; `arch/x86_64` interrupts pass the raw scancode through. State machine is pure and unit-testable per house style. CapsLock out of scope. The harness side is ready: `tests-integration/src/sendkey.rs` already maps `_` to `shift-minus` with a unit test.
+
+## Deferred hardening: ELF load failure must not panic the kernel (decided 2026-10-19)
+
+`elf_task_wrapper` (`kernel/src/task.rs`) calls `load_elf(...).unwrap()` when the task first runs. That is safe today because every schedulable ELF is baked in at build time (`include_bytes!` boot roster and shell statics). Once the shell dispatches unknown commands as files (`rose> snake fast` resolves ROM/VFS bytes at runtime), any name becomes schedulable: `rose> notes.txt` or a corrupted blob turns a typo at the prompt into a kernel panic. Deferred out of the shell-launches-from-ROM work by explicit decision; must land before any untrusted-bytes source (RAM files are already writable).
+
+**Sketch.** `elf_task_wrapper` matches on the `load_elf` result instead of unwrapping: on `Err`, print a diagnostic (task name and `ElfError` debug) through the kernel output and terminate the task without entering the entry point; only `Ok(image)` proceeds. Proven by kernel build plus a QEMU run scheduling a non-ELF blob; host-testable pieces of the decision logic get unit tests per house style.

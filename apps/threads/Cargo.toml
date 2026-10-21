@@ -1,12 +1,12 @@
 [package]
 authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
-name = "ping_client"
+name = "threads"
 publish = false
 version = "0.1.0"
 edition.workspace = true
 
 [[bin]]
-name = "ping_client"
+name = "threads"
 bench = false
 test = false
 

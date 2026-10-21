@@ -4,13 +4,25 @@ name = "shell"
 publish = false
 version = "0.1.0"
 edition.workspace = true
-build = "build.rs"
+
+[lib]
+name = "shell"
+path = "src/lib.rs"
+
+[[bin]]
+name = "shell"
+bench = false
+test = false
 
 [dependencies]
 test_suite = { path = "../test_suite" }
 system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }
+vfs-protocol = { path = "../../vfs-protocol" }
 
 [dependencies.lazy_static]
 version = "1.0"
 features = ["spin_no_std"]
+
+[target.'cfg(target_os = "none")'.dependencies]
+usrlib = { path = "../../usrlib", features = ["runtime"] }

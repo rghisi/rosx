@@ -19,7 +19,7 @@ fn payload_for(object_index: usize, length: usize) -> Vec<u8> {
     (0..length).map(|byte_index| (byte_index * 7 + object_index) as u8).collect()
 }
 
-fn connect_to_bulk_echo() -> UserConnectionHandle {
+fn connect_to_echo() -> UserConnectionHandle {
     loop {
         if let Ok(connection) = Syscall::ipc_connect("BULKECHO") {
             return connection;
@@ -94,7 +94,7 @@ fn verification_round(connection: UserConnectionHandle) {
 
 fn main() {
     Syscall::sleep(STARTUP_DELAY_MS);
-    let connection = connect_to_bulk_echo();
+    let connection = connect_to_echo();
     probe_oversized_write(connection);
     probe_budget(connection);
     verification_round(connection);

@@ -26,7 +26,7 @@ use kernel::kernel::Kernel;
 use kernel::scheduler;
 use kernel::kprintln;
 use kernel::panic::handle_panic;
-use kernel::task::{FunctionTask, new_elf_task};
+use kernel::task::new_elf_task;
 
 static FB_OUTPUT: FramebufferOutput = FramebufferOutput;
 pub static QEMU_OUTPUT: QemuDebugConsole = QemuDebugConsole;
@@ -73,17 +73,18 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // kernel.schedule(FunctionTask::new("2", dummy::app::main2));
     // kernel.schedule(FunctionTask::new("3", dummy::app::main3));
     // kernel.schedule(FunctionTask::new("4", dummy::app::main4));
-    static RANDOM_GEN_SERVER_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/random_gen_server");
-    let _ = kernel.schedule(new_elf_task(RANDOM_GEN_SERVER_ELF));
-    static BULK_ECHO_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/bulk_echo");
-    let _ = kernel.schedule(new_elf_task(BULK_ECHO_ELF));
-    static BULK_CLIENT_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/bulk_client");
-    let _ = kernel.schedule(new_elf_task(BULK_CLIENT_ELF));
-    static PING_SERVER_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/ping_server");
-    let _ = kernel.schedule(new_elf_task(PING_SERVER_ELF));
-    static VFS_SERVER_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/vfs_server");
-    let _ = kernel.schedule(new_elf_task(VFS_SERVER_ELF));
-    let _ = kernel.schedule(FunctionTask::new("Shell", shell::shell::main));
+    static RANDOMD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/randomd");
+    let _ = kernel.schedule(new_elf_task(RANDOMD_ELF));
+    static ECHO_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/echo");
+    let _ = kernel.schedule(new_elf_task(ECHO_ELF));
+    static BULK_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/bulk");
+    let _ = kernel.schedule(new_elf_task(BULK_ELF));
+    static PONG_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/pong");
+    let _ = kernel.schedule(new_elf_task(PONG_ELF));
+    static VFSD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/vfsd");
+    let _ = kernel.schedule(new_elf_task(VFSD_ELF));
+    static SHELL_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/shell");
+    let _ = kernel.schedule(new_elf_task(SHELL_ELF));
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
     // kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));
 

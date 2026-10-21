@@ -9,7 +9,7 @@ use usrlib::handle::{UserConnectionHandle, UserDataHandle};
 use usrlib::println;
 use usrlib::syscall::Syscall;
 use vfs_protocol::wire::{self, Reply, Request, VfsError};
-use vfs_server::fs::RamFs;
+use vfsd::fs::RamFs;
 
 const INCOMING_READ_CHUNK_BYTES: usize = 4096;
 

@@ -2,67 +2,25 @@ use usrlib::{print, println};
 use usrlib::handle::UserConnectionHandle;
 use usrlib::ipc::{ipc_receive_value, ipc_send_value};
 use usrlib::syscall::Syscall;
-use system::args::{MAX_ARGUMENT_BYTES, MAX_ARGUMENT_COUNT};
 use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::collections::BTreeMap;
 use lazy_static::lazy_static;
 use crate::command::Command;
-
-#[cfg(target_arch = "x86_64")]
-static PI_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/hello_elf");
-#[cfg(target_arch = "x86")]
-static PI_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/hello_elf");
-
-#[cfg(target_arch = "x86_64")]
-static SNAKE_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/snake");
-#[cfg(target_arch = "x86")]
-static SNAKE_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/snake");
-
-#[cfg(target_arch = "x86_64")]
-static TETRIS_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/tetris");
-#[cfg(target_arch = "x86")]
-static TETRIS_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/tetris");
-
-#[cfg(target_arch = "x86_64")]
-static CONWAY_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/conway");
-#[cfg(target_arch = "x86")]
-static CONWAY_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/conway");
-
-#[cfg(target_arch = "x86_64")]
-static PING_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/ping_client");
-
-#[cfg(target_arch = "x86_64")]
-static VFS_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/vfs_client");
-
-#[cfg(target_arch = "x86_64")]
-static THREAD_DEMO_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/thread_demo");
+use crate::launcher;
+use vfs_protocol::client::Vfs;
 
 static PROMPT: &str = "\x1B[32mrose>\x1B[m ";
 
 lazy_static! {
-    static ref COMMANDS: BTreeMap<String, fn(&Command)> = {
-        #[allow(unused_mut)]
-        let mut commands: BTreeMap<String, fn(&Command)> = BTreeMap::from([
-            (String::from("ls"), ls as fn(&Command)),
-            (String::from("clear"), clear as fn(&Command)),
-            (String::from("rose"), rose as fn(&Command)),
-            (String::from("pi"), pi as fn(&Command)),
-            (String::from("snake"), snake as fn(&Command)),
-            (String::from("tests"), tests as fn(&Command)),
-            (String::from("tetris"), tetris as fn(&Command)),
-            (String::from("conway"), conway as fn(&Command)),
-            (String::from("sleep"), sleep as fn(&Command)),
-            (String::from("random"), random as fn(&Command)),
-        ]);
-        #[cfg(target_arch = "x86_64")]
-        commands.insert(String::from("ping"), ping as fn(&Command));
-        #[cfg(target_arch = "x86_64")]
-        commands.insert(String::from("vfs"), vfs as fn(&Command));
-        #[cfg(target_arch = "x86_64")]
-        commands.insert(String::from("threads"), threads as fn(&Command));
-        commands
-    };
+    static ref COMMANDS: BTreeMap<String, fn(&Command)> = BTreeMap::from([
+        (String::from("ls"), ls as fn(&Command)),
+        (String::from("clear"), clear as fn(&Command)),
+        (String::from("rose"), rose as fn(&Command)),
+        (String::from("tests"), tests as fn(&Command)),
+        (String::from("sleep"), sleep as fn(&Command)),
+        (String::from("random"), random as fn(&Command)),
+    ]);
 }
 
 pub fn main() {
@@ -83,10 +41,9 @@ pub fn main() {
             println!();
 
             if let Some(cmd) = Command::parse(&buffer) {
-                if let Some(command) = COMMANDS.get(&cmd.name) {
-                    command(&cmd);
-                } else {
-                    println!("Unknown command: {}", cmd.name);
+                match COMMANDS.get(&cmd.name) {
+                    Some(command) => command(&cmd),
+                    None => launcher::run(&cmd),
                 }
             }
             
@@ -108,29 +65,6 @@ fn prompt() {
     print!("{}", PROMPT);
 }
 
-fn spawn(elf: &'static [u8], cmd: &Command) {
-    let argument_count = cmd.args.len() + 1;
-    if argument_count > MAX_ARGUMENT_COUNT {
-        println!("Too many arguments: maximum is {}", MAX_ARGUMENT_COUNT);
-        return;
-    }
-    let encoded_size =
-        cmd.name.len() + cmd.args.iter().map(|arg| arg.len()).sum::<usize>() + argument_count;
-    if encoded_size > MAX_ARGUMENT_BYTES {
-        println!(
-            "Arguments too large: maximum is {} bytes",
-            MAX_ARGUMENT_BYTES
-        );
-        return;
-    }
-    let mut argv = Vec::with_capacity(argument_count);
-    argv.push(cmd.name.clone());
-    argv.extend(cmd.args.iter().cloned());
-    if let Some(fh) = Syscall::load_with_args(elf, &argv) {
-        Syscall::wait_future(fh);
-    }
-}
-
 fn rose(_cmd: &Command) {
     println!("\x1B[40m\x1B[31m       _");
     println!("\x1B[40m\x1B[31m     _( )_");
@@ -149,37 +83,21 @@ fn clear(_cmd: &Command) {
 fn ls(_cmd: &Command) {
     COMMANDS.iter().for_each(|(command, _)| print!("{}\t", command));
     println!();
-}
-
-fn pi(cmd: &Command) {
-    spawn(PI_ELF, cmd);
-}
-
-fn snake(cmd: &Command) {
-    spawn(SNAKE_ELF, cmd);
-}
-
-fn tetris(cmd: &Command) {
-    spawn(TETRIS_ELF, cmd);
-}
-
-fn conway(cmd: &Command) {
-    spawn(CONWAY_ELF, cmd);
-}
-
-#[cfg(target_arch = "x86_64")]
-fn ping(cmd: &Command) {
-    spawn(PING_ELF, cmd);
-}
-
-#[cfg(target_arch = "x86_64")]
-fn vfs(cmd: &Command) {
-    spawn(VFS_ELF, cmd);
-}
-
-#[cfg(target_arch = "x86_64")]
-fn threads(cmd: &Command) {
-    spawn(THREAD_DEMO_ELF, cmd);
+    match Vfs::connect() {
+        Ok(vfs) => {
+            match vfs.list() {
+                Ok(names) => {
+                    if !names.is_empty() {
+                        names.iter().for_each(|name| print!("{}\t", name));
+                        println!();
+                    }
+                }
+                Err(error) => println!("Cannot list files: {:?}", error),
+            }
+            vfs.disconnect();
+        }
+        Err(error) => println!("No filesystem: {:?}", error),
+    }
 }
 
 fn tests(_cmd: &Command) {

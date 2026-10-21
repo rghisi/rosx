@@ -84,15 +84,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c074a3d1075b26ed77e502d6af8ab1263abbdc3d026c166e46480f973287293"
 
 [[package]]
-name = "bulk_client"
-version = "0.1.0"
-dependencies = [
- "system",
- "usrlib",
-]
-
-[[package]]
-name = "bulk_echo"
+name = "bulk"
 version = "0.1.0"
 dependencies = [
  "system",
@@ -127,6 +119,14 @@ dependencies = [
 
 [[package]]
 name = "dummy"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
+name = "echo"
 version = "0.1.0"
 dependencies = [
  "system",
@@ -175,14 +175,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi",
-]
-
-[[package]]
-name = "hello_elf"
-version = "0.1.0"
-dependencies = [
- "system",
- "usrlib",
 ]
 
 [[package]]
@@ -268,6 +260,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "pi"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
 name = "pic8259"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -277,7 +277,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ping_client"
+name = "ping"
 version = "0.1.0"
 dependencies = [
  "system",
@@ -285,7 +285,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ping_server"
+name = "pong"
 version = "0.1.0"
 dependencies = [
  "system",
@@ -323,7 +323,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
-name = "random_gen_server"
+name = "randomd"
 version = "0.1.0"
 dependencies = [
  "system",
@@ -339,7 +339,6 @@ dependencies = [
  "kernel",
  "lazy_static",
  "pic8259",
- "shell",
  "spin 0.10.0",
  "system",
  "test_suite",
@@ -354,7 +353,6 @@ version = "0.1.0"
 dependencies = [
  "kernel",
  "lazy_static",
- "shell",
  "spin 0.10.0",
  "system",
  "volatile 0.2.7",
@@ -445,6 +443,7 @@ dependencies = [
  "system",
  "test_suite",
  "usrlib",
+ "vfs-protocol",
 ]
 
 [[package]]
@@ -560,7 +559,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "thread_demo"
+name = "threads"
 version = "0.1.0"
 dependencies = [
  "system",
@@ -581,15 +580,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "vfs-protocol"
-version = "0.1.0"
-dependencies = [
- "system",
- "usrlib",
-]
-
-[[package]]
-name = "vfs_client"
+name = "vfs"
 version = "0.1.0"
 dependencies = [
  "system",
@@ -598,7 +589,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "vfs_server"
+name = "vfs-protocol"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
+name = "vfsd"
 version = "0.1.0"
 dependencies = [
  "system",

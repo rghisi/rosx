@@ -9,4 +9,5 @@ extern crate system;
 extern crate usrlib;
 
 pub mod command;
+pub mod launcher;
 pub mod shell;

@@ -1,12 +1,12 @@
 [package]
 authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
-name = "thread_demo"
+name = "pi"
 publish = false
 version = "0.1.0"
 edition.workspace = true
 
 [[bin]]
-name = "thread_demo"
+name = "pi"
 bench = false
 test = false
 

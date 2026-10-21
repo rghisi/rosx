@@ -1,12 +1,12 @@
 [package]
 authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
-name = "ping_server"
+name = "randomd"
 publish = false
 version = "0.1.0"
 edition.workspace = true
 
 [[bin]]
-name = "ping_server"
+name = "randomd"
 bench = false
 test = false
 
