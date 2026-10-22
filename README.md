@@ -179,6 +179,7 @@ rosx/
 │   ├── tetris/             # Tetris game
 │   ├── conway/             # Conway's Game of Life
 │   ├── dummy/              # Dummy app for testing
+│   ├── waitset/            # Waitset OR-composition demo
 │   └── test_suite/         # Test suite app
 ├── system/                 # ABI treaty: syscall numbers, wire layout, error numbers
 └── usrlib/                 # User-space library
