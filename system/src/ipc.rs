@@ -66,6 +66,10 @@ mod tests {
             ErrorCode::IpcDataBudgetExceeded,
             ErrorCode::IpcDataNotFound,
             ErrorCode::IpcDataNotReadable,
+            ErrorCode::WaitsetFull,
+            ErrorCode::WaitsetChildInvalid,
+            ErrorCode::WaitsetNestingForbidden,
+            ErrorCode::WaitsetNotFound,
             ErrorCode::Unknown,
         ] {
             let raw = code.to_reg();
