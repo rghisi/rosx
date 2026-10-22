@@ -33,6 +33,7 @@ pub(crate) enum WaitsetTake {
 #[derive(Copy, Clone)]
 pub(crate) struct WaitsetChild {
     child: FutureHandle,
+    #[allow(dead_code)]
     tag: u32,
 }
 

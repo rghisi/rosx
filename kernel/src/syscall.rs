@@ -8,8 +8,12 @@ use system::syscall_numbers::SyscallNum;
 use system::error::ErrorCode;
 use system::ipc::Message;
 use crate::handle::{FutureHandle, IpcConnectionHandle, IpcBindingHandle, IpcDataHandle};
+#[cfg(not(test))]
+use crate::future::waitset::{AttachError, WaitsetFuture};
 use crate::ipc::message_future::IpcMessageFuture;
 use crate::task::{new_elf_task, new_elf_task_with_arguments, new_entrypoint_task, validate_arguments_blob};
+#[cfg(not(test))]
+use system::waitset::WaitEvent;
 
 #[cfg(not(test))]
 pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usize {
@@ -50,6 +54,9 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::WaitFuture) => {
             let Some(handle) = FutureHandle::from_packed(arg1 as usize) else { return 0 };
+            if services().future_registry.borrow_mut().is_waitset(handle) {
+                return ErrorCode::Unknown.to_reg();
+            }
             let out_ptr = arg2;
             let future = kernel().wait_future(handle).unwrap();
             match future.as_any().downcast_ref::<IpcMessageFuture>() {
@@ -163,6 +170,57 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             let dst = unsafe { core::slice::from_raw_parts_mut(arg2 as *mut u8, arg3) };
             crate::rom::read(arg1 as u64, dst)
         }
+        Ok(SyscallNum::WaitsetCreate) => {
+            match services().future_registry.borrow_mut().register(Box::new(WaitsetFuture::new())) {
+                Some(handle) => handle.pack(),
+                None => ErrorCode::WaitsetFull.to_reg(),
+            }
+        }
+        Ok(SyscallNum::WaitsetAttach) => {
+            let Some(set) = FutureHandle::from_packed(arg1) else { return ErrorCode::WaitsetNotFound.to_reg() };
+            let Some(child) = FutureHandle::from_packed(arg2) else { return ErrorCode::WaitsetChildInvalid.to_reg() };
+            match services().future_registry.borrow_mut().attach(set, child, arg3 as u32) {
+                Ok(()) => 0,
+                Err(e) => waitset_attach_error(e).to_reg(),
+            }
+        }
+        Ok(SyscallNum::WaitsetDetach) => {
+            let Some(set) = FutureHandle::from_packed(arg1) else { return ErrorCode::WaitsetNotFound.to_reg() };
+            let Some(child) = FutureHandle::from_packed(arg2) else { return ErrorCode::WaitsetChildInvalid.to_reg() };
+            match services().future_registry.borrow_mut().detach(set, child) {
+                Ok(()) => 0,
+                Err(e) => waitset_attach_error(e).to_reg(),
+            }
+        }
+        Ok(SyscallNum::WaitsetWait) => {
+            let Some(set) = FutureHandle::from_packed(arg1) else { return ErrorCode::WaitsetNotFound.to_reg() };
+            let out_ptr = arg2;
+            match kernel().wait_waitset(set) {
+                Ok(event) => {
+                    if out_ptr != 0 {
+                        unsafe { core::ptr::write(out_ptr as *mut WaitEvent, event) };
+                    }
+                    0
+                }
+                Err(_) => ErrorCode::WaitsetNotFound.to_reg(),
+            }
+        }
+        Ok(SyscallNum::WaitsetDrop) => {
+            if let Some(set) = FutureHandle::from_packed(arg1) {
+                services().future_registry.borrow_mut().drop_waitset(set);
+            }
+            0usize
+        }
         Err(_) => 0,
+    }
+}
+
+#[cfg(not(test))]
+fn waitset_attach_error(error: AttachError) -> ErrorCode {
+    match error {
+        AttachError::ParentNotFound => ErrorCode::WaitsetNotFound,
+        AttachError::ChildInvalid => ErrorCode::WaitsetChildInvalid,
+        AttachError::NestingForbidden => ErrorCode::WaitsetNestingForbidden,
+        AttachError::Full => ErrorCode::WaitsetFull,
     }
 }
