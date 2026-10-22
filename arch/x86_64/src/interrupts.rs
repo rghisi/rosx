@@ -1,17 +1,16 @@
 use crate::cpu::syscall_handler_entry;
+use crate::interrupt_controller::PicController;
+use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering::Relaxed;
+use kernel::interrupt::{self, InterruptController};
+use kernel::kernel::kernel;
 use kernel::messages::HardwareInterrupt;
 use lazy_static::lazy_static;
-use pic8259::ChainedPics;
-use spin::Mutex;
 use usrlib::println;
 use x86_64::instructions::port::Port;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
-use kernel::kernel::kernel;
 
-const PIC_1_OFFSET: u8 = 0x20;
-const PIC_2_OFFSET: u8 = 0x28;
 const SYSCALL_VECTOR: u8 = 0x80;
 
 const PIT_FREQUENCY: u32 = 1_193_182;
@@ -20,22 +19,24 @@ const PIT_DIVISOR: u16 = (PIT_FREQUENCY / TICK_RATE_HZ) as u16;
 const MS_PER_TICK: u64 = 10;
 
 pub(crate) static SYSTEM_TIME_MS: AtomicU64 = AtomicU64::new(0);
+static USING_LOCAL_APIC: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 enum InterruptIndex {
-    Timer = PIC_1_OFFSET,
-    Keyboard = PIC_1_OFFSET + 1,
+    Timer = PicController::VECTOR_BASE,
+    Keyboard = PicController::VECTOR_BASE + 1,
 }
 
 impl InterruptIndex {
     fn as_u8(self) -> u8 {
         self as u8
     }
-}
 
-static PICS: Mutex<ChainedPics> =
-    Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
+    fn as_irq(self) -> u32 {
+        (self.as_u8() - PicController::VECTOR_BASE) as u32
+    }
+}
 
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
@@ -55,37 +56,32 @@ lazy_static! {
 
 pub fn init() {
     IDT.load();
-
-    unsafe {
-        PICS.lock().initialize();
-
-        use x86_64::instructions::port::Port;
-        let mut pic1_data: Port<u8> = Port::new(0x21);
-        let mut pic2_data: Port<u8> = Port::new(0xA1);
-
-        pic1_data.write(0xFF);
-        pic2_data.write(0xFF);
+    if crate::apic::cpu_supports_local_apic() {
+        kernel::kprintln!("[KERNEL] Interrupt controller: Local APIC + I/O APIC");
+        USING_LOCAL_APIC.store(true, Relaxed);
+        interrupt::install::<crate::apic::LocalApic>();
+    } else {
+        kernel::kprintln!("[KERNEL] Interrupt controller: 8259 PIC");
+        interrupt::install::<PicController>();
     }
+    let _ = interrupt::register_handler(InterruptIndex::Timer.as_irq(), timer_handler);
+    let _ = interrupt::register_handler(InterruptIndex::Keyboard.as_irq(), keyboard_handler);
 }
 
 pub fn enable_keyboard() {
-    use x86_64::instructions::port::Port;
     unsafe {
         let mut port: Port<u8> = Port::new(0x60);
         let _: u8 = port.read();
-
-        let mut pic1_data: Port<u8> = Port::new(0x21);
-        let current_mask = pic1_data.read();
-        pic1_data.write(current_mask & !0x02);
     }
+    let _ = interrupt::unmask(InterruptIndex::Keyboard.as_irq());
 }
 
 pub fn enable_timer() {
-    unsafe {
+    if USING_LOCAL_APIC.load(Relaxed) {
+        crate::apic::arm_periodic_tick(MS_PER_TICK as u32);
+    } else {
         set_frequency_to_100hz();
-        let mut pic1_data: Port<u8> = Port::new(0x21);
-        let current_mask = pic1_data.read();
-        pic1_data.write(current_mask & !0x01);
+        let _ = interrupt::unmask(InterruptIndex::Timer.as_irq());
     }
 }
 
@@ -102,28 +98,24 @@ fn set_frequency_to_100hz() {
 }
 
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    SYSTEM_TIME_MS.fetch_add(MS_PER_TICK, Relaxed);
-
-    unsafe {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
-    }
-
-    kernel().preempt();
+    interrupt::dispatch_irq(InterruptIndex::Timer.as_irq());
 }
 
 const KEYBOARD_PORT: u16 = 0x60;
-extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
+
+fn timer_handler(_irq: u32) {
+    SYSTEM_TIME_MS.fetch_add(MS_PER_TICK, Relaxed);
+    kernel().preempt();
+}
+
+fn keyboard_handler(_irq: u32) {
     let mut port: Port<u8> = Port::new(KEYBOARD_PORT);
     let scancode: u8 = unsafe { port.read() };
+    kernel().enqueue(HardwareInterrupt::Keyboard { scancode });
+}
 
-    unsafe {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
-    };
-
-    let keyboard_interrupt = HardwareInterrupt::Keyboard { scancode };
-    kernel().enqueue(keyboard_interrupt);
+extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
+    interrupt::dispatch_irq(InterruptIndex::Keyboard.as_irq());
 }
 
 extern "x86-interrupt" fn syscall_handler(_stack_frame: InterruptStackFrame) {
