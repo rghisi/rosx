@@ -1,5 +1,5 @@
 use crate::arch;
-use crate::error::{DataError, IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError};
+use crate::error::{DataError, IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError, WaitsetError};
 use crate::handle::{UserBindingHandle, UserConnectionHandle, UserFutureHandle, UserDataHandle};
 use crate::ipc::ReceivedMessage;
 use alloc::boxed::Box;
@@ -9,6 +9,7 @@ use core::fmt;
 use system::error::{ErrorCode, is_token};
 use system::ipc::{MESSAGE_PAYLOAD_BYTES, Message};
 use system::syscall_numbers::SyscallNum;
+use system::waitset::WaitEvent;
 
 pub struct Syscall {}
 
@@ -205,6 +206,71 @@ impl Syscall {
             dst.as_mut_ptr() as usize,
             dst.len(),
         )
+    }
+
+    pub fn waitset_create() -> Result<UserFutureHandle, WaitsetError> {
+        let raw = arch::raw_syscall(SyscallNum::WaitsetCreate as usize, 0, 0, 0);
+        match UserFutureHandle::from_token(raw) {
+            Some(handle) => Ok(handle),
+            None => Err(WaitsetError::from(ErrorCode::from_code(raw))),
+        }
+    }
+
+    pub fn waitset_attach(
+        set: UserFutureHandle,
+        child: UserFutureHandle,
+        tag: u32,
+    ) -> Result<(), WaitsetError> {
+        let raw = arch::raw_syscall(
+            SyscallNum::WaitsetAttach as usize,
+            set.packed() as usize,
+            child.packed() as usize,
+            tag as usize,
+        );
+        if is_token(raw) {
+            Ok(())
+        } else {
+            Err(WaitsetError::from(ErrorCode::from_code(raw)))
+        }
+    }
+
+    pub fn waitset_detach(
+        set: UserFutureHandle,
+        child: UserFutureHandle,
+    ) -> Result<(), WaitsetError> {
+        let raw = arch::raw_syscall(
+            SyscallNum::WaitsetDetach as usize,
+            set.packed() as usize,
+            child.packed() as usize,
+            0,
+        );
+        if is_token(raw) {
+            Ok(())
+        } else {
+            Err(WaitsetError::from(ErrorCode::from_code(raw)))
+        }
+    }
+
+    pub fn waitset_wait(set: UserFutureHandle) -> Result<(UserFutureHandle, u32), WaitsetError> {
+        let mut event = WaitEvent { child: 0, tag: 0 };
+        let raw = arch::raw_syscall(
+            SyscallNum::WaitsetWait as usize,
+            set.packed() as usize,
+            &mut event as *mut WaitEvent as usize,
+            0,
+        );
+        if is_token(raw) {
+            match UserFutureHandle::from_token(event.child as usize) {
+                Some(child) => Ok((child, event.tag)),
+                None => Err(WaitsetError::ChildInvalid),
+            }
+        } else {
+            Err(WaitsetError::from(ErrorCode::from_code(raw)))
+        }
+    }
+
+    pub fn waitset_drop(set: UserFutureHandle) {
+        arch::raw_syscall(SyscallNum::WaitsetDrop as usize, set.packed() as usize, 0, 0);
     }
 }
 

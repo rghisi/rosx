@@ -39,7 +39,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
 │    x86_64-runner/ # standalone: BiosBoot → QEMU (NOT bootimage)
 └── apps/
-     [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, vfsd, vfs, snake, tetris, conway, test_suite
+     [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, vfsd, vfs, snake, tetris, conway, test_suite, waitset
 ```
 
 ---
@@ -147,11 +147,11 @@ cargo xtask test [--skip-integration] # Run unit tests; --skip-integration exclu
 These principles are the regression guard: the very inversion this rework removed survived many runs because no document stated who owns handle semantics, while the HAL rule — written down — has been obeyed throughout.
 
 **Kernel Subsystems (current invariants):**
-- `future/` + `ipc/` — **notification-driven** futures (time, task-completion, keyboard) and a mailbox IPC manager (bind/connect/send/receive); no polling on the preemption cycle.
+- `future/` + `ipc/` — **notification-driven** futures (time, task-completion, keyboard, depth-one waitset aggregates) and a mailbox IPC manager (bind/connect/send/receive); a waitset completes when any attached leaf future does, woken by a child-to-waitset cascade inside `FutureRegistry::notify`; no polling on the preemption cycle.
 - `ipc/` data family — messages signal; data rides the connection out-of-band via write/read/release tokens; the kernel never interprets message payloads.
 - `elf/` — loads standalone user-space ELF binaries into tasks (`new_elf_task`).
 - `task/` + `task_manager/` — task lifecycle, context switch, preemption.
-- `rom/` — boot-registered immutable ROM image exposed via the opaque `RomRead` syscall; the kernel stays VFS-agnostic, `vfsd` owns mount semantics. The ROM carries the eleven app ELFs (not the shell); its roster holds only underscore-free names because the kernel keyboard drops shift state (see `docs/todo.md`).
+- `rom/` — boot-registered immutable ROM image exposed via the opaque `RomRead` syscall; the kernel stays VFS-agnostic, `vfsd` owns mount semantics. The ROM carries the thirteen app ELFs (not the shell); its roster holds only underscore-free names because the kernel keyboard drops shift state (see `docs/todo.md`).
 
 **Documentation & Comments:**
 - **CRITICAL: No comments, ever** — the code is the source of truth; make it self-explanatory
