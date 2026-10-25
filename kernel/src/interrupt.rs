@@ -117,7 +117,7 @@ mod tests {
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     const TIMER_IRQ: u32 = 0;
-    const KEYBOARD_IRQ: u32 = 1;
+    const SECOND_IRQ: u32 = 1;
     const UNREGISTERED_IRQ: u32 = 5;
     const OUT_OF_RANGE_IRQ: u32 = 99;
 
@@ -288,7 +288,7 @@ mod tests {
         reset_state();
         install::<MockController>();
 
-        assert_eq!(unmask(KEYBOARD_IRQ), Ok(()));
+        assert_eq!(unmask(SECOND_IRQ), Ok(()));
         assert_eq!(recorded_ops(), alloc::vec![NEW_OP, UNMASK_OP]);
     }
 }

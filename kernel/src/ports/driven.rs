@@ -3,7 +3,6 @@ use alloc::vec::Vec;
 use crate::future::Future;
 use crate::handle::FutureHandle;
 use system::ipc::Message;
-use crate::messages::HardwareInterrupt;
 use crate::task::{TaskHandle, TaskState, YieldReason};
 
 pub(crate) trait ForWakingTasks: Send + Sync {
@@ -38,10 +37,6 @@ pub trait ForReadingSystemTime: Send + Sync {
 
 pub trait ForExpiringTimers: Send + Sync {
     fn pop_expired(&self, now: u64) -> Option<Vec<FutureHandle>>;
-}
-
-pub trait ForHandlingHardwareInterrupts: Send + Sync {
-    fn handle(&self, interrupt: HardwareInterrupt);
 }
 
 pub trait ForManagingTasks: Send + Sync {
