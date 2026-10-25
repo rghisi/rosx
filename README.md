@@ -179,6 +179,8 @@ rosx/
 │   ├── tetris/             # Tetris game
 │   ├── conway/             # Conway's Game of Life
 │   ├── dummy/              # Dummy app for testing
+│   ├── inputd/             # INPUTD input multiplexer daemon
+│   ├── ps2d/               # PS/2 keyboard driver daemon
 │   └── test_suite/         # Test suite app
 ├── system/                 # ABI treaty: syscall numbers, wire layout, error numbers
 └── usrlib/                 # User-space library
