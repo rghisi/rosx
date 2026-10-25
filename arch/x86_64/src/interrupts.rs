@@ -5,7 +5,6 @@ use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering::Relaxed;
 use kernel::interrupt::{self, InterruptController};
 use kernel::kernel::kernel;
-use kernel::messages::HardwareInterrupt;
 use lazy_static::lazy_static;
 use usrlib::println;
 use x86_64::instructions::port::Port;
@@ -111,7 +110,11 @@ fn timer_handler(_irq: u32) {
 fn keyboard_handler(_irq: u32) {
     let mut port: Port<u8> = Port::new(KEYBOARD_PORT);
     let scancode: u8 = unsafe { port.read() };
-    kernel().enqueue(HardwareInterrupt::Keyboard { scancode });
+    let frame = system::ipc::Message::new(
+        system::ipc::KERNEL_EVENT_CONN,
+        &input_protocol::wire::encode_scancode(scancode),
+    );
+    kernel::ipc::deliver_to_service(input_protocol::wire::SOURCE_NAME_PS2KEYBOARD, frame);
 }
 
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {

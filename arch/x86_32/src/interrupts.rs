@@ -1,7 +1,6 @@
 use core::arch::asm;
 use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use kernel::kernel::kernel;
-use kernel::messages::HardwareInterrupt;
 use lazy_static::lazy_static;
 
 pub static SYSTEM_TIME_MS: AtomicU32 = AtomicU32::new(0);
@@ -165,7 +164,11 @@ extern "x86-interrupt" fn timer_interrupt_handler(_frame: InterruptStackFrame) {
 extern "x86-interrupt" fn keyboard_interrupt_handler(_frame: InterruptStackFrame) {
     let scancode = unsafe { inb(0x60) };
     unsafe { outb(PIC_MASTER_CMD, PIC_EOI) };
-    kernel().enqueue(HardwareInterrupt::Keyboard { scancode });
+    let frame = system::ipc::Message::new(
+        system::ipc::KERNEL_EVENT_CONN,
+        &input_protocol::wire::encode_scancode(scancode),
+    );
+    kernel::ipc::deliver_to_service(input_protocol::wire::SOURCE_NAME_PS2KEYBOARD, frame);
 }
 
 // ── Port I/O ──────────────────────────────────────────────────────────────────

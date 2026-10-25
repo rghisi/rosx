@@ -361,6 +361,7 @@ version = "0.1.0"
 dependencies = [
  "bootloader_api",
  "dummy",
+ "input-protocol",
  "kernel",
  "lazy_static",
  "pic8259",
@@ -376,6 +377,7 @@ dependencies = [
 name = "rosx-x86"
 version = "0.1.0"
 dependencies = [
+ "input-protocol",
  "kernel",
  "lazy_static",
  "spin 0.10.0",

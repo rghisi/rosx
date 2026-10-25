@@ -5,6 +5,10 @@ publish = false
 version = "0.1.0"
 edition.workspace = true
 
+[lib]
+name = "ps2d"
+path = "src/lib.rs"
+
 [[bin]]
 name = "ps2d"
 bench = false
