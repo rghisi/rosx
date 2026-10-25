@@ -23,6 +23,7 @@ members = [
     "apps/test_suite",
     "apps/threads",
     "apps/inputd",
+    "apps/ps2d",
     "xtask",
     "tests-integration",
 ]
