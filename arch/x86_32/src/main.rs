@@ -53,6 +53,10 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
     let mut kernel = kernel::kernel::Kernel::new(&KCONFIG);
     kernel.setup();
     //let _ = kernel.schedule(kernel::task::FunctionTask::new("RandomServer", kernel::ipc::random_gen_server::main));
+    static INPUTD_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/inputd");
+    let _ = kernel.schedule(kernel::task::new_elf_task(INPUTD_ELF));
+    static PS2D_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/ps2d");
+    let _ = kernel.schedule(kernel::task::new_elf_task(PS2D_ELF));
     static SHELL_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/shell");
     let _ = kernel.schedule(kernel::task::new_elf_task(SHELL_ELF));
     kernel.start();

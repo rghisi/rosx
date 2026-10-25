@@ -25,7 +25,6 @@ fn kernel_ports(
         timer_handler,
         &crate::kernel::KERNEL_TIME_SOURCE,
         &crate::kernel::KERNEL_TIMER_EXPIRY,
-        &crate::kernel::KERNEL_INTERRUPT_HANDLER,
         &crate::kernel::KERNEL_TASK_MANAGER,
     )
 }

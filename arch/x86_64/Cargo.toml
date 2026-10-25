@@ -8,6 +8,7 @@ build = "build.rs"
 system = { path = "../../system" }
 kernel = { path = "../../kernel" }
 usrlib = { path = "../../usrlib" }
+input-protocol = { path = "../../input-protocol" }
 dummy = { path = "../../apps/dummy"}
 test_suite = { path = "../../apps/test_suite"}
 

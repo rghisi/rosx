@@ -1,13 +1,10 @@
 use alloc::boxed::Box;
-use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use crate::handle::FutureHandle;
-use crate::messages::HardwareInterrupt;
 use crate::scheduler::algorithm::SchedulingAlgorithm;
 use crate::task::{TaskHandle, TaskState};
 use crate::ports::driven::ForCompletingExpiredTimers;
 use crate::ports::driven::ForExpiringTimers;
-use crate::ports::driven::ForHandlingHardwareInterrupts;
 use crate::ports::driven::ForManagingTasks;
 use crate::ports::driven::ForReadingSystemTime;
 use crate::ports::driven::ForSwitchingTaskContext;
@@ -32,12 +29,6 @@ impl ForExpiringTimers for NoopTimerExpiry {
 }
 static NOOP_TIMER_EXPIRY: NoopTimerExpiry = NoopTimerExpiry;
 
-struct NoopInterruptHandler;
-impl ForHandlingHardwareInterrupts for NoopInterruptHandler {
-    fn handle(&self, _interrupt: HardwareInterrupt) {}
-}
-static NOOP_INTERRUPT_HANDLER: NoopInterruptHandler = NoopInterruptHandler;
-
 struct NoopContextSwitcher;
 impl ForSwitchingTaskContext for NoopContextSwitcher {
     fn switch_to_task(&self, handle: TaskHandle) -> SwitchOutcome { SwitchOutcome::Unchanged(handle) }
@@ -59,7 +50,6 @@ pub struct SchedulerPorts {
     timer_handler: &'static dyn ForCompletingExpiredTimers,
     time_source: &'static dyn ForReadingSystemTime,
     timer_expiry: &'static dyn ForExpiringTimers,
-    interrupt_handler: &'static dyn ForHandlingHardwareInterrupts,
     tasks: &'static dyn ForManagingTasks,
 }
 
@@ -69,7 +59,6 @@ impl SchedulerPorts {
         timer_handler: &'static dyn ForCompletingExpiredTimers,
         time_source: &'static dyn ForReadingSystemTime,
         timer_expiry: &'static dyn ForExpiringTimers,
-        interrupt_handler: &'static dyn ForHandlingHardwareInterrupts,
         tasks: &'static dyn ForManagingTasks,
     ) -> Self {
         SchedulerPorts {
@@ -77,7 +66,6 @@ impl SchedulerPorts {
             timer_handler,
             time_source,
             timer_expiry,
-            interrupt_handler,
             tasks,
         }
     }
@@ -88,7 +76,6 @@ impl SchedulerPorts {
             timer_handler: &NOOP_TIMER_HANDLER,
             time_source: &NOOP_TIME_SOURCE,
             timer_expiry: &NOOP_TIMER_EXPIRY,
-            interrupt_handler: &NOOP_INTERRUPT_HANDLER,
             tasks: &NOOP_TASKS,
         }
     }
@@ -96,29 +83,20 @@ impl SchedulerPorts {
 
 pub struct Scheduler {
     algorithm: Box<dyn SchedulingAlgorithm + Send>,
-    hw_interrupt_queue: VecDeque<HardwareInterrupt>,
     idle_task: Option<TaskHandle>,
     ports: SchedulerPorts,
-    interrupt_drain_buf: Vec<HardwareInterrupt>,
 }
 
 impl Scheduler {
     pub fn new(algorithm: impl SchedulingAlgorithm + 'static, ports: SchedulerPorts) -> Self {
         Scheduler {
             algorithm: Box::new(algorithm),
-            hw_interrupt_queue: VecDeque::with_capacity(5),
             idle_task: None,
             ports,
-            interrupt_drain_buf: Vec::new(),
         }
     }
 
     pub(super) fn step(&mut self) {
-        let mut interrupts = core::mem::take(&mut self.interrupt_drain_buf);
-        self.drain_hardware_interrupts(&mut interrupts);
-        for interrupt in interrupts.drain(..) {
-            self.ports.interrupt_handler.handle(interrupt);
-        }
         if let Some(handles) = self.ports.timer_expiry.pop_expired(self.ports.time_source.now()) {
             for handle in handles {
                 self.ports.timer_handler.complete_timer_future(handle);
@@ -127,8 +105,6 @@ impl Scheduler {
         let next_handle = self.start_next_task();
         let outcome = self.ports.context_switcher.switch_to_task(next_handle);
         self.reconcile_returned_task(outcome);
-        interrupts.clear();
-        self.interrupt_drain_buf = interrupts;
     }
 
     pub fn push_task(&mut self, handle: TaskHandle) {
@@ -145,10 +121,6 @@ impl Scheduler {
                 self.algorithm.push_ready(handle);
             }
         }
-    }
-
-    pub fn push_hardware_interrupt(&mut self, interrupt: HardwareInterrupt) {
-        self.hw_interrupt_queue.push_back(interrupt);
     }
 
     pub fn set_idle_task(&mut self, handle: TaskHandle) -> Result<(), ()> {
@@ -205,12 +177,6 @@ impl Scheduler {
             SwitchOutcome::Unchanged(_) => {}
         }
     }
-
-    fn drain_hardware_interrupts(&mut self, out: &mut Vec<HardwareInterrupt>) {
-        while let Some(hardware_interrupt) = self.hw_interrupt_queue.pop_front() {
-            out.push(hardware_interrupt);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -218,6 +184,7 @@ mod tests {
     use super::*;
     use crate::task::YieldReason;
     use crate::task::TaskState as KS;
+    use alloc::collections::VecDeque;
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
@@ -435,18 +402,6 @@ mod tests {
         assert_eq!(fm.state_of(handle), KS::Created);
     }
 
-    // === push_hardware_interrupt tests ===
-
-    #[test]
-    fn push_hardware_interrupt_adds_to_queue() {
-        let fake = FakeAlgorithm::new();
-        let mut engine = Scheduler::new(fake.clone(), SchedulerPorts::noop());
-
-        engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1C });
-
-        assert_eq!(fake.take_pushed_ready().len(), 0);
-    }
-
     // === set_idle_task tests ===
 
     #[test]
@@ -608,7 +563,6 @@ mod tests {
             timer_handler: &NOOP_TIMER_HANDLER,
             time_source: &NOOP_TIME_SOURCE,
             timer_expiry: &NOOP_TIMER_EXPIRY,
-            interrupt_handler: &NOOP_INTERRUPT_HANDLER,
             tasks,
         }
     }
@@ -619,7 +573,6 @@ mod tests {
             timer_handler: &NOOP_TIMER_HANDLER,
             time_source: &NOOP_TIME_SOURCE,
             timer_expiry: &NOOP_TIMER_EXPIRY,
-            interrupt_handler: &NOOP_INTERRUPT_HANDLER,
             tasks,
         }
     }
@@ -791,35 +744,10 @@ mod tests {
         }
     }
 
-    struct RecordingInterruptHandler {
-        handled: Arc<Mutex<Vec<u8>>>,
-    }
-    impl ForHandlingHardwareInterrupts for RecordingInterruptHandler {
-        fn handle(&self, interrupt: HardwareInterrupt) {
-            if let HardwareInterrupt::Keyboard { scancode } = interrupt {
-                self.handled.lock().unwrap().push(scancode);
-            }
-        }
-    }
-
     type CallLog = Arc<Mutex<Vec<&'static str>>>;
 
     fn new_call_log() -> CallLog {
         Arc::new(Mutex::new(Vec::new()))
-    }
-
-    struct StepInterruptHandler {
-        handled: Arc<Mutex<Vec<u8>>>,
-        log: CallLog,
-    }
-
-    impl ForHandlingHardwareInterrupts for StepInterruptHandler {
-        fn handle(&self, interrupt: HardwareInterrupt) {
-            self.log.lock().unwrap().push("interrupt");
-            if let HardwareInterrupt::Keyboard { scancode } = interrupt {
-                self.handled.lock().unwrap().push(scancode);
-            }
-        }
     }
 
     struct StepExpiry {
@@ -863,47 +791,6 @@ mod tests {
     }
 
     #[test]
-    fn step_handles_interrupts_before_timer_expiry() {
-        let fm = FakeTaskManager::new();
-        let log = new_call_log();
-        let handled = Arc::new(Mutex::new(Vec::new()));
-        let seen_now = Arc::new(Mutex::new(Vec::new()));
-        let completed = Arc::new(Mutex::new(Vec::new()));
-        let calls = Arc::new(Mutex::new(Vec::new()));
-
-        let fh = FutureHandle::new(1, 0);
-        let irq = Box::leak(Box::new(StepInterruptHandler { handled: handled.clone(), log: log.clone() }));
-        let time = Box::leak(Box::new(FakeTimeSource { now: 100 }));
-        let expiry = Box::leak(Box::new(StepExpiry { handles: Some(vec![fh]), seen_now: seen_now.clone(), log: log.clone() }));
-        let timer = Box::leak(Box::new(StepTimerHandler { completed: completed.clone(), log: log.clone() }));
-        let ctx = Box::leak(Box::new(StepContextSwitcher { calls: calls.clone(), outcome: Arc::new(Mutex::new(None)), log: log.clone() }));
-
-        let mut fake = FakeAlgorithm::new();
-        let h = create_ready_task(&fm);
-        fake.next = Some(h);
-
-        let mut engine = Scheduler::new(
-            fake,
-            SchedulerPorts {
-                context_switcher: ctx,
-                timer_handler: timer,
-                time_source: time,
-                timer_expiry: expiry,
-                interrupt_handler: irq,
-                tasks: fm.leak(),
-            },
-        );
-        engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1C });
-
-        engine.step();
-
-        assert_eq!(*log.lock().unwrap(), vec!["interrupt", "pop_expired", "complete", "switch"]);
-        assert_eq!(*handled.lock().unwrap(), vec![0x1C]);
-        assert_eq!(*completed.lock().unwrap(), vec![fh]);
-        assert_eq!(*seen_now.lock().unwrap(), vec![100]);
-    }
-
-    #[test]
     fn step_completes_expired_timer_futures() {
         let fm = FakeTaskManager::new();
         let fh1 = FutureHandle::new(1, 0);
@@ -930,7 +817,6 @@ mod tests {
                 timer_handler: timer,
                 time_source: time,
                 timer_expiry: expiry,
-                interrupt_handler: &NOOP_INTERRUPT_HANDLER,
                 tasks: fm.leak(),
             },
         );
@@ -961,7 +847,6 @@ mod tests {
                 timer_handler: handler,
                 time_source: time,
                 timer_expiry: expiry,
-                interrupt_handler: &NOOP_INTERRUPT_HANDLER,
                 tasks: fm.leak(),
             },
         );
@@ -969,41 +854,6 @@ mod tests {
         engine.step();
 
         assert!(completed.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn step_routes_hardware_interrupts() {
-        let fm = FakeTaskManager::new();
-        let handled = Arc::new(Mutex::new(Vec::new()));
-        let ints = Box::leak(Box::new(RecordingInterruptHandler { handled: handled.clone() }));
-
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let ctx = Box::leak(Box::new(StepContextSwitcher { calls: calls.clone(), outcome: Arc::new(Mutex::new(None)), log: new_call_log() }));
-
-        let mut fake = FakeAlgorithm::new();
-        let h = create_ready_task(&fm);
-        fake.picks.lock().unwrap().push_back(h);
-        fake.picks.lock().unwrap().push_back(h);
-
-        let mut engine = Scheduler::new(
-            fake,
-            SchedulerPorts {
-                context_switcher: ctx,
-                timer_handler: &NOOP_TIMER_HANDLER,
-                time_source: &NOOP_TIME_SOURCE,
-                timer_expiry: &NOOP_TIMER_EXPIRY,
-                interrupt_handler: ints,
-                tasks: fm.leak(),
-            },
-        );
-        engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1C });
-        engine.push_hardware_interrupt(HardwareInterrupt::Keyboard { scancode: 0x1E });
-
-        engine.step();
-        assert_eq!(*handled.lock().unwrap(), vec![0x1C, 0x1E]);
-
-        engine.step();
-        assert_eq!(*handled.lock().unwrap(), vec![0x1C, 0x1E]);
     }
 
     #[test]

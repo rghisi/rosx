@@ -5,12 +5,10 @@ pub enum SyscallNum {
     Sleep = 1,
     Exec = 2,
     Yield = 3,
-    ReadChar = 4,
     WaitFuture = 5,
     IsFutureCompleted = 6,
     Alloc = 7,
     Dealloc = 8,
-    TryReadChar = 9,
     LoadElf = 10,
     IpcConnect = 11,
     IpcDisconnect = 12,
@@ -33,12 +31,10 @@ impl TryFrom<usize> for SyscallNum {
             1 => Ok(Self::Sleep),
             2 => Ok(Self::Exec),
             3 => Ok(Self::Yield),
-            4 => Ok(Self::ReadChar),
             5 => Ok(Self::WaitFuture),
             6 => Ok(Self::IsFutureCompleted),
             7 => Ok(Self::Alloc),
             8 => Ok(Self::Dealloc),
-            9 => Ok(Self::TryReadChar),
             10 => Ok(Self::LoadElf),
             11 => Ok(Self::IpcConnect),
             12 => Ok(Self::IpcDisconnect),
@@ -51,6 +47,45 @@ impl TryFrom<usize> for SyscallNum {
             26 => Ok(Self::IpcDataRelease),
             27 => Ok(Self::RomRead),
             _ => Err(()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_char_and_try_read_char_numbers_stay_retired() {
+        assert!(SyscallNum::try_from(4usize).is_err());
+        assert!(SyscallNum::try_from(9usize).is_err());
+    }
+
+    #[test]
+    fn every_live_number_round_trips_through_try_from() {
+        let live = [
+            SyscallNum::Print,
+            SyscallNum::Sleep,
+            SyscallNum::Exec,
+            SyscallNum::Yield,
+            SyscallNum::WaitFuture,
+            SyscallNum::IsFutureCompleted,
+            SyscallNum::Alloc,
+            SyscallNum::Dealloc,
+            SyscallNum::LoadElf,
+            SyscallNum::IpcConnect,
+            SyscallNum::IpcDisconnect,
+            SyscallNum::IpcBind,
+            SyscallNum::IpcSendMessage,
+            SyscallNum::IpcReceiveMessage,
+            SyscallNum::IpcAcceptMessage,
+            SyscallNum::IpcDataWrite,
+            SyscallNum::IpcDataRead,
+            SyscallNum::IpcDataRelease,
+            SyscallNum::RomRead,
+        ];
+        for number in live {
+            assert_eq!(SyscallNum::try_from(number as usize).unwrap(), number);
         }
     }
 }

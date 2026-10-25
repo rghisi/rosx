@@ -1,0 +1,23 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "inputd"
+publish = false
+version = "0.1.0"
+edition.workspace = true
+
+[lib]
+name = "inputd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "inputd"
+bench = false
+test = false
+
+[dependencies]
+system = { path = "../../system" }
+usrlib = { path = "../../usrlib" }
+input-protocol = { path = "../../input-protocol" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+usrlib = { path = "../../usrlib", features = ["runtime"] }
