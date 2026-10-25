@@ -22,6 +22,7 @@ members = [
     "apps/conway",
     "apps/test_suite",
     "apps/threads",
+    "apps/inputd",
     "xtask",
     "tests-integration",
 ]
