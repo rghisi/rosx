@@ -71,6 +71,27 @@ impl MemoryManager {
         }
     }
 
+    pub(crate) unsafe fn release_task_allocations(&self, task_id: usize) {
+        let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
+            && self.cpu.borrow().unwrap().are_interrupts_enabled();
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().disable_interrupts();
+        }
+        let freed = unsafe {
+            self.allocator
+                .borrow_mut()
+                .as_mut()
+                .expect("MemoryManager not bootstrapped")
+                .deallocate_by_owner(task_id)
+        };
+        let _ = self
+            .used
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| used.checked_sub(freed));
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().enable_interrupts();
+        }
+    }
+
     pub fn print_config(&self) {
         let memory_blocks = self.memory_blocks.borrow();
         let memory_blocks = memory_blocks.as_ref().expect("MemoryManager not bootstrapped");
@@ -240,5 +261,44 @@ mod tests {
         let layout = Layout::from_size_align(256, 8).unwrap();
         let ptr = unsafe { manager.alloc_with_owner(layout, BlockOwner::Task(2)) };
         assert!(ptr.is_null());
+    }
+
+    #[test]
+    fn release_task_allocations_returns_blocks_to_the_free_list() {
+        let mut memory = vec![0u8; 4096];
+        let manager = make_manager(&mut memory);
+        let small = Layout::from_size_align(64, 8).unwrap();
+        let large = Layout::from_size_align(4000, 8).unwrap();
+        unsafe { manager.alloc_with_owner(small, BlockOwner::Task(7)) };
+        assert!(unsafe { manager.alloc(large) }.is_null());
+        unsafe { manager.release_task_allocations(7) };
+        assert!(!unsafe { manager.alloc(large) }.is_null());
+    }
+
+    #[test]
+    fn release_task_allocations_tracks_used() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let task_layout = Layout::from_size_align(128, 8).unwrap();
+        let kernel_layout = Layout::from_size_align(64, 8).unwrap();
+        unsafe { manager.alloc_with_owner(task_layout, BlockOwner::Task(3)) };
+        let kernel_ptr = unsafe { manager.alloc(kernel_layout) };
+        assert_eq!(manager.used(), 192);
+        unsafe { manager.release_task_allocations(3) };
+        assert_eq!(manager.used(), 64);
+        unsafe { manager.dealloc(kernel_ptr, kernel_layout) };
+        assert_eq!(manager.used(), 0);
+    }
+
+    #[test]
+    fn release_unknown_task_allocations_changes_nothing() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { manager.alloc_with_owner(layout, BlockOwner::Task(5)) };
+        unsafe { manager.release_task_allocations(99) };
+        assert_eq!(manager.used(), 64);
+        unsafe { manager.dealloc(ptr, layout) };
+        assert_eq!(manager.used(), 0);
     }
 }

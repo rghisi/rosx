@@ -168,8 +168,9 @@ impl FreeListAllocator {
             })
     }
 
-    pub unsafe fn deallocate_by_owner(&mut self, task_id: usize) {
+    pub unsafe fn deallocate_by_owner(&mut self, task_id: usize) -> usize {
         let target = BlockOwner::Task(task_id);
+        let mut freed_usable = 0usize;
         let mut prev_next: *mut *mut AllocHeader = &mut self.alloc_head;
         let mut current = self.alloc_head;
         while !current.is_null() {
@@ -178,12 +179,14 @@ impl FreeListAllocator {
                 *prev_next = next;
                 let start = current as usize;
                 let block_size = (*current).size;
+                freed_usable += block_size.saturating_sub(ALLOC_HDR);
                 self.insert_free_block(start, block_size);
             } else {
                 prev_next = &mut (*current).next;
             }
             current = next;
         }
+        freed_usable
     }
 
     unsafe fn insert_free_block(&mut self, start: usize, block_size: usize) -> bool {
@@ -439,6 +442,20 @@ mod tests {
             unsafe { alloc.allocate(layout, BlockOwner::Kernel) },
             Err(AllocError::OutOfMemory)
         ));
+    }
+
+    #[test]
+    fn deallocate_by_owner_returns_total_freed_usable_bytes() {
+        let region_size = 3 * needed_for(64);
+        let mut memory = vec![0u8; region_size];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = make_allocator(&[(base, region_size)]);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Task(7)) }.unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Task(7)) }.unwrap();
+        assert_eq!(unsafe { alloc.deallocate_by_owner(7) }, 2 * 64);
+        assert_eq!(unsafe { alloc.deallocate_by_owner(7) }, 0);
     }
 
     fn free_entries(alloc: &FreeListAllocator) -> Vec<(usize, usize)> {
