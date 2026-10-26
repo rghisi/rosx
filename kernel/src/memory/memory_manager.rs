@@ -127,7 +127,7 @@ unsafe impl GlobalAlloc for MemoryManager {
                 .borrow_mut()
                 .as_mut()
                 .expect("MemoryManager not bootstrapped")
-                .deallocate(ptr)
+                .deallocate(ptr, layout.align())
         };
         self.used.fetch_sub(layout.size(), Ordering::Relaxed);
         if interrupts_enabled {
@@ -261,6 +261,19 @@ mod tests {
         let layout = Layout::from_size_align(256, 8).unwrap();
         let ptr = unsafe { manager.alloc_with_owner(layout, BlockOwner::Task(2)) };
         assert!(ptr.is_null());
+    }
+
+    #[test]
+    fn overaligned_alloc_returns_aligned_pointer_and_tracks_used() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let layout = Layout::from_size_align(64, 16).unwrap();
+        let ptr = unsafe { manager.alloc(layout) };
+        assert!(!ptr.is_null());
+        assert_eq!(ptr as usize % 16, 0);
+        assert_eq!(manager.used(), 64);
+        unsafe { manager.dealloc(ptr, layout) };
+        assert_eq!(manager.used(), 0);
     }
 
     #[test]
