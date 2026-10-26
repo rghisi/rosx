@@ -8,6 +8,7 @@ use system::syscall_numbers::SyscallNum;
 use system::error::ErrorCode;
 use system::ipc::Message;
 use crate::handle::{FutureHandle, IpcConnectionHandle, IpcBindingHandle, IpcDataHandle};
+use crate::memory::free_list_allocator::BlockOwner;
 use crate::ipc::message_future::IpcMessageFuture;
 use crate::task::{new_elf_task, new_elf_task_with_arguments, new_entrypoint_task, validate_arguments_blob};
 
@@ -67,7 +68,8 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::Alloc) => {
             let Ok(layout) = Layout::from_size_align(arg1, arg2) else { return 0 };
-            (unsafe { services().memory_manager.alloc(layout) }) as usize
+            let owner = BlockOwner::Task(kernel().execution_state.current_task().pack());
+            (unsafe { services().memory_manager.alloc_with_owner(layout, owner) }) as usize
         }
         Ok(SyscallNum::Dealloc) => {
             let Ok(layout) = Layout::from_size_align(arg2, arg3) else { return 0 };

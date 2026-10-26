@@ -48,6 +48,29 @@ impl MemoryManager {
         self.used.load(Ordering::Relaxed)
     }
 
+    pub(crate) unsafe fn alloc_with_owner(&self, layout: Layout, owner: BlockOwner) -> *mut u8 {
+        let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
+            && self.cpu.borrow().unwrap().are_interrupts_enabled();
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().disable_interrupts();
+        }
+        self.used.fetch_add(layout.size(), Ordering::Relaxed);
+        let result = unsafe {
+            self.allocator
+                .borrow_mut()
+                .as_mut()
+                .expect("MemoryManager not bootstrapped")
+                .allocate(layout, owner)
+        };
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().enable_interrupts();
+        }
+        match result {
+            Ok(ptr) => ptr,
+            Err(_) => ptr::null_mut(),
+        }
+    }
+
     pub fn print_config(&self) {
         let memory_blocks = self.memory_blocks.borrow();
         let memory_blocks = memory_blocks.as_ref().expect("MemoryManager not bootstrapped");
@@ -69,26 +92,7 @@ impl MemoryManager {
 
 unsafe impl GlobalAlloc for MemoryManager {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
-            && self.cpu.borrow().unwrap().are_interrupts_enabled();
-        if interrupts_enabled {
-            self.cpu.borrow().unwrap().disable_interrupts();
-        }
-        self.used.fetch_add(layout.size(), Ordering::Relaxed);
-        let result = unsafe {
-            self.allocator
-                .borrow_mut()
-                .as_mut()
-                .expect("MemoryManager not bootstrapped")
-                .allocate(layout, BlockOwner::Kernel)
-        };
-        if interrupts_enabled {
-            self.cpu.borrow().unwrap().enable_interrupts();
-        }
-        match result {
-            Ok(ptr) => ptr,
-            Err(_) => ptr::null_mut(),
-        }
+        unsafe { self.alloc_with_owner(layout, BlockOwner::Kernel) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -195,5 +199,46 @@ mod tests {
         let ptr = unsafe { manager.alloc(layout) };
         assert!(!ptr.is_null());
         unsafe { manager.dealloc(ptr, layout) };
+    }
+
+    #[test]
+    fn alloc_with_task_owner_returns_non_null() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { manager.alloc_with_owner(layout, BlockOwner::Task(9)) };
+        assert!(!ptr.is_null());
+        unsafe { manager.dealloc(ptr, layout) };
+    }
+
+    #[test]
+    fn alloc_with_task_owner_tracks_used() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let layout = Layout::from_size_align(128, 8).unwrap();
+        let ptr = unsafe { manager.alloc_with_owner(layout, BlockOwner::Task(4)) };
+        assert_eq!(manager.used(), 128);
+        unsafe { manager.dealloc(ptr, layout) };
+        assert_eq!(manager.used(), 0);
+    }
+
+    #[test]
+    fn alloc_with_task_owner_and_cpu_setup_returns_non_null() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        manager.setup(&MOCK_CPU);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { manager.alloc_with_owner(layout, BlockOwner::Task(1)) };
+        assert!(!ptr.is_null());
+        unsafe { manager.dealloc(ptr, layout) };
+    }
+
+    #[test]
+    fn alloc_with_owner_exhausted_returns_null() {
+        let mut memory = vec![0u8; 128];
+        let manager = make_manager(&mut memory);
+        let layout = Layout::from_size_align(256, 8).unwrap();
+        let ptr = unsafe { manager.alloc_with_owner(layout, BlockOwner::Task(2)) };
+        assert!(ptr.is_null());
     }
 }
