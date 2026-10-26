@@ -29,11 +29,11 @@ Evaluate [`rust_arkitect`](https://crates.io/crates/rust_arkitect) (ArchUnit/php
 
 Neither idea is wired in today, so `checks/compile_fail.sh` remains a manual gate; at minimum it deserves a CI invocation and an AGENTS.md mention until idea 1 lands.
 
-## Deferred keyboard: shifted characters are not typeable (decided 2026-10-20)
+## Resolved keyboard: shifted characters are not typeable (decided 2026-10-20, resolved 2026-10-25)
 
-`kernel/src/keyboard.rs` decodes through a stateless `KeyboardEvent::from_key`, and `Key::from_scancode_set1` masks the release bit (`value & 0x7F`), so shift state is dropped: `_`, `!`, `@`, uppercase letters and every other shifted character can never reach the keyboard buffer. Physical keyboards and QEMU `sendkey shift-minus` both deliver the correct PS/2 sequence (`0x2A 0x0C 0xAA`) — the guest decodes plain `-`. Discovered while typing the ROM app names (`hello_elf`) in the integration suite; the apps were renamed to underscore-free names instead (2026-10-20 decision), which masks the gap for today's roster but not for any future file or app name that wants a shifted character.
+Resolved by the INPUTD migration: the stateless in-kernel decoder is gone, and the PS/2 decoding moved to the user-space driver `apps/ps2d`, whose `Ps2Decoder` is a pure state machine keeping left/right shift press and release state (`0x2A`/`0x36`/`0xAA`/`0xB6`) with a shifted US overlay (`-` → `_`, digits → symbols, letters → uppercase, releases silent), covered by host unit tests including the `0x2A 0x0C 0xAA` → `_` sequence. CapsLock remains out of scope.
 
-**Sketch.** A raw-scancode entry point in `kernel::keyboard` that keeps the `0x80` release bit: explicit left/right shift press/release state, `from_key` gaining a shifted US overlay (at minimum `-` → `_`, digits → symbols, letters → uppercase), releases emitting no character; `arch/x86_64` interrupts pass the raw scancode through. State machine is pure and unit-testable per house style. CapsLock out of scope. The harness side is ready: `tests-integration/src/sendkey.rs` already maps `_` to `shift-minus` with a unit test.
+**Follow-up, still open.** The ROM app names were renamed underscore-free on 2026-10-20 to mask the old gap; with shifted characters now typeable those renames can be reverted, as a separate future task.
 
 ## Deferred hardening: ELF load failure must not panic the kernel (decided 2026-10-19)
 

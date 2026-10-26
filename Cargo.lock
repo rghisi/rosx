@@ -178,6 +178,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "input-protocol"
+version = "0.1.0"
+dependencies = [
+ "system",
+]
+
+[[package]]
+name = "inputd"
+version = "0.1.0"
+dependencies = [
+ "input-protocol",
+ "system",
+ "usrlib",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -302,6 +318,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ps2d"
+version = "0.1.0"
+dependencies = [
+ "input-protocol",
+ "system",
+ "usrlib",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -336,6 +361,7 @@ version = "0.1.0"
 dependencies = [
  "bootloader_api",
  "dummy",
+ "input-protocol",
  "kernel",
  "lazy_static",
  "pic8259",
@@ -351,6 +377,7 @@ dependencies = [
 name = "rosx-x86"
 version = "0.1.0"
 dependencies = [
+ "input-protocol",
  "kernel",
  "lazy_static",
  "spin 0.10.0",
@@ -576,6 +603,7 @@ checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
 name = "usrlib"
 version = "0.1.0"
 dependencies = [
+ "input-protocol",
  "system",
 ]
 

@@ -86,6 +86,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let _ = kernel.schedule(new_elf_task(PONG_ELF));
     static VFSD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/vfsd");
     let _ = kernel.schedule(new_elf_task(VFSD_ELF));
+    static INPUTD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/inputd");
+    let _ = kernel.schedule(new_elf_task(INPUTD_ELF));
+    static PS2D_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/ps2d");
+    let _ = kernel.schedule(new_elf_task(PS2D_ELF));
     static SHELL_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/shell");
     let _ = kernel.schedule(new_elf_task(SHELL_ELF));
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));

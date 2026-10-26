@@ -7,6 +7,7 @@ edition.workspace = true
 
 [dependencies]
 system = { path = "../system" }
+input-protocol = { path = "../input-protocol" }
 
 [features]
 runtime = []

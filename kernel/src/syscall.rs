@@ -36,19 +36,6 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             kernel().task_yield();
             0
         }
-        Ok(SyscallNum::ReadChar) => {
-            if let Some(c) = crate::keyboard::pop_key() {
-                return c as usize;
-            }
-            let future = Box::new(crate::keyboard::KeyboardFuture::new());
-            let handle = services().future_registry
-                .borrow_mut()
-                .register(future)
-                .expect("Failed to register keyboard future");
-            crate::keyboard::register_future_handle(handle);
-            let _ = kernel().wait_future(handle);
-            crate::keyboard::pop_key().map_or(0, |c| c as usize)
-        }
         Ok(SyscallNum::WaitFuture) => {
             let Some(handle) = FutureHandle::from_packed(arg1 as usize) else { return 0 };
             let out_ptr = arg2;
@@ -75,9 +62,6 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             let Ok(layout) = Layout::from_size_align(arg2, arg3) else { return 0 };
             unsafe { services().memory_manager.dealloc(arg1 as *mut u8, layout) };
             0
-        }
-        Ok(SyscallNum::TryReadChar) => {
-            crate::keyboard::pop_key().map_or(0, |c| c as usize)
         }
         Ok(SyscallNum::LoadElf) => {
             if arg1 == 0 { return u64::MAX as usize; }

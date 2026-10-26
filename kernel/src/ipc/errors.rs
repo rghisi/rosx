@@ -33,6 +33,12 @@ pub(crate) enum DataError {
     NotReadable,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) enum DeliverError {
+    ServiceNotFound,
+    Congested,
+}
+
 impl From<IpcConnectionError> for ErrorCode {
     fn from(error: IpcConnectionError) -> Self {
         match error {

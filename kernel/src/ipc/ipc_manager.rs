@@ -5,7 +5,7 @@ use crate::collections::arena::GenerationalArena;
 use crate::future::Future;
 use crate::handle::{FutureHandle, IpcBindingHandle, IpcConnectionHandle, IpcDataHandle};
 use crate::ipc::data_manager::IpcDataManager;
-use crate::ipc::errors::{DataError, IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError};
+use crate::ipc::errors::{DataError, DeliverError, IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError};
 use crate::ipc::message_future::IpcMessageFuture;
 use system::ipc::Message;
 use crate::ipc::mailbox_manager::{MailboxManager, MailboxHandle};
@@ -159,6 +159,25 @@ impl IpcManager {
             self.notifier
                 .register(Box::new(IpcMessageFuture::with_error(IpcReceiveError::ConnectionNotFound)))
                 .unwrap()
+        }
+    }
+
+    pub(crate) fn deliver_to_service(
+        &mut self,
+        service: &str,
+        message: Message,
+    ) -> Result<(), DeliverError> {
+        let Some(binding_handle) = self.registry.get(service).copied() else {
+            return Err(DeliverError::ServiceNotFound);
+        };
+        let Ok(server_binding) = self.bindings.borrow(binding_handle.into()) else {
+            return Err(DeliverError::ServiceNotFound);
+        };
+        let server_mailbox = server_binding.mailbox_handle;
+        match self.mailbox_manager.push_back(server_mailbox, message) {
+            Ok(()) => Ok(()),
+            Err(IpcSendError::ConnectionCongested) => Err(DeliverError::Congested),
+            Err(IpcSendError::ConnectionNotFound) => Err(DeliverError::ServiceNotFound),
         }
     }
 }
@@ -394,6 +413,93 @@ mod tests {
         let malformed_conn = (system::error::ERROR_BIT | connection.pack()) as u32;
         assert_eq!(
             manager.send_message(CLIENT_TASK, &Message::new(malformed_conn, &[0u8; MESSAGE_PAYLOAD_BYTES])),
+            Err(IpcSendError::ConnectionNotFound)
+        );
+    }
+
+    #[test]
+    fn deliver_to_service_wakes_parked_accept() {
+        let mut manager = manager_with_notifier();
+        crate::scheduler::wire_scheduler_for_tests();
+        let binding = manager.bind_service("EVT-WAKE").unwrap();
+
+        let task = crate::task::Task::new("waiter", 0x1000, 0);
+        let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+        services()
+            .task_manager
+            .borrow_mut()
+            .set_state(task_handle, crate::task::TaskState::Blocked);
+
+        let fh = manager.accept_message_async(binding);
+        services()
+            .future_registry
+            .borrow_mut()
+            .register_waiter(fh, task_handle);
+
+        let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = [0x2A; MESSAGE_PAYLOAD_BYTES];
+        assert_eq!(
+            manager.deliver_to_service("EVT-WAKE", Message::new(system::ipc::KERNEL_EVENT_CONN, &pattern)),
+            Ok(())
+        );
+
+        assert_eq!(
+            services().task_manager.borrow().get_state(task_handle),
+            crate::task::TaskState::Ready
+        );
+        let delivered = delivered_message(fh);
+        assert_eq!(delivered.conn(), system::ipc::KERNEL_EVENT_CONN);
+        assert_eq!(delivered.data(), &pattern);
+    }
+
+    #[test]
+    fn deliver_to_unbound_service_is_service_not_found() {
+        let mut manager = manager_with_notifier();
+        assert_eq!(
+            manager.deliver_to_service("EVT-ABSENT", Message::new(system::ipc::KERNEL_EVENT_CONN, &[0u8; MESSAGE_PAYLOAD_BYTES])),
+            Err(DeliverError::ServiceNotFound)
+        );
+    }
+
+    #[test]
+    fn deliver_before_park_queues_message() {
+        let mut manager = manager_with_notifier();
+        let binding = manager.bind_service("EVT-EARLY").unwrap();
+        let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = [0x1C; MESSAGE_PAYLOAD_BYTES];
+        assert_eq!(
+            manager.deliver_to_service("EVT-EARLY", Message::new(system::ipc::KERNEL_EVENT_CONN, &pattern)),
+            Ok(())
+        );
+
+        let fh = manager.accept_message_async(binding);
+        let delivered = delivered_message(fh);
+        assert_eq!(delivered.conn(), system::ipc::KERNEL_EVENT_CONN);
+        assert_eq!(delivered.data(), &pattern);
+    }
+
+    #[test]
+    fn deliver_congested_at_32_and_recovers_after_accept() {
+        let mut manager = manager_with_notifier();
+        let binding = manager.bind_service("EVT-FLOOD").unwrap();
+        let envelope = Message::new(system::ipc::KERNEL_EVENT_CONN, &[0x36; MESSAGE_PAYLOAD_BYTES]);
+        for _ in 0..32 {
+            assert_eq!(manager.deliver_to_service("EVT-FLOOD", envelope), Ok(()));
+        }
+        assert_eq!(
+            manager.deliver_to_service("EVT-FLOOD", envelope),
+            Err(DeliverError::Congested)
+        );
+
+        let fh = manager.accept_message_async(binding);
+        assert_eq!(delivered_message(fh).conn(), system::ipc::KERNEL_EVENT_CONN);
+        assert_eq!(manager.deliver_to_service("EVT-FLOOD", envelope), Ok(()));
+    }
+
+    #[test]
+    fn send_message_never_carries_the_kernel_event_conn() {
+        let mut manager = manager_with_notifier();
+        let (_binding, _connection) = bind_and_connect(&mut manager, "EVT-FORGE");
+        assert_eq!(
+            manager.send_message(CLIENT_TASK, &Message::new(system::ipc::KERNEL_EVENT_CONN, &[0u8; MESSAGE_PAYLOAD_BYTES])),
             Err(IpcSendError::ConnectionNotFound)
         );
     }

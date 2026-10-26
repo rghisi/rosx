@@ -1,5 +1,6 @@
 pub const MESSAGE_BYTES: usize = 64;
 pub const MESSAGE_PAYLOAD_BYTES: usize = 60;
+pub const KERNEL_EVENT_CONN: u32 = 0x8000_0000;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -47,6 +48,13 @@ mod tests {
         let message = Message::new(0x7FFF_FFFF, &pattern);
         assert_eq!(message.conn(), 0x7FFF_FFFF);
         assert_eq!(*message.data(), pattern);
+    }
+
+    #[test]
+    fn kernel_event_conn_is_neither_a_token_nor_the_empty_conn() {
+        assert!(!is_token(KERNEL_EVENT_CONN as usize));
+        assert_ne!(KERNEL_EVENT_CONN, 0);
+        assert_ne!(KERNEL_EVENT_CONN, Message::EMPTY.conn());
     }
 
     #[test]
