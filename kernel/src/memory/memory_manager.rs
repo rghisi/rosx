@@ -54,7 +54,6 @@ impl MemoryManager {
         if interrupts_enabled {
             self.cpu.borrow().unwrap().disable_interrupts();
         }
-        self.used.fetch_add(layout.size(), Ordering::Relaxed);
         let result = unsafe {
             self.allocator
                 .borrow_mut()
@@ -66,7 +65,10 @@ impl MemoryManager {
             self.cpu.borrow().unwrap().enable_interrupts();
         }
         match result {
-            Ok(ptr) => ptr,
+            Ok(ptr) => {
+                self.used.fetch_add(layout.size(), Ordering::Relaxed);
+                ptr
+            }
             Err(_) => ptr::null_mut(),
         }
     }
@@ -261,6 +263,13 @@ mod tests {
         let layout = Layout::from_size_align(256, 8).unwrap();
         let ptr = unsafe { manager.alloc_with_owner(layout, BlockOwner::Task(2)) };
         assert!(ptr.is_null());
+        assert_eq!(manager.used(), 0);
+        let fits = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { manager.alloc_with_owner(fits, BlockOwner::Task(2)) };
+        assert!(!ptr.is_null());
+        assert_eq!(manager.used(), 64);
+        unsafe { manager.dealloc(ptr, fits) };
+        assert_eq!(manager.used(), 0);
     }
 
     #[test]
