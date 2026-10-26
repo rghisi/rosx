@@ -1,5 +1,4 @@
 use crate::command::Command;
-use alloc::boxed::Box;
 use alloc::vec::Vec;
 use system::args::{MAX_ARGUMENT_BYTES, MAX_ARGUMENT_COUNT};
 use usrlib::println;
@@ -75,8 +74,7 @@ fn launch(image: Vec<u8>, cmd: &Command) {
     let mut argv = Vec::with_capacity(argument_count);
     argv.push(cmd.name.clone());
     argv.extend(cmd.args.iter().cloned());
-    let image: &'static [u8] = Box::leak(image.into_boxed_slice());
-    match Syscall::load_with_args(image, &argv) {
+    match Syscall::load_with_args(&image, &argv) {
         Some(handle) => Syscall::wait_future(handle),
         None => println!("Cannot launch: {}", cmd.name),
     }

@@ -18,13 +18,13 @@ impl Syscall {
         UserFutureHandle::from_token(raw)
     }
 
-    pub fn load(elf: &'static [u8]) -> Option<UserFutureHandle> {
+    pub fn load(elf: &[u8]) -> Option<UserFutureHandle> {
         let elf_ptr = Box::into_raw(Box::new(elf)) as usize;
         let raw = arch::raw_syscall(SyscallNum::LoadElf as usize, elf_ptr as usize, 0, 0);
         UserFutureHandle::from_token(raw)
     }
 
-    pub fn load_with_args(elf: &'static [u8], args: &[String]) -> Option<UserFutureHandle> {
+    pub fn load_with_args(elf: &[u8], args: &[String]) -> Option<UserFutureHandle> {
         let elf_ptr = Box::into_raw(Box::new(elf)) as usize;
         let blob = encode_arguments(args);
         let (blob_ptr, blob_len) = wire_pair(&blob);
