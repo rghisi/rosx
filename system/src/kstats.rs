@@ -12,7 +12,7 @@ const FREE_BYTES_OFFSET: usize = 17;
 const LARGEST_FREE_BLOCK_OFFSET: usize = 25;
 const FREE_BLOCK_COUNT_OFFSET: usize = 33;
 const UPTIME_MS_OFFSET: usize = 41;
-const SNAPSHOT_BYTES: usize = 49;
+pub const SNAPSHOT_BYTES: usize = 49;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum KstatsRequest {

@@ -31,6 +31,13 @@ pub(crate) enum AllocError {
     OutOfMemory,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) struct FreeListStats {
+    pub free_bytes: usize,
+    pub free_block_count: usize,
+    pub largest_free_block: usize,
+}
+
 pub struct FreeListAllocator {
     head: *mut FreeBlock,
     alloc_head: *mut AllocHeader,
@@ -200,6 +207,25 @@ impl FreeListAllocator {
                     && start >= region.start
                     && end <= region.start.saturating_add(region.size)
             })
+    }
+
+    pub(crate) fn stats(&self) -> FreeListStats {
+        let mut free_bytes = 0usize;
+        let mut free_block_count = 0usize;
+        let mut largest_free_block = 0usize;
+        let mut current = self.head;
+        while !current.is_null() {
+            let size = unsafe { (*current).size };
+            free_bytes += size;
+            free_block_count += 1;
+            largest_free_block = largest_free_block.max(size);
+            current = unsafe { (*current).next };
+        }
+        FreeListStats {
+            free_bytes,
+            free_block_count,
+            largest_free_block,
+        }
     }
 
     pub unsafe fn deallocate_by_owner(&mut self, task_id: usize) -> usize {
@@ -768,5 +794,77 @@ mod tests {
         let entries = free_entries(&alloc);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].1, region_size - (aligned - base));
+    }
+
+    #[test]
+    fn stats_of_fresh_allocator_reports_the_whole_region_as_free() {
+        let mut memory = vec![0u8; 4096];
+        let base = memory.as_mut_ptr() as usize;
+        let aligned = align_up(base, BLOCK_ALIGN);
+        let alloc = make_allocator(&[(base, 4096)]);
+        let stats = alloc.stats();
+        assert_eq!(stats.free_block_count, 1);
+        assert_eq!(stats.free_bytes, 4096 - (aligned - base));
+        assert_eq!(stats.largest_free_block, 4096 - (aligned - base));
+    }
+
+    #[test]
+    fn stats_count_each_region_as_a_free_entry() {
+        let mut memory1 = vec![0u8; 1024];
+        let mut memory2 = vec![0u8; 2048];
+        let base1 = memory1.as_mut_ptr() as usize;
+        let base2 = memory2.as_mut_ptr() as usize;
+        let aligned1 = align_up(base1, BLOCK_ALIGN);
+        let aligned2 = align_up(base2, BLOCK_ALIGN);
+        let alloc = make_allocator(&[(base1, 1024), (base2, 2048)]);
+        let stats = alloc.stats();
+        assert_eq!(stats.free_block_count, 2);
+        assert_eq!(
+            stats.free_bytes,
+            (1024 - (aligned1 - base1)) + (2048 - (aligned2 - base2))
+        );
+        assert_eq!(stats.largest_free_block, 2048 - (aligned2 - base2));
+    }
+
+    #[test]
+    fn stats_shrink_on_allocation_and_grow_back_on_deallocation() {
+        let mut memory = vec![0u8; 4096];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = make_allocator(&[(base, 4096)]);
+        let fresh = alloc.stats();
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        let after_alloc = alloc.stats();
+        assert_eq!(after_alloc.free_block_count, 1);
+        assert_eq!(after_alloc.free_bytes, fresh.free_bytes - needed_for(64));
+        assert_eq!(after_alloc.largest_free_block, after_alloc.free_bytes);
+        unsafe { alloc.deallocate(ptr, BLOCK_ALIGN) };
+        assert_eq!(alloc.stats(), fresh);
+    }
+
+    #[test]
+    fn stats_of_exhausted_allocator_are_zero() {
+        let (_memory, alloc, _aligned) = emptied_allocator(4096);
+        let stats = alloc.stats();
+        assert_eq!(stats.free_bytes, 0);
+        assert_eq!(stats.free_block_count, 0);
+        assert_eq!(stats.largest_free_block, 0);
+    }
+
+    #[test]
+    fn stats_report_fragmentation_after_releasing_a_middle_block() {
+        let region_size = 4 * needed_for(64);
+        let mut memory = vec![0u8; region_size];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = make_allocator(&[(base, region_size)]);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let _a = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        let b = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        let _c = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        unsafe { alloc.deallocate(b, BLOCK_ALIGN) };
+        let stats = alloc.stats();
+        assert_eq!(stats.free_block_count, 2);
+        assert_eq!(stats.free_bytes, 2 * needed_for(64));
+        assert_eq!(stats.largest_free_block, needed_for(64));
     }
 }

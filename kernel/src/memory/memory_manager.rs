@@ -15,6 +15,15 @@ pub fn alloc_error_handler(layout: Layout) -> ! {
     panic!("allocation error: {:?}", layout)
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) struct MemoryStats {
+    pub used_bytes: usize,
+    pub total_bytes: usize,
+    pub free_bytes: usize,
+    pub largest_free_block: usize,
+    pub free_block_count: usize,
+}
+
 pub struct MemoryManager {
     allocator: KernelCell<Option<FreeListAllocator>>,
     used: AtomicUsize,
@@ -46,6 +55,35 @@ impl MemoryManager {
 
     pub fn used(&self) -> usize {
         self.used.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn stats(&self) -> MemoryStats {
+        let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
+            && self.cpu.borrow().unwrap().are_interrupts_enabled();
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().disable_interrupts();
+        }
+        let memory_blocks = self.memory_blocks.borrow();
+        let memory_blocks = memory_blocks.as_ref().expect("MemoryManager not bootstrapped");
+        let mut total_bytes = 0usize;
+        for i in 0..memory_blocks.count {
+            total_bytes += memory_blocks.blocks[i].size;
+        }
+        let allocator = self.allocator.borrow();
+        let free_list = allocator
+            .as_ref()
+            .expect("MemoryManager not bootstrapped")
+            .stats();
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().enable_interrupts();
+        }
+        MemoryStats {
+            used_bytes: self.used.load(Ordering::Relaxed),
+            total_bytes,
+            free_bytes: free_list.free_bytes,
+            largest_free_block: free_list.largest_free_block,
+            free_block_count: free_list.free_block_count,
+        }
     }
 
     pub(crate) unsafe fn alloc_with_owner(&self, layout: Layout, owner: BlockOwner) -> *mut u8 {
@@ -313,5 +351,39 @@ mod tests {
         assert_eq!(manager.used(), 64);
         unsafe { manager.dealloc(ptr, layout) };
         assert_eq!(manager.used(), 0);
+    }
+
+    #[test]
+    fn stats_of_fresh_manager_reports_the_full_region_as_free() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let stats = manager.stats();
+        assert_eq!(stats.used_bytes, 0);
+        assert_eq!(stats.total_bytes, 1024 * 1024);
+        assert_eq!(stats.free_block_count, 1);
+        assert!(stats.free_bytes > 0);
+        assert!(stats.free_bytes <= stats.total_bytes);
+        assert_eq!(stats.largest_free_block, stats.free_bytes);
+    }
+
+    #[test]
+    fn stats_follow_allocation_and_release() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let fresh = manager.stats();
+        let layout = Layout::from_size_align(128, 8).unwrap();
+        let ptr = unsafe { manager.alloc(layout) };
+        let after = manager.stats();
+        assert_eq!(after.used_bytes, 128);
+        assert_eq!(after.total_bytes, fresh.total_bytes);
+        assert!(after.free_bytes < fresh.free_bytes);
+        assert_eq!(after.free_block_count, fresh.free_block_count);
+        assert!(after.largest_free_block < fresh.largest_free_block);
+        unsafe { manager.dealloc(ptr, layout) };
+        let restored = manager.stats();
+        assert_eq!(restored.used_bytes, 0);
+        assert_eq!(restored.free_bytes, fresh.free_bytes);
+        assert_eq!(restored.free_block_count, fresh.free_block_count);
+        assert_eq!(restored.largest_free_block, fresh.largest_free_block);
     }
 }
