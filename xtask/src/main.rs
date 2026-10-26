@@ -2,7 +2,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::{self, Command};
 
-const USER_APPS: [&str; 14] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "inputd", "ps2d"];
+const USER_APPS: [&str; 15] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "inputd", "ps2d"];
 
 const UNSTABLE: [&str; 3] = [
     "-Zbuild-std=core,alloc,compiler_builtins",
