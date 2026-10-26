@@ -233,6 +233,7 @@ impl Kernel {
     pub(crate) fn terminate_and_yield(&mut self) -> ! {
         self.execution_state.preemption_enabled = false;
         if let Some(task_handle) = self.execution_state.current_task.take() {
+            unsafe { services().memory_manager.release_task_allocations(task_handle.pack()) };
             services()
                 .task_manager
                 .borrow_mut()
