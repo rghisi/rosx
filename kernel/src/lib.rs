@@ -17,6 +17,7 @@ pub mod kconfig;
 pub mod kernel;
 pub(crate) mod kernel_cell;
 pub(crate) mod kernel_services;
+pub mod kstatsd;
 pub mod memory;
 pub mod once;
 pub mod panic;

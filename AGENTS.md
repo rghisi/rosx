@@ -1,6 +1,6 @@
 # RosX - Agent Context Document
 
-> **Last Updated:** 2026-10-08
+> **Last Updated:** 2026-10-26
 > **Purpose:** Compact, always-accurate context for AI coding agents working on RosX.
 
 ---
@@ -30,7 +30,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    scheduler/ (SchedulingAlgorithm: MLFQ + FIFO)
 │    memory/   (global allocator; FreeList + BitmapChunk)
 │    collections/ (arena)  handle/ (5 newtypes: task/future/ipc-connection/ipc-binding/ipc-data)
-│    elf/ ipc/ (mailbox, data) future/ syscall/ task*  cpu (HAL trait)  kconfig  rom/
+│    elf/ ipc/ (mailbox, data) future/ syscall/ kstatsd task*  cpu (HAL trait)  kconfig  rom/
 ├── system/      # ABI treaty: syscall numbers, wire layout, ROM image layout, error numbers
 ├── usrlib/      # User-space libc: syscall, out, arch/{x86_64,x86_32}
 ├── vfs-protocol/# VFS wire codec + typed client (user-space RPC treaty)
@@ -39,7 +39,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
 │    x86_64-runner/ # standalone: BiosBoot → QEMU (NOT bootimage)
 └── apps/
-     [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, vfsd, vfs, snake, tetris, conway, test_suite, inputd, ps2d
+     [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, mem, vfsd, vfs, snake, tetris, conway, threads, test_suite, inputd, ps2d
 ```
 
 ---
@@ -150,6 +150,7 @@ These principles are the regression guard: the very inversion this rework remove
 - `future/` + `ipc/` — **notification-driven** futures (time, task-completion) and a mailbox IPC manager (bind/connect/send/receive); kernel-originated event delivery (`deliver_to_service`) wakes accepts on bound services; no polling on the preemption cycle.
 - `ipc/` data family — messages signal; data rides the connection out-of-band via write/read/release tokens; the kernel never interprets message payloads.
 - Input architecture — policy lives in the user-space `INPUTD` daemon (`inputd`), device semantics in driver daemons (`ps2d`); the kernel delivers opaque event frames only.
+- Kernel-hosted IPC services — `kstatsd` is the first: kernel code runs a service loop as a `FunctionTask` (launched by each arch at boot), calling `IpcManager` directly and blocking on futures via `Kernel::wait`. Metrics stay domain-owned (`MemoryManager::stats`); the wire contract lives only in `system::kstats`; user-space clients (`mem`) own rendering.
 - `elf/` — loads standalone user-space ELF binaries into tasks (`new_elf_task`).
 - `task/` + `task_manager/` — task lifecycle, context switch, preemption.
 - `rom/` — boot-registered immutable ROM image exposed via the opaque `RomRead` syscall; the kernel stays VFS-agnostic, `vfsd` owns mount semantics. The ROM carries the app ELFs (not the shell); its roster names stay underscore-free — a historical constraint from the era when the kernel keyboard dropped shift state, with the rename tracked in `docs/todo.md`.

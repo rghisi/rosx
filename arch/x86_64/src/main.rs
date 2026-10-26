@@ -28,6 +28,7 @@ use kernel::kernel::Kernel;
 use kernel::scheduler;
 use kernel::kprintln;
 use kernel::panic::handle_panic;
+use kernel::task::FunctionTask;
 use kernel::task::new_elf_task;
 
 static FB_OUTPUT: FramebufferOutput = FramebufferOutput;
@@ -72,6 +73,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     kernel.setup();
     static ROM_IMAGE: &[u8] = include_bytes!("../../../target/rosx-user/rom.img");
     kernel::rom::init(ROM_IMAGE);
+    let _ = kernel.schedule(FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main));
     // kernel.schedule(FunctionTask::new("1", dummy::app::main));
     // kernel.schedule(FunctionTask::new("2", dummy::app::main2));
     // kernel.schedule(FunctionTask::new("3", dummy::app::main3));
