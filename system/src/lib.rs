@@ -5,5 +5,6 @@ pub mod args;
 pub mod syscall_numbers;
 pub mod ipc;
 pub mod error;
+pub mod kstats;
 pub mod rom;
 
