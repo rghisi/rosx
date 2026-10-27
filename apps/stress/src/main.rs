@@ -1,8 +1,15 @@
-use crate::{allocation_test, context_switching};
+#![no_std]
+
+extern crate alloc;
+
 use usrlib::println;
 use usrlib::syscall::Syscall;
 
-pub fn main() {
+mod allocation_test;
+mod context_switching;
+mod random;
+
+fn main() {
     println!("=== RosX Test Suite Started ===");
 
     if let Some(fh) = Syscall::exec(allocation_test::run as *const () as usize) {
@@ -19,7 +26,7 @@ pub fn main() {
     println!("=== Main Thread Finished ===");
 }
 
-pub fn worker_mixed_load() {
+fn worker_mixed_load() {
     println!("[MixWorker] Starting Mixed Load Test...");
 
     if let Some(mem) = Syscall::exec(allocation_test::run as *const () as usize) {

@@ -10,7 +10,6 @@ kernel = { path = "../../kernel" }
 usrlib = { path = "../../usrlib" }
 input-protocol = { path = "../../input-protocol" }
 dummy = { path = "../../apps/dummy"}
-test_suite = { path = "../../apps/test_suite"}
 
 bootloader_api = "0.11"
 volatile = "0.2.6"

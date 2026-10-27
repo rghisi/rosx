@@ -21,7 +21,7 @@ members = [
     "apps/snake",
     "apps/tetris",
     "apps/conway",
-    "apps/test_suite",
+    "apps/stress",
     "apps/threads",
     "apps/inputd",
     "apps/ps2d",
@@ -36,7 +36,6 @@ default-members = [
     "input-protocol",
     "apps/shell",
     "apps/dummy",
-    "apps/test_suite",
     "xtask",
 ]
 resolver = "3"

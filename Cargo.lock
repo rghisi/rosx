@@ -375,7 +375,6 @@ dependencies = [
  "pic8259",
  "spin 0.10.0",
  "system",
- "test_suite",
  "usrlib",
  "volatile 0.2.7",
  "x86_64",
@@ -476,7 +475,6 @@ version = "0.1.0"
 dependencies = [
  "lazy_static",
  "system",
- "test_suite",
  "usrlib",
  "vfs-protocol",
 ]
@@ -502,6 +500,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
 dependencies = [
  "lock_api",
+]
+
+[[package]]
+name = "stress"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
 ]
 
 [[package]]
@@ -547,14 +553,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
-]
-
-[[package]]
-name = "test_suite"
-version = "0.1.0"
-dependencies = [
- "system",
- "usrlib",
 ]
 
 [[package]]

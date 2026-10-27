@@ -17,7 +17,6 @@ lazy_static! {
         (String::from("ls"), ls as fn(&Command)),
         (String::from("clear"), clear as fn(&Command)),
         (String::from("rose"), rose as fn(&Command)),
-        (String::from("tests"), tests as fn(&Command)),
         (String::from("sleep"), sleep as fn(&Command)),
         (String::from("random"), random as fn(&Command)),
     ]);
@@ -97,12 +96,6 @@ fn ls(_cmd: &Command) {
             vfs.disconnect();
         }
         Err(error) => println!("No filesystem: {:?}", error),
-    }
-}
-
-fn tests(_cmd: &Command) {
-    if let Some(fh) = Syscall::exec(test_suite::app::main as usize) {
-        Syscall::wait_future(fh);
     }
 }
 
