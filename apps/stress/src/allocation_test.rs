@@ -13,7 +13,7 @@ const SWEEP_INTERVAL: usize = 50;
 const MINIMUM_SIZE: u32 = 16;
 const MAXIMUM_SIZE: u32 = 16 * 1024 * 1024;
 
-fn pattern_byte(key: u64, index: usize) -> u8 {
+pub(crate) fn pattern_byte(key: u64, index: usize) -> u8 {
     let mixed = (key ^ (index as u64)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     (mixed >> 56) as u8
 }

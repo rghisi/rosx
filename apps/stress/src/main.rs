@@ -7,6 +7,7 @@ use alloc::vec::Vec;
 use usrlib::println;
 use usrlib::syscall::Syscall;
 
+mod alignment_test;
 mod allocation_test;
 mod context_switching;
 mod random;
@@ -24,6 +25,10 @@ const SCENARIOS: &[Scenario] = &[
     Scenario {
         name: "ctx",
         run: context_switching::worker_context_switch,
+    },
+    Scenario {
+        name: "align",
+        run: alignment_test::run,
     },
     Scenario {
         name: "mixed",
