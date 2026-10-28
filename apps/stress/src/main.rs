@@ -24,7 +24,7 @@ const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: "ctx",
-        run: context_switching::worker_context_switch,
+        run: context_switching::run,
     },
     Scenario {
         name: "align",
