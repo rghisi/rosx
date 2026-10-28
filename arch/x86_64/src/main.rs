@@ -95,7 +95,6 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static SHELL_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/shell");
     let _ = kernel.schedule(new_elf_task(SHELL_ELF));
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
-    // kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));
 
     kprintln!("[KERNEL] Starting");
     kernel.start();

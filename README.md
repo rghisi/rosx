@@ -181,7 +181,7 @@ rosx/
 │   ├── dummy/              # Dummy app for testing
 │   ├── inputd/             # INPUTD input multiplexer daemon
 │   ├── ps2d/               # PS/2 keyboard driver daemon
-│   └── test_suite/         # Test suite app
+│   └── stress/             # Kernel subsystem stress tests (memory, context switching)
 ├── system/                 # ABI treaty: syscall numbers, wire layout, error numbers
 └── usrlib/                 # User-space library
 ```
