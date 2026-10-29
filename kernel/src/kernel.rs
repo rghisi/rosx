@@ -117,6 +117,7 @@ impl Kernel {
                 scheduler: scheduler_task_handler,
                 current_task: None,
                 preemption_enabled: false,
+                pending_preemption: false,
                 execution_context: ExecutionContext::Kernel,
                 cpu,
             },
@@ -222,6 +223,12 @@ impl Kernel {
             if let Some(task_handle) = self.execution_state.current_task {
                 services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
             }
+            self.execution_state.pending_preemption = true;
+        }
+    }
+
+    pub fn apply_pending_preemption(&mut self) {
+        if core::mem::take(&mut self.execution_state.pending_preemption) {
             self.execution_state.switch_to_scheduler();
         }
     }

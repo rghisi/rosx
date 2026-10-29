@@ -56,7 +56,9 @@ syscall_handler_entry:
     pop r15
 
     # Return to Ring 0 (since we don't support Ring 3 yet)
-    # Restore RFLAGS from R11
+    # SFMASK stripped IF from the RFLAGS saved in R11; hand interrupts back
+    # so the caller remains preemptible by the scheduler tick
+    or r11, 0x200
     push r11
     popfq
 
