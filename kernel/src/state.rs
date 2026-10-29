@@ -13,6 +13,7 @@ pub struct ExecutionState {
     pub(crate) scheduler: TaskHandle,
     pub(crate) current_task: Option<TaskHandle>,
     pub(crate) preemption_enabled: bool,
+    pub(crate) pending_preemption: bool,
     pub(crate) execution_context: ExecutionContext,
     pub(crate) cpu: &'static dyn Cpu,
 }

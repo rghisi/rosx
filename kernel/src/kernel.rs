@@ -87,7 +87,6 @@ pub struct Kernel {
     cpu: &'static dyn Cpu,
     pub(crate) elf_arch: &'static dyn ElfArch,
     pub(crate) execution_state: ExecutionState,
-    pending_preemption: bool,
 }
 
 impl Kernel {
@@ -118,10 +117,10 @@ impl Kernel {
                 scheduler: scheduler_task_handler,
                 current_task: None,
                 preemption_enabled: false,
+                pending_preemption: false,
                 execution_context: ExecutionContext::Kernel,
                 cpu,
             },
-            pending_preemption: false,
         }
     }
 
@@ -224,16 +223,13 @@ impl Kernel {
             if let Some(task_handle) = self.execution_state.current_task {
                 services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
             }
-            self.pending_preemption = true;
+            self.execution_state.pending_preemption = true;
         }
     }
 
     pub fn apply_pending_preemption(&mut self) {
-        if self.pending_preemption {
-            self.pending_preemption = false;
-            if self.execution_state.preemption_enabled {
-                self.execution_state.switch_to_scheduler();
-            }
+        if core::mem::take(&mut self.execution_state.pending_preemption) {
+            self.execution_state.switch_to_scheduler();
         }
     }
 
