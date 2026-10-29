@@ -7,14 +7,12 @@ use system::waitset::WaitEvent;
 use crate::kconfig::KConfig;
 use crate::kernel_services::services;
 use crate::kprintln;
-use crate::messages::HardwareInterrupt;
 
 use crate::state::{ExecutionContext, ExecutionState};
 use crate::task::TaskState;
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, YieldReason};
 use crate::ports::driven::ForExpiringTimers;
-use crate::ports::driven::ForHandlingHardwareInterrupts;
 use crate::ports::driven::ForManagingTasks;
 use crate::ports::driven::ForReadingSystemTime;
 use crate::ports::driven::ForSwitchingTaskContext;
@@ -65,26 +63,6 @@ pub(crate) static KERNEL_TIMER_EXPIRY: KernelTimerExpiry = KernelTimerExpiry;
 impl ForExpiringTimers for KernelTimerExpiry {
     fn pop_expired(&self, now: u64) -> Option<alloc::vec::Vec<FutureHandle>> {
         services().timer_manager.borrow_mut().pop_expired(now)
-    }
-}
-
-pub(crate) struct KernelInterruptHandler;
-pub(crate) static KERNEL_INTERRUPT_HANDLER: KernelInterruptHandler = KernelInterruptHandler;
-
-impl ForHandlingHardwareInterrupts for KernelInterruptHandler {
-    fn handle(&self, interrupt: HardwareInterrupt) {
-        match interrupt {
-            HardwareInterrupt::Keyboard { scancode } => {
-                if scancode & 0x80 == 0 {
-                    if let Ok(key) = crate::keyboard::Key::from_scancode_set1(scancode) {
-                        let event = crate::keyboard::KeyboardEvent::from_key(key);
-                        if let Some(c) = event.char {
-                            crate::keyboard::push_key(c);
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -202,13 +180,6 @@ impl Kernel {
         future_handle.ok_or(())
     }
 
-    pub fn enqueue(&mut self, hardware_interrupt: HardwareInterrupt) {
-        let prev = self.execution_state.preemption_enabled;
-        self.execution_state.preemption_enabled = false;
-        services().scheduler.borrow_mut().push_hardware_interrupt(hardware_interrupt);
-        self.execution_state.preemption_enabled = prev;
-    }
-    
     pub fn sleep(&mut self, millis: u64) {
         let future = Box::new(TimeFuture::new());
         let handle = services().future_registry
@@ -279,6 +250,7 @@ impl Kernel {
     pub(crate) fn terminate_and_yield(&mut self) -> ! {
         self.execution_state.preemption_enabled = false;
         if let Some(task_handle) = self.execution_state.current_task.take() {
+            unsafe { services().memory_manager.release_task_allocations(task_handle.pack()) };
             services()
                 .task_manager
                 .borrow_mut()

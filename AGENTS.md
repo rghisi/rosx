@@ -1,6 +1,6 @@
 # RosX - Agent Context Document
 
-> **Last Updated:** 2026-10-08
+> **Last Updated:** 2026-10-26
 > **Purpose:** Compact, always-accurate context for AI coding agents working on RosX.
 
 ---
@@ -30,7 +30,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    scheduler/ (SchedulingAlgorithm: MLFQ + FIFO)
 │    memory/   (global allocator; FreeList + BitmapChunk)
 │    collections/ (arena)  handle/ (5 newtypes: task/future/ipc-connection/ipc-binding/ipc-data)
-│    elf/ ipc/ (mailbox, data) future/ syscall/ keyboard/ task*  cpu (HAL trait)  kconfig  rom/
+│    elf/ ipc/ (mailbox, data) future/ syscall/ kstatsd task*  cpu (HAL trait)  kconfig  rom/
 ├── system/      # ABI treaty: syscall numbers, wire layout, ROM image layout, error numbers
 ├── usrlib/      # User-space libc: syscall, out, arch/{x86_64,x86_32}
 ├── vfs-protocol/# VFS wire codec + typed client (user-space RPC treaty)
@@ -39,7 +39,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
 │    x86_64-runner/ # standalone: BiosBoot → QEMU (NOT bootimage)
 └── apps/
-     [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, vfsd, vfs, snake, tetris, conway, test_suite, waitset
+     [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, mem, vfsd, vfs, snake, tetris, conway, threads, waitset, stress, inputd, ps2d
 ```
 
 ---
@@ -60,7 +60,7 @@ cargo run -p rosx              # run.sh -> arch/x86_64-runner -> BiosBoot disk i
 - `cargo run` uses the **custom runner** (`.cargo/config.toml` → `./run.sh`), which invokes `arch/x86_64-runner` to make a BIOS disk image with the `bootloader` crate's `BiosBoot`, then starts `qemu-system-x86_64`. **Not bootimage.**
 - Target spec: `arch/x86_64/rosx.json` — bare-metal `no_std`, `build-std` = core/alloc/compiler_builtins.
 - User-space ELF apps (pi, randomd, snake, tetris, conway) are workspace members; build with `cargo xtask apps` or `cargo xtask build`.
-- The shell is a user ELF: each arch port embeds `target/rosx-user/release/shell` with `include_bytes!` and boots it via `new_elf_task`. It keeps six built-ins (`ls clear rose tests sleep random`) and resolves every other prompt name through VFS, so ROM/RAM files execute by name with arguments (`rose> snake fast`).
+- The shell is a user ELF: each arch port embeds `target/rosx-user/release/shell` with `include_bytes!` and boots it via `new_elf_task`. It keeps five built-ins (`ls clear rose sleep random`) and resolves every other prompt name through VFS, so ROM/RAM files execute by name with arguments (`rose> snake fast`).
 - `cargo build --workspace` is intentionally unsupported: bare-metal bins and PIE apps cannot compile for the host.
 
 ### x86_32
@@ -147,11 +147,13 @@ cargo xtask test [--skip-integration] # Run unit tests; --skip-integration exclu
 These principles are the regression guard: the very inversion this rework removed survived many runs because no document stated who owns handle semantics, while the HAL rule — written down — has been obeyed throughout.
 
 **Kernel Subsystems (current invariants):**
-- `future/` + `ipc/` — **notification-driven** futures (time, task-completion, keyboard, depth-one waitset aggregates) and a mailbox IPC manager (bind/connect/send/receive); a waitset completes when any attached leaf future does, woken by a child-to-waitset cascade inside `FutureRegistry::notify`; no polling on the preemption cycle.
+- `future/` + `ipc/` — **notification-driven** futures (time, task-completion, depth-one waitset aggregates) and a mailbox IPC manager (bind/connect/send/receive); kernel-originated event delivery (`deliver_to_service`) wakes accepts on bound services; a waitset completes when any attached leaf future does, woken by a child-to-waitset cascade inside `FutureRegistry::notify`; no polling on the preemption cycle.
 - `ipc/` data family — messages signal; data rides the connection out-of-band via write/read/release tokens; the kernel never interprets message payloads.
+- Input architecture — policy lives in the user-space `INPUTD` daemon (`inputd`), device semantics in driver daemons (`ps2d`); the kernel delivers opaque event frames only.
+- Kernel-hosted IPC services — `kstatsd` is the first: kernel code runs a service loop as a `FunctionTask` (launched by each arch at boot), calling `IpcManager` directly and blocking on futures via `Kernel::wait`. Metrics stay domain-owned (`MemoryManager::stats`); the wire contract lives only in `system::kstats`; user-space clients (`mem`) own rendering.
 - `elf/` — loads standalone user-space ELF binaries into tasks (`new_elf_task`).
 - `task/` + `task_manager/` — task lifecycle, context switch, preemption.
-- `rom/` — boot-registered immutable ROM image exposed via the opaque `RomRead` syscall; the kernel stays VFS-agnostic, `vfsd` owns mount semantics. The ROM carries the thirteen app ELFs (not the shell); its roster holds only underscore-free names because the kernel keyboard drops shift state (see `docs/todo.md`).
+- `rom/` — boot-registered immutable ROM image exposed via the opaque `RomRead` syscall; the kernel stays VFS-agnostic, `vfsd` owns mount semantics. The ROM carries the app ELFs (not the shell); its roster names stay underscore-free — a historical constraint from the era when the kernel keyboard dropped shift state, with the rename tracked in `docs/todo.md`.
 
 **Documentation & Comments:**
 - **CRITICAL: No comments, ever** — the code is the source of truth; make it self-explanatory

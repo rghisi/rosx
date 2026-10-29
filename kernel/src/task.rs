@@ -176,13 +176,13 @@ pub fn new_entrypoint_task(entrypoint: usize) -> SharedTask {
 }
 
 pub struct ElfTaskContext {
-    elf_bytes: &'static [u8],
+    elf_bytes: Vec<u8>,
     argument_strings: Vec<u8>,
     argument_pointers: Vec<*const u8>,
 }
 
 impl ElfTaskContext {
-    fn new(elf_bytes: &'static [u8], arguments: &[&str]) -> Box<ElfTaskContext> {
+    fn new(elf_bytes: &[u8], arguments: &[&str]) -> Box<ElfTaskContext> {
         let mut argument_strings: Vec<u8> = Vec::new();
         for argument in arguments {
             argument_strings.extend_from_slice(argument.as_bytes());
@@ -191,9 +191,9 @@ impl ElfTaskContext {
         ElfTaskContext::with_blob(elf_bytes, argument_strings)
     }
 
-    fn with_blob(elf_bytes: &'static [u8], argument_strings: Vec<u8>) -> Box<ElfTaskContext> {
+    fn with_blob(elf_bytes: &[u8], argument_strings: Vec<u8>) -> Box<ElfTaskContext> {
         let mut context = Box::new(ElfTaskContext {
-            elf_bytes,
+            elf_bytes: elf_bytes.to_vec(),
             argument_strings,
             argument_pointers: Vec::new(),
         });
@@ -240,12 +240,12 @@ pub fn validate_arguments_blob(blob: &[u8]) -> Result<(), ErrorCode> {
     Ok(())
 }
 
-pub fn new_elf_task(elf: &'static [u8]) -> SharedTask {
+pub fn new_elf_task(elf: &[u8]) -> SharedTask {
     let context = ElfTaskContext::new(elf, &["ELF"]);
     Task::new("ELF", elf_task_wrapper as usize, Box::into_raw(context) as usize)
 }
 
-pub fn new_elf_task_with_arguments(elf: &'static [u8], arguments_blob: Vec<u8>) -> SharedTask {
+pub fn new_elf_task_with_arguments(elf: &[u8], arguments_blob: Vec<u8>) -> SharedTask {
     let context = ElfTaskContext::with_blob(elf, arguments_blob);
     Task::new("ELF", elf_task_wrapper as usize, Box::into_raw(context) as usize)
 }
@@ -459,11 +459,19 @@ mod tests {
         assert_eq!(joined.argument_strings, moved.argument_strings);
         assert_eq!(joined.argc(), moved.argc());
     }
+
+    #[test]
+    fn elf_task_context_owns_a_copy_of_the_image() {
+        let mut source = vec![1u8, 2, 3, 4];
+        let context = ElfTaskContext::with_blob(&source, Vec::new());
+        source[0] = 9;
+        assert_eq!(context.elf_bytes, vec![1, 2, 3, 4]);
+    }
 }
 
 pub(crate) extern "C" fn elf_task_wrapper(context: usize) {
     let context = unsafe { Box::from_raw(context as *mut ElfTaskContext) };
-    let image = load_elf(context.elf_bytes, kernel().elf_arch).unwrap();
+    let image = load_elf(&context.elf_bytes, kernel().elf_arch).unwrap();
     let task_entry_point: extern "C" fn(i32, *const *const u8) -> i32 =
         unsafe { core::mem::transmute(image.entry) };
 

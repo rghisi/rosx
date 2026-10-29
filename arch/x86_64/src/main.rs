@@ -3,9 +3,11 @@
 #![feature(abi_x86_interrupt)]
 
 extern crate alloc;
+mod apic;
 mod cpu;
 mod debug_console;
 mod elf_arch;
+mod interrupt_controller;
 mod interrupts;
 mod vga_buffer;
 mod terminal_fonts;
@@ -26,6 +28,7 @@ use kernel::kernel::Kernel;
 use kernel::scheduler;
 use kernel::kprintln;
 use kernel::panic::handle_panic;
+use kernel::task::FunctionTask;
 use kernel::task::new_elf_task;
 
 static FB_OUTPUT: FramebufferOutput = FramebufferOutput;
@@ -62,6 +65,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
     let phys_offset = boot_info.physical_memory_offset.into_option().unwrap();
     unsafe { cpu::clear_nx_bits(phys_offset); }
+    apic::set_phys_offset(phys_offset);
     let memory_blocks = build_memory_blocks(boot_info, phys_offset);
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kprintln!("[KERNEL] Initializing");
@@ -69,6 +73,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     kernel.setup();
     static ROM_IMAGE: &[u8] = include_bytes!("../../../target/rosx-user/rom.img");
     kernel::rom::init(ROM_IMAGE);
+    let _ = kernel.schedule(FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main));
     // kernel.schedule(FunctionTask::new("1", dummy::app::main));
     // kernel.schedule(FunctionTask::new("2", dummy::app::main2));
     // kernel.schedule(FunctionTask::new("3", dummy::app::main3));
@@ -83,10 +88,13 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let _ = kernel.schedule(new_elf_task(PONG_ELF));
     static VFSD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/vfsd");
     let _ = kernel.schedule(new_elf_task(VFSD_ELF));
+    static INPUTD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/inputd");
+    let _ = kernel.schedule(new_elf_task(INPUTD_ELF));
+    static PS2D_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/ps2d");
+    let _ = kernel.schedule(new_elf_task(PS2D_ELF));
     static SHELL_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/shell");
     let _ = kernel.schedule(new_elf_task(SHELL_ELF));
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
-    // kernel.schedule(FunctionTask::new("Test Suite", test_suite::app::main));
 
     kprintln!("[KERNEL] Starting");
     kernel.start();

@@ -180,7 +180,9 @@ rosx/
 │   ├── conway/             # Conway's Game of Life
 │   ├── dummy/              # Dummy app for testing
 │   ├── waitset/            # Waitset OR-composition demo
-│   └── test_suite/         # Test suite app
+│   ├── inputd/             # INPUTD input multiplexer daemon
+│   ├── ps2d/               # PS/2 keyboard driver daemon
+│   └── stress/             # Kernel subsystem stress tests (memory, context switching)
 ├── system/                 # ABI treaty: syscall numbers, wire layout, error numbers
 └── usrlib/                 # User-space library
 ```

@@ -1,10 +1,9 @@
 [package]
 authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
-name = "test_suite"
+name = "input-protocol"
 publish = false
 version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-system = { path = "../../system" }
-usrlib = { path = "../../usrlib" }
+system = { path = "../system" }

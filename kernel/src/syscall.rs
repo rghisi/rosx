@@ -10,6 +10,7 @@ use system::ipc::Message;
 use crate::handle::{FutureHandle, IpcConnectionHandle, IpcBindingHandle, IpcDataHandle};
 #[cfg(not(test))]
 use crate::future::waitset::{AttachError, WaitsetFuture};
+use crate::memory::free_list_allocator::BlockOwner;
 use crate::ipc::message_future::IpcMessageFuture;
 use crate::task::{new_elf_task, new_elf_task_with_arguments, new_entrypoint_task, validate_arguments_blob};
 #[cfg(not(test))]
@@ -39,19 +40,6 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             kernel().task_yield();
             0
         }
-        Ok(SyscallNum::ReadChar) => {
-            if let Some(c) = crate::keyboard::pop_key() {
-                return c as usize;
-            }
-            let future = Box::new(crate::keyboard::KeyboardFuture::new());
-            let handle = services().future_registry
-                .borrow_mut()
-                .register(future)
-                .expect("Failed to register keyboard future");
-            crate::keyboard::register_future_handle(handle);
-            let _ = kernel().wait_future(handle);
-            crate::keyboard::pop_key().map_or(0, |c| c as usize)
-        }
         Ok(SyscallNum::WaitFuture) => {
             let Some(handle) = FutureHandle::from_packed(arg1 as usize) else { return 0 };
             if services().future_registry.borrow_mut().is_waitset(handle) {
@@ -74,15 +62,13 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::Alloc) => {
             let Ok(layout) = Layout::from_size_align(arg1, arg2) else { return 0 };
-            (unsafe { services().memory_manager.alloc(layout) }) as usize
+            let owner = BlockOwner::Task(kernel().execution_state.current_task().pack());
+            (unsafe { services().memory_manager.alloc_with_owner(layout, owner) }) as usize
         }
         Ok(SyscallNum::Dealloc) => {
             let Ok(layout) = Layout::from_size_align(arg2, arg3) else { return 0 };
             unsafe { services().memory_manager.dealloc(arg1 as *mut u8, layout) };
             0
-        }
-        Ok(SyscallNum::TryReadChar) => {
-            crate::keyboard::pop_key().map_or(0, |c| c as usize)
         }
         Ok(SyscallNum::LoadElf) => {
             if arg1 == 0 { return u64::MAX as usize; }
