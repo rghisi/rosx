@@ -98,6 +98,7 @@ fn set_frequency_to_100hz() {
 
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
     interrupt::dispatch_irq(InterruptIndex::Timer.as_irq());
+    kernel().apply_pending_preemption();
 }
 
 const KEYBOARD_PORT: u16 = 0x60;
