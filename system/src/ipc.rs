@@ -78,6 +78,8 @@ mod tests {
             ErrorCode::WaitsetChildInvalid,
             ErrorCode::WaitsetNestingForbidden,
             ErrorCode::WaitsetNotFound,
+            ErrorCode::WaitsetLeafRequired,
+            ErrorCode::FutureCapacityExhausted,
             ErrorCode::Unknown,
         ] {
             let raw = code.to_reg();

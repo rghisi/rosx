@@ -107,7 +107,9 @@ fn waitfuture_on_waitset_is_guarded(
     if Syscall::waitset_attach(set, child, GUARD_TAG).is_err() {
         return false;
     }
-    if Syscall::wait_for_message(set).is_ok() {
+    if usrlib::arch::raw_syscall(SyscallNum::WaitFuture as usize, set.value(), 0, 0)
+        != ErrorCode::WaitsetLeafRequired.to_reg()
+    {
         return false;
     }
     let mut data = [0u8; MESSAGE_PAYLOAD_BYTES];

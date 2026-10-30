@@ -133,6 +133,7 @@ pub enum WaitsetError {
     ChildInvalid,
     NestingForbidden,
     NotFound,
+    CapacityExhausted,
 }
 
 impl From<ErrorCode> for WaitsetError {
@@ -141,6 +142,7 @@ impl From<ErrorCode> for WaitsetError {
             ErrorCode::WaitsetFull => Self::Full,
             ErrorCode::WaitsetChildInvalid => Self::ChildInvalid,
             ErrorCode::WaitsetNestingForbidden => Self::NestingForbidden,
+            ErrorCode::FutureCapacityExhausted => Self::CapacityExhausted,
             _ => Self::NotFound,
         }
     }
@@ -153,6 +155,7 @@ impl Display for WaitsetError {
             WaitsetError::ChildInvalid => write!(f, "Waitset child invalid"),
             WaitsetError::NestingForbidden => write!(f, "Waitset nesting forbidden"),
             WaitsetError::NotFound => write!(f, "Waitset not found"),
+            WaitsetError::CapacityExhausted => write!(f, "Future capacity exhausted"),
         }
     }
 }
@@ -161,7 +164,7 @@ impl Display for WaitsetError {
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 17] = [
+    const ALL_ERROR_CODES: [ErrorCode; 19] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -178,6 +181,8 @@ mod tests {
         ErrorCode::WaitsetChildInvalid,
         ErrorCode::WaitsetNestingForbidden,
         ErrorCode::WaitsetNotFound,
+        ErrorCode::WaitsetLeafRequired,
+        ErrorCode::FutureCapacityExhausted,
         ErrorCode::Unknown,
     ];
 
@@ -216,6 +221,7 @@ mod tests {
                 ErrorCode::WaitsetFull => WaitsetError::Full,
                 ErrorCode::WaitsetChildInvalid => WaitsetError::ChildInvalid,
                 ErrorCode::WaitsetNestingForbidden => WaitsetError::NestingForbidden,
+                ErrorCode::FutureCapacityExhausted => WaitsetError::CapacityExhausted,
                 _ => WaitsetError::NotFound,
             };
 

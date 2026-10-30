@@ -25,6 +25,8 @@ pub enum ErrorCode {
     WaitsetChildInvalid = 0x0302,
     WaitsetNestingForbidden = 0x0303,
     WaitsetNotFound = 0x0304,
+    WaitsetLeafRequired = 0x0305,
+    FutureCapacityExhausted = 0x0401,
     Unknown = 0x7FFF_FFFF,
 }
 
@@ -53,6 +55,8 @@ impl ErrorCode {
             0x0302 => ErrorCode::WaitsetChildInvalid,
             0x0303 => ErrorCode::WaitsetNestingForbidden,
             0x0304 => ErrorCode::WaitsetNotFound,
+            0x0305 => ErrorCode::WaitsetLeafRequired,
+            0x0401 => ErrorCode::FutureCapacityExhausted,
             _ => ErrorCode::Unknown,
         }
     }
@@ -62,7 +66,7 @@ impl ErrorCode {
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 19] = [
+    const ALL_ERROR_CODES: [ErrorCode; 21] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -81,6 +85,8 @@ mod tests {
         ErrorCode::WaitsetChildInvalid,
         ErrorCode::WaitsetNestingForbidden,
         ErrorCode::WaitsetNotFound,
+        ErrorCode::WaitsetLeafRequired,
+        ErrorCode::FutureCapacityExhausted,
         ErrorCode::Unknown,
     ];
 

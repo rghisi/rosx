@@ -43,7 +43,7 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         Ok(SyscallNum::WaitFuture) => {
             let Some(handle) = FutureHandle::from_packed(arg1 as usize) else { return 0 };
             if services().future_registry.borrow_mut().is_waitset(handle) {
-                return ErrorCode::Unknown.to_reg();
+                return ErrorCode::WaitsetLeafRequired.to_reg();
             }
             let out_ptr = arg2;
             let future = kernel().wait_future(handle).unwrap();
@@ -159,7 +159,7 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         Ok(SyscallNum::WaitsetCreate) => {
             match services().future_registry.borrow_mut().register(Box::new(WaitsetFuture::new())) {
                 Some(handle) => handle.pack(),
-                None => ErrorCode::WaitsetFull.to_reg(),
+                None => ErrorCode::FutureCapacityExhausted.to_reg(),
             }
         }
         Ok(SyscallNum::WaitsetAttach) => {
