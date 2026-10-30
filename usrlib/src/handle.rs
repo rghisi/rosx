@@ -6,17 +6,17 @@ use system::syscall_numbers::SyscallNum;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct UserFutureHandle {
-    packed: u32,
+    token: u32,
 }
 
 impl UserFutureHandle {
-    pub(crate) fn packed(self) -> u32 {
-        self.packed
+    pub fn value(self) -> usize {
+        self.token as usize
     }
 
     pub(crate) fn from_token(raw: usize) -> Option<Self> {
         if is_token(raw) {
-            Some(Self { packed: raw as u32 })
+            Some(Self { token: raw as u32 })
         } else {
             None
         }
@@ -25,29 +25,29 @@ impl UserFutureHandle {
 
 impl Debug for UserFutureHandle {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{:08x}", self.packed)
+        write!(f, "{:08x}", self.token)
     }
 }
 
 impl Display for UserFutureHandle {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{:08x}", self.packed)
+        write!(f, "{:08x}", self.token)
     }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct UserConnectionHandle {
-    packed: u32,
+    token: u32,
 }
 
 impl UserConnectionHandle {
-    pub(crate) fn packed(self) -> u32 {
-        self.packed
+    pub fn value(self) -> usize {
+        self.token as usize
     }
 
     pub(crate) fn from_token(raw: usize) -> Option<Self> {
         if is_token(raw) {
-            Some(Self { packed: raw as u32 })
+            Some(Self { token: raw as u32 })
         } else {
             None
         }
@@ -56,29 +56,29 @@ impl UserConnectionHandle {
 
 impl Debug for UserConnectionHandle {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{:08x}", self.packed)
+        write!(f, "{:08x}", self.token)
     }
 }
 
 impl Display for UserConnectionHandle {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{:08x}", self.packed)
+        write!(f, "{:08x}", self.token)
     }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct UserBindingHandle {
-    packed: u32,
+    token: u32,
 }
 
 impl UserBindingHandle {
-    pub(crate) fn packed(self) -> u32 {
-        self.packed
+    pub fn value(self) -> usize {
+        self.token as usize
     }
 
     pub(crate) fn from_token(raw: usize) -> Option<Self> {
         if is_token(raw) {
-            Some(Self { packed: raw as u32 })
+            Some(Self { token: raw as u32 })
         } else {
             None
         }
@@ -87,32 +87,29 @@ impl UserBindingHandle {
 
 impl Debug for UserBindingHandle {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{:08x}", self.packed)
+        write!(f, "{:08x}", self.token)
     }
 }
 
 impl Display for UserBindingHandle {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{:08x}", self.packed)
+        write!(f, "{:08x}", self.token)
     }
 }
 
 pub struct UserDataHandle {
-    packed: Option<u32>,
+    token: Option<u32>,
 }
 
 impl UserDataHandle {
-    pub(crate) fn packed(&self) -> u32 {
-        match self.packed {
-            Some(token) => token,
-            None => 0,
-        }
+    pub fn value(&self) -> usize {
+        self.token.unwrap_or(0) as usize
     }
 
     pub(crate) fn from_token(raw: usize) -> Option<Self> {
         if is_token(raw) {
             Some(Self {
-                packed: Some(raw as u32),
+                token: Some(raw as u32),
             })
         } else {
             None
@@ -120,7 +117,7 @@ impl UserDataHandle {
     }
 
     pub fn release(&mut self) -> Result<(), DataError> {
-        let Some(raw) = self.packed.take() else {
+        let Some(raw) = self.token.take() else {
             return Ok(());
         };
         let result =
@@ -141,8 +138,8 @@ impl Drop for UserDataHandle {
 
 impl Debug for UserDataHandle {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        match self.packed {
-            Some(packed) => write!(f, "{:08x}", packed),
+        match self.token {
+            Some(token) => write!(f, "{:08x}", token),
             None => write!(f, "released"),
         }
     }
@@ -150,8 +147,8 @@ impl Debug for UserDataHandle {
 
 impl Display for UserDataHandle {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        match self.packed {
-            Some(packed) => write!(f, "{:08x}", packed),
+        match self.token {
+            Some(token) => write!(f, "{:08x}", token),
             None => write!(f, "released"),
         }
     }
@@ -190,7 +187,14 @@ mod tests {
     }
 
     #[test]
-    fn debug_and_display_render_packed_hex_only() {
+    fn value_round_trips_the_token_through_the_register_domain() {
+        let handle = UserFutureHandle::from_token(0x0012_3456usize).unwrap();
+        assert_eq!(handle.value(), 0x0012_3456usize);
+        assert_eq!(UserFutureHandle::from_token(handle.value()).unwrap(), handle);
+    }
+
+    #[test]
+    fn debug_and_display_render_token_as_hex() {
         let rendered = format!(
             "{:?}",
             UserConnectionHandle::from_token(0x0012_3456usize).unwrap()
@@ -205,17 +209,17 @@ mod tests {
 
     #[test]
     fn data_handle_release_on_released_token_is_ok_and_idempotent() {
-        let mut handle = UserDataHandle { packed: None };
+        let mut handle = UserDataHandle { token: None };
         assert_eq!(handle.release(), Ok(()));
         assert_eq!(handle.release(), Ok(()));
     }
 
     #[test]
-    fn released_data_handle_renders_as_released_and_packs_to_zero() {
-        let mut handle = UserDataHandle { packed: None };
+    fn released_data_handle_renders_as_released_and_values_to_zero() {
+        let mut handle = UserDataHandle { token: None };
         assert_eq!(format!("{:?}", handle), "released");
         assert_eq!(format!("{}", handle), "released");
-        assert_eq!(handle.packed(), 0);
+        assert_eq!(handle.value(), 0);
         assert_eq!(handle.release(), Ok(()));
     }
 

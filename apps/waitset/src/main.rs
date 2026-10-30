@@ -86,12 +86,9 @@ fn nesting_is_rejected(set: UserFutureHandle) -> bool {
 }
 
 fn absent_child_is_rejected(set: UserFutureHandle) -> bool {
-    let Ok(set_word) = u32::from_str_radix(&format!("{}", set), 16) else {
-        return false;
-    };
     usrlib::arch::raw_syscall(
         SyscallNum::WaitsetAttach as usize,
-        set_word as usize,
+        set.value(),
         MISSING_CHILD_PROBE,
         99,
     ) == ErrorCode::WaitsetChildInvalid.to_reg()

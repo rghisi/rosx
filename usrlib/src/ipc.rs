@@ -106,7 +106,7 @@ pub fn send_data(
 ) -> Result<UserDataHandle, SendDataError> {
     let handle = Syscall::ipc_data_write(connection, payload)?;
     let mut data = [0u8; MESSAGE_PAYLOAD_BYTES];
-    encode_data_token(&mut data, handle.packed());
+    encode_data_token(&mut data, handle.value() as u32);
     Syscall::ipc_send(connection, &data).map_err(SendDataError::Send)?;
     Ok(handle)
 }

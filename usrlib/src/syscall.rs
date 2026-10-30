@@ -44,7 +44,7 @@ impl Syscall {
     pub fn wait_future(handle: UserFutureHandle) {
         arch::raw_syscall(
             SyscallNum::WaitFuture as usize,
-            handle.packed() as usize,
+            handle.value(),
             0,
             0,
         );
@@ -54,7 +54,7 @@ impl Syscall {
         let mut envelope = Message::EMPTY;
         let raw = arch::raw_syscall(
             SyscallNum::WaitFuture as usize,
-            handle.packed() as usize,
+            handle.value(),
             &mut envelope as *mut Message as usize,
             0,
         );
@@ -68,7 +68,7 @@ impl Syscall {
     pub fn is_future_completed(handle: UserFutureHandle) -> bool {
         let result = arch::raw_syscall(
             SyscallNum::IsFutureCompleted as usize,
-            handle.packed() as usize,
+            handle.value(),
             0,
             0,
         );
@@ -108,7 +108,7 @@ impl Syscall {
     pub fn ipc_disconnect(connection_handle: UserConnectionHandle) {
         arch::raw_syscall(
             SyscallNum::IpcDisconnect as usize,
-            connection_handle.packed() as usize,
+            connection_handle.value(),
             0,
             0,
         );
@@ -127,7 +127,7 @@ impl Syscall {
         connection: UserConnectionHandle,
         data: &[u8; MESSAGE_PAYLOAD_BYTES],
     ) -> Result<(), IpcSendError> {
-        let envelope = Message::new(connection.packed(), data);
+        let envelope = Message::new(connection.value() as u32, data);
         let raw = arch::raw_syscall(
             SyscallNum::IpcSendMessage as usize,
             &envelope as *const Message as usize,
@@ -146,7 +146,7 @@ impl Syscall {
     ) -> Option<UserFutureHandle> {
         let raw = arch::raw_syscall(
             SyscallNum::IpcReceiveMessage as usize,
-            connection_handle.packed() as usize,
+            connection_handle.value(),
             0,
             0,
         );
@@ -156,7 +156,7 @@ impl Syscall {
     pub fn ipc_accept_message(binding_handle: UserBindingHandle) -> Option<UserFutureHandle> {
         let raw = arch::raw_syscall(
             SyscallNum::IpcAcceptMessage as usize,
-            binding_handle.packed() as usize,
+            binding_handle.value(),
             0,
             0,
         );
@@ -169,7 +169,7 @@ impl Syscall {
     ) -> Result<UserDataHandle, DataError> {
         let raw = arch::raw_syscall(
             SyscallNum::IpcDataWrite as usize,
-            connection.packed() as usize,
+            connection.value(),
             payload.as_ptr() as usize,
             payload.len(),
         );
@@ -217,8 +217,8 @@ impl Syscall {
     ) -> Result<(), WaitsetError> {
         let raw = arch::raw_syscall(
             SyscallNum::WaitsetAttach as usize,
-            set.packed() as usize,
-            child.packed() as usize,
+            set.value(),
+            child.value(),
             tag as usize,
         );
         if is_token(raw) {
@@ -234,8 +234,8 @@ impl Syscall {
     ) -> Result<(), WaitsetError> {
         let raw = arch::raw_syscall(
             SyscallNum::WaitsetDetach as usize,
-            set.packed() as usize,
-            child.packed() as usize,
+            set.value(),
+            child.value(),
             0,
         );
         if is_token(raw) {
@@ -249,7 +249,7 @@ impl Syscall {
         let mut event = WaitEvent { child: 0, tag: 0 };
         let raw = arch::raw_syscall(
             SyscallNum::WaitsetWait as usize,
-            set.packed() as usize,
+            set.value(),
             &mut event as *mut WaitEvent as usize,
             0,
         );
@@ -264,7 +264,7 @@ impl Syscall {
     }
 
     pub fn waitset_drop(set: UserFutureHandle) {
-        arch::raw_syscall(SyscallNum::WaitsetDrop as usize, set.packed() as usize, 0, 0);
+        arch::raw_syscall(SyscallNum::WaitsetDrop as usize, set.value(), 0, 0);
     }
 }
 
