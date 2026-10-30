@@ -301,7 +301,7 @@ impl FutureRegistry {
 
     fn cascade_to_waitsets(&mut self, handle: FutureHandle) {
         let index = handle.index() as usize;
-        let mut row = match self.parents_of.get_mut(index) {
+        let row = match self.parents_of.get_mut(index) {
             Some(slot) => core::mem::take(slot),
             None => return,
         };
@@ -313,10 +313,9 @@ impl FutureRegistry {
             return;
         }
         let child_token = handle.pack() as u32;
-        let mut satisfied_end = 0usize;
-        let mut cursor = 0usize;
-        while cursor < row.len() {
-            let link = row[cursor];
+        let mut kept = Vec::with_capacity(row.len());
+        let mut awakened = Vec::new();
+        for link in row {
             let recorded = match self.arena.borrow_mut(link.parent.into()) {
                 Ok(future) => match future.as_any_mut().downcast_mut::<WaitsetFuture>() {
                     Some(waitset) => Some(waitset.record(WaitEvent { child: child_token, tag: link.tag })),
@@ -325,27 +324,18 @@ impl FutureRegistry {
                 Err(_) => None,
             };
             match recorded {
+                None => continue,
                 Some(became_signalled) => {
                     if became_signalled {
-                        row.swap(cursor, satisfied_end);
-                        satisfied_end += 1;
+                        awakened.push(link.parent);
                     }
-                    cursor += 1;
-                }
-                None => {
-                    row.swap_remove(cursor);
+                    kept.push(link);
                 }
             }
         }
-        self.parents_of[index] = row;
-        let mut wake_cursor = 0usize;
-        while wake_cursor < satisfied_end {
-            let parent = match self.parents_of[index].get(wake_cursor) {
-                Some(link) => link.parent,
-                None => break,
-            };
+        self.parents_of[index] = kept;
+        for parent in awakened {
             self.notify(parent);
-            wake_cursor += 1;
         }
     }
 
