@@ -179,6 +179,7 @@ rosx/
 │   ├── tetris/             # Tetris game
 │   ├── conway/             # Conway's Game of Life
 │   ├── dummy/              # Dummy app for testing
+│   ├── waitset/            # Waitset OR-composition demo
 │   ├── inputd/             # INPUTD input multiplexer daemon
 │   ├── ps2d/               # PS/2 keyboard driver daemon
 │   └── stress/             # Kernel subsystem stress tests (memory, context switching)

@@ -55,7 +55,7 @@ fn ensure_connection() -> Option<UserConnectionHandle> {
     }
     for _ in 0..CONNECT_ATTEMPTS {
         if let Ok(connection) = Syscall::ipc_connect(wire::SERVICE_NAME) {
-            CACHED_CONNECTION.store(connection.packed() as usize, Ordering::Relaxed);
+            CACHED_CONNECTION.store(connection.value(), Ordering::Relaxed);
             return Some(connection);
         }
         Syscall::sleep(CONNECT_RETRY_DELAY_MS);

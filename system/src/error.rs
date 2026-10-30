@@ -21,6 +21,12 @@ pub enum ErrorCode {
     IpcDataNotReadable = 0x010C,
     ElfArgumentLimitExceeded = 0x0201,
     ElfArgumentBlobMalformed = 0x0202,
+    WaitsetFull = 0x0301,
+    WaitsetChildInvalid = 0x0302,
+    WaitsetNestingForbidden = 0x0303,
+    WaitsetNotFound = 0x0304,
+    WaitsetLeafRequired = 0x0305,
+    FutureCapacityExhausted = 0x0401,
     Unknown = 0x7FFF_FFFF,
 }
 
@@ -45,6 +51,12 @@ impl ErrorCode {
             0x010C => ErrorCode::IpcDataNotReadable,
             0x0201 => ErrorCode::ElfArgumentLimitExceeded,
             0x0202 => ErrorCode::ElfArgumentBlobMalformed,
+            0x0301 => ErrorCode::WaitsetFull,
+            0x0302 => ErrorCode::WaitsetChildInvalid,
+            0x0303 => ErrorCode::WaitsetNestingForbidden,
+            0x0304 => ErrorCode::WaitsetNotFound,
+            0x0305 => ErrorCode::WaitsetLeafRequired,
+            0x0401 => ErrorCode::FutureCapacityExhausted,
             _ => ErrorCode::Unknown,
         }
     }
@@ -54,7 +66,7 @@ impl ErrorCode {
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 15] = [
+    const ALL_ERROR_CODES: [ErrorCode; 21] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -69,6 +81,12 @@ mod tests {
         ErrorCode::IpcDataNotReadable,
         ErrorCode::ElfArgumentLimitExceeded,
         ErrorCode::ElfArgumentBlobMalformed,
+        ErrorCode::WaitsetFull,
+        ErrorCode::WaitsetChildInvalid,
+        ErrorCode::WaitsetNestingForbidden,
+        ErrorCode::WaitsetNotFound,
+        ErrorCode::WaitsetLeafRequired,
+        ErrorCode::FutureCapacityExhausted,
         ErrorCode::Unknown,
     ];
 

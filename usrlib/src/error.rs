@@ -127,11 +127,44 @@ impl Display for DataError {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum WaitsetError {
+    Full,
+    ChildInvalid,
+    NestingForbidden,
+    NotFound,
+    CapacityExhausted,
+}
+
+impl From<ErrorCode> for WaitsetError {
+    fn from(code: ErrorCode) -> Self {
+        match code {
+            ErrorCode::WaitsetFull => Self::Full,
+            ErrorCode::WaitsetChildInvalid => Self::ChildInvalid,
+            ErrorCode::WaitsetNestingForbidden => Self::NestingForbidden,
+            ErrorCode::FutureCapacityExhausted => Self::CapacityExhausted,
+            _ => Self::NotFound,
+        }
+    }
+}
+
+impl Display for WaitsetError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            WaitsetError::Full => write!(f, "Waitset capacity exhausted"),
+            WaitsetError::ChildInvalid => write!(f, "Waitset child invalid"),
+            WaitsetError::NestingForbidden => write!(f, "Waitset nesting forbidden"),
+            WaitsetError::NotFound => write!(f, "Waitset not found"),
+            WaitsetError::CapacityExhausted => write!(f, "Future capacity exhausted"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 13] = [
+    const ALL_ERROR_CODES: [ErrorCode; 19] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -144,6 +177,12 @@ mod tests {
         ErrorCode::IpcDataBudgetExceeded,
         ErrorCode::IpcDataNotFound,
         ErrorCode::IpcDataNotReadable,
+        ErrorCode::WaitsetFull,
+        ErrorCode::WaitsetChildInvalid,
+        ErrorCode::WaitsetNestingForbidden,
+        ErrorCode::WaitsetNotFound,
+        ErrorCode::WaitsetLeafRequired,
+        ErrorCode::FutureCapacityExhausted,
         ErrorCode::Unknown,
     ];
 
@@ -155,6 +194,7 @@ mod tests {
             let send = IpcSendError::from(code);
             let receive = IpcReceiveError::from(code);
             let data = DataError::from(code);
+            let waitset = WaitsetError::from(code);
 
             let expected_connection = match code {
                 ErrorCode::IpcConnectionCannotBeEstablished => {
@@ -177,12 +217,20 @@ mod tests {
                 ErrorCode::IpcDataNotReadable => DataError::NotReadable,
                 _ => DataError::NotFound,
             };
+            let expected_waitset = match code {
+                ErrorCode::WaitsetFull => WaitsetError::Full,
+                ErrorCode::WaitsetChildInvalid => WaitsetError::ChildInvalid,
+                ErrorCode::WaitsetNestingForbidden => WaitsetError::NestingForbidden,
+                ErrorCode::FutureCapacityExhausted => WaitsetError::CapacityExhausted,
+                _ => WaitsetError::NotFound,
+            };
 
             assert_eq!(connection, expected_connection);
             assert_eq!(binding, IpcBindingError::AlreadyBound);
             assert_eq!(send, expected_send);
             assert_eq!(receive, expected_receive);
             assert_eq!(data, expected_data);
+            assert_eq!(waitset, expected_waitset);
         }
     }
 
@@ -205,5 +253,6 @@ mod tests {
             IpcReceiveError::ConnectionNotFound
         );
         assert_eq!(DataError::from(ErrorCode::Unknown), DataError::NotFound);
+        assert_eq!(WaitsetError::from(ErrorCode::Unknown), WaitsetError::NotFound);
     }
 }

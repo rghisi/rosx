@@ -7,4 +7,5 @@ pub mod ipc;
 pub mod error;
 pub mod kstats;
 pub mod rom;
+pub mod waitset;
 
