@@ -127,6 +127,14 @@ impl Default for FutureRegistry {
     }
 }
 
+fn is_waitset(future: &Box<dyn Future + Send + Sync>) -> bool {
+    future.as_any().downcast_ref::<WaitsetFuture>().is_some()
+}
+
+fn as_waitset(future: &mut Box<dyn Future + Send + Sync>) -> Option<&mut WaitsetFuture> {
+    future.as_any_mut().downcast_mut::<WaitsetFuture>()
+}
+
 impl FutureRegistry {
     pub fn new() -> Self {
         Self {
@@ -168,7 +176,7 @@ impl FutureRegistry {
             let row = core::mem::take(row_slot);
             for link in row {
                 if let Ok(future) = self.arena.borrow_mut(link.parent.into()) {
-                    if let Some(waitset) = future.as_any_mut().downcast_mut::<WaitsetFuture>() {
+                    if let Some(waitset) = as_waitset(future) {
                         waitset.remove_child(handle);
                     }
                 }
@@ -192,23 +200,16 @@ impl FutureRegistry {
     }
 
     pub(crate) fn is_waitset(&mut self, handle: FutureHandle) -> bool {
-        match self.arena.borrow_mut(handle.into()) {
-            Ok(future) => future.as_any().downcast_ref::<WaitsetFuture>().is_some(),
+        match self.arena.borrow(handle.into()) {
+            Ok(future) => is_waitset(future),
             Err(_) => false,
         }
     }
 
     pub(crate) fn attach(&mut self, set: FutureHandle, child: FutureHandle, tag: u32) -> Result<(), AttachError> {
-        let parent_is_waitset = match self.arena.borrow_mut(set.into()) {
-            Ok(future) => future.as_any().downcast_ref::<WaitsetFuture>().is_some(),
-            Err(_) => return Err(AttachError::ParentNotFound),
-        };
-        if !parent_is_waitset {
-            return Err(AttachError::ParentNotFound);
-        }
         let child_completed = match self.arena.borrow(child.into()) {
             Ok(future) => {
-                if future.as_any().downcast_ref::<WaitsetFuture>().is_some() {
+                if is_waitset(future) {
                     return Err(AttachError::NestingForbidden);
                 }
                 future.is_completed()
@@ -217,7 +218,7 @@ impl FutureRegistry {
         };
         {
             let parent = match self.arena.borrow_mut(set.into()) {
-                Ok(future) => match future.as_any_mut().downcast_mut::<WaitsetFuture>() {
+                Ok(future) => match as_waitset(future) {
                     Some(waitset) => waitset,
                     None => return Err(AttachError::ParentNotFound),
                 },
@@ -243,7 +244,7 @@ impl FutureRegistry {
 
     pub(crate) fn detach(&mut self, set: FutureHandle, child: FutureHandle) -> Result<(), AttachError> {
         let edge_removed = match self.arena.borrow_mut(set.into()) {
-            Ok(future) => match future.as_any_mut().downcast_mut::<WaitsetFuture>() {
+            Ok(future) => match as_waitset(future) {
                 Some(waitset) => waitset.remove_child(child),
                 None => return Err(AttachError::ParentNotFound),
             },
@@ -261,7 +262,7 @@ impl FutureRegistry {
     pub(crate) fn take_pending(&mut self, set: FutureHandle) -> WaitsetTake {
         loop {
             let event = match self.arena.borrow_mut(set.into()) {
-                Ok(future) => match future.as_any_mut().downcast_mut::<WaitsetFuture>() {
+                Ok(future) => match as_waitset(future) {
                     Some(waitset) => match waitset.take_pending() {
                         Some(event) => event,
                         None => return WaitsetTake::Empty,
@@ -282,7 +283,7 @@ impl FutureRegistry {
 
     pub(crate) fn drop_waitset(&mut self, set: FutureHandle) {
         let children = match self.arena.borrow_mut(set.into()) {
-            Ok(future) => match future.as_any_mut().downcast_mut::<WaitsetFuture>() {
+            Ok(future) => match as_waitset(future) {
                 Some(waitset) => waitset.child_handles(),
                 None => return,
             },
@@ -317,7 +318,7 @@ impl FutureRegistry {
         let mut awakened = Vec::new();
         for link in row {
             let recorded = match self.arena.borrow_mut(link.parent.into()) {
-                Ok(future) => match future.as_any_mut().downcast_mut::<WaitsetFuture>() {
+                Ok(future) => match as_waitset(future) {
                     Some(waitset) => Some(waitset.record(WaitEvent { child: child_token, tag: link.tag })),
                     None => None,
                 },
