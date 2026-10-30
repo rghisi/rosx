@@ -8,10 +8,11 @@ const ROUND_PREFIX: &str = "waitset round: ";
 const NEGATIVE_PREFIX: &str = "waitset negative: ";
 const LAST_LINE: &str = "waitset complete: 3 rounds ok";
 const FORBIDDEN_STRINGS: [&str; 2] = ["fail", "Panic"];
-const EXPECTED_NEGATIVE_LINES: [&str; 4] = [
+const EXPECTED_NEGATIVE_LINES: [&str; 5] = [
     "waitset negative: nesting rejected ok",
     "waitset negative: child rejected ok",
     "waitset negative: waitfuture guarded ok",
+    "waitset negative: detach purged ok",
     "waitset negative: drop idempotent ok",
 ];
 const EXPECTED_TAGS: [&str; 3] = ["11", "22", "33"];
@@ -128,8 +129,8 @@ fn shell_waitset_or_composition_roundtrip() {
     let negatives = negative_lines(&content);
     assert_eq!(
         negatives.len(),
-        4,
-        "expected exactly four lines starting with {NEGATIVE_PREFIX:?}\n{}",
+        5,
+        "expected exactly five lines starting with {NEGATIVE_PREFIX:?}\n{}",
         window_diagnostics(&content)
     );
     for (index, expected) in EXPECTED_NEGATIVE_LINES.iter().enumerate() {

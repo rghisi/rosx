@@ -16,6 +16,8 @@ const SERVICE_PREFIX: &str = "WAITSET";
 const SERVICE_BIND_ATTEMPTS: usize = 8;
 const ROUND_TAGS: [u32; 3] = [11, 22, 33];
 const GUARD_TAG: u32 = 44;
+const DETACHED_TAG: u32 = 55;
+const LIVE_TAG: u32 = 66;
 const MISSING_CHILD_PROBE: usize = 0x7FFF_FFFF;
 
 fn verdict_word(ok: bool) -> &'static str {
@@ -125,6 +127,47 @@ fn waitfuture_on_waitset_is_guarded(
     pong.data()[0] == GUARD_TAG as u8
 }
 
+fn detached_child_is_purged(
+    set: UserFutureHandle,
+    binding: UserBindingHandle,
+    connection: UserConnectionHandle,
+) -> bool {
+    let Some(stale) = Syscall::ipc_accept_message(binding) else {
+        return false;
+    };
+    if Syscall::waitset_attach(set, stale, DETACHED_TAG).is_err() {
+        return false;
+    }
+    let mut data = [0u8; MESSAGE_PAYLOAD_BYTES];
+    data[0] = DETACHED_TAG as u8;
+    if Syscall::ipc_send(connection, &data).is_err() {
+        return false;
+    }
+    if Syscall::waitset_detach(set, stale).is_err() {
+        return false;
+    }
+    let Some(live) = Syscall::ipc_accept_message(binding) else {
+        return false;
+    };
+    if Syscall::waitset_attach(set, live, LIVE_TAG).is_err() {
+        return false;
+    }
+    data[0] = LIVE_TAG as u8;
+    if Syscall::ipc_send(connection, &data).is_err() {
+        return false;
+    }
+    let Ok((event_child, event_tag)) = Syscall::waitset_wait(set) else {
+        return false;
+    };
+    if event_child != live || event_tag != LIVE_TAG {
+        return false;
+    }
+    let Ok(pong) = Syscall::wait_for_message(live) else {
+        return false;
+    };
+    pong.data()[0] == LIVE_TAG as u8
+}
+
 fn main() {
     let Some((binding, service)) = bind_free_service() else {
         println!("waitset complete: 3 rounds fail");
@@ -162,10 +205,15 @@ fn main() {
         "waitset negative: waitfuture guarded {}",
         verdict_word(guard_ok)
     );
+    let detach_ok = detached_child_is_purged(set, binding, connection);
+    println!(
+        "waitset negative: detach purged {}",
+        verdict_word(detach_ok)
+    );
     Syscall::waitset_drop(set);
     Syscall::waitset_drop(set);
     println!("waitset negative: drop idempotent ok");
-    let complete = rounds_ok && nesting_ok && absent_ok && guard_ok;
+    let complete = rounds_ok && nesting_ok && absent_ok && guard_ok && detach_ok;
     println!("waitset complete: 3 rounds {}", verdict_word(complete));
     Syscall::ipc_disconnect(connection);
 }
