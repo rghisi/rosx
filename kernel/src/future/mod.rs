@@ -229,7 +229,7 @@ impl FutureRegistry {
             if parent.child_count() == WAITSET_CHILD_CAPACITY {
                 return Err(AttachError::Full);
             }
-            parent.add_child(child, tag);
+            parent.add_child(child);
             if child_completed {
                 parent.record(WaitEvent { child: child.pack() as u32, tag });
             }
@@ -289,12 +289,10 @@ impl FutureRegistry {
             Err(_) => return,
         };
         for child in children {
-            if let Some(row) = self.parents_of.get_mut(child.index() as usize) {
-                row.retain(|link| link.parent != set);
-            }
+            let _ = self.detach(set, child);
         }
         self.notify(set);
-        let _ = self.arena.remove(set.into());
+        let _ = self.consume(set);
     }
 
     fn is_live(&mut self, handle: FutureHandle) -> bool {

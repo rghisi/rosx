@@ -7,7 +7,6 @@ use super::Future;
 use system::waitset::WaitEvent;
 
 pub(crate) const WAITSET_CHILD_CAPACITY: usize = 16;
-pub(crate) const WAITSET_PENDING_CAPACITY: usize = 16;
 
 #[derive(Copy, Clone)]
 pub(crate) struct ParentLink {
@@ -30,15 +29,8 @@ pub(crate) enum WaitsetTake {
     Gone,
 }
 
-#[derive(Copy, Clone)]
-pub(crate) struct WaitsetChild {
-    child: FutureHandle,
-    #[allow(dead_code)]
-    tag: u32,
-}
-
 pub(crate) struct WaitsetFuture {
-    children: Vec<WaitsetChild>,
+    children: Vec<FutureHandle>,
     pending: VecDeque<WaitEvent>,
 }
 
@@ -46,12 +38,12 @@ impl WaitsetFuture {
     pub(crate) fn new() -> Self {
         Self {
             children: Vec::with_capacity(WAITSET_CHILD_CAPACITY),
-            pending: VecDeque::with_capacity(WAITSET_PENDING_CAPACITY),
+            pending: VecDeque::with_capacity(WAITSET_CHILD_CAPACITY),
         }
     }
 
-    pub(crate) fn add_child(&mut self, child: FutureHandle, tag: u32) {
-        self.children.push(WaitsetChild { child, tag });
+    pub(crate) fn add_child(&mut self, child: FutureHandle) {
+        self.children.push(child);
     }
 
     pub(crate) fn record(&mut self, event: WaitEvent) -> bool {
@@ -67,13 +59,13 @@ impl WaitsetFuture {
     pub(crate) fn remove_child(&mut self, child: FutureHandle) -> bool {
         let token = child.pack() as u32;
         let before = self.children.len();
-        self.children.retain(|edge| edge.child != child);
+        self.children.retain(|attached| *attached != child);
         self.pending.retain(|event| event.child != token);
         self.children.len() != before
     }
 
     pub(crate) fn has_child(&self, child: FutureHandle) -> bool {
-        self.children.iter().any(|edge| edge.child == child)
+        self.children.contains(&child)
     }
 
     pub(crate) fn child_count(&self) -> usize {
@@ -81,7 +73,7 @@ impl WaitsetFuture {
     }
 
     pub(crate) fn child_handles(&self) -> Vec<FutureHandle> {
-        self.children.iter().map(|edge| edge.child).collect()
+        self.children.clone()
     }
 }
 
@@ -144,7 +136,7 @@ mod tests {
         let child = handle_at(3, 0);
         assert!(!waitset.has_child(child));
         assert_eq!(waitset.child_count(), 0);
-        waitset.add_child(child, 5);
+        waitset.add_child(child);
         assert!(waitset.has_child(child));
         assert_eq!(waitset.child_count(), 1);
     }
@@ -154,8 +146,8 @@ mod tests {
         let mut waitset = WaitsetFuture::new();
         let child = handle_at(4, 2);
         let other = handle_at(5, 0);
-        waitset.add_child(child, 1);
-        waitset.add_child(other, 2);
+        waitset.add_child(child);
+        waitset.add_child(other);
         waitset.record(WaitEvent { child: child.pack() as u32, tag: 1 });
         waitset.record(WaitEvent { child: other.pack() as u32, tag: 2 });
 
@@ -175,7 +167,7 @@ mod tests {
     fn remove_child_ignores_recycled_generation_of_same_index() {
         let mut waitset = WaitsetFuture::new();
         let child = handle_at(6, 1);
-        waitset.add_child(child, 3);
+        waitset.add_child(child);
         assert!(!waitset.remove_child(handle_at(6, 2)));
         assert!(waitset.has_child(child));
     }
@@ -185,8 +177,8 @@ mod tests {
         let mut waitset = WaitsetFuture::new();
         let first = handle_at(9, 0);
         let second = handle_at(10, 0);
-        waitset.add_child(first, 1);
-        waitset.add_child(second, 2);
+        waitset.add_child(first);
+        waitset.add_child(second);
         assert_eq!(waitset.child_handles(), vec![first, second]);
     }
 }
