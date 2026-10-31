@@ -24,7 +24,7 @@ use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
 use bootloader_api::config::Mapping;
 use core::panic::PanicInfo;
 use kernel::memory::{MemoryBlock, MemoryBlocks};
-use kernel::default_output::MultiplexOutput;
+use kernel::platform::output::MultiplexOutput;
 use kernel::kconfig::KConfig;
 use kernel::kernel::Kernel;
 use kernel::scheduler;
@@ -35,7 +35,7 @@ use kernel::task::new_elf_task;
 
 static FB_OUTPUT: FramebufferOutput = FramebufferOutput;
 pub static QEMU_OUTPUT: QemuDebugConsole = QemuDebugConsole;
-static OUTPUTS: &[&dyn kernel::default_output::KernelOutput] = &[&FB_OUTPUT, &QEMU_OUTPUT];
+static OUTPUTS: &[&dyn kernel::platform::output::KernelOutput] = &[&FB_OUTPUT, &QEMU_OUTPUT];
 
 static MULTIPLEXED_OUTPUT: MultiplexOutput = MultiplexOutput::new(OUTPUTS);
 

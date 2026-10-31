@@ -6,7 +6,6 @@ extern crate lazy_static;
 extern crate system;
 
 pub mod collections;
-pub mod default_output;
 pub mod elf;
 pub mod future;
 pub mod handle;

@@ -3,7 +3,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use crate::kernel::kernel;
 use crate::kernel_services::services;
-use crate::default_output::print;
+use crate::platform::output::print;
 use system::syscall_numbers::SyscallNum;
 use system::error::ErrorCode;
 use system::ipc::Message;
