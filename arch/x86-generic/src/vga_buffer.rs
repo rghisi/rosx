@@ -1,10 +1,17 @@
 use core::fmt;
 use core::fmt::Write;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use kernel::once::Once;
 use kernel::platform::output::KernelOutput;
 use spin::Mutex;
 use volatile::Volatile;
 use crate::ansi_parser::{AnsiParser, AnsiCommand, AnsiColor};
+
+static VGA_PHYS_OFFSET: AtomicUsize = AtomicUsize::new(0);
+
+pub fn init(physical_memory_offset: usize) {
+    VGA_PHYS_OFFSET.store(physical_memory_offset, Ordering::Relaxed);
+}
 
 static WRITER: Once<Mutex<Writer>> = Once::new();
 
@@ -70,7 +77,7 @@ impl Writer {
             row_position: BUFFER_HEIGHT - 1,
             color_code,
             default_color: color_code,
-            buffer: unsafe { &mut *(0xb8000 as *mut Buffer) },
+            buffer: unsafe { &mut *((VGA_PHYS_OFFSET.load(Ordering::Relaxed) + 0xb8000) as *mut Buffer) },
             ansi_parser: AnsiParser::new(),
         }
     }
