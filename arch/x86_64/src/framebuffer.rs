@@ -2,8 +2,8 @@ use core::fmt;
 use core::fmt::Write;
 use core::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering::Relaxed};
 use bootloader_api::info::{FrameBufferInfo, PixelFormat};
+use kernel::once::Once;
 use kernel::platform::output::KernelOutput;
-use lazy_static::lazy_static;
 use spin::Mutex;
 use x86_generic::ansi_parser::{AnsiColor, AnsiCommand, AnsiParser};
 use crate::terminal_fonts::{BitmapFont, IBM_8X8, IBM_VGA_8X16, TERMINUS_8X16, SPLEEN_8X16};
@@ -196,14 +196,16 @@ impl fmt::Write for Writer {
     }
 }
 
-lazy_static! {
-    static ref WRITER: Mutex<Writer> = Mutex::new(Writer::new());
-}
+static WRITER: Once<Mutex<Writer>> = Once::new();
 
 pub struct FramebufferOutput;
 
 impl KernelOutput for FramebufferOutput {
     fn write_str(&self, s: &str) {
-        WRITER.lock().write_str(s).unwrap();
+        WRITER
+            .get_or_init(|| Mutex::new(Writer::new()))
+            .lock()
+            .write_str(s)
+            .unwrap();
     }
 }
