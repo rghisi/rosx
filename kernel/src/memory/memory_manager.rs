@@ -2,7 +2,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use crate::cpu::Cpu;
+use crate::platform::cpu::Cpu;
 use crate::kernel_cell::KernelCell;
 use crate::memory::MemoryBlocks;
 use crate::memory::free_list_allocator::{BlockOwner, FreeListAllocator};
@@ -179,7 +179,7 @@ unsafe impl GlobalAlloc for MemoryManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::Cpu;
+    use crate::platform::cpu::Cpu;
     use crate::memory::{MemoryBlock, MAX_MEMORY_BLOCKS};
     use core::alloc::{GlobalAlloc, Layout};
 

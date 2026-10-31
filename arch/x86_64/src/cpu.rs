@@ -1,7 +1,7 @@
 use crate::interrupts::SYSTEM_TIME_MS;
 use core::arch::asm;
 use core::sync::atomic::Ordering::Relaxed;
-use kernel::cpu::Cpu;
+use kernel::platform::cpu::Cpu;
 use x86_64::registers::model_specific::{Efer, EferFlags, LStar, SFMask, Star};
 use x86_64::structures::gdt::SegmentSelector;
 use x86_64::VirtAddr;

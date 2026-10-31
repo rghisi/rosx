@@ -18,7 +18,7 @@ use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
 use bootloader_api::config::Mapping;
 use core::panic::PanicInfo;
 use kernel::memory::{MemoryBlock, MemoryBlocks};
-use kernel::default_output::MultiplexOutput;
+use kernel::platform::output::MultiplexOutput;
 use kernel::kconfig::KConfig;
 use kernel::kernel::Kernel;
 use kernel::scheduler;
@@ -31,7 +31,7 @@ use x86_generic::port::X86PortIo;
 
 static FB_OUTPUT: FramebufferOutput = FramebufferOutput;
 pub static QEMU_OUTPUT: QemuDebugConsole = QemuDebugConsole;
-static OUTPUTS: &[&dyn kernel::default_output::KernelOutput] = &[&FB_OUTPUT, &QEMU_OUTPUT];
+static OUTPUTS: &[&dyn kernel::platform::output::KernelOutput] = &[&FB_OUTPUT, &QEMU_OUTPUT];
 
 static MULTIPLEXED_OUTPUT: MultiplexOutput = MultiplexOutput::new(OUTPUTS);
 
@@ -95,10 +95,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static ATAD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/atad");
     match kernel.schedule_with_task_handle(new_elf_task(ATAD_ELF)) {
         Ok((atad_handle, _)) => {
-            if !kernel::portio::grant(atad_handle, 0x1F0, 0x1F7) {
+            if !kernel::platform::portio::grant(atad_handle, 0x1F0, 0x1F7) {
                 kprintln!("[KERNEL] atad primary taskfile grant failed");
             }
-            if !kernel::portio::grant(atad_handle, 0x3F6, 0x3F6) {
+            if !kernel::platform::portio::grant(atad_handle, 0x3F6, 0x3F6) {
                 kprintln!("[KERNEL] atad alternate status grant failed");
             }
         }

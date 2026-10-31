@@ -2,7 +2,7 @@ use core::fmt;
 use core::fmt::Write;
 use core::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering::Relaxed};
 use bootloader_api::info::{FrameBufferInfo, PixelFormat};
-use kernel::default_output::KernelOutput;
+use kernel::platform::output::KernelOutput;
 use lazy_static::lazy_static;
 use spin::Mutex;
 use x86_generic::ansi_parser::{AnsiColor, AnsiCommand, AnsiParser};

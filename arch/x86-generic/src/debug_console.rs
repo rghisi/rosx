@@ -1,4 +1,4 @@
-use kernel::default_output::KernelOutput;
+use kernel::platform::output::KernelOutput;
 pub struct QemuDebugConsole;
 
 impl QemuDebugConsole {
