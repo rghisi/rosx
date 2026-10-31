@@ -227,7 +227,7 @@ This is the MOST CRITICAL guideline for working on RosX:
 
 - **CRITICAL: Minimize `unsafe` usage** - Use Rust's safe abstractions whenever possible; `unsafe` only when truly unavoidable
 - **CRITICAL: Hardware abstraction required** - All platform-specific code must go through HAL traits (like `Cpu`), never directly in kernel code
-- **CRITICAL: kernel/ is `no_std`** - std is forbidden; dependencies are limited to the workspace crate `system` plus `lazy_static`. No other third-party crates.
+- **CRITICAL: kernel/ is `no_std`** - std is forbidden; dependencies are limited to the workspace crate `system`. No other third-party crates.
 - **CRITICAL: No comments, ever** - Write self-explanatory code with clear names instead
 - **CRITICAL: Write unit tests** - All kernel modules should have comprehensive unit tests (see `kernel/src/scheduler/mlfq_strategy.rs` as a reference)
 - **CRITICAL: No test-only functions in production code** - production functions need non-test callers; test helpers belong in `#[cfg(test)]` modules, and production APIs need real users
