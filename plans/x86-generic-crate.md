@@ -1,13 +1,11 @@
 # x86-Generic Arch Crate — Refactoring Plan
 
 > **Status:** Plan (no code written). Written 2026-10-31.
-> **Branch base:** `origin/main` (`7e1e6ae`, waitset #76; includes #86). The
-> port-I/O mechanism and the ATA integration suite live on the unmerged
-> `ata-pio-driver-plan` branch: milestones M1, M3, M4 apply to `main` today
-> (the `ansi_parser`, `debug_console`, `vga_buffer` duplication exists there);
-> **M2 lands only once `portio` is merged into `main`** (or its implementing
-> branch is rebased onto the merged main). The §2 portio facts were measured
-> on the `ata-pio-driver-plan` tree.
+> **Branch base:** `origin/main` at `c86667a` (#87 ATA driver merged;
+> includes waitset #76 and #86). All milestones apply to this base directly
+> — the port-I/O mechanism and the ATA integration suite that serve as M2's
+> oracles are on `main`. The §2 facts were re-verified on this base
+> (`portio.rs` 40/82 lines; `ansi_parser.rs` byte-identical at 197).
 > **Feature:** a new workspace crate `arch/x86-generic/` holding code that is
 > x86-family-specific but not bit-width-specific, shared by `arch/x86_64` and
 > `arch/x86_32`. First residents: the port executor (the `PortIo` HAL
