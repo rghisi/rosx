@@ -343,8 +343,10 @@ mod tests {
         signature_lba_high: u8,
         busy_stuck: bool,
         fault_status_after_reads: usize,
+        fault_status_after_data_writes: usize,
         fault_status: u8,
         data_reads: usize,
+        data_writes: usize,
         sleeps: u64,
         alternate_reads: usize,
         deny_reads: bool,
@@ -363,8 +365,10 @@ mod tests {
                 signature_lba_high: 0,
                 busy_stuck: false,
                 fault_status_after_reads: usize::MAX,
+                fault_status_after_data_writes: usize::MAX,
                 fault_status: READY_WITH_DRQ,
                 data_reads: 0,
+                data_writes: 0,
                 sleeps: 0,
                 alternate_reads: 0,
                 deny_reads: false,
@@ -376,6 +380,8 @@ mod tests {
             if self.busy_stuck {
                 STATUS_BUSY
             } else if self.data_reads >= self.fault_status_after_reads {
+                self.fault_status
+            } else if self.data_writes >= self.fault_status_after_data_writes {
                 self.fault_status
             } else {
                 READY_WITH_DRQ
@@ -434,6 +440,9 @@ mod tests {
         fn write_words(&mut self, port: u16, source: &[u16]) -> Result<(), PortError> {
             if self.deny_writes {
                 return Err(PortError::Denied);
+            }
+            if port == DATA_PORT {
+                self.data_writes += 1;
             }
             self.ops.push(Op::OutWords(port, source.to_vec()));
             Ok(())
@@ -646,6 +655,77 @@ mod tests {
                 Op::OutWords(DATA_PORT, sector_words(3)),
             ]
         );
+    }
+
+    #[test]
+    fn read_into_undersized_destination_is_bad_address() {
+        let mut drive = probed_drive();
+        drive.bus.disk_words.extend(sector_words(0));
+        let mut buffer = vec![0u8; SECTOR_BYTES - 1];
+        assert_eq!(
+            drive.read_sectors(0, SECTOR_ONE, &mut buffer),
+            Err(DriveFault::BadAddress)
+        );
+        assert_eq!(drive.bus.ops, vec![]);
+    }
+
+    #[test]
+    fn write_waits_data_request_before_each_block() {
+        let mut drive = probed_drive();
+        drive.bus.fault_status_after_data_writes = 1;
+        drive.bus.fault_status = FAULTED;
+        drive.bus.error_register = ABORT;
+
+        let payload = [sector_pattern(0), sector_pattern(1)].concat();
+        assert_eq!(
+            drive.write_sectors(0, &payload),
+            Err(DriveFault::Device {
+                error_register: ABORT,
+                status: FAULTED,
+            })
+        );
+        let block_writes = drive
+            .bus
+            .ops
+            .iter()
+            .filter(|op| matches!(op, Op::OutWords(DATA_PORT, _)))
+            .count();
+        assert_eq!(block_writes, 1);
+    }
+
+    #[test]
+    fn write_streams_two_blocks_in_order() {
+        let mut drive = probed_drive();
+        let payload = [sector_pattern(0), sector_pattern(1)].concat();
+        drive.write_sectors(0x1020, &payload).unwrap();
+
+        assert_eq!(
+            drive.bus.ops,
+            vec![
+                Op::Out(SECTOR_COUNT_PORT, 2),
+                Op::Out(LBA_LOW_PORT, 0x20),
+                Op::Out(LBA_MID_PORT, 0x10),
+                Op::Out(LBA_HIGH_PORT, 0x00),
+                Op::Out(DRIVE_HEAD_PORT, 0xE0),
+                Op::Out(COMMAND_PORT, WRITE_SECTORS_COMMAND),
+                Op::OutWords(DATA_PORT, sector_words(0)),
+                Op::OutWords(DATA_PORT, sector_words(1)),
+            ]
+        );
+    }
+
+    #[test]
+    fn write_payload_must_be_whole_sectors() {
+        let mut drive = probed_drive();
+        assert_eq!(
+            drive.write_sectors(0, &[]),
+            Err(DriveFault::BadAddress)
+        );
+        assert_eq!(
+            drive.write_sectors(0, &vec![0u8; SECTOR_BYTES + 1]),
+            Err(DriveFault::BadAddress)
+        );
+        assert_eq!(drive.bus.ops, vec![]);
     }
 
     #[test]

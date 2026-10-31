@@ -30,6 +30,7 @@ fn main() {
         None => show_drive_and_mbr(&ata),
         Some("read") => read_subcommand(&ata, &requested[1..]),
         Some("write") => write_subcommand(&ata, &requested[1..]),
+        Some("stress") => stress_subcommand(&ata),
         Some(subcommand) => println!("ata unknown subcommand: {subcommand}"),
     }
     ata.disconnect();
@@ -163,4 +164,60 @@ fn report_writeback(drive: u8, lba: u64, payload: &[u8], read_back: &[u8]) {
         }
         None => println!("writeback mismatch at byte {}", read_back.len()),
     }
+}
+
+const STRESS_CHUNK_SECTORS: usize = 128;
+const STRESS_READ_CHUNKS: usize = 4;
+const STRESS_WRITE_CYCLES: usize = 2;
+const STRESS_WRITE_SECTORS: usize = 8;
+
+fn stress_subcommand(ata: &Ata) {
+    let mut total = 0u64;
+    for chunk in 0..STRESS_READ_CHUNKS {
+        let lba = (chunk * STRESS_CHUNK_SECTORS) as u64;
+        match ata.read(0, lba, STRESS_CHUNK_SECTORS) {
+            Ok(payload) => {
+                let chunk_sum = checksum(&payload);
+                total = total.wrapping_add(chunk_sum);
+                println!(
+                    "stress chunk {chunk} lba={lba} sectors={STRESS_CHUNK_SECTORS} sum={chunk_sum}"
+                );
+            }
+            Err(error) => {
+                println!("ata stress read failed: {error:?}");
+                return;
+            }
+        }
+    }
+    println!("stress read ok chunks={STRESS_READ_CHUNKS} sum={total}");
+    stress_writeback_cycles(ata);
+}
+
+fn stress_writeback_cycles(ata: &Ata) {
+    for cycle in 0..STRESS_WRITE_CYCLES {
+        let lba = (cycle * STRESS_WRITE_SECTORS) as u64;
+        let payload: Vec<u8> = (0..STRESS_WRITE_SECTORS * SECTOR_BYTES)
+            .map(|index| ((cycle as u64 * 53 + index as u64) & 0xFF) as u8)
+            .collect();
+        if let Err(error) = ata.write(1, lba, &payload) {
+            println!("ata stress write failed: {error:?}");
+            return;
+        }
+        if let Err(error) = ata.flush(1) {
+            println!("ata stress flush failed: {error:?}");
+            return;
+        }
+        match ata.read(1, lba, STRESS_WRITE_SECTORS) {
+            Ok(read_back) if read_back == payload => {}
+            Ok(_) => {
+                println!("ata stress writeback differs at cycle {cycle}");
+                return;
+            }
+            Err(error) => {
+                println!("ata stress readback failed: {error:?}");
+                return;
+            }
+        }
+    }
+    println!("stress writeback ok cycles={STRESS_WRITE_CYCLES}");
 }

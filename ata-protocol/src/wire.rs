@@ -713,4 +713,41 @@ mod tests {
         frame[21] = 0x28;
         assert_eq!(Reply::decode(&frame), Err(AtaError::Protocol));
     }
+
+    fn seed_frames() -> Vec<[u8; FRAME_BYTES]> {
+        let requests = [
+            Request::Identify { drive: 0 },
+            Request::Read { drive: 1, lba: 7105, count: 1 },
+            Request::Write { drive: 0, lba: 0, count: 128, token: 0x00AB_CDEF },
+            Request::Flush { drive: 1 },
+        ];
+        let replies = [
+            Reply::Ack,
+            Reply::Err { error: AtaError::Device, error_register: 0x10, status: 0x41 },
+            Reply::Ident { sectors: 7106, firmware_rev: "1.0", model: "QEMU HARDDISK" },
+            Reply::Data { token: 9, sectors: 2 },
+        ];
+        let mut frames = Vec::new();
+        for request in requests {
+            frames.push(request.encode().expect("seed request encodes"));
+        }
+        for reply in replies {
+            frames.push(reply.encode().expect("seed reply encodes"));
+        }
+        frames
+    }
+
+    #[test]
+    fn decoding_flips_never_panics() {
+        for seed in seed_frames() {
+            for byte in 0..FRAME_BYTES {
+                for bit in 0..8 {
+                    let mut mutated = seed;
+                    mutated[byte] ^= 1 << bit;
+                    let _ = Request::decode(&mutated);
+                    let _ = Reply::decode(&mutated);
+                }
+            }
+        }
+    }
 }

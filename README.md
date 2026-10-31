@@ -175,9 +175,19 @@ rosx/
 │   ├── shell/              # Command-line shell
 │   ├── pi/                 # Simple ELF test program (pi digits spigot)
 │   ├── randomd/            # Random number generator server
+│   ├── echo/               # Echo IPC server
+│   ├── bulk/               # Bulk data-plane budget exerciser
+│   ├── pong/               # IPC ping-pong latency app
+│   ├── ping/               # IPC ping client for pong
+│   ├── mem/                # kstatsd memory report client
+│   ├── vfsd/               # VFS daemon (RAM/ROM filesystem)
+│   ├── vfs/                # VFS client demo app
+│   ├── atad/               # ATA (IDE) PIO disk driver daemon
+│   ├── ata/                # ATA client demo (identity, MBR, read/write/stress)
 │   ├── snake/              # Snake game
 │   ├── tetris/             # Tetris game
 │   ├── conway/             # Conway's Game of Life
+│   ├── threads/            # Multithreading exerciser
 │   ├── dummy/              # Dummy app for testing
 │   ├── inputd/             # INPUTD input multiplexer daemon
 │   ├── ps2d/               # PS/2 keyboard driver daemon
