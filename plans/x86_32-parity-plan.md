@@ -1,6 +1,7 @@
 # x86_32 Port Parity — build, run and test via `cargo xtask`
 
-> **Status:** Plan (no code written). Written 2026-10-31 at worktree `clever-knight`, HEAD `c131b41`.
+> **Status:** Executing. M1 (Gap 1 diagnosis) complete 2026-10-31 — see `plans/x86_32-gap1-diagnosis.md`
+> for the contract diff and measured stall link. Written 2026-10-31 at worktree `clever-knight`, HEAD `c131b41`.
 > **Goal:** bring the x86_32 port to the same level of quality as x86_64: buildable, runnable and
 > integration-tested through `cargo xtask`, with CI guarding it.
 > **Method:** every code fact below is cited to a path (and line) re-verified against this tree;
