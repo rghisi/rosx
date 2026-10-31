@@ -8,7 +8,7 @@ build = "build.rs"
 system = { path = "../../system" }
 kernel = { path = "../../kernel" }
 usrlib = { path = "../../usrlib" }
-input-protocol = { path = "../../input-protocol" }
+input-protocol = { path = "../../protocol/input" }
 dummy = { path = "../../apps/dummy"}
 
 bootloader_api = "0.11"

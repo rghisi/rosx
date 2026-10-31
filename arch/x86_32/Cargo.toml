@@ -6,7 +6,7 @@ edition.workspace = true
 [dependencies]
 kernel = { path = "../../kernel" }
 system = { path = "../../system" }
-input-protocol = { path = "../../input-protocol" }
+input-protocol = { path = "../../protocol/input" }
 spin = "0.10.0"
 volatile = "0.2.6"
 
