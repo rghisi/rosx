@@ -6,7 +6,6 @@ extern crate lazy_static;
 extern crate system;
 
 pub mod collections;
-pub mod cpu;
 pub mod default_output;
 pub mod elf;
 pub mod future;
@@ -21,6 +20,7 @@ pub mod kstatsd;
 pub mod memory;
 pub mod once;
 pub mod panic;
+pub mod platform;
 pub mod portio;
 pub mod ports;
 pub mod rom;

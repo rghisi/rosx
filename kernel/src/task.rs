@@ -1,4 +1,4 @@
-use crate::cpu::Cpu;
+use crate::platform::cpu::Cpu;
 use crate::kernel::{kernel};
 use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::boxed::Box;

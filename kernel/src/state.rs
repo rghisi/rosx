@@ -1,4 +1,4 @@
-use crate::cpu::Cpu;
+use crate::platform::cpu::Cpu;
 use crate::kernel_services::services;
 use crate::task::TaskHandle;
 use crate::task::TaskState::Blocked;

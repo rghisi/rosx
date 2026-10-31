@@ -1,4 +1,4 @@
-use crate::cpu::Cpu;
+use crate::platform::cpu::Cpu;
 use crate::elf::ElfArch;
 use crate::portio::PortIo;
 use crate::scheduler::SchedulerFactory;

@@ -1,4 +1,4 @@
-use crate::cpu::Cpu;
+use crate::platform::cpu::Cpu;
 use crate::default_output::{KernelOutput, setup_default_output};
 use crate::elf::ElfArch;
 use crate::future::{TaskCompletionFuture, TimeFuture};

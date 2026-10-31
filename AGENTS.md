@@ -131,7 +131,7 @@ cargo xtask test [--skip-integration] # Run unit tests; --skip-integration exclu
 - Use Hardware Abstraction Layer (HAL) pattern - see the `Cpu` trait as the reference example
 - Kernel code in `kernel/` should be completely platform-agnostic
 - Platform-specific implementations go in `arch/[platform]/`
-- Key HAL traits: `Cpu` (`kernel/src/cpu.rs`), `ElfArch` (`kernel/src/elf/arch.rs`), `PortIo` (`kernel/src/portio.rs`)
+- Key HAL traits: `Cpu` (`kernel/src/platform/cpu.rs`), `ElfArch` (`kernel/src/elf/arch.rs`), `PortIo` (`kernel/src/portio.rs`)
 
 **No Test-Only Production Surface:**
 - Every function, method, or constructor in production code must have at least one non-test caller; `pub(crate)` visibility is not an excuse
