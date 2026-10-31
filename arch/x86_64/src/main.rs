@@ -5,7 +5,6 @@
 extern crate alloc;
 mod apic;
 mod cpu;
-mod debug_console;
 mod elf_arch;
 mod interrupt_controller;
 mod interrupts;
@@ -14,7 +13,6 @@ mod terminal_fonts;
 mod framebuffer;
 
 use crate::cpu::X86_64;
-use crate::debug_console::QemuDebugConsole;
 use crate::elf_arch::X86_64ElfArch;
 use crate::framebuffer::FramebufferOutput;
 use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
@@ -29,6 +27,7 @@ use kernel::kprintln;
 use kernel::panic::handle_panic;
 use kernel::task::FunctionTask;
 use kernel::task::new_elf_task;
+use x86_generic::debug_console::QemuDebugConsole;
 use x86_generic::port::X86PortIo;
 
 static FB_OUTPUT: FramebufferOutput = FramebufferOutput;

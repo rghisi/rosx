@@ -5,7 +5,6 @@
 extern crate alloc;
 
 mod cpu;
-mod debug_console;
 mod elf_arch;
 mod interrupts;
 mod vga_buffer;
@@ -28,7 +27,7 @@ use kernel::panic::handle_panic;
 
 core::arch::global_asm!(include_str!("boot.S"));
 
-static DEBUG_CONSOLE: debug_console::QemuDebugConsole = debug_console::QemuDebugConsole;
+static DEBUG_CONSOLE: x86_generic::debug_console::QemuDebugConsole = x86_generic::debug_console::QemuDebugConsole;
 static VGA_OUTPUT: vga_buffer::VgaOutput = vga_buffer::VgaOutput;
 static OUTPUTS: &[&dyn kernel::default_output::KernelOutput] = &[&VGA_OUTPUT, &DEBUG_CONSOLE];
 static MULTIPLEXED_OUTPUT: MultiplexOutput = MultiplexOutput::new(OUTPUTS);
