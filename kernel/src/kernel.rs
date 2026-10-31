@@ -1,6 +1,6 @@
 use crate::platform::cpu::Cpu;
 use crate::default_output::{KernelOutput, setup_default_output};
-use crate::elf::ElfArch;
+use crate::platform::elf::ElfArch;
 use crate::future::{TaskCompletionFuture, TimeFuture};
 use crate::future::waitset::WaitsetTake;
 use system::waitset::WaitEvent;
