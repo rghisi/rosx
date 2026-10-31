@@ -20,7 +20,6 @@ pub mod memory;
 pub mod once;
 pub mod panic;
 pub mod platform;
-pub mod portio;
 pub mod ports;
 pub mod rom;
 pub mod scheduler;

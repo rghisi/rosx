@@ -1,4 +1,4 @@
-use kernel::portio::{PortIo, PortWidth};
+use kernel::platform::portio::{PortIo, PortWidth};
 use x86_64::instructions::port::Port;
 
 pub struct X86_64PortIo;

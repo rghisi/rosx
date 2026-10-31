@@ -7,7 +7,7 @@ use system::waitset::WaitEvent;
 use crate::kconfig::KConfig;
 use crate::kernel_services::services;
 use crate::kprintln;
-use crate::portio::PortIo;
+use crate::platform::portio::PortIo;
 
 use crate::state::{ExecutionContext, ExecutionState};
 use crate::task::TaskState;
