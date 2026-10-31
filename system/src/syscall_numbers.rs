@@ -20,6 +20,10 @@ pub enum SyscallNum {
     IpcDataRead = 25,
     IpcDataRelease = 26,
     RomRead = 27,
+    PortIn = 28,
+    PortOut = 29,
+    PortInBlock = 30,
+    PortOutBlock = 31,
 }
 
 impl TryFrom<usize> for SyscallNum {
@@ -46,6 +50,10 @@ impl TryFrom<usize> for SyscallNum {
             25 => Ok(Self::IpcDataRead),
             26 => Ok(Self::IpcDataRelease),
             27 => Ok(Self::RomRead),
+            28 => Ok(Self::PortIn),
+            29 => Ok(Self::PortOut),
+            30 => Ok(Self::PortInBlock),
+            31 => Ok(Self::PortOutBlock),
             _ => Err(()),
         }
     }
@@ -83,6 +91,10 @@ mod tests {
             SyscallNum::IpcDataRead,
             SyscallNum::IpcDataRelease,
             SyscallNum::RomRead,
+            SyscallNum::PortIn,
+            SyscallNum::PortOut,
+            SyscallNum::PortInBlock,
+            SyscallNum::PortOutBlock,
         ];
         for number in live {
             assert_eq!(SyscallNum::try_from(number as usize).unwrap(), number);

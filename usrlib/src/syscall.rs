@@ -1,5 +1,5 @@
 use crate::arch;
-use crate::error::{DataError, IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError};
+use crate::error::{DataError, IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError, PortError};
 use crate::handle::{UserBindingHandle, UserConnectionHandle, UserFutureHandle, UserDataHandle};
 use crate::ipc::ReceivedMessage;
 use alloc::boxed::Box;
@@ -199,6 +199,58 @@ impl Syscall {
             dst.as_mut_ptr() as usize,
             dst.len(),
         )
+    }
+
+    pub fn port_in(port: u16, width: usize) -> Result<u32, PortError> {
+        let mut slot: u32 = 0;
+        let raw = arch::raw_syscall(
+            SyscallNum::PortIn as usize,
+            port as usize,
+            width,
+            &mut slot as *mut u32 as usize,
+        );
+        if is_token(raw) {
+            Ok(slot)
+        } else {
+            Err(PortError::from(ErrorCode::from_code(raw)))
+        }
+    }
+
+    pub fn port_out(port: u16, value: usize, width: usize) -> Result<(), PortError> {
+        let raw = arch::raw_syscall(SyscallNum::PortOut as usize, port as usize, value, width);
+        if is_token(raw) {
+            Ok(())
+        } else {
+            Err(PortError::from(ErrorCode::from_code(raw)))
+        }
+    }
+
+    pub fn port_in_words(port: u16, destination: &mut [u16]) -> Result<(), PortError> {
+        let raw = arch::raw_syscall(
+            SyscallNum::PortInBlock as usize,
+            port as usize,
+            destination.as_mut_ptr() as usize,
+            destination.len(),
+        );
+        if is_token(raw) {
+            Ok(())
+        } else {
+            Err(PortError::from(ErrorCode::from_code(raw)))
+        }
+    }
+
+    pub fn port_out_words(port: u16, source: &[u16]) -> Result<(), PortError> {
+        let raw = arch::raw_syscall(
+            SyscallNum::PortOutBlock as usize,
+            port as usize,
+            source.as_ptr() as usize,
+            source.len(),
+        );
+        if is_token(raw) {
+            Ok(())
+        } else {
+            Err(PortError::from(ErrorCode::from_code(raw)))
+        }
     }
 }
 

@@ -149,6 +149,50 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             let dst = unsafe { core::slice::from_raw_parts_mut(arg2 as *mut u8, arg3) };
             crate::rom::read(arg1 as u64, dst)
         }
+        Ok(SyscallNum::PortIn) => {
+            let task = kernel().execution_state.current_task();
+            match crate::portio::authorize_single(task, arg1, arg2) {
+                Err(code) => code.to_reg(),
+                Ok(_) if arg3 == 0 => ErrorCode::PortRequestInvalid.to_reg(),
+                Ok((port, width)) => {
+                    let value = kernel().port_io.read(port, width);
+                    unsafe { core::ptr::write(arg3 as *mut u32, value) };
+                    0
+                }
+            }
+        }
+        Ok(SyscallNum::PortOut) => {
+            let task = kernel().execution_state.current_task();
+            match crate::portio::authorize_single(task, arg1, arg3) {
+                Err(code) => code.to_reg(),
+                Ok((port, width)) => {
+                    kernel().port_io.write(port, arg2 as u32, width);
+                    0
+                }
+            }
+        }
+        Ok(SyscallNum::PortInBlock) => {
+            let task = kernel().execution_state.current_task();
+            match crate::portio::authorize_block(task, arg1, arg3) {
+                Err(code) => code.to_reg(),
+                Ok((port, count)) => {
+                    let destination = unsafe { core::slice::from_raw_parts_mut(arg2 as *mut u16, count) };
+                    kernel().port_io.read_words(port, destination);
+                    0
+                }
+            }
+        }
+        Ok(SyscallNum::PortOutBlock) => {
+            let task = kernel().execution_state.current_task();
+            match crate::portio::authorize_block(task, arg1, arg3) {
+                Err(code) => code.to_reg(),
+                Ok((port, count)) => {
+                    let source = unsafe { core::slice::from_raw_parts(arg2 as *const u16, count) };
+                    kernel().port_io.write_words(port, source);
+                    0
+                }
+            }
+        }
         Err(_) => 0,
     }
 }

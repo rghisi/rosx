@@ -256,7 +256,7 @@ mod tests {
     use crate::collections::arena::GenerationalArena;
     use system::error::ErrorCode;
 
-    const ALL_ERROR_CODES: [ErrorCode; 13] = [
+    const ALL_ERROR_CODES: [ErrorCode; 15] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -270,6 +270,8 @@ mod tests {
         ErrorCode::IpcDataNotFound,
         ErrorCode::IpcDataNotReadable,
         ErrorCode::Unknown,
+        ErrorCode::PortAccessDenied,
+        ErrorCode::PortRequestInvalid,
     ];
 
     #[test]

@@ -30,7 +30,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    scheduler/ (SchedulingAlgorithm: MLFQ + FIFO)
 │    memory/   (global allocator; FreeList + BitmapChunk)
 │    collections/ (arena)  handle/ (5 newtypes: task/future/ipc-connection/ipc-binding/ipc-data)
-│    elf/ ipc/ (mailbox, data) future/ syscall/ kstatsd task*  cpu (HAL trait)  kconfig  rom/
+│    elf/ ipc/ (mailbox, data) future/ syscall/ kstatsd task*  cpu (HAL trait)  portio (PortIo HAL trait + per-task port grants)  kconfig  rom/
 ├── system/      # ABI treaty: syscall numbers, wire layout, ROM image layout, error numbers
 ├── usrlib/      # User-space libc: syscall, out, arch/{x86_64,x86_32}
 ├── vfs-protocol/# VFS wire codec + typed client (user-space RPC treaty)
@@ -68,7 +68,7 @@ cargo run -p rosx              # run.sh -> arch/x86_64-runner -> BiosBoot disk i
 cargo build -p rosx-x86        # kernel (Multiboot2, boot.S); run from arch/x86_32/ — its .cargo/config.toml supplies the rosx-i686 custom target
 bash arch/x86_32/build-image.sh   # GRUB bootable image (needs grub-mkrescue, xorriso, mtools)
 ```
-- x86_32 builds are untouched by xtask. The kernel embeds the shell ELF from `target/rosx-i686-user/release/shell`; build it for `rosx-i686-user` first with the explicit `-Z` build-std flags xtask uses for x86_64. No `vfsd` runs on x86_32, so running a program by name reports `No filesystem` after connect retries.
+- x86_32 builds are untouched by xtask. The kernel embeds the shell ELF from `target/rosx-i686-user/release/shell`; build it for `rosx-i686-user` first with the explicit `-Z` build-std flags xtask uses for x86_64. No `vfsd` runs on x86_32, so running a program by name reports `No filesystem` after connect retries. x86_32 wires the port-I/O mechanism but boots with no port grants and no `atad`, so the port syscalls answer `PortAccessDenied` there.
 
 ### Unit tests (run on host)
 ```bash
@@ -130,7 +130,7 @@ cargo xtask test [--skip-integration] # Run unit tests; --skip-integration exclu
 - Use Hardware Abstraction Layer (HAL) pattern - see the `Cpu` trait as the reference example
 - Kernel code in `kernel/` should be completely platform-agnostic
 - Platform-specific implementations go in `arch/[platform]/`
-- Key HAL traits: `Cpu` (`kernel/src/cpu.rs`), `ElfArch` (`kernel/src/elf/arch.rs`)
+- Key HAL traits: `Cpu` (`kernel/src/cpu.rs`), `ElfArch` (`kernel/src/elf/arch.rs`), `PortIo` (`kernel/src/portio.rs`)
 
 **Pluggable Architecture:**
 - **Scheduling is pluggable (implemented):** the strategy is a `SchedulingAlgorithm` (MLFQ + FIFO) chosen at boot via `scheduler_factory` in `KConfig` (`kernel/src/kconfig.rs`).

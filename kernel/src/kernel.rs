@@ -5,6 +5,7 @@ use crate::future::{TaskCompletionFuture, TimeFuture};
 use crate::kconfig::KConfig;
 use crate::kernel_services::services;
 use crate::kprintln;
+use crate::portio::PortIo;
 
 use crate::state::{ExecutionContext, ExecutionState};
 use crate::task::TaskState;
@@ -86,6 +87,7 @@ pub fn kernel() -> &'static mut Kernel {
 pub struct Kernel {
     cpu: &'static dyn Cpu,
     pub(crate) elf_arch: &'static dyn ElfArch,
+    pub(crate) port_io: &'static dyn PortIo,
     pub(crate) execution_state: ExecutionState,
 }
 
@@ -93,6 +95,7 @@ impl Kernel {
     pub fn new(kconfig: &'static KConfig) -> Self {
         let cpu = kconfig.cpu;
         let elf_arch = kconfig.elf_arch;
+        let port_io = kconfig.port_io;
         crate::kernel_services::init();
         let scheduler_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
         let scheduler_task_handler = services()
@@ -113,6 +116,7 @@ impl Kernel {
         Kernel {
             cpu,
             elf_arch,
+            port_io,
             execution_state: ExecutionState {
                 scheduler: scheduler_task_handler,
                 current_task: None,

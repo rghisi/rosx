@@ -127,11 +127,35 @@ impl Display for DataError {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum PortError {
+    Denied,
+    Invalid,
+}
+
+impl From<ErrorCode> for PortError {
+    fn from(code: ErrorCode) -> Self {
+        match code {
+            ErrorCode::PortAccessDenied => Self::Denied,
+            _ => Self::Invalid,
+        }
+    }
+}
+
+impl Display for PortError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            PortError::Denied => write!(f, "Port access denied"),
+            PortError::Invalid => write!(f, "Port request invalid"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 13] = [
+    const ALL_ERROR_CODES: [ErrorCode; 15] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -144,6 +168,8 @@ mod tests {
         ErrorCode::IpcDataBudgetExceeded,
         ErrorCode::IpcDataNotFound,
         ErrorCode::IpcDataNotReadable,
+        ErrorCode::PortAccessDenied,
+        ErrorCode::PortRequestInvalid,
         ErrorCode::Unknown,
     ];
 
@@ -155,6 +181,7 @@ mod tests {
             let send = IpcSendError::from(code);
             let receive = IpcReceiveError::from(code);
             let data = DataError::from(code);
+            let port = PortError::from(code);
 
             let expected_connection = match code {
                 ErrorCode::IpcConnectionCannotBeEstablished => {
@@ -177,12 +204,17 @@ mod tests {
                 ErrorCode::IpcDataNotReadable => DataError::NotReadable,
                 _ => DataError::NotFound,
             };
+            let expected_port = match code {
+                ErrorCode::PortAccessDenied => PortError::Denied,
+                _ => PortError::Invalid,
+            };
 
             assert_eq!(connection, expected_connection);
             assert_eq!(binding, IpcBindingError::AlreadyBound);
             assert_eq!(send, expected_send);
             assert_eq!(receive, expected_receive);
             assert_eq!(data, expected_data);
+            assert_eq!(port, expected_port);
         }
     }
 
@@ -205,5 +237,6 @@ mod tests {
             IpcReceiveError::ConnectionNotFound
         );
         assert_eq!(DataError::from(ErrorCode::Unknown), DataError::NotFound);
+        assert_eq!(PortError::from(ErrorCode::Unknown), PortError::Invalid);
     }
 }

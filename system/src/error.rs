@@ -21,6 +21,8 @@ pub enum ErrorCode {
     IpcDataNotReadable = 0x010C,
     ElfArgumentLimitExceeded = 0x0201,
     ElfArgumentBlobMalformed = 0x0202,
+    PortAccessDenied = 0x0301,
+    PortRequestInvalid = 0x0302,
     Unknown = 0x7FFF_FFFF,
 }
 
@@ -45,6 +47,8 @@ impl ErrorCode {
             0x010C => ErrorCode::IpcDataNotReadable,
             0x0201 => ErrorCode::ElfArgumentLimitExceeded,
             0x0202 => ErrorCode::ElfArgumentBlobMalformed,
+            0x0301 => ErrorCode::PortAccessDenied,
+            0x0302 => ErrorCode::PortRequestInvalid,
             _ => ErrorCode::Unknown,
         }
     }
@@ -54,7 +58,7 @@ impl ErrorCode {
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 15] = [
+    const ALL_ERROR_CODES: [ErrorCode; 17] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -69,6 +73,8 @@ mod tests {
         ErrorCode::IpcDataNotReadable,
         ErrorCode::ElfArgumentLimitExceeded,
         ErrorCode::ElfArgumentBlobMalformed,
+        ErrorCode::PortAccessDenied,
+        ErrorCode::PortRequestInvalid,
         ErrorCode::Unknown,
     ];
 
