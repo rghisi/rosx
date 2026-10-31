@@ -10,7 +10,6 @@ pub mod default_output;
 pub mod elf;
 pub mod future;
 pub mod handle;
-pub mod interrupt;
 pub mod ipc;
 pub mod kconfig;
 pub mod kernel;

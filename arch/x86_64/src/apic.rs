@@ -1,4 +1,4 @@
-use kernel::interrupt::{InterruptController, InterruptError, Polarity, Result, TriggerMode};
+use kernel::platform::interrupt::{InterruptController, InterruptError, Polarity, Result, TriggerMode};
 use core::sync::atomic::{AtomicU64, Ordering};
 use x86_64::instructions::port::Port;
 
