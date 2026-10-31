@@ -33,8 +33,10 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    elf/ ipc/ (mailbox, data) future/ syscall/ kstatsd task*  platform/ (cpu, elf, interrupt, output, portio HAL traits + per-task port grants)  kconfig  rom/
 ├── system/      # ABI treaty: syscall numbers, wire layout, ROM image layout, error numbers
 ├── usrlib/      # User-space libc: syscall, out, arch/{x86_64,x86_32}
-├── vfs-protocol/# VFS wire codec + typed client (user-space RPC treaty)
-├── ata-protocol/# ATA wire codec + typed client (user-space RPC treaty)
+├── protocol/                # Service RPC treaties, one sub-crate each (workspace glob protocol/*)
+│    vfs/         # package vfs-protocol: wire codec + typed client
+│    input/       # package input-protocol: wire codec
+│    ata/         # package ata-protocol: wire codec + typed client
 ├── arch/
 │    x86_64/        # entry, cpu, interrupts, framebuffer, terminal_fonts, *.S (global_asm)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
