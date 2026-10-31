@@ -71,7 +71,7 @@ unsafe extern "C" {
 }
 
 fn trim_to_safe_memory(raw: MemoryBlocks) -> MemoryBlocks {
-    let safe_start = unsafe { core::ptr::addr_of!(kernel_end) as usize };
+    let safe_start = core::ptr::addr_of!(kernel_end) as usize;
     let mut out = MemoryBlocks {
         blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),
         count: 0,

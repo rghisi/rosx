@@ -158,11 +158,18 @@ core::arch::global_asm!(
 // The CPU pushes [eip, cs, eflags] before entering. iretd restores them on exit,
 // which means eflags is preserved from the caller's perspective (preserves_flags).
 //
+// The IDT entry is a trap gate, so IF survives entry with the caller's value (1).
+// cli here closes the interrupt window across handle_syscall so a task parking on
+// a future cannot be preempted between blocking and waiter registration — the
+// window SFMASK closes on x86_64. Exits: swap_context re-enables via sti when the
+// task switches away; iretd restores the caller's IF=1 on a plain return.
+//
 // ebx, ecx, edx are saved/restored so the caller sees them unchanged (mirrors
 // the Linux int 0x80 ABI and matches the usrlib asm declaration).
 core::arch::global_asm!(
     ".global int80_handler",
     "int80_handler:",
+    "    cli",                    // park-registration window must be IRQ-atomic
     "    push ebp",
     "    push edi",
     "    push esi",
