@@ -1,4 +1,4 @@
-use kernel::interrupt::{InterruptController, InterruptError, Polarity, Result, TriggerMode};
+use kernel::platform::interrupt::{InterruptController, InterruptError, Polarity, Result, TriggerMode};
 use pic8259::ChainedPics;
 use spin::Mutex;
 use x86_64::instructions::port::Port;

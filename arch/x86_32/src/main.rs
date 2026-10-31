@@ -24,7 +24,7 @@ static KCONFIG: kernel::kconfig::KConfig = kernel::kconfig::KConfig {
 };
 
 use core::panic::PanicInfo;
-use kernel::default_output::MultiplexOutput;
+use kernel::platform::output::MultiplexOutput;
 use kernel::memory::{MemoryBlock, MemoryBlocks};
 use kernel::panic::handle_panic;
 
@@ -32,7 +32,7 @@ core::arch::global_asm!(include_str!("boot.S"));
 
 static DEBUG_CONSOLE: debug_console::QemuDebugConsole = debug_console::QemuDebugConsole;
 static VGA_OUTPUT: vga_buffer::VgaOutput = vga_buffer::VgaOutput;
-static OUTPUTS: &[&dyn kernel::default_output::KernelOutput] = &[&VGA_OUTPUT, &DEBUG_CONSOLE];
+static OUTPUTS: &[&dyn kernel::platform::output::KernelOutput] = &[&VGA_OUTPUT, &DEBUG_CONSOLE];
 static MULTIPLEXED_OUTPUT: MultiplexOutput = MultiplexOutput::new(OUTPUTS);
 
 #[panic_handler]

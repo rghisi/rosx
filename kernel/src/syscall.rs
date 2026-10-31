@@ -3,7 +3,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use crate::kernel::kernel;
 use crate::kernel_services::services;
-use crate::default_output::print;
+use crate::platform::output::print;
 use system::syscall_numbers::SyscallNum;
 use system::error::ErrorCode;
 use system::ipc::Message;
@@ -199,7 +199,7 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::PortIn) => {
             let task = kernel().execution_state.current_task();
-            match crate::portio::authorize_single(task, arg1, arg2) {
+            match crate::platform::portio::authorize_single(task, arg1, arg2) {
                 Err(code) => code.to_reg(),
                 Ok(_) if arg3 == 0 => ErrorCode::PortRequestInvalid.to_reg(),
                 Ok((port, width)) => {
@@ -211,7 +211,7 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::PortOut) => {
             let task = kernel().execution_state.current_task();
-            match crate::portio::authorize_single(task, arg1, arg3) {
+            match crate::platform::portio::authorize_single(task, arg1, arg3) {
                 Err(code) => code.to_reg(),
                 Ok((port, width)) => {
                     kernel().port_io.write(port, arg2 as u32, width);
@@ -221,7 +221,7 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::PortInBlock) => {
             let task = kernel().execution_state.current_task();
-            match crate::portio::authorize_block(task, arg1, arg3) {
+            match crate::platform::portio::authorize_block(task, arg1, arg3) {
                 Err(code) => code.to_reg(),
                 Ok((port, count)) => {
                     let destination = unsafe { core::slice::from_raw_parts_mut(arg2 as *mut u16, count) };
@@ -232,7 +232,7 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::PortOutBlock) => {
             let task = kernel().execution_state.current_task();
-            match crate::portio::authorize_block(task, arg1, arg3) {
+            match crate::platform::portio::authorize_block(task, arg1, arg3) {
                 Err(code) => code.to_reg(),
                 Ok((port, count)) => {
                     let source = unsafe { core::slice::from_raw_parts(arg2 as *const u16, count) };

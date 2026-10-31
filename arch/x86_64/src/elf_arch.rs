@@ -1,4 +1,4 @@
-use kernel::elf::ElfArch;
+use kernel::platform::elf::ElfArch;
 
 const R_X86_64_RELATIVE: u64 = 8;
 

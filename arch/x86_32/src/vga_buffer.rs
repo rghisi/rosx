@@ -1,6 +1,6 @@
 use core::fmt;
 use core::fmt::Write;
-use kernel::default_output::KernelOutput;
+use kernel::platform::output::KernelOutput;
 use lazy_static::lazy_static;
 use spin::Mutex;
 use volatile::Volatile;

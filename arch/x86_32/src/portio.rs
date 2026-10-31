@@ -1,5 +1,5 @@
 use core::arch::asm;
-use kernel::portio::{PortIo, PortWidth};
+use kernel::platform::portio::{PortIo, PortWidth};
 
 pub struct X86_32PortIo;
 

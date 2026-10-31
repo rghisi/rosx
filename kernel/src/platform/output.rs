@@ -57,5 +57,5 @@ macro_rules! kprintln {
 
 #[macro_export]
 macro_rules! kprint {
-      ($($arg:tt)*) => ($crate::default_output::print(format_args!($($arg)*)));
+      ($($arg:tt)*) => ($crate::platform::output::print(format_args!($($arg)*)));
   }

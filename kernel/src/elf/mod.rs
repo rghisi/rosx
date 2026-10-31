@@ -1,12 +1,10 @@
-pub mod arch;
 pub(crate) mod structs;
 
 use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
+use crate::platform::elf::ElfArch;
 use structs::{Elf32Dyn, Elf32Header, Elf32Phdr, Elf32Rel, Elf64Dyn, Elf64Header, Elf64Phdr, Elf64Rela};
-
-pub use arch::ElfArch;
 
 const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 const EI_CLASS: usize = 4;

@@ -30,7 +30,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    scheduler/ (SchedulingAlgorithm: MLFQ + FIFO)
 │    memory/   (global allocator; FreeList + BitmapChunk)
 │    collections/ (arena)  handle/ (5 newtypes: task/future/ipc-connection/ipc-binding/ipc-data)
-│    elf/ ipc/ (mailbox, data) future/ syscall/ kstatsd task*  cpu (HAL trait)  portio (PortIo HAL trait + per-task port grants)  kconfig  rom/
+│    elf/ ipc/ (mailbox, data) future/ syscall/ kstatsd task*  platform/ (cpu, elf, interrupt, output, portio HAL traits + per-task port grants)  kconfig  rom/
 ├── system/      # ABI treaty: syscall numbers, wire layout, ROM image layout, error numbers
 ├── usrlib/      # User-space libc: syscall, out, arch/{x86_64,x86_32}
 ├── vfs-protocol/# VFS wire codec + typed client (user-space RPC treaty)
@@ -131,7 +131,7 @@ cargo xtask test [--skip-integration] # Run unit tests; --skip-integration exclu
 - Use Hardware Abstraction Layer (HAL) pattern - see the `Cpu` trait as the reference example
 - Kernel code in `kernel/` should be completely platform-agnostic
 - Platform-specific implementations go in `arch/[platform]/`
-- Key HAL traits: `Cpu` (`kernel/src/cpu.rs`), `ElfArch` (`kernel/src/elf/arch.rs`), `PortIo` (`kernel/src/portio.rs`)
+- Key HAL traits: `Cpu` (`kernel/src/platform/cpu.rs`), `ElfArch` (`kernel/src/platform/elf.rs`), `PortIo` (`kernel/src/platform/portio.rs`)
 
 **No Test-Only Production Surface:**
 - Every function, method, or constructor in production code must have at least one non-test caller; `pub(crate)` visibility is not an excuse

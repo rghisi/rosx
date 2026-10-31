@@ -3,7 +3,7 @@ use crate::interrupt_controller::PicController;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering::Relaxed;
-use kernel::interrupt::{self, InterruptController};
+use kernel::platform::interrupt::{self, InterruptController};
 use kernel::kernel::kernel;
 use lazy_static::lazy_static;
 use usrlib::println;

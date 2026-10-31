@@ -1,6 +1,6 @@
 use core::arch::asm;
 use core::sync::atomic::Ordering::Relaxed;
-use kernel::cpu::Cpu;
+use kernel::platform::cpu::Cpu;
 
 pub struct X86_32 {}
 
