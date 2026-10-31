@@ -1,0 +1,23 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "atad"
+publish = false
+version = "0.1.0"
+edition.workspace = true
+
+[lib]
+name = "atad"
+path = "src/lib.rs"
+
+[[bin]]
+name = "atad"
+bench = false
+test = false
+
+[dependencies]
+system = { path = "../../system" }
+usrlib = { path = "../../usrlib" }
+ata-protocol = { path = "../../ata-protocol" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+usrlib = { path = "../../usrlib", features = ["runtime"] }

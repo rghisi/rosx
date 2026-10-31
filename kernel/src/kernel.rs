@@ -7,6 +7,7 @@ use system::waitset::WaitEvent;
 use crate::kconfig::KConfig;
 use crate::kernel_services::services;
 use crate::kprintln;
+use crate::portio::PortIo;
 
 use crate::state::{ExecutionContext, ExecutionState};
 use crate::task::TaskState;
@@ -88,6 +89,7 @@ pub fn kernel() -> &'static mut Kernel {
 pub struct Kernel {
     cpu: &'static dyn Cpu,
     pub(crate) elf_arch: &'static dyn ElfArch,
+    pub(crate) port_io: &'static dyn PortIo,
     pub(crate) execution_state: ExecutionState,
 }
 
@@ -95,6 +97,7 @@ impl Kernel {
     pub fn new(kconfig: &'static KConfig) -> Self {
         let cpu = kconfig.cpu;
         let elf_arch = kconfig.elf_arch;
+        let port_io = kconfig.port_io;
         crate::kernel_services::init();
         let scheduler_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
         let scheduler_task_handler = services()
@@ -115,6 +118,7 @@ impl Kernel {
         Kernel {
             cpu,
             elf_arch,
+            port_io,
             execution_state: ExecutionState {
                 scheduler: scheduler_task_handler,
                 current_task: None,
@@ -160,10 +164,14 @@ impl Kernel {
     }
 
     pub fn schedule(&mut self, task: SharedTask) -> Result<FutureHandle, ()> {
+        self.schedule_with_task_handle(task).map(|(_task_handle, future_handle)| future_handle)
+    }
+
+    pub fn schedule_with_task_handle(&mut self, task: SharedTask) -> Result<(TaskHandle, FutureHandle), ()> {
         let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
         let result = services().task_manager.borrow_mut().add_task(task);
-        let future_handle = match result {
+        let paired = match result {
             Ok(task_handle) => {
                 let future = Box::new(TaskCompletionFuture::new(task_handle));
                 let future_handle = services().future_registry.borrow_mut().register(future);
@@ -171,14 +179,14 @@ impl Kernel {
                     services().task_manager.borrow_mut().set_completion_future(task_handle, fh);
                 }
                 self.schedule_task(task_handle);
-                future_handle
+                future_handle.map(|fh| (task_handle, fh))
             }
             Err(_) => {
                 panic!("Not able to create new task");
             }
         };
         self.execution_state.preemption_enabled = prev;
-        future_handle.ok_or(())
+        paired.ok_or(())
     }
 
     pub fn sleep(&mut self, millis: u64) {

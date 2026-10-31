@@ -30,16 +30,17 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    scheduler/ (SchedulingAlgorithm: MLFQ + FIFO)
 │    memory/   (global allocator; FreeList + BitmapChunk)
 │    collections/ (arena)  handle/ (5 newtypes: task/future/ipc-connection/ipc-binding/ipc-data)
-│    elf/ ipc/ (mailbox, data) future/ syscall/ kstatsd task*  cpu (HAL trait)  kconfig  rom/
+│    elf/ ipc/ (mailbox, data) future/ syscall/ kstatsd task*  cpu (HAL trait)  portio (PortIo HAL trait + per-task port grants)  kconfig  rom/
 ├── system/      # ABI treaty: syscall numbers, wire layout, ROM image layout, error numbers
 ├── usrlib/      # User-space libc: syscall, out, arch/{x86_64,x86_32}
 ├── vfs-protocol/# VFS wire codec + typed client (user-space RPC treaty)
+├── ata-protocol/# ATA wire codec + typed client (user-space RPC treaty)
 ├── arch/
 │    x86_64/        # entry, cpu, interrupts, framebuffer, terminal_fonts, *.S (global_asm)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
 │    x86_64-runner/ # standalone: BiosBoot → QEMU (NOT bootimage)
 └── apps/
-     [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, mem, vfsd, vfs, snake, tetris, conway, threads, waitset, stress, inputd, ps2d
+     [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, mem, vfsd, vfs, snake, tetris, conway, threads, waitset, stress, inputd, ps2d, atad, ata
 ```
 
 ---
@@ -68,7 +69,7 @@ cargo run -p rosx              # run.sh -> arch/x86_64-runner -> BiosBoot disk i
 cargo build -p rosx-x86        # kernel (Multiboot2, boot.S); run from arch/x86_32/ — its .cargo/config.toml supplies the rosx-i686 custom target
 bash arch/x86_32/build-image.sh   # GRUB bootable image (needs grub-mkrescue, xorriso, mtools)
 ```
-- x86_32 builds are untouched by xtask. The kernel embeds the shell ELF from `target/rosx-i686-user/release/shell`; build it for `rosx-i686-user` first with the explicit `-Z` build-std flags xtask uses for x86_64. No `vfsd` runs on x86_32, so running a program by name reports `No filesystem` after connect retries.
+- x86_32 builds are untouched by xtask. The kernel embeds the shell ELF from `target/rosx-i686-user/release/shell`; build it for `rosx-i686-user` first with the explicit `-Z` build-std flags xtask uses for x86_64. No `vfsd` runs on x86_32, so running a program by name reports `No filesystem` after connect retries. x86_32 wires the port-I/O mechanism but boots with no port grants and no `atad`, so the port syscalls answer `PortAccessDenied` there.
 
 ### Unit tests (run on host)
 ```bash
@@ -130,7 +131,7 @@ cargo xtask test [--skip-integration] # Run unit tests; --skip-integration exclu
 - Use Hardware Abstraction Layer (HAL) pattern - see the `Cpu` trait as the reference example
 - Kernel code in `kernel/` should be completely platform-agnostic
 - Platform-specific implementations go in `arch/[platform]/`
-- Key HAL traits: `Cpu` (`kernel/src/cpu.rs`), `ElfArch` (`kernel/src/elf/arch.rs`)
+- Key HAL traits: `Cpu` (`kernel/src/cpu.rs`), `ElfArch` (`kernel/src/elf/arch.rs`), `PortIo` (`kernel/src/portio.rs`)
 
 **No Test-Only Production Surface:**
 - Every function, method, or constructor in production code must have at least one non-test caller; `pub(crate)` visibility is not an excuse
@@ -156,6 +157,7 @@ These principles are the regression guard: the very inversion this rework remove
 - `future/` + `ipc/` — **notification-driven** futures (time, task-completion, depth-one waitset aggregates) and a mailbox IPC manager (bind/connect/send/receive); kernel-originated event delivery (`deliver_to_service`) wakes accepts on bound services; a waitset completes when any attached leaf future does, woken by a child-to-waitset cascade inside `FutureRegistry::notify`; no polling on the preemption cycle.
 - `ipc/` data family — messages signal; data rides the connection out-of-band via write/read/release tokens; the kernel never interprets message payloads.
 - Input architecture — policy lives in the user-space `INPUTD` daemon (`inputd`), device semantics in driver daemons (`ps2d`); the kernel delivers opaque event frames only.
+- Disk architecture — ATA command semantics live in the user-space `ATAD` daemon (`atad`) over `ata-protocol`; the kernel contributes only the mediated port capability (`portio` grants). v1 polls; IRQ14 delivery is the v2 event path.
 - Kernel-hosted IPC services — `kstatsd` is the first: kernel code runs a service loop as a `FunctionTask` (launched by each arch at boot), calling `IpcManager` directly and blocking on futures via `Kernel::wait`. Metrics stay domain-owned (`MemoryManager::stats`); the wire contract lives only in `system::kstats`; user-space clients (`mem`) own rendering.
 - `elf/` — loads standalone user-space ELF binaries into tasks (`new_elf_task`).
 - `task/` + `task_manager/` — task lifecycle, context switch, preemption.

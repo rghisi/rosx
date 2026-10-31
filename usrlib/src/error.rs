@@ -160,11 +160,35 @@ impl Display for WaitsetError {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum PortError {
+    Denied,
+    Invalid,
+}
+
+impl From<ErrorCode> for PortError {
+    fn from(code: ErrorCode) -> Self {
+        match code {
+            ErrorCode::PortAccessDenied => Self::Denied,
+            _ => Self::Invalid,
+        }
+    }
+}
+
+impl Display for PortError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            PortError::Denied => write!(f, "Port access denied"),
+            PortError::Invalid => write!(f, "Port request invalid"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 19] = [
+    const ALL_ERROR_CODES: [ErrorCode; 21] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -183,6 +207,8 @@ mod tests {
         ErrorCode::WaitsetNotFound,
         ErrorCode::WaitsetLeafRequired,
         ErrorCode::FutureCapacityExhausted,
+        ErrorCode::PortAccessDenied,
+        ErrorCode::PortRequestInvalid,
         ErrorCode::Unknown,
     ];
 
@@ -195,6 +221,7 @@ mod tests {
             let receive = IpcReceiveError::from(code);
             let data = DataError::from(code);
             let waitset = WaitsetError::from(code);
+            let port = PortError::from(code);
 
             let expected_connection = match code {
                 ErrorCode::IpcConnectionCannotBeEstablished => {
@@ -224,6 +251,10 @@ mod tests {
                 ErrorCode::FutureCapacityExhausted => WaitsetError::CapacityExhausted,
                 _ => WaitsetError::NotFound,
             };
+            let expected_port = match code {
+                ErrorCode::PortAccessDenied => PortError::Denied,
+                _ => PortError::Invalid,
+            };
 
             assert_eq!(connection, expected_connection);
             assert_eq!(binding, IpcBindingError::AlreadyBound);
@@ -231,6 +262,7 @@ mod tests {
             assert_eq!(receive, expected_receive);
             assert_eq!(data, expected_data);
             assert_eq!(waitset, expected_waitset);
+            assert_eq!(port, expected_port);
         }
     }
 
@@ -254,5 +286,6 @@ mod tests {
         );
         assert_eq!(DataError::from(ErrorCode::Unknown), DataError::NotFound);
         assert_eq!(WaitsetError::from(ErrorCode::Unknown), WaitsetError::NotFound);
+        assert_eq!(PortError::from(ErrorCode::Unknown), PortError::Invalid);
     }
 }

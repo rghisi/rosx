@@ -9,6 +9,7 @@ mod debug_console;
 mod elf_arch;
 mod interrupt_controller;
 mod interrupts;
+mod portio;
 mod vga_buffer;
 mod terminal_fonts;
 mod framebuffer;
@@ -18,6 +19,7 @@ use crate::cpu::X86_64;
 use crate::debug_console::QemuDebugConsole;
 use crate::elf_arch::X86_64ElfArch;
 use crate::framebuffer::FramebufferOutput;
+use crate::portio::X86_64PortIo;
 use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
 use bootloader_api::config::Mapping;
 use core::panic::PanicInfo;
@@ -39,10 +41,12 @@ static MULTIPLEXED_OUTPUT: MultiplexOutput = MultiplexOutput::new(OUTPUTS);
 
 static CPU: X86_64 = X86_64::new();
 static ELF_ARCH: X86_64ElfArch = X86_64ElfArch;
+static PORT_IO: X86_64PortIo = X86_64PortIo;
 
 static KCONFIG: KConfig = KConfig {
     cpu: &CPU,
     elf_arch: &ELF_ARCH,
+    port_io: &PORT_IO,
     scheduler_factory: scheduler::mfq_scheduler,
 };
 
@@ -92,6 +96,18 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let _ = kernel.schedule(new_elf_task(INPUTD_ELF));
     static PS2D_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/ps2d");
     let _ = kernel.schedule(new_elf_task(PS2D_ELF));
+    static ATAD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/atad");
+    match kernel.schedule_with_task_handle(new_elf_task(ATAD_ELF)) {
+        Ok((atad_handle, _)) => {
+            if !kernel::portio::grant(atad_handle, 0x1F0, 0x1F7) {
+                kprintln!("[KERNEL] atad primary taskfile grant failed");
+            }
+            if !kernel::portio::grant(atad_handle, 0x3F6, 0x3F6) {
+                kprintln!("[KERNEL] atad alternate status grant failed");
+            }
+        }
+        Err(()) => kprintln!("[KERNEL] atad schedule failed"),
+    }
     static SHELL_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/shell");
     let _ = kernel.schedule(new_elf_task(SHELL_ELF));
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
