@@ -1,7 +1,7 @@
 use core::arch::asm;
 use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use kernel::kernel::kernel;
-use lazy_static::lazy_static;
+use kernel::once::Once;
 
 pub static SYSTEM_TIME_MS: AtomicU32 = AtomicU32::new(0);
 
@@ -79,14 +79,14 @@ unsafe extern "C" {
     fn int80_handler();
 }
 
-lazy_static! {
-    static ref IDT: Idt = {
-        let mut idt = Idt([IdtEntry::absent(); 256]);
-        idt.0[PIC_MASTER_OFFSET as usize]     = IdtEntry::interrupt_gate(timer_interrupt_handler);
-        idt.0[PIC_MASTER_OFFSET as usize + 1] = IdtEntry::interrupt_gate(keyboard_interrupt_handler);
-        idt.0[0x80] = IdtEntry::trap_gate_ring3(int80_handler as *const () as u32);
-        idt
-    };
+static IDT: Once<Idt> = Once::new();
+
+fn build_idt() -> Idt {
+    let mut idt = Idt([IdtEntry::absent(); 256]);
+    idt.0[PIC_MASTER_OFFSET as usize]     = IdtEntry::interrupt_gate(timer_interrupt_handler);
+    idt.0[PIC_MASTER_OFFSET as usize + 1] = IdtEntry::interrupt_gate(keyboard_interrupt_handler);
+    idt.0[0x80] = IdtEntry::trap_gate_ring3(int80_handler as *const () as u32);
+    idt
 }
 
 // ── Initialisation ────────────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ lazy_static! {
 pub fn init() {
     let ptr = IdtPtr {
         limit: (core::mem::size_of::<Idt>() - 1) as u16,
-        base: IDT.0.as_ptr() as u32,
+        base: IDT.get_or_init(build_idt).0.as_ptr() as u32,
     };
     unsafe {
         asm!("lidt [{0}]", in(reg) &ptr as *const IdtPtr as usize,

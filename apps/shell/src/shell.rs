@@ -4,22 +4,25 @@ use usrlib::ipc::{ipc_receive_value, ipc_send_value};
 use usrlib::syscall::Syscall;
 use alloc::string::String;
 use alloc::vec::Vec;
-use alloc::collections::BTreeMap;
-use lazy_static::lazy_static;
 use crate::command::Command;
 use crate::launcher;
 use vfs_protocol::client::Vfs;
 
 static PROMPT: &str = "\x1B[32mrose>\x1B[m ";
 
-lazy_static! {
-    static ref COMMANDS: BTreeMap<String, fn(&Command)> = BTreeMap::from([
-        (String::from("ls"), ls as fn(&Command)),
-        (String::from("clear"), clear as fn(&Command)),
-        (String::from("rose"), rose as fn(&Command)),
-        (String::from("sleep"), sleep as fn(&Command)),
-        (String::from("random"), random as fn(&Command)),
-    ]);
+static COMMANDS: [(&str, fn(&Command)); 5] = [
+    ("ls", ls),
+    ("clear", clear),
+    ("rose", rose),
+    ("sleep", sleep),
+    ("random", random),
+];
+
+fn lookup_command(name: &str) -> Option<fn(&Command)> {
+    COMMANDS
+        .iter()
+        .find(|(command_name, _)| *command_name == name)
+        .map(|(_, handler)| *handler)
 }
 
 pub fn main() {
@@ -40,7 +43,7 @@ pub fn main() {
             println!();
 
             if let Some(cmd) = Command::parse(&buffer) {
-                match COMMANDS.get(&cmd.name) {
+                match lookup_command(&cmd.name) {
                     Some(command) => command(&cmd),
                     None => launcher::run(&cmd),
                 }

@@ -229,17 +229,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 name = "kernel"
 version = "0.1.0"
 dependencies = [
- "lazy_static",
  "system",
-]
-
-[[package]]
-name = "lazy_static"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
-dependencies = [
- "spin 0.9.8",
 ]
 
 [[package]]
@@ -397,9 +387,8 @@ dependencies = [
  "dummy",
  "input-protocol",
  "kernel",
- "lazy_static",
  "pic8259",
- "spin 0.10.0",
+ "spin",
  "system",
  "usrlib",
  "volatile 0.2.7",
@@ -412,8 +401,7 @@ version = "0.1.0"
 dependencies = [
  "input-protocol",
  "kernel",
- "lazy_static",
- "spin 0.10.0",
+ "spin",
  "system",
  "volatile 0.2.7",
 ]
@@ -499,7 +487,6 @@ dependencies = [
 name = "shell"
 version = "0.1.0"
 dependencies = [
- "lazy_static",
  "system",
  "usrlib",
  "vfs-protocol",
@@ -512,12 +499,6 @@ dependencies = [
  "system",
  "usrlib",
 ]
-
-[[package]]
-name = "spin"
-version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 
 [[package]]
 name = "spin"

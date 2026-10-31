@@ -1,8 +1,8 @@
 use core::fmt;
 use core::fmt::Write;
 use core::sync::atomic::{AtomicU64, Ordering};
+use kernel::once::Once;
 use kernel::platform::output::KernelOutput;
-use lazy_static::lazy_static;
 use spin::Mutex;
 use volatile::Volatile;
 use crate::ansi_parser::{AnsiParser, AnsiCommand, AnsiColor};
@@ -13,10 +13,7 @@ pub fn init(physical_memory_offset: u64) {
     VGA_PHYS_OFFSET.store(physical_memory_offset, Ordering::Relaxed);
 }
 
-lazy_static! {
-    static ref WRITER: Mutex<Writer> =
-        Mutex::new(Writer::new(ColorCode::new(Color::Green, Color::Black)));
-}
+static WRITER: Once<Mutex<Writer>> = Once::new();
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,6 +246,10 @@ pub struct VgaOutput;
 
 impl KernelOutput for VgaOutput {
     fn write_str(&self, s: &str) {
-        WRITER.lock().write_str(s).unwrap();
+        WRITER
+            .get_or_init(|| Mutex::new(Writer::new(ColorCode::new(Color::Green, Color::Black))))
+            .lock()
+            .write_str(s)
+            .unwrap();
     }
 }
