@@ -96,6 +96,18 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let _ = kernel.schedule(new_elf_task(INPUTD_ELF));
     static PS2D_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/ps2d");
     let _ = kernel.schedule(new_elf_task(PS2D_ELF));
+    static ATAD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/atad");
+    match kernel.schedule_with_task_handle(new_elf_task(ATAD_ELF)) {
+        Ok((atad_handle, _)) => {
+            if !kernel::portio::grant(atad_handle, 0x1F0, 0x1F7) {
+                kprintln!("[KERNEL] atad primary taskfile grant failed");
+            }
+            if !kernel::portio::grant(atad_handle, 0x3F6, 0x3F6) {
+                kprintln!("[KERNEL] atad alternate status grant failed");
+            }
+        }
+        Err(()) => kprintln!("[KERNEL] atad schedule failed"),
+    }
     static SHELL_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/shell");
     let _ = kernel.schedule(new_elf_task(SHELL_ELF));
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));

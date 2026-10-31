@@ -161,10 +161,14 @@ impl Kernel {
     }
 
     pub fn schedule(&mut self, task: SharedTask) -> Result<FutureHandle, ()> {
+        self.schedule_with_task_handle(task).map(|(_task_handle, future_handle)| future_handle)
+    }
+
+    pub fn schedule_with_task_handle(&mut self, task: SharedTask) -> Result<(TaskHandle, FutureHandle), ()> {
         let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
         let result = services().task_manager.borrow_mut().add_task(task);
-        let future_handle = match result {
+        let paired = match result {
             Ok(task_handle) => {
                 let future = Box::new(TaskCompletionFuture::new(task_handle));
                 let future_handle = services().future_registry.borrow_mut().register(future);
@@ -172,14 +176,14 @@ impl Kernel {
                     services().task_manager.borrow_mut().set_completion_future(task_handle, fh);
                 }
                 self.schedule_task(task_handle);
-                future_handle
+                future_handle.map(|fh| (task_handle, fh))
             }
             Err(_) => {
                 panic!("Not able to create new task");
             }
         };
         self.execution_state.preemption_enabled = prev;
-        future_handle.ok_or(())
+        paired.ok_or(())
     }
 
     pub fn sleep(&mut self, millis: u64) {
