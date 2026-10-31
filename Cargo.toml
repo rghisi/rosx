@@ -8,6 +8,7 @@ members = [
     "ata-protocol",
     "arch/x86_64",
     "arch/x86_32",
+    "arch/x86-generic",
     "apps/shell",
     "apps/dummy",
     "apps/pi",

@@ -13,7 +13,6 @@ mod portio;
 mod vga_buffer;
 mod terminal_fonts;
 mod framebuffer;
-mod ansi_parser;
 
 use crate::cpu::X86_64;
 use crate::debug_console::QemuDebugConsole;

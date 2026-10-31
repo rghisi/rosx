@@ -5,7 +5,7 @@ use bootloader_api::info::{FrameBufferInfo, PixelFormat};
 use kernel::default_output::KernelOutput;
 use lazy_static::lazy_static;
 use spin::Mutex;
-use crate::ansi_parser::{AnsiColor, AnsiCommand, AnsiParser};
+use x86_generic::ansi_parser::{AnsiColor, AnsiCommand, AnsiParser};
 use crate::terminal_fonts::{BitmapFont, IBM_8X8, IBM_VGA_8X16, TERMINUS_8X16, SPLEEN_8X16};
 
 const FONT: &BitmapFont = &TERMINUS_8X16;

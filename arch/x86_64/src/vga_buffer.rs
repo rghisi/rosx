@@ -5,7 +5,7 @@ use kernel::default_output::KernelOutput;
 use lazy_static::lazy_static;
 use spin::Mutex;
 use volatile::Volatile;
-use crate::ansi_parser::{AnsiParser, AnsiCommand, AnsiColor};
+use x86_generic::ansi_parser::{AnsiParser, AnsiCommand, AnsiColor};
 
 static VGA_PHYS_OFFSET: AtomicU64 = AtomicU64::new(0);
 

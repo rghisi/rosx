@@ -4,7 +4,6 @@
 
 extern crate alloc;
 
-mod ansi_parser;
 mod cpu;
 mod debug_console;
 mod elf_arch;
