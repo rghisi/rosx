@@ -21,8 +21,14 @@ pub enum ErrorCode {
     IpcDataNotReadable = 0x010C,
     ElfArgumentLimitExceeded = 0x0201,
     ElfArgumentBlobMalformed = 0x0202,
-    PortAccessDenied = 0x0301,
-    PortRequestInvalid = 0x0302,
+    WaitsetFull = 0x0301,
+    WaitsetChildInvalid = 0x0302,
+    WaitsetNestingForbidden = 0x0303,
+    WaitsetNotFound = 0x0304,
+    WaitsetLeafRequired = 0x0305,
+    FutureCapacityExhausted = 0x0401,
+    PortAccessDenied = 0x0501,
+    PortRequestInvalid = 0x0502,
     Unknown = 0x7FFF_FFFF,
 }
 
@@ -47,8 +53,14 @@ impl ErrorCode {
             0x010C => ErrorCode::IpcDataNotReadable,
             0x0201 => ErrorCode::ElfArgumentLimitExceeded,
             0x0202 => ErrorCode::ElfArgumentBlobMalformed,
-            0x0301 => ErrorCode::PortAccessDenied,
-            0x0302 => ErrorCode::PortRequestInvalid,
+            0x0301 => ErrorCode::WaitsetFull,
+            0x0302 => ErrorCode::WaitsetChildInvalid,
+            0x0303 => ErrorCode::WaitsetNestingForbidden,
+            0x0304 => ErrorCode::WaitsetNotFound,
+            0x0305 => ErrorCode::WaitsetLeafRequired,
+            0x0401 => ErrorCode::FutureCapacityExhausted,
+            0x0501 => ErrorCode::PortAccessDenied,
+            0x0502 => ErrorCode::PortRequestInvalid,
             _ => ErrorCode::Unknown,
         }
     }
@@ -58,7 +70,7 @@ impl ErrorCode {
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 17] = [
+    const ALL_ERROR_CODES: [ErrorCode; 23] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -73,6 +85,12 @@ mod tests {
         ErrorCode::IpcDataNotReadable,
         ErrorCode::ElfArgumentLimitExceeded,
         ErrorCode::ElfArgumentBlobMalformed,
+        ErrorCode::WaitsetFull,
+        ErrorCode::WaitsetChildInvalid,
+        ErrorCode::WaitsetNestingForbidden,
+        ErrorCode::WaitsetNotFound,
+        ErrorCode::WaitsetLeafRequired,
+        ErrorCode::FutureCapacityExhausted,
         ErrorCode::PortAccessDenied,
         ErrorCode::PortRequestInvalid,
         ErrorCode::Unknown,

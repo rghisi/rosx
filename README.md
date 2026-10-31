@@ -189,6 +189,7 @@ rosx/
 │   ├── conway/             # Conway's Game of Life
 │   ├── threads/            # Multithreading exerciser
 │   ├── dummy/              # Dummy app for testing
+│   ├── waitset/            # Waitset OR-composition demo
 │   ├── inputd/             # INPUTD input multiplexer daemon
 │   ├── ps2d/               # PS/2 keyboard driver daemon
 │   └── stress/             # Kernel subsystem stress tests (memory, context switching)

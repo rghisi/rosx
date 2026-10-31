@@ -1,6 +1,6 @@
 # RosX - Agent Context Document
 
-> **Last Updated:** 2026-10-26
+> **Last Updated:** 2026-10-30
 > **Purpose:** Compact, always-accurate context for AI coding agents working on RosX.
 
 ---
@@ -40,7 +40,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
 │    x86_64-runner/ # standalone: BiosBoot → QEMU (NOT bootimage)
 └── apps/
-     [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, mem, vfsd, vfs, snake, tetris, conway, threads, stress, inputd, ps2d, atad, ata
+     [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, mem, vfsd, vfs, snake, tetris, conway, threads, waitset, stress, inputd, ps2d, atad, ata
 ```
 
 ---
@@ -133,6 +133,12 @@ cargo xtask test [--skip-integration] # Run unit tests; --skip-integration exclu
 - Platform-specific implementations go in `arch/[platform]/`
 - Key HAL traits: `Cpu` (`kernel/src/cpu.rs`), `ElfArch` (`kernel/src/elf/arch.rs`), `PortIo` (`kernel/src/portio.rs`)
 
+**No Test-Only Production Surface:**
+- Every function, method, or constructor in production code must have at least one non-test caller; `pub(crate)` visibility is not an excuse
+- Test scaffolding (inspectors, fixtures, wake/task helpers) lives inside the `#[cfg(test)]` module of the unit under test, never in production code paths
+- If a test needs access beyond the production interface, reshape the test or give the function a real caller - never widen the production surface to serve a test
+- Symmetric rule: production API without any caller (test or otherwise) is dead weight - wire a real user or delete it
+
 **Pluggable Architecture:**
 - **Scheduling is pluggable (implemented):** the strategy is a `SchedulingAlgorithm` (MLFQ + FIFO) chosen at boot via `scheduler_factory` in `KConfig` (`kernel/src/kconfig.rs`).
 - **Memory is NOT pluggable (yet):** a single static `global_allocator` (`MemoryManager` → `FreeListAllocator`) is active; a `BitmapChunkAllocator` exists but is not wired in. Making the allocator selectable is a stated **low-priority goal**.
@@ -148,7 +154,7 @@ cargo xtask test [--skip-integration] # Run unit tests; --skip-integration exclu
 These principles are the regression guard: the very inversion this rework removed survived many runs because no document stated who owns handle semantics, while the HAL rule — written down — has been obeyed throughout.
 
 **Kernel Subsystems (current invariants):**
-- `future/` + `ipc/` — **notification-driven** futures (time, task-completion) and a mailbox IPC manager (bind/connect/send/receive); kernel-originated event delivery (`deliver_to_service`) wakes accepts on bound services; no polling on the preemption cycle.
+- `future/` + `ipc/` — **notification-driven** futures (time, task-completion, depth-one waitset aggregates) and a mailbox IPC manager (bind/connect/send/receive); kernel-originated event delivery (`deliver_to_service`) wakes accepts on bound services; a waitset completes when any attached leaf future does, woken by a child-to-waitset cascade inside `FutureRegistry::notify`; no polling on the preemption cycle.
 - `ipc/` data family — messages signal; data rides the connection out-of-band via write/read/release tokens; the kernel never interprets message payloads.
 - Input architecture — policy lives in the user-space `INPUTD` daemon (`inputd`), device semantics in driver daemons (`ps2d`); the kernel delivers opaque event frames only.
 - Disk architecture — ATA command semantics live in the user-space `ATAD` daemon (`atad`) over `ata-protocol`; the kernel contributes only the mediated port capability (`portio` grants). v1 polls; IRQ14 delivery is the v2 event path.
@@ -224,5 +230,6 @@ This is the MOST CRITICAL guideline for working on RosX:
 - **CRITICAL: kernel/ is `no_std`** - std is forbidden; dependencies are limited to the workspace crate `system` plus `lazy_static`. No other third-party crates.
 - **CRITICAL: No comments, ever** - Write self-explanatory code with clear names instead
 - **CRITICAL: Write unit tests** - All kernel modules should have comprehensive unit tests (see `kernel/src/scheduler/mlfq_strategy.rs` as a reference)
+- **CRITICAL: No test-only functions in production code** - production functions need non-test callers; test helpers belong in `#[cfg(test)]` modules, and production APIs need real users
 - Multi-platform support is a goal - keep kernel code portable and platform-agnostic
 - Build and test after significant changes (`cargo test -p kernel`)

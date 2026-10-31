@@ -24,6 +24,7 @@ members = [
     "apps/conway",
     "apps/stress",
     "apps/threads",
+    "apps/waitset",
     "apps/inputd",
     "apps/ps2d",
     "apps/atad",

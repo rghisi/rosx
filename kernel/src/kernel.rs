@@ -2,6 +2,8 @@ use crate::cpu::Cpu;
 use crate::default_output::{KernelOutput, setup_default_output};
 use crate::elf::ElfArch;
 use crate::future::{TaskCompletionFuture, TimeFuture};
+use crate::future::waitset::WaitsetTake;
+use system::waitset::WaitEvent;
 use crate::kconfig::KConfig;
 use crate::kernel_services::services;
 use crate::kprintln;
@@ -121,6 +123,7 @@ impl Kernel {
                 scheduler: scheduler_task_handler,
                 current_task: None,
                 preemption_enabled: false,
+                pending_preemption: false,
                 execution_context: ExecutionContext::Kernel,
                 cpu,
             },
@@ -214,6 +217,21 @@ impl Kernel {
         self.wait_future(handle).ok()?.into_any().downcast::<T>().ok()
     }
 
+    pub fn wait_waitset(&mut self, handle: FutureHandle) -> Result<WaitEvent, Error> {
+        loop {
+            match services().future_registry.borrow_mut().take_pending(handle) {
+                WaitsetTake::Event(event) => return Ok(event),
+                WaitsetTake::Empty => {
+                    self.execution_state.block_current_task();
+                    let task_handle = self.execution_state.current_task();
+                    services().future_registry.borrow_mut().register_waiter(handle, task_handle);
+                    self.execution_state.switch_to_scheduler();
+                }
+                WaitsetTake::Gone => return Err(Error::NotFound),
+            }
+        }
+    }
+
     pub fn is_future_completed(&self, handle: FutureHandle) -> bool {
         services().future_registry.borrow_mut().get(handle).unwrap_or(true)
     }
@@ -230,6 +248,12 @@ impl Kernel {
             if let Some(task_handle) = self.execution_state.current_task {
                 services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
             }
+            self.execution_state.pending_preemption = true;
+        }
+    }
+
+    pub fn apply_pending_preemption(&mut self) {
+        if core::mem::take(&mut self.execution_state.pending_preemption) {
             self.execution_state.switch_to_scheduler();
         }
     }
