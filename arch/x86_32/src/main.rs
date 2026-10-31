@@ -8,12 +8,11 @@ mod cpu;
 mod debug_console;
 mod elf_arch;
 mod interrupts;
-mod portio;
 mod vga_buffer;
 
 pub static CPU: cpu::X86_32 = cpu::X86_32::new();
 pub static ELF_ARCH: elf_arch::X86_32ElfArch = elf_arch::X86_32ElfArch;
-pub static PORT_IO: portio::X86_32PortIo = portio::X86_32PortIo;
+pub static PORT_IO: x86_generic::port::X86PortIo = x86_generic::port::X86PortIo;
 
 static KCONFIG: kernel::kconfig::KConfig = kernel::kconfig::KConfig {
     cpu: &CPU,

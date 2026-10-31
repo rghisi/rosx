@@ -1,9 +1,9 @@
 use core::arch::asm;
 use kernel::portio::{PortIo, PortWidth};
 
-pub struct X86_32PortIo;
+pub struct X86PortIo;
 
-impl PortIo for X86_32PortIo {
+impl PortIo for X86PortIo {
     fn read(&self, port: u16, width: PortWidth) -> u32 {
         match width {
             PortWidth::Byte => unsafe { read_byte(port) as u32 },

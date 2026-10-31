@@ -714,6 +714,9 @@ dependencies = [
 [[package]]
 name = "x86-generic"
 version = "0.1.0"
+dependencies = [
+ "kernel",
+]
 
 [[package]]
 name = "x86_64"
