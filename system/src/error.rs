@@ -27,6 +27,8 @@ pub enum ErrorCode {
     WaitsetNotFound = 0x0304,
     WaitsetLeafRequired = 0x0305,
     FutureCapacityExhausted = 0x0401,
+    PortAccessDenied = 0x0501,
+    PortRequestInvalid = 0x0502,
     Unknown = 0x7FFF_FFFF,
 }
 
@@ -57,6 +59,8 @@ impl ErrorCode {
             0x0304 => ErrorCode::WaitsetNotFound,
             0x0305 => ErrorCode::WaitsetLeafRequired,
             0x0401 => ErrorCode::FutureCapacityExhausted,
+            0x0501 => ErrorCode::PortAccessDenied,
+            0x0502 => ErrorCode::PortRequestInvalid,
             _ => ErrorCode::Unknown,
         }
     }
@@ -66,7 +70,7 @@ impl ErrorCode {
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 21] = [
+    const ALL_ERROR_CODES: [ErrorCode; 23] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -87,6 +91,8 @@ mod tests {
         ErrorCode::WaitsetNotFound,
         ErrorCode::WaitsetLeafRequired,
         ErrorCode::FutureCapacityExhausted,
+        ErrorCode::PortAccessDenied,
+        ErrorCode::PortRequestInvalid,
         ErrorCode::Unknown,
     ];
 

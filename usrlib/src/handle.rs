@@ -106,7 +106,7 @@ impl UserDataHandle {
         self.token.unwrap_or(0) as usize
     }
 
-    pub(crate) fn from_token(raw: usize) -> Option<Self> {
+    pub fn from_token(raw: usize) -> Option<Self> {
         if is_token(raw) {
             Some(Self {
                 token: Some(raw as u32),

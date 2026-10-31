@@ -25,6 +25,10 @@ pub enum SyscallNum {
     WaitsetDetach = 30,
     WaitsetWait = 31,
     WaitsetDrop = 32,
+    PortIn = 33,
+    PortOut = 34,
+    PortInBlock = 35,
+    PortOutBlock = 36,
 }
 
 impl TryFrom<usize> for SyscallNum {
@@ -56,6 +60,10 @@ impl TryFrom<usize> for SyscallNum {
             30 => Ok(Self::WaitsetDetach),
             31 => Ok(Self::WaitsetWait),
             32 => Ok(Self::WaitsetDrop),
+            33 => Ok(Self::PortIn),
+            34 => Ok(Self::PortOut),
+            35 => Ok(Self::PortInBlock),
+            36 => Ok(Self::PortOutBlock),
             _ => Err(()),
         }
     }
@@ -98,6 +106,10 @@ mod tests {
             SyscallNum::WaitsetDetach,
             SyscallNum::WaitsetWait,
             SyscallNum::WaitsetDrop,
+            SyscallNum::PortIn,
+            SyscallNum::PortOut,
+            SyscallNum::PortInBlock,
+            SyscallNum::PortOutBlock,
         ];
         for number in live {
             assert_eq!(SyscallNum::try_from(number as usize).unwrap(), number);
