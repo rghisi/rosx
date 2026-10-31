@@ -109,7 +109,7 @@ impl UserDataHandle {
         }
     }
 
-    pub(crate) fn from_token(raw: usize) -> Option<Self> {
+    pub fn from_token(raw: usize) -> Option<Self> {
         if is_token(raw) {
             Some(Self {
                 packed: Some(raw as u32),
