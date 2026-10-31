@@ -27,6 +27,7 @@ members = [
     "apps/inputd",
     "apps/ps2d",
     "apps/atad",
+    "apps/ata",
     "xtask",
     "tests-integration",
 ]

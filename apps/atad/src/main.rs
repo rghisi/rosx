@@ -3,8 +3,9 @@
 extern crate alloc;
 
 use alloc::format;
+use alloc::vec;
 use alloc::vec::Vec;
-use ata_protocol::wire::{self, AtaError, Reply, Request};
+use ata_protocol::wire::{self, AtaError, Reply, Request, SECTOR_BYTES};
 use atad::taskfile::{AtaDrive, Bus, DriveFault, Identity};
 use usrlib::error::PortError;
 use usrlib::handle::{UserBindingHandle, UserConnectionHandle, UserDataHandle};
@@ -42,6 +43,10 @@ impl Bus for SyscallBus {
 
 fn conn_token(connection: UserConnectionHandle) -> u32 {
     u32::from_str_radix(&format!("{}", connection), 16).expect("canonical connection token")
+}
+
+fn data_token(handle: &UserDataHandle) -> u32 {
+    u32::from_str_radix(&format!("{}", handle), 16).expect("canonical data token")
 }
 
 fn drain_incoming(token: u32) -> Option<Vec<u8>> {
@@ -115,7 +120,7 @@ fn serve_one(
     let owner = conn_token(connection);
     release_held_for(held, owner);
     let reply = match Request::decode(received.data()) {
-        Ok(request) => dispatch(drives, connection, owner, request),
+        Ok(request) => dispatch(drives, held, connection, owner, request),
         Err(error) => error_reply(error, 0, 0),
     };
     if let Ok(frame) = reply.encode() {
@@ -134,23 +139,63 @@ fn release_held_for(held: &mut Vec<(u32, UserDataHandle)>, owner: u32) {
     });
 }
 
-fn dispatch(
-    drives: &mut [AtaDrive<SyscallBus>],
+fn dispatch<'a>(
+    drives: &'a mut [AtaDrive<SyscallBus>],
+    held: &mut Vec<(u32, UserDataHandle)>,
     connection: UserConnectionHandle,
     owner: u32,
     request: Request,
-) -> Reply {
+) -> Reply<'a> {
     match request {
-        Request::Identify { drive } => match drive_of(drives, drive).and_then(|drive| drive.identity()) {
-            Some(identity) => Reply::Ident {
-                sectors: identity.sectors,
-                firmware_rev: &identity.firmware_rev,
-                model: &identity.model,
-            },
-            None => error_reply(AtaError::NotFound, 0, 0),
-        },
-        Request::Read { .. } | Request::Write { .. } | Request::Flush { .. } => {
-            error_reply(AtaError::Protocol, 0, 0)
+        Request::Identify { drive } => {
+            let identity = drive_of(drives, drive).and_then(|drive| drive.identity());
+            match identity {
+                Some(identity) => Reply::Ident {
+                    sectors: identity.sectors,
+                    firmware_rev: &identity.firmware_rev,
+                    model: &identity.model,
+                },
+                None => error_reply(AtaError::NotFound, 0, 0),
+            }
+        }
+        Request::Read { drive, lba, count } => {
+            read_payload(drives, drive, lba, count).map_or_else(
+                |fault| {
+                    let (error, error_register, status) = fault.wire_error();
+                    error_reply(error, error_register, status)
+                },
+                |payload| attach_payload(held, connection, owner, &payload, count as u16),
+            )
+        }
+        Request::Write { .. } | Request::Flush { .. } => error_reply(AtaError::Protocol, 0, 0),
+    }
+}
+
+fn read_payload(
+    drives: &mut [AtaDrive<SyscallBus>],
+    drive: u8,
+    lba: u32,
+    count: u8,
+) -> Result<Vec<u8>, atad::taskfile::DriveFault> {
+    let engine = drive_of(drives, drive).ok_or(atad::taskfile::DriveFault::NotFound)?;
+    let mut buffer = vec![0u8; count as usize * SECTOR_BYTES];
+    engine.read_sectors(lba, count, &mut buffer)?;
+    Ok(buffer)
+}
+
+fn attach_payload(
+    held: &mut Vec<(u32, UserDataHandle)>,
+    connection: UserConnectionHandle,
+    owner: u32,
+    payload: &[u8],
+    sectors: u16,
+) -> Reply<'static> {
+    match Syscall::ipc_data_write(connection, payload) {
+        Err(_) => error_reply(AtaError::Busy, 0, 0),
+        Ok(object) => {
+            let token = data_token(&object);
+            held.push((owner, object));
+            Reply::Data { token, sectors }
         }
     }
 }
