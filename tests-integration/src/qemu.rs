@@ -18,6 +18,7 @@ const INTER_KEY_DELAY: Duration = Duration::from_millis(50);
 const DROP_QUIT_CAP: Duration = Duration::from_secs(5);
 const DROP_REAP_CAP: Duration = Duration::from_secs(5);
 const DROP_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const SCRATCH_DISK_BYTES: usize = 1024 * 1024;
 
 pub struct QemuSession {
     child: Mutex<Child>,
@@ -29,14 +30,35 @@ pub struct QemuSession {
 
 impl QemuSession {
     pub fn spawn() -> QemuSession {
+        QemuSession::spawn_with_scratch(None)
+    }
+
+    pub fn spawn_with_scratch_disk() -> QemuSession {
+        QemuSession::spawn_with_scratch(Some(SCRATCH_DISK_BYTES))
+    }
+
+    fn spawn_with_scratch(scratch_bytes: Option<usize>) -> QemuSession {
         let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
         let kernel_elf = kernel_build::kernel_elf();
         let disk_image = disk_image::create_disk_image(&kernel_elf, temp_dir.path());
         let monitor_socket = temp_dir.path().join("monitor.sock");
 
-        let mut child = Command::new("qemu-system-x86_64")
+        let mut command = Command::new("qemu-system-x86_64");
+        command
             .arg("-drive")
-            .arg(format!("format=raw,file={}", disk_image.display()))
+            .arg(format!("format=raw,file={}", disk_image.display()));
+        if let Some(bytes) = scratch_bytes {
+            let scratch = temp_dir.path().join("scratch-disk.img");
+            std::fs::write(&scratch, vec![0u8; bytes])
+                .expect("failed to create scratch disk image");
+            command
+                .arg("-drive")
+                .arg(format!(
+                    "if=ide,index=1,media=disk,format=raw,file={}",
+                    scratch.display()
+                ));
+        }
+        let mut child = command
             .arg("-debugcon")
             .arg("stdio")
             .arg("-display")

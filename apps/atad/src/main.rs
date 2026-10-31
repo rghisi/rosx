@@ -167,7 +167,34 @@ fn dispatch<'a>(
                 |payload| attach_payload(held, connection, owner, &payload, count as u16),
             )
         }
-        Request::Write { .. } | Request::Flush { .. } => error_reply(AtaError::Protocol, 0, 0),
+        Request::Write { drive, lba, count, token } => {
+            match drain_incoming(token) {
+                None => error_reply(AtaError::Protocol, 0, 0),
+                Some(payload) if payload.len() != count as usize * SECTOR_BYTES => {
+                    error_reply(AtaError::Protocol, 0, 0)
+                }
+                Some(payload) => match drive_of(drives, drive) {
+                    None => error_reply(AtaError::NotFound, 0, 0),
+                    Some(engine) => engine
+                        .write_sectors(lba, &payload)
+                        .map(|()| Reply::Ack)
+                        .unwrap_or_else(|fault| {
+                            let (error, error_register, status) = fault.wire_error();
+                            error_reply(error, error_register, status)
+                        }),
+                },
+            }
+        }
+        Request::Flush { drive } => match drive_of(drives, drive) {
+            None => error_reply(AtaError::NotFound, 0, 0),
+            Some(engine) => engine
+                .flush()
+                .map(|()| Reply::Ack)
+                .unwrap_or_else(|fault| {
+                    let (error, error_register, status) = fault.wire_error();
+                    error_reply(error, error_register, status)
+                }),
+        },
     }
 }
 

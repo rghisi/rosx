@@ -4,6 +4,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use ata_protocol::client::{Ata, DriveIdentity};
+use ata_protocol::wire::SECTOR_BYTES;
 use usrlib::println;
 
 const MBR_BYTES: usize = 512;
@@ -28,6 +29,7 @@ fn main() {
     match requested.first().copied() {
         None => show_drive_and_mbr(&ata),
         Some("read") => read_subcommand(&ata, &requested[1..]),
+        Some("write") => write_subcommand(&ata, &requested[1..]),
         Some(subcommand) => println!("ata unknown subcommand: {subcommand}"),
     }
     ata.disconnect();
@@ -111,4 +113,54 @@ fn checksum(payload: &[u8]) -> u64 {
     payload
         .iter()
         .fold(0u64, |sum, byte| sum.wrapping_add(u64::from(*byte)))
+}
+
+fn write_subcommand(ata: &Ata, arguments: &[&str]) {
+    let [drive, lba] = arguments else {
+        println!("usage: ata write <drive> <lba>");
+        return;
+    };
+    let (Ok(drive), Ok(lba)) = (drive.parse::<u8>(), lba.parse::<u64>()) else {
+        println!("ata write wants two numbers");
+        return;
+    };
+    if drive > 1 {
+        println!("ata write wants drive 0 or 1");
+        return;
+    }
+    let payload: Vec<u8> = writeback_pattern(lba);
+    if let Err(error) = ata.write(drive, lba, &payload) {
+        println!("ata write failed: {error:?}");
+        return;
+    }
+    if let Err(error) = ata.flush(drive) {
+        println!("ata flush failed: {error:?}");
+        return;
+    }
+    match ata.read(drive, lba, WRITEBACK_SECTORS) {
+        Ok(read_back) => report_writeback(drive, lba, &payload, &read_back),
+        Err(error) => println!("ata readback failed: {error:?}"),
+    }
+}
+
+const WRITEBACK_SECTORS: usize = 8;
+
+fn writeback_pattern(lba: u64) -> Vec<u8> {
+    (0..WRITEBACK_SECTORS * SECTOR_BYTES)
+        .map(|index| ((lba * 7 + index as u64) & 0xFF) as u8)
+        .collect()
+}
+
+fn report_writeback(drive: u8, lba: u64, payload: &[u8], read_back: &[u8]) {
+    let mismatch = payload
+        .iter()
+        .zip(read_back.iter())
+        .position(|(expected, actual)| expected != actual);
+    match mismatch {
+        Some(index) => println!("writeback mismatch at byte {index}"),
+        None if read_back.len() == payload.len() => {
+            println!("writeback ok drive={drive} lba={lba}");
+        }
+        None => println!("writeback mismatch at byte {}", read_back.len()),
+    }
 }
