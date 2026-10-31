@@ -164,13 +164,15 @@ full x86_64 integration suite green (run_tests consumes the refactored functions
 
 ## 4. Gap 3 — Run & image path
 
-**DECISION REQUIRED (owner):** canonical x86_32 boot artifact.
-- **A (recommended): QEMU `-kernel` multiboot ELF** (current `run.sh` mechanics — F3, proven by
+**DECIDED (owner, 2026-10-31): multiboot.** The canonical x86_32 boot artifact is the QEMU
+`-kernel` multiboot ELF; the GRUB ISO stays an optional real-hardware path outside CI.
+- **A (CHOSEN): QEMU `-kernel` multiboot ELF** (current `run.sh` mechanics — F3, proven by
   O3). Zero host dependencies; QEMU-only.
 - B: GRUB multiboot ISO via `build-image.sh`. Real-hardware capable but host-dep heavy; **O7** shows
-  the toolchain is missing even on this dev machine.
+  the toolchain is missing even on this dev machine. Kept reachable as `cargo xtask image x86_32`,
+  never a CI requirement.
 
-Under A:
+Implementation:
 - Fix `run.sh`: add `-display none`; drop `-d cpu_reset` (register-dump flood; the integration
   harness deliberately never passed it). Keep it compatible with both launch routes (cargo runner
   config in `arch/x86_32/.cargo/config.toml` and xtask's direct invocation).
@@ -237,8 +239,9 @@ ported subsets; default invocation byte-identical in behavior for x86_64.
   `ROSX_ARCH=x86_32 cargo test -p tests-integration …`.
 - `build-artifacts.yml`: mirror the x86_64 job for x86_32.
 
-**Gate:** a green push to a PR branch shows all jobs; no new required apt packages for the A path
-(nothing outside Cargo + QEMU, which is gap-free by construction on GH runners).
+**Gate:** a green push to a PR branch shows all jobs; no new required apt packages (the multiboot
+decision of 2026-10-31 leaves nothing outside Cargo + QEMU, which is gap-free by construction on
+GH runners).
 
 ---
 
