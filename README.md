@@ -61,7 +61,7 @@ Core components are designed to be interchangeable:
 The system utilizes:
 - **Free-list Allocator:** Active global allocator for kernel memory
 - **Bitmap-chunk Allocator:** Present, not yet wired in
-- **`no_std`:** std is forbidden; dependencies limited to `system` and `lazy_static`
+- **`no_std`:** std is forbidden; dependencies limited to `system`
 
 ## Current State
 
@@ -209,7 +209,7 @@ rosx/
 
 - **Incremental Development:** Make small, testable changes; verify each step
 - **Hardware Abstraction:** All platform-specific code must use traits (HAL pattern)
-- **`no_std` kernel:** std is forbidden; dependencies are limited to `system` and `lazy_static`
+- **`no_std` kernel:** std is forbidden; dependencies are limited to the workspace crate `system`
 - **Unit Tests:** Write comprehensive tests for all kernel modules
 - **No Comments in Code:** Write self-explanatory code with clear names; exceptions for assembly
 

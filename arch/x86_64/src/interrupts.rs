@@ -3,9 +3,9 @@ use crate::interrupt_controller::PicController;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering::Relaxed;
+use kernel::once::Once;
 use kernel::platform::interrupt::{self, InterruptController};
 use kernel::kernel::kernel;
-use lazy_static::lazy_static;
 use usrlib::println;
 use x86_64::instructions::port::Port;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
@@ -37,24 +37,24 @@ impl InterruptIndex {
     }
 }
 
-lazy_static! {
-    static ref IDT: InterruptDescriptorTable = {
-        let mut idt = InterruptDescriptorTable::new();
-        idt[InterruptIndex::Timer.as_u8()].set_handler_fn(timer_interrupt_handler);
-        idt[InterruptIndex::Keyboard.as_u8()].set_handler_fn(keyboard_interrupt_handler);
-        idt[SYSCALL_VECTOR].set_handler_fn(syscall_handler);
+static IDT: Once<InterruptDescriptorTable> = Once::new();
 
-        unsafe {
-            idt[SYSCALL_VECTOR]
-                .set_handler_addr(core::mem::transmute(syscall_handler_entry as *const ()));
-        }
+fn build_idt() -> InterruptDescriptorTable {
+    let mut idt = InterruptDescriptorTable::new();
+    idt[InterruptIndex::Timer.as_u8()].set_handler_fn(timer_interrupt_handler);
+    idt[InterruptIndex::Keyboard.as_u8()].set_handler_fn(keyboard_interrupt_handler);
+    idt[SYSCALL_VECTOR].set_handler_fn(syscall_handler);
 
-        idt
-    };
+    unsafe {
+        idt[SYSCALL_VECTOR]
+            .set_handler_addr(core::mem::transmute(syscall_handler_entry as *const ()));
+    }
+
+    idt
 }
 
 pub fn init() {
-    IDT.load();
+    IDT.get_or_init(build_idt).load();
     if crate::apic::cpu_supports_local_apic() {
         kernel::kprintln!("[KERNEL] Interrupt controller: Local APIC + I/O APIC");
         USING_LOCAL_APIC.store(true, Relaxed);
