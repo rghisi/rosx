@@ -7,7 +7,6 @@ extern crate alloc;
 mod cpu;
 mod elf_arch;
 mod interrupts;
-mod vga_buffer;
 
 pub static CPU: cpu::X86_32 = cpu::X86_32::new();
 pub static ELF_ARCH: elf_arch::X86_32ElfArch = elf_arch::X86_32ElfArch;
@@ -28,7 +27,7 @@ use kernel::panic::handle_panic;
 core::arch::global_asm!(include_str!("boot.S"));
 
 static DEBUG_CONSOLE: x86_generic::debug_console::QemuDebugConsole = x86_generic::debug_console::QemuDebugConsole;
-static VGA_OUTPUT: vga_buffer::VgaOutput = vga_buffer::VgaOutput;
+static VGA_OUTPUT: x86_generic::vga_buffer::VgaOutput = x86_generic::vga_buffer::VgaOutput;
 static OUTPUTS: &[&dyn kernel::default_output::KernelOutput] = &[&VGA_OUTPUT, &DEBUG_CONSOLE];
 static MULTIPLEXED_OUTPUT: MultiplexOutput = MultiplexOutput::new(OUTPUTS);
 
@@ -45,6 +44,7 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
         panic!("bad Multiboot magic: {:#x}", multiboot_magic);
     }
 
+    x86_generic::vga_buffer::init(0);
     let raw_blocks = parse_memory_map(multiboot_info as *const u8);
     let memory_blocks = trim_to_safe_memory(raw_blocks);
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);

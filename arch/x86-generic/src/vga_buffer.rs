@@ -1,15 +1,15 @@
 use core::fmt;
 use core::fmt::Write;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use kernel::default_output::KernelOutput;
 use lazy_static::lazy_static;
 use spin::Mutex;
 use volatile::Volatile;
-use x86_generic::ansi_parser::{AnsiParser, AnsiCommand, AnsiColor};
+use crate::ansi_parser::{AnsiParser, AnsiCommand, AnsiColor};
 
-static VGA_PHYS_OFFSET: AtomicU64 = AtomicU64::new(0);
+static VGA_PHYS_OFFSET: AtomicUsize = AtomicUsize::new(0);
 
-pub fn init(physical_memory_offset: u64) {
+pub fn init(physical_memory_offset: usize) {
     VGA_PHYS_OFFSET.store(physical_memory_offset, Ordering::Relaxed);
 }
 
@@ -184,9 +184,7 @@ impl Writer {
     pub fn write_string(&mut self, s: &str) {
         for byte in s.bytes() {
             match byte {
-                // printable ASCII byte, newline, backspace or escape
                 0x20..=0x7e | b'\n' | b'\t' | 0x08 | 0x1B => self.write_byte(byte),
-                // not part of printable ASCII range
                 _ => self.write_byte(0xfe),
             }
         }

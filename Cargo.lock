@@ -716,6 +716,9 @@ name = "x86-generic"
 version = "0.1.0"
 dependencies = [
  "kernel",
+ "lazy_static",
+ "spin 0.10.0",
+ "volatile 0.2.7",
 ]
 
 [[package]]

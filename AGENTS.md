@@ -1,6 +1,6 @@
 # RosX - Agent Context Document
 
-> **Last Updated:** 2026-10-30
+> **Last Updated:** 2026-10-31
 > **Purpose:** Compact, always-accurate context for AI coding agents working on RosX.
 
 ---
@@ -38,6 +38,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 ├── arch/
 │    x86_64/        # entry, cpu, interrupts, framebuffer, terminal_fonts, *.S (global_asm)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
+│    x86-generic/   # shared x86-family mechanism: port executor, VGA text buffer, debug console, ANSI parser
 │    x86_64-runner/ # standalone: BiosBoot → QEMU (NOT bootimage)
 └── apps/
      [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, mem, vfsd, vfs, snake, tetris, conway, threads, waitset, stress, inputd, ps2d, atad, ata
@@ -96,6 +97,7 @@ cargo xtask test [--skip-integration] # Run unit tests; --skip-integration exclu
 2. **Understand the architecture layer:**
    - `kernel/` should remain platform-agnostic
    - Architecture-specific code goes in `arch/[platform]/`
+   - x86-family-specific but not bit-width-specific code lives in `arch/x86-generic/`; anything else stays in its port
    - Use traits to abstract platform differences
 
 3. **Assembly code:**
