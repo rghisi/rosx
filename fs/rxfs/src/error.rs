@@ -7,6 +7,7 @@ pub enum IoError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsError {
     Io(IoError),
+    Corrupt,
     DeviceTooSmall,
     VolumeTooLarge,
 }

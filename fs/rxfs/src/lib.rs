@@ -6,3 +6,4 @@ pub mod checksum;
 pub mod device;
 pub mod error;
 pub mod spec;
+pub mod superblock;
