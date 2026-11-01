@@ -55,7 +55,6 @@ impl ExecutionState {
                 .get_task_stack_pointer(self.scheduler);
             let state_pointer = self as *mut ExecutionState as *mut usize;
             self.cpu.swap_context(state_pointer, task_stack_pointer_reference, scheduler_stack_pointer);
-            crate::wake_probe::swapped_in(task_handle);
             self.execution_context = ExecutionContext::UserTask;
             self.preemption_enabled = true;
         }

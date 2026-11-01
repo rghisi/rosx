@@ -97,7 +97,6 @@ impl Scheduler {
     }
 
     pub(super) fn step(&mut self) {
-        crate::wake_probe::sched_enter("step", "sched-thread");
         if let Some(handles) = self.ports.timer_expiry.pop_expired(self.ports.time_source.now()) {
             for handle in handles {
                 self.ports.timer_handler.complete_timer_future(handle);
@@ -106,31 +105,24 @@ impl Scheduler {
         let next_handle = self.start_next_task();
         let outcome = self.ports.context_switcher.switch_to_task(next_handle);
         self.reconcile_returned_task(outcome);
-        crate::wake_probe::sched_exit();
     }
 
     pub fn push_task(&mut self, handle: TaskHandle) {
         let _section = crate::irq_guard::SCHED_SECTION.acquire();
-        crate::wake_probe::sched_enter("push_task", "caller");
         match self.ports.tasks.get_state(handle) {
             TaskState::Ready => self.algorithm.push_ready(handle),
             _ => {}
         }
-        crate::wake_probe::sched_exit();
     }
 
     pub fn wake_tasks(&mut self, handles: Vec<TaskHandle>) {
         let _section = crate::irq_guard::SCHED_SECTION.acquire();
-        crate::wake_probe::sched_enter("wake_tasks", "caller");
         for handle in handles {
             if self.ports.tasks.get_state(handle) != TaskState::Terminated {
                 self.ports.tasks.set_state(handle, TaskState::Ready);
-                crate::wake_probe::wake(handle);
                 self.algorithm.push_ready(handle);
-                crate::wake_probe::pushed(handle);
             }
         }
-        crate::wake_probe::sched_exit();
     }
 
     pub fn set_idle_task(&mut self, handle: TaskHandle) -> Result<(), ()> {
@@ -164,7 +156,6 @@ impl Scheduler {
             }
         };
 
-        crate::wake_probe::picked(next_handle);
         self.algorithm.on_task_start(next_handle);
         self.ports.tasks.set_state(next_handle, TaskState::Running);
         next_handle

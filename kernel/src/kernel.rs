@@ -207,13 +207,6 @@ impl Kernel {
     pub fn wait_future(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
         if !self.is_future_completed(handle) {
             let task_handle = self.execution_state.current_task();
-            let name = services()
-                .task_manager
-                .borrow_mut()
-                .borrow_task_mut(task_handle)
-                .map(|task| task.name())
-                .unwrap_or("?");
-            crate::wake_probe::park(name, handle.index() as usize);
             self.execution_state.block_current_task();
             services().future_registry.borrow_mut().register_waiter(handle, task_handle);
             self.execution_state.switch_to_scheduler();

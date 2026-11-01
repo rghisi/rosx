@@ -376,18 +376,23 @@ Step 5: no residual trips observed; nothing further to fix.
 
 Each numbered fix is its own commit and must keep the x86_64 suite green.
 
-### M4 — Verification and unguard
+### M4 — Verification and unguard (DONE 2026-11-01)
 
-1. Remove the M2 counters and trace prints. `IrqGuard` stays: its
-   held-flag detector is production code with real callers (M3.2–4) per the
-   no-test-only-surface rule.
-2. Debug x86_32: `kstats_mem` 6/6; then the full suite
-   `ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1`.
-3. x86_64 full suite (must not regress).
-4. Keystroke variant: `python3 arch/x86_32/echo-stress.py 30 10` clean.
-5. Remove the guard in `tests-integration/tests/kstats_mem.rs`; update
-   `plans/x86_32-wake-race.md` (fixed) and the interim-state bullet in
-   `AGENTS.md`.
+1. M2 counters and trace prints removed (`wake_probe.rs` deleted, all
+   hooks stripped; the mailbox `*_inner` split from the probe folded
+   back, the `notify`/`consume` inner halves stay for the guard).
+   `IrqGuard` stays: production tripwire with real callers.
+2. Debug x86_32: `kstats_mem` **6/6 PASS unguarded**; full x86_32 suite
+   **exit 0, 20/20 result blocks ok, zero `IRQGUARD`**
+   (`/tmp/opencode/m4/`).
+3. x86_64 full suite: **exit 0, 20/20 ok, zero trips**.
+4. Keystroke variant: `ECHO_BOOTS=30 arch/x86_32/echo-stress.py`
+   **30 boots x 10 keys, all echoed** (the script reads env vars, not
+   positional args).
+5. `tests-integration/tests/kstats_mem.rs` restored to the clean test
+   (guard skip removed); `plans/x86_32-wake-race.md` marked fixed;
+   `AGENTS.md` interim bullet updated and the interrupt-discipline
+   invariant recorded.
 
 ## Definition of done
 

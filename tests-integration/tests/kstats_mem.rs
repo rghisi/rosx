@@ -15,20 +15,14 @@ const REPORT_LINES: [&str; 6] = [
 #[test]
 fn mem_reports_a_memory_snapshot_over_ipc() {
     let mut session = QemuSession::spawn();
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        session.expect_output("rose>", BOOT_BUDGET);
+    session.expect_output("rose>", BOOT_BUDGET);
 
-        let mark = session.mark();
-        session.send_line("mem");
-        for needle in REPORT_LINES {
-            session.expect_output_since(mark, needle, SNAPSHOT_TIMEOUT);
-        }
-
-        let after_report = session.mark();
-        session.expect_output_since(after_report, "rose>", SNAPSHOT_TIMEOUT);
-    }));
-    eprintln!("----CONSOLE-DUMP----\n{}\n----END-DUMP----", session.content_since(0));
-    if outcome.is_err() {
-        panic!("kstats_mem expectations failed (full console dumped above)");
+    let mark = session.mark();
+    session.send_line("mem");
+    for needle in REPORT_LINES {
+        session.expect_output_since(mark, needle, SNAPSHOT_TIMEOUT);
     }
+
+    let after_report = session.mark();
+    session.expect_output_since(after_report, "rose>", SNAPSHOT_TIMEOUT);
 }
