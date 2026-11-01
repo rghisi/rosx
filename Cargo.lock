@@ -405,7 +405,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rosx-x86"
+name = "rosx-x86_32"
 version = "0.1.0"
 dependencies = [
  "input-protocol",

@@ -6,7 +6,7 @@ REPO_ROOT="$(realpath "$SCRIPT_DIR/../..")"
 
 PROFILE="${PROFILE:-release}"
 CARGO_FLAGS="$([ "$PROFILE" = "release" ] && echo "--release" || echo "")"
-KERNEL="$REPO_ROOT/target/rosx-i686/$PROFILE/rosx-x86"
+KERNEL="$REPO_ROOT/target/rosx-i686/$PROFILE/rosx-x86_32"
 OUTPUT="${1:-$REPO_ROOT/target/rosx-i686/$PROFILE/rosx-x86_32.img}"
 
 # ── Tool checks ───────────────────────────────────────────────────────────────

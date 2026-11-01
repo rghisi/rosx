@@ -5,6 +5,6 @@ KERNEL_PATH="$(realpath "$1")"
 exec qemu-system-i386 \
     -kernel "$KERNEL_PATH" \
     -debugcon stdio \
+    -display none \
     -no-reboot \
-    -no-shutdown \
-    -d cpu_reset
+    -no-shutdown

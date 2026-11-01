@@ -58,6 +58,62 @@ jobs:
           path: target/rosx/release/rosx-x86_64.img
           if-no-files-found: error
 
+  build-x86_32:
+    name: Build Kernel (x86_32)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-
+
+      - name: Build
+        run: cargo xtask build x86_32
+
+      - name: Upload multiboot kernel
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rosx-x86_32
+          path: |
+            target/rosx-i686/release/rosx-x86_32
+            target/rosx-i686-user/rom.img
+          if-no-files-found: error
+
+  test-x86_32-integration:
+    name: Integration Tests (x86_32)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-
+
+      - name: Install QEMU x86 targets
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86
+
+      - name: Build apps and ROM for x86_32
+        run: cargo xtask build x86_32
+
+      - name: Integration suite on x86_32
+        run: ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1
+
   release:
     name: Create Release
     needs: [test, build]

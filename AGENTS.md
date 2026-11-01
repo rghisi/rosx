@@ -1,6 +1,6 @@
 # RosX - Agent Context Document
 
-> **Last Updated:** 2026-10-31
+> **Last Updated:** 2026-11-01
 > **Purpose:** Compact, always-accurate context for AI coding agents working on RosX.
 
 ---
@@ -69,10 +69,15 @@ cargo run -p rosx              # run.sh -> arch/x86_64-runner -> BiosBoot disk i
 
 ### x86_32
 ```bash
-cargo build -p rosx-x86        # kernel (Multiboot2, boot.S); run from arch/x86_32/ — its .cargo/config.toml supplies the rosx-i686 custom target
-bash arch/x86_32/build-image.sh   # GRUB bootable image (needs grub-mkrescue, xorriso, mtools)
+cargo xtask build x86_32       # ELF apps + ROM image + kernel (Multiboot2, boot.S)
+cargo xtask run x86_32         # boot QEMU (-kernel, qemu-system-i386) to the shell prompt
+cargo xtask image x86_32       # GRUB bootable ISO (needs grub-mkrescue, xorriso, mtools)
+cargo build -p rosx-x86_32     # kernel only (from arch/x86_32/ — its .cargo/config.toml supplies the rosx-i686 custom target)
 ```
-- x86_32 builds are untouched by xtask. The kernel embeds the shell ELF from `target/rosx-i686-user/release/shell`; build it for `rosx-i686-user` first with the explicit `-Z` build-std flags xtask uses for x86_64. No `vfsd` runs on x86_32, so running a program by name reports `No filesystem` after connect retries. x86_32 wires the port-I/O mechanism but boots with no port grants and no `atad`, so the port syscalls answer `PortAccessDenied` there.
+- The kernel embeds the shell ELF and the ROM image that `cargo xtask build x86_32` produces under `target/rosx-i686-user/release/`; `arch/x86_32/build.rs` asserts both are present before compiling.
+- The boot roster matches x86_64 (randomd, echo, bulk, pong, vfsd, inputd, ps2d, atad with ATA port grants, then the shell), so programs run by name from the prompt and the disk stack works there.
+- Integration tests run on x86_32 with `ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1`; the harness boots the kernel ELF directly and synthesizes the two-drive IDE topology for the ata suites. `ipc_vfs` and `ata_env_spike` stay x86_64-only; `kstats_mem` is guarded pending the wake-path race fix in `plans/x86_32-wake-race.md`.
+- 32-bit targets use a 16 KiB task stack (`STACK_WORDS` in `kernel/src/task_stack.rs`): the deepest debug syscall chain with a nested IRQ frame overflows the 8 KiB x86_64 stack and corrupts adjacent kernel heap blocks.
 
 ### Unit tests (run on host)
 ```bash
@@ -81,11 +86,19 @@ cargo test                     # default-members only
 cargo test -p kernel -- --test-threads=1   # scheduler, memory, elf, ipc, future
 ```
 
+### Integration tests (run on host against QEMU)
+```bash
+cargo test -p tests-integration -- --test-threads=1                      # x86_64
+ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1      # x86_32
+```
+
 ### xtask commands
 ```bash
-cargo xtask build [--debug]    # Build ELF apps + ROM image + x86_64 kernel + disk image
-cargo xtask apps               # Build ELF apps only
-cargo xtask rom                # Pack target/rosx-user/rom.img from the built user ELFs
+cargo xtask build [arch] [--debug]  # ELF apps + ROM + kernel + boot artifact (arch: x86_64 default, or x86_32)
+cargo xtask apps [arch]             # Build ELF apps only
+cargo xtask rom [arch]              # Pack the ROM image from the built user ELFs
+cargo xtask run [arch] [--debug]    # Build and launch QEMU to the shell prompt
+cargo xtask image x86_32 [--debug]  # GRUB bootable ISO (needs grub-mkrescue, xorriso, mtools)
 cargo xtask test [--skip-integration] # Run unit tests; --skip-integration excludes the QEMU tests-integration suite
 ```
 

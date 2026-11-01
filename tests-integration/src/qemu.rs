@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::arch::Arch;
 use crate::disk_image;
 use crate::kernel_build;
 use crate::monitor::Monitor;
@@ -19,6 +20,8 @@ const DROP_QUIT_CAP: Duration = Duration::from_secs(5);
 const DROP_REAP_CAP: Duration = Duration::from_secs(5);
 const DROP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SCRATCH_DISK_BYTES: usize = 1024 * 1024;
+const MASTER_DISK_BYTES: usize = 1024 * 1024;
+const MBR_SIGNATURE_OFFSET: usize = 510;
 
 pub struct QemuSession {
     child: Mutex<Child>,
@@ -40,13 +43,27 @@ impl QemuSession {
     fn spawn_with_scratch(scratch_bytes: Option<usize>) -> QemuSession {
         let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
         let kernel_elf = kernel_build::kernel_elf();
-        let disk_image = disk_image::create_disk_image(&kernel_elf, temp_dir.path());
+        let arch = Arch::current();
         let monitor_socket = temp_dir.path().join("monitor.sock");
 
-        let mut command = Command::new("qemu-system-x86_64");
-        command
-            .arg("-drive")
-            .arg(format!("format=raw,file={}", disk_image.display()));
+        let mut command = Command::new(arch.qemu_binary());
+        if arch.boots_via_disk_image() {
+            let disk = disk_image::create_disk_image(&kernel_elf, temp_dir.path());
+            command.arg("-drive").arg(format!("format=raw,file={}", disk.display()));
+        } else {
+            command.arg("-kernel").arg(&kernel_elf);
+            let master = temp_dir.path().join("primary-master-disk.img");
+            let mut image = vec![0u8; MASTER_DISK_BYTES];
+            image[MBR_SIGNATURE_OFFSET] = 0x55;
+            image[MBR_SIGNATURE_OFFSET + 1] = 0xAA;
+            std::fs::write(&master, image).expect("failed to create primary master disk image");
+            command
+                .arg("-drive")
+                .arg(format!(
+                    "if=ide,index=0,media=disk,format=raw,file={}",
+                    master.display()
+                ));
+        }
         if let Some(bytes) = scratch_bytes {
             let scratch = temp_dir.path().join("scratch-disk.img");
             std::fs::write(&scratch, vec![0u8; bytes])
@@ -77,9 +94,12 @@ impl QemuSession {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect(
-                "failed to spawn qemu-system-x86_64; install QEMU and ensure it is on the PATH",
-            );
+            .unwrap_or_else(|err| {
+                panic!(
+                    "failed to spawn {}; install QEMU and ensure it is on the PATH: {err}",
+                    arch.qemu_binary()
+                )
+            });
 
         let output = SharedOutput::new();
         if let Some(stdout) = child.stdout.take() {

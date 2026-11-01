@@ -134,19 +134,25 @@ The x86_32 platform runs on older 32-bit processors.
 
 1. **Build:**
    ```bash
-   cd arch/x86_32
-   cargo build -p rosx-x86
+   cargo xtask build x86_32
    ```
 
 2. **Run:**
    ```bash
-   bash arch/x86_32/build-image.sh
+   cargo xtask run x86_32
+   ```
+
+3. **Bootable GRUB image (optional):**
+   ```bash
+   cargo xtask image x86_32    # needs grub-mkrescue, xorriso, mtools
    ```
 
 ### Testing
 
 ```bash
-cargo xtask test
+cargo xtask test                      # workspace unit tests
+cargo test -p tests-integration -- --test-threads=1                      # QEMU integration, x86_64
+ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1      # QEMU integration, x86_32
 ```
 
 ### More detail
