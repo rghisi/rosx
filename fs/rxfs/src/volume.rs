@@ -54,6 +54,13 @@ pub enum Kind {
     Directory,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirItem {
+    pub inode: u32,
+    pub kind: Kind,
+    pub name: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stat {
     pub inode: u32,
@@ -288,6 +295,9 @@ impl<D: BlockDevice> FileSystem<D> {
     pub fn read(&mut self, handle: Handle, offset: u64, buf: &mut [u8]) -> Result<usize, FsError> {
         let inode_no = self.validate_handle(handle)?;
         let (inode, extents) = self.load_inode(inode_no)?;
+        if inode.kind == KIND_FREE {
+            return Err(FsError::BadHandle);
+        }
         if inode.kind == KIND_DIRECTORY {
             return Err(FsError::IsADirectory);
         }
@@ -324,6 +334,9 @@ impl<D: BlockDevice> FileSystem<D> {
         }
         let inode_no = self.validate_handle(handle)?;
         let (mut inode, mut extents) = self.load_inode(inode_no)?;
+        if inode.kind == KIND_FREE {
+            return Err(FsError::BadHandle);
+        }
         if inode.kind == KIND_DIRECTORY {
             return Err(FsError::IsADirectory);
         }
@@ -372,12 +385,188 @@ impl<D: BlockDevice> FileSystem<D> {
     pub fn stat(&mut self, handle: Handle) -> Result<Stat, FsError> {
         let inode_no = self.validate_handle(handle)?;
         let (inode, _) = self.load_inode(inode_no)?;
+        if inode.kind == KIND_FREE {
+            return Err(FsError::BadHandle);
+        }
         Ok(stat_of(inode_no, &inode))
     }
 
     pub fn close(&mut self, handle: Handle) -> Result<(), FsError> {
         self.validate_handle(handle)?;
         self.opens[handle.slot as usize] = None;
+        Ok(())
+    }
+
+    pub fn mkdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        let parts = path::parse(path_bytes)?;
+        if parts.is_root() {
+            return Err(FsError::AlreadyExists);
+        }
+        let parent_no = self.resolve_prefix(&parts, parts.len() - 1)?;
+        let name = parts.get(parts.len() - 1).ok_or(FsError::InvalidPath)?;
+        let (mut parent_inode, mut parent_extents) = self.load_inode(parent_no)?;
+        if parent_inode.kind != KIND_DIRECTORY {
+            return Err(FsError::NotADirectory);
+        }
+        if self
+            .dir_find(&parent_inode, &parent_extents, name)?
+            .is_some()
+        {
+            return Err(FsError::AlreadyExists);
+        }
+        let dir_no = self.alloc_inode()?;
+        let generation = self.slot_generation(dir_no)?;
+        let runs = self.alloc_blocks(1)?;
+        let first_block = runs[0];
+        let mut data = [0u8; BLOCK_BYTES];
+        dir::init_dot_entries(&mut data, dir_no, parent_no);
+        dev_write(&mut self.dev, first_block.0 as u64, &data)?;
+        let mut dir_extents = Vec::new();
+        extent::append(&mut dir_extents, first_block.0, first_block.1);
+        let mut inode = Inode::new(KIND_DIRECTORY, MODE_DIRECTORY, generation);
+        inode.size = BLOCK_BYTES as u64;
+        inode.blocks_used = extent::total_blocks(&dir_extents) as u32;
+        inode.mtime = self.sb.txg;
+        self.store_inode(dir_no, &inode, &dir_extents)?;
+        self.dir_add_entry(&mut parent_inode, &mut parent_extents, name, KIND_DIRECTORY, dir_no)?;
+        parent_inode.mtime = self.sb.txg;
+        self.store_inode(parent_no, &parent_inode, &parent_extents)?;
+        Ok(())
+    }
+
+    pub fn remove(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        let parts = path::parse(path_bytes)?;
+        if parts.is_root() {
+            return Err(FsError::InvalidPath);
+        }
+        let parent_no = self.resolve_prefix(&parts, parts.len() - 1)?;
+        let name = parts.get(parts.len() - 1).ok_or(FsError::InvalidPath)?;
+        let (mut parent_inode, parent_extents) = self.load_inode(parent_no)?;
+        if parent_inode.kind != KIND_DIRECTORY {
+            return Err(FsError::NotADirectory);
+        }
+        let (target, kind) = self
+            .dir_find(&parent_inode, &parent_extents, name)?
+            .ok_or(FsError::NotFound)?;
+        if kind == KIND_DIRECTORY {
+            return Err(FsError::IsADirectory);
+        }
+        self.dir_remove_entry(&parent_inode, &parent_extents, name)?;
+        parent_inode.mtime = self.sb.txg;
+        self.store_inode(parent_no, &parent_inode, &parent_extents)?;
+        self.release_inode(target)
+    }
+
+    pub fn rmdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        let parts = path::parse(path_bytes)?;
+        if parts.is_root() {
+            return Err(FsError::InvalidPath);
+        }
+        let parent_no = self.resolve_prefix(&parts, parts.len() - 1)?;
+        let name = parts.get(parts.len() - 1).ok_or(FsError::InvalidPath)?;
+        let (mut parent_inode, parent_extents) = self.load_inode(parent_no)?;
+        if parent_inode.kind != KIND_DIRECTORY {
+            return Err(FsError::NotADirectory);
+        }
+        let (target, kind) = self
+            .dir_find(&parent_inode, &parent_extents, name)?
+            .ok_or(FsError::NotFound)?;
+        if kind != KIND_DIRECTORY {
+            return Err(FsError::NotADirectory);
+        }
+        if self.dir_live_entries(target)? != 2 {
+            return Err(FsError::DirectoryNotEmpty);
+        }
+        self.dir_remove_entry(&parent_inode, &parent_extents, name)?;
+        parent_inode.mtime = self.sb.txg;
+        self.store_inode(parent_no, &parent_inode, &parent_extents)?;
+        self.release_inode(target)
+    }
+
+    pub fn readdir(&mut self, path_bytes: &[u8]) -> Result<Vec<DirItem>, FsError> {
+        let parts = path::parse(path_bytes)?;
+        let dir_no = self.resolve(&parts)?;
+        let (inode, extents) = self.load_inode(dir_no)?;
+        if inode.kind != KIND_DIRECTORY {
+            return Err(FsError::NotADirectory);
+        }
+        let mut items = Vec::new();
+        for index in 0..ceil_blocks(inode.size) {
+            let (extent, inner) = extent::locate(&extents, index).ok_or(FsError::Corrupt)?;
+            let physical = extent.start as u64 + inner;
+            let mut found = self.cache.inspect(&mut self.dev, physical, |data| {
+                dir::entries(data)
+                    .iter()
+                    .map(|entry| (entry.inode, entry.kind, entry.name.to_vec()))
+                    .collect::<Vec<(u32, u8, Vec<u8>)>>()
+            })?;
+            items.extend(found.drain(..).map(|(ino, kind, name)| DirItem {
+                inode: ino,
+                kind: kind_to_kind(kind),
+                name,
+            }));
+        }
+        Ok(items)
+    }
+
+    fn dir_live_entries(&mut self, dir_no: u32) -> Result<usize, FsError> {
+        let (inode, extents) = self.load_inode(dir_no)?;
+        let mut count = 0usize;
+        for index in 0..ceil_blocks(inode.size) {
+            let (extent, inner) = extent::locate(&extents, index).ok_or(FsError::Corrupt)?;
+            let physical = extent.start as u64 + inner;
+            count += self
+                .cache
+                .inspect(&mut self.dev, physical, |data| dir::live_count(data))?;
+        }
+        Ok(count)
+    }
+
+    fn dir_remove_entry(
+        &mut self,
+        dir_inode: &Inode,
+        dir_extents: &[Extent],
+        name: &[u8],
+    ) -> Result<(), FsError> {
+        for index in 0..ceil_blocks(dir_inode.size) {
+            let (extent, inner) = extent::locate(dir_extents, index).ok_or(FsError::Corrupt)?;
+            let physical = extent.start as u64 + inner;
+            let removed = self
+                .cache
+                .mutate(&mut self.dev, physical, |data| dir::remove(data, name))?;
+            if removed {
+                return Ok(());
+            }
+        }
+        Err(FsError::NotFound)
+    }
+
+    fn release_inode(&mut self, inode_no: u32) -> Result<(), FsError> {
+        let (inode, extents) = self.load_inode(inode_no)?;
+        for extent in &extents {
+            self.block_bitmap
+                .free_range(extent.start as u64, extent.length as u64);
+            self.cache.invalidate(extent.start as u64);
+        }
+        let mut next = inode.spill_block;
+        while next != 0 {
+            let peek = self
+                .cache
+                .inspect(&mut self.dev, next as u64, |data| {
+                    u32::from_le_bytes([data[0], data[1], data[2], data[3]])
+                })?;
+            self.block_bitmap.set_free(next as u64);
+            self.cache.invalidate(next as u64);
+            next = peek;
+        }
+        let freed = Inode::free(inode.generation.wrapping_add(1));
+        let (table_block, slot_off) = inode_slot_location(&self.geometry, inode_no);
+        self.cache.mutate(&mut self.dev, table_block, |data| {
+            let target: &mut [u8; INODE_SIZE] =
+                (&mut data[slot_off..slot_off + INODE_SIZE]).try_into().unwrap();
+            inode::encode(&freed, &[], target);
+        })?;
+        self.inode_bitmap.set_free(inode_no as u64);
         Ok(())
     }
 
@@ -613,14 +802,18 @@ impl<D: BlockDevice> FileSystem<D> {
         Ok(generation)
     }
 }
+fn kind_to_kind(raw: u8) -> Kind {
+    match raw {
+        KIND_DIRECTORY => Kind::Directory,
+        _ => Kind::Regular,
+    }
+}
+
 fn stat_of(inode_no: u32, inode: &Inode) -> Stat {
     Stat {
         inode: inode_no,
         generation: inode.generation,
-        kind: match inode.kind {
-            KIND_DIRECTORY => Kind::Directory,
-            _ => Kind::Regular,
-        },
+        kind: kind_to_kind(inode.kind),
         size: inode.size,
         blocks: inode.blocks_used,
         mtime: inode.mtime,
@@ -1246,4 +1439,174 @@ mod tests {
         assert_eq!(&buf, b"stable");
     }
 
+
+    #[test]
+    fn mkdir_create_and_read_nested() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        fs.mkdir(b"/a").unwrap();
+        let h = fs.create(b"/a/f").unwrap();
+        fs.write(h, 0, b"nested").unwrap();
+        fs.close(h).unwrap();
+        let mut buf = [0u8; 6];
+        let h = fs.open(b"/a/f").unwrap();
+        assert_eq!(fs.read(h, 0, &mut buf).unwrap(), 6);
+        assert_eq!(&buf, b"nested");
+    }
+
+    #[test]
+    fn mkdir_errors() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        assert_eq!(fs.mkdir(b"/").err(), Some(FsError::AlreadyExists));
+        fs.mkdir(b"/dup").unwrap();
+        assert_eq!(fs.mkdir(b"/dup").err(), Some(FsError::AlreadyExists));
+        assert_eq!(fs.mkdir(b"/missing/deep").err(), Some(FsError::NotFound));
+        let file = fs.create(b"/file").unwrap();
+        assert_eq!(fs.mkdir(b"/file/inside").err(), Some(FsError::NotADirectory));
+        let _ = file;
+    }
+
+    #[test]
+    fn mkdir_updates_kind_and_stat() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        fs.mkdir(b"/sub").unwrap();
+        let st = fs.lookup(b"/sub").unwrap();
+        assert_eq!(st.kind, Kind::Directory);
+        assert_eq!(st.size, BLOCK_BYTES as u64);
+        assert_eq!(st.blocks, 1);
+    }
+
+    #[test]
+    fn deep_tree_resolution() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        fs.mkdir(b"/a").unwrap();
+        fs.mkdir(b"/a/b").unwrap();
+        fs.mkdir(b"/a/b/c/").unwrap();
+        let h = fs.create(b"/a/b/c/deep.txt").unwrap();
+        fs.write(h, 0, b"bottom").unwrap();
+        assert_eq!(fs.lookup(b"/a/b/c/deep.txt").unwrap().size, 6);
+    }
+
+    #[test]
+    fn readdir_lists_dots_and_entries_in_order() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        fs.mkdir(b"/sub").unwrap();
+        fs.create(b"/one").unwrap();
+        let items = fs.readdir(b"/").unwrap();
+        let names: Vec<&[u8]> = items.iter().map(|item| item.name.as_slice()).collect();
+        assert_eq!(names, vec![&b"."[..], &b".."[..], &b"sub"[..], &b"one"[..]]);
+        assert_eq!(items[2].kind, Kind::Directory);
+        assert_eq!(items[3].kind, Kind::Regular);
+        assert_eq!(items[0].inode, ROOT_INODE);
+    }
+
+    #[test]
+    fn readdir_requires_directory() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        fs.create(b"/plain").unwrap();
+        assert_eq!(fs.readdir(b"/plain").err(), Some(FsError::NotADirectory));
+        assert_eq!(fs.readdir(b"/ghost").err(), Some(FsError::NotFound));
+    }
+
+    #[test]
+    fn remove_frees_blocks_and_entry() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        let before = fs.free_blocks();
+        let before_inodes = fs.free_inodes();
+        let h = fs.create(b"/gone").unwrap();
+        fs.write(h, 0, &vec![0xABu8; 10 * BLOCK_BYTES]).unwrap();
+        fs.close(h).unwrap();
+        assert_eq!(fs.free_blocks(), before - 10);
+        fs.remove(b"/gone").unwrap();
+        assert_eq!(fs.free_blocks(), before);
+        assert_eq!(fs.free_inodes(), before_inodes);
+        assert_eq!(fs.lookup(b"/gone").err(), Some(FsError::NotFound));
+        assert_eq!(fs.readdir(b"/").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn remove_errors() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        assert_eq!(fs.remove(b"/nope").err(), Some(FsError::NotFound));
+        assert_eq!(fs.remove(b"/").err(), Some(FsError::InvalidPath));
+        fs.mkdir(b"/adir").unwrap();
+        assert_eq!(fs.remove(b"/adir").err(), Some(FsError::IsADirectory));
+    }
+
+    #[test]
+    fn rmdir_roundtrip_frees_everything() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        let before = fs.free_blocks();
+        let before_inodes = fs.free_inodes();
+        fs.mkdir(b"/box").unwrap();
+        let inner = fs.create(b"/box/thing").unwrap();
+        fs.write(inner, 0, b"data").unwrap();
+        fs.close(inner).unwrap();
+        assert_eq!(fs.rmdir(b"/box").err(), Some(FsError::DirectoryNotEmpty));
+        fs.remove(b"/box/thing").unwrap();
+        fs.rmdir(b"/box").unwrap();
+        assert_eq!(fs.free_blocks(), before);
+        assert_eq!(fs.free_inodes(), before_inodes);
+        assert_eq!(fs.lookup(b"/box").err(), Some(FsError::NotFound));
+    }
+
+    #[test]
+    fn rmdir_errors() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        assert_eq!(fs.rmdir(b"/").err(), Some(FsError::InvalidPath));
+        assert_eq!(fs.rmdir(b"/missing").err(), Some(FsError::NotFound));
+        fs.create(b"/plain").unwrap();
+        assert_eq!(fs.rmdir(b"/plain").err(), Some(FsError::NotADirectory));
+    }
+
+    #[test]
+    fn remove_bumps_generation_on_freed_slot() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        let handle = fs.create(b"/cycle").unwrap();
+        let st = fs.stat(handle).unwrap();
+        fs.close(handle).unwrap();
+        fs.remove(b"/cycle").unwrap();
+        assert_eq!(fs.slot_generation(st.inode).unwrap(), st.generation + 1);
+    }
+
+    #[test]
+    fn open_handle_on_removed_file_is_bad_handle() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        let h = fs.create(b"/doomed").unwrap();
+        fs.write(h, 0, b"data").unwrap();
+        fs.remove(b"/doomed").unwrap();
+        assert_eq!(fs.stat(h).err(), Some(FsError::BadHandle));
+        assert_eq!(fs.read(h, 0, &mut [0u8; 1]).err(), Some(FsError::BadHandle));
+        assert_eq!(fs.write(h, 0, b"x").err(), Some(FsError::BadHandle));
+    }
+
+    #[test]
+    fn removed_spill_file_frees_chain_blocks() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        let f1 = fs.create(b"/sp1").unwrap();
+        let f2 = fs.create(b"/sp2").unwrap();
+        let mut f1_size = 0usize;
+        let mut f2_size = 0usize;
+        for round in 0..30usize {
+            let data = pattern_bytes(8 * BLOCK_BYTES, round as u8);
+            fs.write(f1, f1_size as u64, &data).unwrap();
+            f1_size += data.len();
+            let other = pattern_bytes(4 * BLOCK_BYTES, (round + 100) as u8);
+            fs.write(f2, f2_size as u64, &other).unwrap();
+            f2_size += other.len();
+        }
+        let f1_stat = fs.stat(f1).unwrap();
+        assert_ne!(fs.load_inode(f1_stat.inode).unwrap().0.spill_block, 0);
+        let blocks_before = fs.free_blocks();
+        fs.close(f1).unwrap();
+        fs.remove(b"/sp1").unwrap();
+        assert_eq!(fs.free_blocks(), blocks_before + u64::from(f1_stat.blocks) + 1);
+        let mut tail = vec![0u8; 40];
+        let n = fs.read(f2, (f2_size - 40) as u64, &mut tail).unwrap();
+        let expect = pattern_bytes(4 * BLOCK_BYTES, 129);
+        assert_eq!(&tail[..n], &expect[4 * BLOCK_BYTES - 40..]);
+        fs.close(f2).unwrap();
+        let mut fs = FileSystem::mount(fs.unmount().unwrap()).unwrap();
+        assert_eq!(fs.lookup(b"/sp1").err(), Some(FsError::NotFound));
+        assert_eq!(fs.lookup(b"/sp2").unwrap().size, f2_size as u64);
+    }
 }
