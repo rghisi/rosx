@@ -9,6 +9,7 @@ extern crate system;
 mod runtime;
 #[cfg(all(feature = "runtime", not(test)))]
 pub use runtime::{args, argc, argv};
+pub mod allocator;
 pub mod out;
 pub mod arch;
 pub mod error;
