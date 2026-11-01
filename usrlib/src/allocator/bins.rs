@@ -30,6 +30,16 @@ pub const fn chunk_size_of_class(class: usize) -> Option<usize> {
     }
 }
 
+pub const fn realloc_same_class(layout: &Layout, new_size: usize) -> bool {
+    match Layout::from_size_align(new_size, layout.align()) {
+        Ok(new_layout) => match (small_class_of(layout), small_class_of(&new_layout)) {
+            (Some(current), Some(candidate)) => current == candidate,
+            _ => false,
+        },
+        Err(_) => false,
+    }
+}
+
 pub struct Binner {
     heads: [usize; CLASS_COUNT],
 }
@@ -178,6 +188,40 @@ mod tests {
             .collect();
         assert_eq!(sizes, vec![16, 32, 64, 128, 256, 512, 1024, 2048, 4096]);
         assert_eq!(chunk_size_of_class(CLASS_COUNT), None);
+    }
+
+    #[test]
+    fn realloc_within_the_same_class_is_in_place() {
+        assert!(realloc_same_class(&layout(50, 8), 60));
+        assert!(realloc_same_class(&layout(50, 8), 50));
+        assert!(realloc_same_class(&layout(50, 8), 33));
+        assert!(realloc_same_class(&layout(17, 8), 32));
+    }
+
+    #[test]
+    fn realloc_crossing_a_class_boundary_falls_back() {
+        assert!(!realloc_same_class(&layout(64, 8), 65));
+        assert!(!realloc_same_class(&layout(64, 8), 32));
+        assert!(!realloc_same_class(&layout(4096, 8), 4097));
+    }
+
+    #[test]
+    fn large_blocks_never_realloc_in_place() {
+        let big = layout(8192, 8);
+        assert!(!realloc_same_class(&big, 16384));
+        assert!(!realloc_same_class(&big, 64));
+        assert!(!realloc_same_class(&layout(64, 8), 1 << 20));
+    }
+
+    #[test]
+    fn overaligned_chunks_follow_their_class_exactly() {
+        assert!(realloc_same_class(&layout(20, 32), 32));
+        assert!(!realloc_same_class(&layout(16, 32), 16));
+    }
+
+    #[test]
+    fn realloc_with_invalid_new_size_falls_back() {
+        assert!(!realloc_same_class(&layout(16, 8), usize::MAX));
     }
 
     #[test]
