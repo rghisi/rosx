@@ -35,13 +35,19 @@
 ### Non-Goals
 - **No kernel or ABI changes.** The existing `Alloc = 7` / `Dealloc = 8`
   numbers already take `(size, align)` (§2.11); slab fetching rides them. No
-  new syscall number, no `system` crate change.
+  new syscall number, no `system` crate change. **Correction found while
+  implementing (§2.14):** this holds for the mechanism but not for shipping
+  it on by default — a shared per-image cache needs the kernel to reclaim
+  blocks per loaded-image group, so that kernel change is the prerequisite
+  for the default flip (M4, docs/todo.md). Meanwhile the allocator ships
+  behind a usrlib feature and no app's behavior changes.
 - **No per-allocation headers or footers.** Rust's `GlobalAlloc` contract
   hands `dealloc` the exact layout given to `alloc` (§2.1); the allocator
   re-derives the size class from the layout and stores nothing beside the
   chunk. This is the single biggest simplification jemalloc cannot enjoy.
 - **No memory return to the kernel in this plan.** Freed chunks stay in the
-  pool for reuse; exit-time ownership reclaim (§2.5) is the leak safety net.
+  pool for reuse; exit-time ownership reclaim (§2.5) is the leak safety net
+  for single-task programs — shared caches need §2.14's group reclaim.
   A trim path is deferred (docs/todo.md).
 - **No task-local caches (tcache).** A global spinlock guards the bins
   (§3.4); per-task caches need a `TaskId` syscall that does not exist yet.
@@ -85,6 +91,7 @@
    which sweeps every block owned by the task
    (`free_list_allocator.rs:231-250`, `deallocate_by_owner`). A user allocator
    that never frees slabs back still gives all memory back at exit.
+   (For a *shared per-image* cache this net is exactly the hazard — fact 14.)
 6. **Flat address space.** No per-task page tables exist; the only page-table
    code is the boot table walk (`arch/x86_64/src/cpu.rs:147-160`). Kernel and
    all tasks share one memory space, so interior pointers handed out from a
@@ -143,7 +150,28 @@
     test-only production surface (every function gets a real caller);
     `kernel/` stays untouched and portable; host unit tests for all new
     logic; commit messages carry no prefix; x86_32 shares `usrlib`, so M2
-    verification includes the `rosx-x86` build.
+    verification includes the x86_32 build.
+13. **The kernel frees boxed marshalling cells.** `LoadElf`, `IpcConnect`
+    and `IpcBind` run `*Box::from_raw` on the pointer they are handed
+    (`kernel/src/syscall.rs:76,93,106`): the cell crosses the boundary and
+    the kernel becomes its owner. Such a cell must therefore be a
+    kernel-owned block, never a slab chunk — with a caching allocator active
+    these cells must bypass the cache (`kernel_box` in
+    `usrlib/src/syscall.rs`).
+14. **Per-task reclaim turns a shared cache into a hazard for a terminating
+    sibling.** Fact 5's exit-time reclaim fires per task, but fact 7's
+    shared statics span the whole image: when an `exec`'d sibling exits, the
+    kernel unmaps the slabs stamped `BlockOwner::Task(that sibling)` while
+    chunks it had freed are still threaded on the image's shared free list —
+    the next `take` hands out unmapped memory. Reproduced with the slab
+    allocator wired as the default global allocator: after the first
+    `exec`'d bench suite terminated, `bench alloc_churn` produced total
+    console silence (kernel heap corruption). Only bench, stress and threads
+    ever call `Syscall::exec`; every other program is single-task, so a
+    per-image cache is sound for them. A *shared* cache becomes sound only
+    once the kernel reclaims at loaded-image-group granularity (last member
+    exits) — the prerequisite for enabling `slab-allocator` by default,
+    tracked in docs/todo.md.
 
 ---
 
@@ -280,20 +308,27 @@ twice under deterministic mixed sequences (checked against a host-side
 occupancy map).
 **Verify:** `cargo test -p usrlib`; `cargo xtask build` unaffected.
 
-### M2 — Wire UsrAllocator as the global allocator
-`usrlib/src/allocator/mod.rs` (lock + routing + fetch + passthrough),
-`#[global_allocator]` swap in `runtime.rs`.
+### M2 — Wire UsrAllocator as an opt-in global allocator
+`usrlib/src/allocator/mod.rs` (lock + routing + fetch + slab adoption),
+allocator selection in `runtime.rs`. As shipped, the binned allocator is
+selected only under a new `slab-allocator` usrlib feature and the default
+`#[global_allocator]` stays the syscall passthrough (§2.14): every app's
+default behavior is identical to main. Opt-in staging keeps the mechanism,
+its host tests and both bare-metal build shapes green, so flipping the
+default after the group-ownership fix (M4) is a one-line change.
 **Verify:**
 - `cargo test -p usrlib` still green (shim is `not(test)`).
-- `cargo xtask build` and `cargo build -p rosx-x86` (§2.12: x86_32 shares
+- `cargo xtask build` and `cargo xtask build x86_32` (§2.12: x86_32 shares
   usrlib).
-- QEMU smoke: shell boots, allocation-heavy apps run — `snake`, `conway`,
+- Both usrlib bare-metal configurations compile warning-free:
+  `cargo build --target arch/x86_64/rosx-user.json -p usrlib
+  --features runtime`, and the same with `--features slab-allocator`.
+- QEMU smoke (default config is the unchanged passthrough): shell boots,
   `bench alloc` (raw path unchanged: still reports ~45k pairs/s),
-  `threads`, `ps2d`/`inputd`/`vfsd` daemons (their `Vec` churn now rides
-  bins).
+  `snake`/`tetris` idle, IPC roundtrip, stress preemption.
 - `cargo test -p tests-integration --test bench_alloc` stays green.
 
-### M3 — Bench suites, new record, gate
+### M3 — Bench suites shipped; gate and report deferred to the flip
 New suites in `apps/bench` following the `alloc_pairs.rs` pattern:
 - **`alloc_cached`** — same `SIZES` ladder, same pair shape, but through
   `alloc::alloc(layout)` / `alloc::dealloc` (the global allocator). Directly
@@ -304,30 +339,38 @@ New suites in `apps/bench` following the `alloc_pairs.rs` pattern:
   sequence, steady-state ~50 % live, exercising real bin interleave behavior
   and holding a live working set (the workload that today walks the kernel's
   O(live) dealloc list on every free).
-Record a new baseline (`BENCH_RECORD=1 cargo test -p tests-integration
---test bench_baseline -- --ignored`) on the gate host and commit the record;
-the gate then enforces ±20 % from it. Wire the new suites into
-`tests-integration` line-shape tests the way `bench_alloc.rs` does.
 
-**Closing deliverable — baseline comparison and results report.** Once the
-change is in place (M2 wired, M3 suites green), run the full `bench` suite on
-the gate host and compare the new `alloc_cached` / `alloc_churn` numbers
-against the pre-change baseline table in §2.8
-(`benchmarks/bench-x86_64-20261101-113130.txt`). Produce a short
-human-readable report — `docs/userspace-allocator-results.md` — stating, per
-size, the baseline pairs/s vs the cached pairs/s and the speedup factor, the
-churn result, the observed `MAX_ITERATIONS`-cap behavior on the fast sizes,
-and confirmation that the ≥ 4 097 passthrough rows stayed within the ±20 %
-gate. It closes by recording the aggregate win and any regression found. This
-report is the last commit of the plan; it is prose for a reader, not a second
-machine record (the committed `.txt` record already serves that role).
-**Verify:** gate green; `bench list` shows four suites; games still play;
-`docs/userspace-allocator-results.md` exists and cites both the §2.8 baseline
-and the new record.
+`windows::run_phase` is widened to `&mut dyn FnMut() -> bool` so churn can
+carry its live set across phases. Both new suites are excluded from the
+default `bench` sweep (`in_default_sweep: false`): while the default
+allocator is still the passthrough (M2, §2.14) a sweep would record
+passthrough numbers into the slab oracle's history.
+`tests-integration/tests/bench_allocator.rs` boots QEMU, runs both suites by
+name, asserts their line shapes and asserts no kernel BAD-FREE anywhere in
+the transcript; it is `#[ignore]`d until the flip, when it becomes the
+soundness gate for the §2.14 fix.
+
+**Closing deliverable — baseline comparison and results report.** Deferred
+with the flip: once `slab-allocator` is the default and all four suites ride
+the sweep, record a new baseline (`BENCH_RECORD=1 cargo test
+-p tests-integration --test bench_baseline -- --ignored`) on the gate host,
+commit the record, and write `docs/userspace-allocator-results.md` as
+originally specified — per size, the §2.8 baseline pairs/s
+(`benchmarks/bench-x86_64-20261101-113130.txt`) vs the cached pairs/s and
+the speedup factor, the churn result, the observed `MAX_ITERATIONS`-cap
+behavior on the fast sizes, and confirmation that the ≥ 4 097 passthrough
+rows stayed within the ±20 % gate. That report remains the plan's last
+commit; prose for a reader, not a second machine record.
+**Verify:** `bench list` shows four suites; the default sweep and the
+committed `benchmarks/` history are untouched; games still play.
 
 ### M4 — Deferred (out of scope, tracked in docs/todo.md)
-Task-local caches (tcache) behind a new `TaskId` syscall; slab trim
-(returning fully-free slabs to the kernel); `realloc` fast path.
+**Prerequisite: task-group memory ownership in the kernel** (§2.14) — stamp
+user blocks with the owning loaded-image group and reclaim only when the
+last group member exits; then flip the `slab-allocator` default and close
+out M3's deferred record and report. After that: task-local caches (tcache)
+behind a new `TaskId` syscall; slab trim (returning fully-free slabs to the
+kernel); `realloc` fast path.
 
 ---
 
