@@ -9,7 +9,7 @@ use crate::inode::{
 };
 use crate::path::{self, PathParts};
 use crate::spec::{
-    BLOCK_BYTES, Geometry, INODE_SIZE, MAX_OPEN, RESERVED_PREFIX_BLOCKS, ROOT_INODE,
+    BLOCK_BYTES, Geometry, INODE_SIZE, MAX_DEPTH, MAX_OPEN, RESERVED_PREFIX_BLOCKS, ROOT_INODE,
     SUPERBLOCK_BLOCK,
 };
 use crate::superblock::{Superblock, CHECK_CLEAN, CHECK_UNCLEAN, UUID_BYTES, VOLUME_NAME_BYTES};
@@ -55,6 +55,16 @@ pub struct Handle {
 pub enum Kind {
     Regular,
     Directory,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Report {
+    pub leaked_blocks: u64,
+    pub leaked_inodes: u64,
+    pub dangling_entries: u64,
+    pub double_refs: u64,
+    pub fixed: bool,
+    pub hard_corrupt: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -622,6 +632,22 @@ impl<D: BlockDevice> FileSystem<D> {
         Ok(())
     }
 
+    pub fn check(&mut self) -> Result<Report, FsError> {
+        self.commit(false)?;
+        let total_blocks = self.geometry.total_blocks;
+        let inode_count = self.geometry.inode_count;
+        let mut checker = Checker {
+            fs: self,
+            ref_blocks: BitMap::empty(total_blocks),
+            ref_inodes: BitMap::empty(inode_count),
+            visited: BitMap::empty(inode_count),
+            report: Report::default(),
+        };
+        checker.run()?;
+        checker.finish()?;
+        Ok(checker.report)
+    }
+
     fn open_handle(&mut self, inode_no: u32) -> Result<Handle, FsError> {
         let (inode, _) = self.load_inode(inode_no)?;
         if inode.kind == KIND_FREE {
@@ -854,6 +880,313 @@ impl<D: BlockDevice> FileSystem<D> {
         Ok(generation)
     }
 }
+struct Checker<'a, D: BlockDevice> {
+    fs: &'a mut FileSystem<D>,
+    ref_blocks: BitMap,
+    ref_inodes: BitMap,
+    visited: BitMap,
+    report: Report,
+}
+
+impl<D: BlockDevice> Checker<'_, D> {
+    fn run(&mut self) -> Result<(), FsError> {
+        let root = match self.fs.load_inode(ROOT_INODE) {
+            Ok(pair) if pair.0.kind == KIND_DIRECTORY => pair,
+            _ => {
+                self.report.hard_corrupt = true;
+                return Ok(());
+            }
+        };
+        self.ref_inodes.set_used(ROOT_INODE as u64);
+        self.mark_extents(ROOT_INODE, &root.0, &root.1)?;
+        let mut stack = Vec::new();
+        stack.push((ROOT_INODE, ROOT_INODE, 0usize));
+        while let Some((dir_no, parent, depth)) = stack.pop() {
+            if self.visited.is_used(u64::from(dir_no)) {
+                self.report.hard_corrupt = true;
+                continue;
+            }
+            self.visited.set_used(u64::from(dir_no));
+            self.walk_dir(dir_no, parent, depth, &mut stack)?;
+        }
+        Ok(())
+    }
+
+    fn walk_dir(
+        &mut self,
+        dir_no: u32,
+        parent: u32,
+        depth: usize,
+        stack: &mut Vec<(u32, u32, usize)>,
+    ) -> Result<(), FsError> {
+        let (dir_inode, dir_extents) = self.fs.load_inode(dir_no)?;
+        if dir_inode.kind != KIND_DIRECTORY {
+            self.report.hard_corrupt = true;
+            return Ok(());
+        }
+        for index in 0..ceil_blocks(dir_inode.size) {
+            let located = extent::locate(&dir_extents, index);
+            let Some((extent, inner)) = located else {
+                self.report.hard_corrupt = true;
+                continue;
+            };
+            let physical = extent.start as u64 + inner;
+            let well_formed = self
+                .fs
+                .cache
+                .inspect(&mut self.fs.dev, physical, |data| dir::is_well_formed(data))?;
+            if !well_formed {
+                self.report.hard_corrupt = true;
+                continue;
+            }
+            if index == 0 {
+                self.fix_dot_entries(physical, dir_no, parent)?;
+            }
+            let entries = self
+                .fs
+                .cache
+                .inspect(&mut self.fs.dev, physical, |data| {
+                    dir::entries(data)
+                        .iter()
+                        .filter(|entry| entry.name != b"." && entry.name != b"..")
+                        .map(|entry| (entry.name.to_vec(), entry.inode, entry.kind))
+                        .collect::<Vec<(Vec<u8>, u32, u8)>>()
+                })?;
+            for (name, target, entry_kind) in entries {
+                self.visit_entry(
+                    dir_no,
+                    depth,
+                    &dir_inode,
+                    &dir_extents,
+                    &name,
+                    target,
+                    entry_kind,
+                    stack,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn fix_dot_entries(&mut self, physical: u64, dir_no: u32, parent: u32) -> Result<(), FsError> {
+        let (dot, dot_dot) = self
+            .fs
+            .cache
+            .inspect(&mut self.fs.dev, physical, |data| {
+                (
+                    dir::find(data, b".").map(|entry| (entry.inode, entry.kind)),
+                    dir::find(data, b"..").map(|entry| (entry.inode, entry.kind)),
+                )
+            })?;
+        if dot.is_none() || dot_dot.is_none() {
+            self.report.hard_corrupt = true;
+        }
+        if dot.is_some_and(|found| found != (dir_no, KIND_DIRECTORY)) {
+            self.fs.cache.mutate(&mut self.fs.dev, physical, |data| {
+                dir::patch(data, b".", dir_no, KIND_DIRECTORY)
+            })?;
+            self.report.fixed = true;
+        }
+        if dot_dot.is_some_and(|found| found != (parent, KIND_DIRECTORY)) {
+            self.fs.cache.mutate(&mut self.fs.dev, physical, |data| {
+                dir::patch(data, b"..", parent, KIND_DIRECTORY)
+            })?;
+            self.report.fixed = true;
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn visit_entry(
+        &mut self,
+        dir_no: u32,
+        depth: usize,
+        dir_inode: &Inode,
+        dir_extents: &[Extent],
+        name: &[u8],
+        target: u32,
+        entry_kind: u8,
+        stack: &mut Vec<(u32, u32, usize)>,
+    ) -> Result<(), FsError> {
+        let loaded = if target == 0 {
+            None
+        } else {
+            self.fs.load_inode(target).ok()
+        };
+        let (inode, extents) = match loaded {
+            Some(pair) if pair.0.kind != KIND_FREE => pair,
+            _ => {
+                if self.repair_dir_entry(dir_inode, dir_extents, name, true, 0, 0)? {
+                    self.report.dangling_entries += 1;
+                    self.report.fixed = true;
+                }
+                return Ok(());
+            }
+        };
+        if entry_kind != inode.kind {
+            if self.repair_dir_entry(dir_inode, dir_extents, name, false, target, inode.kind)? {
+                self.report.fixed = true;
+            }
+        }
+        if self.ref_inodes.is_used(u64::from(target)) {
+            return Ok(());
+        }
+        self.ref_inodes.set_used(u64::from(target));
+        self.mark_extents(target, &inode, &extents)?;
+        if inode.kind == KIND_DIRECTORY {
+            if depth + 1 > MAX_DEPTH {
+                self.report.hard_corrupt = true;
+            } else {
+                stack.push((target, dir_no, depth + 1));
+            }
+        }
+        Ok(())
+    }
+
+    fn repair_dir_entry(
+        &mut self,
+        dir_inode: &Inode,
+        dir_extents: &[Extent],
+        name: &[u8],
+        remove: bool,
+        inode: u32,
+        kind: u8,
+    ) -> Result<bool, FsError> {
+        for index in 0..ceil_blocks(dir_inode.size) {
+            let Some((extent, inner)) = extent::locate(dir_extents, index) else {
+                return Ok(false);
+            };
+            let physical = extent.start as u64 + inner;
+            let applied = if remove {
+                self.fs
+                    .cache
+                    .mutate(&mut self.fs.dev, physical, |data| dir::remove(data, name))?
+            } else {
+                self.fs.cache.mutate(&mut self.fs.dev, physical, |data| {
+                    dir::patch(data, name, inode, kind)
+                })?
+            };
+            if applied {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn mark_extents(&mut self, no: u32, inode: &Inode, extents: &[Extent]) -> Result<(), FsError> {
+        let mut rebuilt: Vec<Extent> = Vec::new();
+        let mut changed = false;
+        for extent in extents {
+            let start = extent.start as u64;
+            if start < self.fs.geometry.data_start
+                || extent.end() > self.fs.geometry.backup_superblock
+            {
+                self.report.hard_corrupt = true;
+                changed = true;
+                continue;
+            }
+            for block in start..extent.end() {
+                if self.ref_blocks.is_used(block) {
+                    self.report.double_refs += 1;
+                    changed = true;
+                } else {
+                    self.ref_blocks.set_used(block);
+                    extent::append(&mut rebuilt, block as u32, 1);
+                }
+            }
+        }
+        if changed {
+            let blocks = extent::total_blocks(&rebuilt);
+            let mut repaired = *inode;
+            repaired.blocks_used = blocks as u32;
+            repaired.size = if inode.kind == KIND_DIRECTORY {
+                blocks * BLOCK_BYTES as u64
+            } else {
+                inode.size.min(blocks * BLOCK_BYTES as u64)
+            };
+            self.fs.store_inode(no, &repaired, &rebuilt)?;
+            self.report.fixed = true;
+        } else if inode.kind != KIND_DIRECTORY {
+            let cap = inode.blocks_used as u64 * BLOCK_BYTES as u64;
+            if inode.size > cap {
+                let mut repaired = *inode;
+                repaired.size = cap;
+                self.fs.store_inode(no, &repaired, extents)?;
+                self.report.fixed = true;
+            }
+        }
+        self.mark_spill(inode.spill_block)
+    }
+
+    fn mark_spill(&mut self, head: u32) -> Result<(), FsError> {
+        let mut next = head;
+        let mut hops = 0u64;
+        while next != 0 {
+            let block = u64::from(next);
+            if block < self.fs.geometry.data_start
+                || block >= self.fs.geometry.backup_superblock
+                || self.ref_blocks.is_used(block)
+            {
+                self.report.hard_corrupt = true;
+                break;
+            }
+            self.ref_blocks.set_used(block);
+            let peek = self.fs.cache.inspect(&mut self.fs.dev, block, |data| {
+                u32::from_le_bytes([data[0], data[1], data[2], data[3]])
+            })?;
+            next = peek;
+            hops += 1;
+            if hops > self.fs.geometry.data_blocks {
+                self.report.hard_corrupt = true;
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<(), FsError> {
+        for index in 2..self.fs.geometry.inode_count {
+            let no = index as u32;
+            let referenced = self.ref_inodes.is_used(index);
+            let allocated = self.fs.inode_bitmap.is_used(index);
+            if allocated && !referenced {
+                let generation = self.fs.slot_generation(no)?;
+                let freed = Inode::free(generation.wrapping_add(1));
+                let (table_block, slot_off) = inode_slot_location(&self.fs.geometry, no);
+                self.fs.cache.mutate(&mut self.fs.dev, table_block, |data| {
+                    let target: &mut [u8; INODE_SIZE] =
+                        (&mut data[slot_off..slot_off + INODE_SIZE]).try_into().unwrap();
+                    inode::encode(&freed, &[], target);
+                })?;
+                self.fs.inode_bitmap.set_free(index);
+                self.report.leaked_inodes += 1;
+                self.report.fixed = true;
+            } else if referenced && !allocated {
+                self.fs.inode_bitmap.set_used(index);
+                self.report.fixed = true;
+            }
+        }
+        for block in self.fs.geometry.data_start..self.fs.geometry.backup_superblock {
+            let allocated = self.fs.block_bitmap.is_used(block);
+            let referenced = self.ref_blocks.is_used(block);
+            if allocated && !referenced {
+                self.fs.block_bitmap.set_free(block);
+                self.report.leaked_blocks += 1;
+                self.report.fixed = true;
+            } else if referenced && !allocated {
+                self.fs.block_bitmap.set_used(block);
+                self.report.fixed = true;
+            }
+        }
+        if self.report.fixed {
+            self.fs.store_bitmaps()?;
+            self.fs.sb_dirty = true;
+            self.fs.commit(false)?;
+        }
+        Ok(())
+    }
+}
+
 fn kind_to_kind(raw: u8) -> Kind {
     match raw {
         KIND_DIRECTORY => Kind::Directory,
@@ -1754,5 +2087,209 @@ mod tests {
         assert_eq!(fs.lookup(b"/temporary").err(), Some(FsError::NotFound));
         assert_eq!(fs.free_blocks(), 973);
         assert_eq!(fs.free_inodes(), 238);
+    }
+
+    const TEST_BLOCK_BITMAP: u64 = 8;
+    const TEST_INODE_BITMAP: u64 = 9;
+    fn poke_bit(mut disk: SharedDisk, block: u64, bit: u64) {
+        let mut data = disk.peek(block);
+        data[(bit / 8) as usize] |= 1 << (bit % 8);
+        disk.poke(block, &data);
+    }
+
+    fn clear_bit(mut disk: SharedDisk, block: u64, bit: u64) {
+        let mut data = disk.peek(block);
+        data[(bit / 8) as usize] &= !(1 << (bit % 8));
+        disk.poke(block, &data);
+    }
+
+    fn bit_set(disk: &SharedDisk, block: u64, bit: u64) -> bool {
+        let data = disk.peek(block);
+        data[(bit / 8) as usize] & (1 << (bit % 8)) != 0
+    }
+
+    #[test]
+    fn check_reports_clean_on_fresh_volume() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        let report = fs.check().unwrap();
+        assert_eq!(report, Report::default());
+        let writes = fs.dev.write_count();
+        let report = fs.check().unwrap();
+        assert_eq!(report, Report::default());
+        assert_eq!(fs.dev.write_count(), writes);
+    }
+
+    #[test]
+    fn check_clears_leaked_block_bit() {
+        let disk = SharedDisk::new(SMALL_BLOCKS);
+        let mut fs = format_shared(disk.clone());
+        let h = fs.create(b"/keep").unwrap();
+        fs.write(h, 0, &vec![7u8; BLOCK_BYTES]).unwrap();
+        fs.close(h).unwrap();
+        fs.unmount().unwrap();
+        poke_bit(disk.clone(), TEST_BLOCK_BITMAP, EXPECTED_DATA_START + 50);
+        let mut fs = FileSystem::mount(disk.clone()).unwrap();
+        let report = fs.check().unwrap();
+        assert_eq!(report.leaked_blocks, 1);
+        assert!(report.fixed);
+        assert!(!report.hard_corrupt);
+        assert_eq!(fs.free_blocks(), 972);
+        fs.unmount().unwrap();
+        assert!(!bit_set(&disk, TEST_BLOCK_BITMAP, EXPECTED_DATA_START + 50));
+    }
+
+    #[test]
+    fn check_clears_stale_referenced_bit_direction_too() {
+        let disk = SharedDisk::new(SMALL_BLOCKS);
+        let mut fs = format_shared(disk.clone());
+        let h = fs.create(b"/keep").unwrap();
+        fs.write(h, 0, &vec![7u8; BLOCK_BYTES]).unwrap();
+        fs.close(h).unwrap();
+        fs.unmount().unwrap();
+        clear_bit(disk.clone(), TEST_BLOCK_BITMAP, EXPECTED_DATA_START);
+        let mut fs = FileSystem::mount(disk.clone()).unwrap();
+        let report = fs.check().unwrap();
+        assert_eq!(report.leaked_blocks, 0);
+        assert!(report.fixed);
+        assert_eq!(fs.free_blocks(), 972);
+        fs.unmount().unwrap();
+        assert!(bit_set(&disk, TEST_BLOCK_BITMAP, EXPECTED_DATA_START));
+        let mut fs = FileSystem::mount(disk.clone()).unwrap();
+        assert_eq!(fs.lookup(b"/keep").unwrap().size, BLOCK_BYTES as u64);
+    }
+
+    #[test]
+    fn check_frees_leaked_inode() {
+        let disk = SharedDisk::new(SMALL_BLOCKS);
+        let fs = format_shared(disk.clone());
+        let (table_block, slot_off) = inode_slot_location(&fs.geometry, 30);
+        fs.unmount().unwrap();
+        poke_bit(disk.clone(), TEST_INODE_BITMAP, 30);
+        let mut fs = FileSystem::mount(disk.clone()).unwrap();
+        let report = fs.check().unwrap();
+        assert_eq!(report.leaked_inodes, 1);
+        assert!(report.fixed);
+        assert_eq!(fs.free_inodes(), 238);
+        fs.unmount().unwrap();
+        assert!(!bit_set(&disk, TEST_INODE_BITMAP, 30));
+        let table = disk.peek(table_block);
+        let slot: &[u8; INODE_SIZE] = table[slot_off..slot_off + INODE_SIZE]
+            .try_into()
+            .unwrap();
+        assert_eq!(inode::generation_of(slot), 1);
+    }
+
+    #[test]
+    fn check_removes_dangling_entry() {
+        let mut disk = SharedDisk::new(SMALL_BLOCKS);
+        let mut fs = format_shared(disk.clone());
+        fs.create(b"/ghost").unwrap();
+        let ghost = fs.lookup(b"/ghost").unwrap().inode;
+        let (table_block, slot_off) = inode_slot_location(&fs.geometry, ghost);
+        fs.unmount().unwrap();
+        let mut table = disk.peek(table_block);
+        for byte in &mut table[slot_off..slot_off + INODE_SIZE] {
+            *byte = 0;
+        }
+        disk.poke(table_block, &table);
+        let mut fs = FileSystem::mount(disk.clone()).unwrap();
+        let report = fs.check().unwrap();
+        assert_eq!(report.dangling_entries, 1);
+        assert_eq!(report.leaked_inodes, 1);
+        assert!(report.fixed);
+        assert_eq!(fs.readdir(b"/").unwrap().len(), 2);
+        fs.unmount().unwrap();
+        let mut fs = FileSystem::mount(disk).unwrap();
+        assert_eq!(fs.lookup(b"/ghost").err(), Some(FsError::NotFound));
+        assert_eq!(fs.free_inodes(), 238);
+    }
+
+    #[test]
+    fn check_strips_double_referenced_extent() {
+        let mut disk = SharedDisk::new(SMALL_BLOCKS);
+        let mut fs = format_shared(disk.clone());
+        let f = fs.create(b"/f").unwrap();
+        let keep = pattern_bytes(BLOCK_BYTES, 11);
+        fs.write(f, 0, &keep).unwrap();
+        fs.close(f).unwrap();
+        let g = fs.create(b"/g").unwrap();
+        fs.write(g, 0, &vec![9u8; BLOCK_BYTES]).unwrap();
+        fs.close(g).unwrap();
+        let g_stat = fs.lookup(b"/g").unwrap();
+        let (g_inode, mut g_extents) = fs.load_inode(g_stat.inode).unwrap();
+        let f_stat = fs.lookup(b"/f").unwrap();
+        let (_, f_extents) = fs.load_inode(f_stat.inode).unwrap();
+        g_extents[0].start = f_extents[0].start;
+        let (table_block, slot_off) = inode_slot_location(&fs.geometry, g_stat.inode);
+        fs.unmount().unwrap();
+        let mut table = disk.peek(table_block);
+        let target: &mut [u8; INODE_SIZE] =
+            (&mut table[slot_off..slot_off + INODE_SIZE]).try_into().unwrap();
+        inode::encode(&g_inode, &g_extents, target);
+        disk.poke(table_block, &table);
+        let mut fs = FileSystem::mount(disk.clone()).unwrap();
+        let report = fs.check().unwrap();
+        assert_eq!(report.double_refs, 1);
+        assert!(report.fixed);
+        let st = fs.lookup(b"/f").unwrap();
+        assert_eq!(st.size, BLOCK_BYTES as u64);
+        let h = fs.open(b"/f").unwrap();
+        let mut buf = vec![0u8; BLOCK_BYTES];
+        fs.read(h, 0, &mut buf).unwrap();
+        assert_eq!(buf, keep);
+        assert_eq!(fs.lookup(b"/g").unwrap().size, 0);
+        assert_eq!(report.leaked_blocks, 1);
+    }
+
+    #[test]
+    fn check_flags_extent_into_metadata() {
+        let mut disk = SharedDisk::new(SMALL_BLOCKS);
+        let mut fs = format_shared(disk.clone());
+        let h = fs.create(b"/bad").unwrap();
+        fs.write(h, 0, &vec![3u8; BLOCK_BYTES]).unwrap();
+        fs.close(h).unwrap();
+        let stat = fs.lookup(b"/bad").unwrap();
+        let (inode_value, mut extents) = fs.load_inode(stat.inode).unwrap();
+        extents[0].start = 5;
+        let (table_block, slot_off) = inode_slot_location(&fs.geometry, stat.inode);
+        fs.unmount().unwrap();
+        let mut table = disk.peek(table_block);
+        let target: &mut [u8; INODE_SIZE] =
+            (&mut table[slot_off..slot_off + INODE_SIZE]).try_into().unwrap();
+        inode::encode(&inode_value, &extents, target);
+        disk.poke(table_block, &table);
+        let mut fs = FileSystem::mount(disk.clone()).unwrap();
+        let report = fs.check().unwrap();
+        assert!(report.hard_corrupt);
+        assert_eq!(fs.lookup(b"/bad").unwrap().size, 0);
+    }
+
+    #[test]
+    fn check_restores_wrong_dot_parent() {
+        let mut disk = SharedDisk::new(SMALL_BLOCKS);
+        let fs = format_shared(disk.clone());
+        fs.unmount().unwrap();
+        let mut root_block = disk.peek(EXPECTED_DATA_START);
+        root_block[12..16].copy_from_slice(&7u32.to_le_bytes());
+        disk.poke(EXPECTED_DATA_START, &root_block);
+        let mut fs = FileSystem::mount(disk.clone()).unwrap();
+        let report = fs.check().unwrap();
+        assert!(report.fixed);
+        assert!(!report.hard_corrupt);
+        fs.unmount().unwrap();
+        let root_block = disk.peek(EXPECTED_DATA_START);
+        assert_eq!(u32::from_le_bytes(root_block[12..16].try_into().unwrap()), ROOT_INODE);
+    }
+
+    #[test]
+    fn check_flags_unwell_formed_dir_block_without_panicking() {
+        let mut disk = SharedDisk::new(SMALL_BLOCKS);
+        let fs = format_shared(disk.clone());
+        fs.unmount().unwrap();
+        let zeroed = vec![0u8; BLOCK_BYTES];
+        disk.poke(EXPECTED_DATA_START, &zeroed.try_into().unwrap());
+        let mut fs = FileSystem::mount(disk).unwrap();
+        let report = fs.check().unwrap();
+        assert!(report.hard_corrupt);
     }
 }

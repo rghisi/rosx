@@ -108,6 +108,26 @@ pub fn add(block: &mut [u8], inode: u32, kind: u8, name: &[u8]) -> bool {
     false
 }
 
+pub fn patch(block: &mut [u8], name: &[u8], inode: u32, kind: u8) -> bool {
+    let mut pos = 0usize;
+    while pos < BLOCK_BYTES {
+        let (entry_inode, rec_len, _, _) = read_header(block, pos);
+        if rec_len < MIN_ENTRY_BYTES as u16 || rec_len % 4 != 0 {
+            return false;
+        }
+        if pos + rec_len as usize > BLOCK_BYTES {
+            return false;
+        }
+        if entry_inode != 0 && entry_at(block, pos).name == name {
+            block[pos..pos + 4].copy_from_slice(&inode.to_le_bytes());
+            block[pos + 7] = kind;
+            return true;
+        }
+        pos += rec_len as usize;
+    }
+    false
+}
+
 pub fn remove(block: &mut [u8], name: &[u8]) -> bool {
     let mut pos = 0usize;
     let mut prev: Option<usize> = None;
@@ -363,6 +383,19 @@ mod tests {
         assert!(remove(&mut block, doomed));
         assert!(add(&mut block, 5000, KIND_REGULAR, b"free"));
         assert!(is_well_formed(&block));
+    }
+
+    #[test]
+    fn patch_rewrites_target_and_kind_preserving_layout() {
+        let mut block = dotted_block(1, 1);
+        assert!(add(&mut block, 9, KIND_REGULAR, b"target"));
+        let before = entries(&block).len();
+        assert!(patch(&mut block, b"target", 42, KIND_DIRECTORY));
+        assert!(is_well_formed(&block));
+        let fixed = find(&block, b"target").unwrap();
+        assert_eq!((fixed.inode, fixed.kind), (42, KIND_DIRECTORY));
+        assert_eq!(entries(&block).len(), before);
+        assert!(!patch(&mut block, b"missing", 3, KIND_REGULAR));
     }
 
     #[test]
