@@ -7,6 +7,8 @@ use alloc::vec::Vec;
 use usrlib::println;
 use usrlib::syscall::Syscall;
 
+mod alloc_cached;
+mod alloc_churn;
 mod alloc_pairs;
 mod windows;
 mod yield_floor;
@@ -14,16 +16,29 @@ mod yield_floor;
 struct Benchmark {
     name: &'static str,
     run: fn(),
+    in_default_sweep: bool,
 }
 
 const BENCHMARKS: &[Benchmark] = &[
     Benchmark {
         name: "alloc",
         run: alloc_pairs::run,
+        in_default_sweep: true,
+    },
+    Benchmark {
+        name: "alloc_cached",
+        run: alloc_cached::run,
+        in_default_sweep: false,
+    },
+    Benchmark {
+        name: "alloc_churn",
+        run: alloc_churn::run,
+        in_default_sweep: false,
     },
     Benchmark {
         name: "yield",
         run: yield_floor::run,
+        in_default_sweep: true,
     },
 ];
 
@@ -62,7 +77,7 @@ fn main() {
 
 fn select<'a>(requested: &[&'a str]) -> Result<Vec<&'static Benchmark>, &'a str> {
     if requested.is_empty() {
-        return Ok(BENCHMARKS.iter().collect());
+        return Ok(BENCHMARKS.iter().filter(|b| b.in_default_sweep).collect());
     }
     let mut selected = Vec::new();
     for name in requested {

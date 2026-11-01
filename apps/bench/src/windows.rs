@@ -6,7 +6,7 @@ const TARGET_WINDOW_MS: u64 = 500;
 const MAX_ITERATIONS: u64 = 4_000_000;
 const MEASURE_REPS: usize = 3;
 
-pub(crate) fn run_phase(phase: &str, detail: &str, operation: &dyn Fn() -> bool) {
+pub(crate) fn run_phase(phase: &str, detail: &str, operation: &mut dyn FnMut() -> bool) {
     let Some(iterations) = calibrate(operation) else {
         println!("bench.{phase} {detail} result=oom stage=calibrate");
         return;
@@ -34,7 +34,7 @@ pub(crate) fn run_phase(phase: &str, detail: &str, operation: &dyn Fn() -> bool)
     }
 }
 
-fn calibrate(operation: &dyn Fn() -> bool) -> Option<u64> {
+fn calibrate(operation: &mut dyn FnMut() -> bool) -> Option<u64> {
     let mut iterations = 64u64;
     loop {
         let elapsed_ms = time_window(operation, iterations)?;
@@ -46,16 +46,18 @@ fn calibrate(operation: &dyn Fn() -> bool) -> Option<u64> {
         } else {
             iterations.saturating_mul(TARGET_WINDOW_MS / elapsed_ms.max(1))
         };
-        iterations = projected.max(iterations.saturating_mul(2)).min(MAX_ITERATIONS);
+        iterations = projected
+            .max(iterations.saturating_mul(2))
+            .min(MAX_ITERATIONS);
     }
 }
 
-fn warm_up(operation: &dyn Fn() -> bool, iterations: u64) {
+fn warm_up(operation: &mut dyn FnMut() -> bool, iterations: u64) {
     let warmup_iterations = (iterations / 4).max(1);
     let _ = time_window(operation, warmup_iterations);
 }
 
-fn time_window(operation: &dyn Fn() -> bool, iterations: u64) -> Option<u64> {
+fn time_window(operation: &mut dyn FnMut() -> bool, iterations: u64) -> Option<u64> {
     let start = Syscall::now();
     for _ in 0..iterations {
         if !operation() {

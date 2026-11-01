@@ -4,7 +4,7 @@ use usrlib::syscall::Syscall;
 
 pub fn run() {
     println!("bench.start suite=yield shape=voluntary");
-    windows::run_phase("yield", "shape=voluntary", &yield_once);
+    windows::run_phase("yield", "shape=voluntary", &mut yield_once);
     println!("bench.done suite=yield");
 }
 

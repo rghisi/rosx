@@ -11,3 +11,4 @@ input-protocol = { path = "../protocol/input" }
 
 [features]
 runtime = []
+slab-allocator = ["runtime"]

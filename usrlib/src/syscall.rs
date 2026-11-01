@@ -3,11 +3,11 @@ use crate::error::{
     DataError, IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError, PortError,
     WaitsetError,
 };
-use crate::handle::{UserBindingHandle, UserConnectionHandle, UserFutureHandle, UserDataHandle};
+use crate::handle::{UserBindingHandle, UserConnectionHandle, UserDataHandle, UserFutureHandle};
 use crate::ipc::ReceivedMessage;
-use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::alloc::Layout;
 use core::fmt;
 use system::error::{ErrorCode, is_token};
 use system::ipc::{MESSAGE_PAYLOAD_BYTES, Message};
@@ -16,6 +16,16 @@ use system::waitset::WaitEvent;
 
 pub struct Syscall {}
 
+fn kernel_box<T>(value: T) -> *mut T {
+    let layout = Layout::new::<T>();
+    let cell =
+        arch::raw_syscall(SyscallNum::Alloc as usize, layout.size(), layout.align(), 0) as *mut T;
+    if !cell.is_null() {
+        unsafe { cell.write(value) };
+    }
+    cell
+}
+
 impl Syscall {
     pub fn exec(entrypoint: usize) -> Option<UserFutureHandle> {
         let raw = arch::raw_syscall(SyscallNum::Exec as usize, entrypoint as usize, 0, 0);
@@ -23,16 +33,27 @@ impl Syscall {
     }
 
     pub fn load(elf: &[u8]) -> Option<UserFutureHandle> {
-        let elf_ptr = Box::into_raw(Box::new(elf)) as usize;
-        let raw = arch::raw_syscall(SyscallNum::LoadElf as usize, elf_ptr as usize, 0, 0);
+        let elf_cell = kernel_box(elf);
+        if elf_cell.is_null() {
+            return None;
+        }
+        let raw = arch::raw_syscall(SyscallNum::LoadElf as usize, elf_cell as usize, 0, 0);
         UserFutureHandle::from_token(raw)
     }
 
     pub fn load_with_args(elf: &[u8], args: &[String]) -> Option<UserFutureHandle> {
-        let elf_ptr = Box::into_raw(Box::new(elf)) as usize;
+        let elf_cell = kernel_box(elf);
+        if elf_cell.is_null() {
+            return None;
+        }
         let blob = encode_arguments(args);
         let (blob_ptr, blob_len) = wire_pair(&blob);
-        let raw = arch::raw_syscall(SyscallNum::LoadElf as usize, elf_ptr, blob_ptr, blob_len);
+        let raw = arch::raw_syscall(
+            SyscallNum::LoadElf as usize,
+            elf_cell as usize,
+            blob_ptr,
+            blob_len,
+        );
         UserFutureHandle::from_token(raw)
     }
 
@@ -49,12 +70,7 @@ impl Syscall {
     }
 
     pub fn wait_future(handle: UserFutureHandle) {
-        arch::raw_syscall(
-            SyscallNum::WaitFuture as usize,
-            handle.value(),
-            0,
-            0,
-        );
+        arch::raw_syscall(SyscallNum::WaitFuture as usize, handle.value(), 0, 0);
     }
 
     pub fn wait_for_message(handle: UserFutureHandle) -> Result<ReceivedMessage, IpcReceiveError> {
@@ -73,12 +89,8 @@ impl Syscall {
     }
 
     pub fn is_future_completed(handle: UserFutureHandle) -> bool {
-        let result = arch::raw_syscall(
-            SyscallNum::IsFutureCompleted as usize,
-            handle.value(),
-            0,
-            0,
-        );
+        let result =
+            arch::raw_syscall(SyscallNum::IsFutureCompleted as usize, handle.value(), 0, 0);
         result != 0
     }
 
@@ -104,8 +116,11 @@ impl Syscall {
     }
 
     pub fn ipc_connect(service: &str) -> Result<UserConnectionHandle, IpcConnectionError> {
-        let boxed = Box::into_raw(Box::new(service)) as usize;
-        let raw = arch::raw_syscall(SyscallNum::IpcConnect as usize, boxed, 0, 0);
+        let service_cell = kernel_box(service);
+        if service_cell.is_null() {
+            return Err(IpcConnectionError::from(ErrorCode::Unknown));
+        }
+        let raw = arch::raw_syscall(SyscallNum::IpcConnect as usize, service_cell as usize, 0, 0);
         match UserConnectionHandle::from_token(raw) {
             Some(handle) => Ok(handle),
             None => Err(IpcConnectionError::from(ErrorCode::from_code(raw))),
@@ -122,8 +137,11 @@ impl Syscall {
     }
 
     pub fn ipc_bind(service: &str) -> Result<UserBindingHandle, IpcBindingError> {
-        let boxed = Box::into_raw(Box::new(service)) as usize;
-        let raw = arch::raw_syscall(SyscallNum::IpcBind as usize, boxed, 0, 0);
+        let service_cell = kernel_box(service);
+        if service_cell.is_null() {
+            return Err(IpcBindingError::from(ErrorCode::Unknown));
+        }
+        let raw = arch::raw_syscall(SyscallNum::IpcBind as usize, service_cell as usize, 0, 0);
         match UserBindingHandle::from_token(raw) {
             Some(handle) => Ok(handle),
             None => Err(IpcBindingError::from(ErrorCode::from_code(raw))),
