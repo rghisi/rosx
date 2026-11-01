@@ -9,6 +9,9 @@ use x86_runner::{BootMedium, LaunchMode};
 
 const USER_APPS: [&str; 20] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "bench", "atad", "ata"];
 
+const RUN_DISK_BYTES: usize = 1024 * 1024;
+const MBR_SIGNATURE_OFFSET: usize = 510;
+
 const UNSTABLE: [&str; 3] = [
     "-Zbuild-std=core,alloc,compiler_builtins",
     "-Zbuild-std-features=compiler-builtins-mem",
@@ -73,6 +76,11 @@ fn prepare_medium(debug: bool, spec: &ArchSpec) -> BootMedium {
 
 fn launch(medium: &BootMedium, spec: &ArchSpec) {
     let mut cmd = x86_runner::qemu_command(spec.boot, medium, LaunchMode::Interactive);
+    if let BootMedium::MultibootKernel(_) = medium {
+        let disk = create_run_disk(spec);
+        cmd.arg("-drive")
+            .arg(format!("if=ide,index=0,media=disk,format=raw,file={}", disk.display()));
+    }
     run(&mut cmd, &format!("boot {} in qemu", spec.name));
 }
 
@@ -96,6 +104,17 @@ fn pack_rom(spec: &ArchSpec) {
     let rom_path = spec.rom_path();
     std::fs::write(&rom_path, image).expect("failed to write ROM image");
     println!("==> packed ROM image {}", rom_path.display());
+}
+
+fn create_run_disk(spec: &ArchSpec) -> PathBuf {
+    let path = workspace_root()
+        .join("target")
+        .join(format!("{}-run-disk.img", spec.kernel_dir_name));
+    let mut image = vec![0u8; RUN_DISK_BYTES];
+    image[MBR_SIGNATURE_OFFSET] = 0x55;
+    image[MBR_SIGNATURE_OFFSET + 1] = 0xAA;
+    std::fs::write(&path, image).expect("failed to create run disk image");
+    path
 }
 
 fn create_flashable_image(debug: bool, spec: &ArchSpec) {

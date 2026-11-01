@@ -2,7 +2,7 @@ pub mod bins;
 
 #[cfg(all(feature = "runtime", not(test)))]
 mod shim {
-    use super::bins::{Binner, SLAB_BYTES, SMALL_MAX, small_class_of};
+    use super::bins::{Binner, SLAB_BYTES, SMALL_MAX, realloc_same_class, small_class_of};
     use crate::syscall::Syscall;
     use core::alloc::{GlobalAlloc, Layout};
     use core::cell::UnsafeCell;
@@ -69,6 +69,21 @@ mod shim {
                 }
                 None => Syscall::dealloc(ptr, layout.size(), layout.align()),
             }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            if realloc_same_class(&layout, new_size) {
+                return ptr;
+            }
+            let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
+                return ptr::null_mut();
+            };
+            let new_ptr = self.alloc(new_layout);
+            if !new_ptr.is_null() {
+                unsafe { ptr::copy_nonoverlapping(ptr, new_ptr, layout.size().min(new_size)) };
+                self.dealloc(ptr, layout);
+            }
+            new_ptr
         }
     }
 }
