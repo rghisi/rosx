@@ -8,16 +8,24 @@ use usrlib::println;
 use usrlib::syscall::Syscall;
 
 mod alloc_pairs;
+mod windows;
+mod yield_floor;
 
 struct Benchmark {
     name: &'static str,
     run: fn(),
 }
 
-const BENCHMARKS: &[Benchmark] = &[Benchmark {
-    name: "alloc",
-    run: alloc_pairs::run,
-}];
+const BENCHMARKS: &[Benchmark] = &[
+    Benchmark {
+        name: "alloc",
+        run: alloc_pairs::run,
+    },
+    Benchmark {
+        name: "yield",
+        run: yield_floor::run,
+    },
+];
 
 fn main() {
     let arguments = usrlib::args();
