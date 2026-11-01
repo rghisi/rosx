@@ -6,9 +6,6 @@ const REPLY_BUDGET: Duration = Duration::from_secs(60);
 
 #[test]
 fn ata_write_roundtrips_on_the_scratch_slave() {
-    if tests_integration::arch::not_ported_to_x86_32() {
-        return;
-    }
     let mut session = QemuSession::spawn_with_scratch_disk();
     session.expect_output("[ATAD] ata0 drive0 ready:", BOOT_BUDGET);
     session.expect_output("[ATAD] ata0 drive1 ready:", BOOT_BUDGET);

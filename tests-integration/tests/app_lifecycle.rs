@@ -14,9 +14,6 @@ const DIAGNOSTIC_TAIL_CHARS: usize = 2000;
 
 #[test]
 fn tetris_survives_idle() {
-    if tests_integration::arch::not_ported_to_x86_32() {
-        return;
-    }
     let booted_at = Instant::now();
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);
@@ -58,9 +55,6 @@ fn tetris_survives_idle() {
 
 #[test]
 fn snake_survives_idle() {
-    if tests_integration::arch::not_ported_to_x86_32() {
-        return;
-    }
     let booted_at = Instant::now();
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);

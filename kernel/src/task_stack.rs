@@ -1,6 +1,9 @@
 use alloc::boxed::Box;
 use alloc::vec;
 
+#[cfg(target_pointer_width = "32")]
+pub const STACK_WORDS: usize = 4096;
+#[cfg(target_pointer_width = "64")]
 pub const STACK_WORDS: usize = 2048;
 
 pub struct TaskStack {

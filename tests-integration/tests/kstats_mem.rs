@@ -14,9 +14,6 @@ const REPORT_LINES: [&str; 6] = [
 
 #[test]
 fn mem_reports_a_memory_snapshot_over_ipc() {
-    if tests_integration::arch::not_ported_to_x86_32() {
-        return;
-    }
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);
 

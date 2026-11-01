@@ -6,9 +6,6 @@ const REPLY_BUDGET: Duration = Duration::from_secs(90);
 
 #[test]
 fn ata_stress_reads_chunks_and_writebacks_twice() {
-    if tests_integration::arch::not_ported_to_x86_32() {
-        return;
-    }
     let mut session = QemuSession::spawn_with_scratch_disk();
     session.expect_output("[ATAD] ata0 drive1 ready:", BOOT_BUDGET);
     session.expect_output("rose>", BOOT_BUDGET);

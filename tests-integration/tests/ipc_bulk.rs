@@ -79,9 +79,6 @@ fn window_diagnostics(content: &str) -> String {
 
 #[test]
 fn bulk_data_transfer_echo_and_limits_roundtrip() {
-    if tests_integration::arch::not_ported_to_x86_32() {
-        return;
-    }
     let session = QemuSession::spawn();
 
     let mark = session.mark();

@@ -6,9 +6,6 @@ const ARGUMENTS_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[test]
 fn shell_forwards_command_arguments_to_elf_app() {
-    if tests_integration::arch::not_ported_to_x86_32() {
-        return;
-    }
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);
     let mark = session.mark();

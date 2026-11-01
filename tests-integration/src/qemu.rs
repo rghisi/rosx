@@ -20,6 +20,8 @@ const DROP_QUIT_CAP: Duration = Duration::from_secs(5);
 const DROP_REAP_CAP: Duration = Duration::from_secs(5);
 const DROP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SCRATCH_DISK_BYTES: usize = 1024 * 1024;
+const MASTER_DISK_BYTES: usize = 1024 * 1024;
+const MBR_SIGNATURE_OFFSET: usize = 510;
 
 pub struct QemuSession {
     child: Mutex<Child>,
@@ -50,6 +52,17 @@ impl QemuSession {
             command.arg("-drive").arg(format!("format=raw,file={}", disk.display()));
         } else {
             command.arg("-kernel").arg(&kernel_elf);
+            let master = temp_dir.path().join("primary-master-disk.img");
+            let mut image = vec![0u8; MASTER_DISK_BYTES];
+            image[MBR_SIGNATURE_OFFSET] = 0x55;
+            image[MBR_SIGNATURE_OFFSET + 1] = 0xAA;
+            std::fs::write(&master, image).expect("failed to create primary master disk image");
+            command
+                .arg("-drive")
+                .arg(format!(
+                    "if=ide,index=0,media=disk,format=raw,file={}",
+                    master.display()
+                ));
         }
         if let Some(bytes) = scratch_bytes {
             let scratch = temp_dir.path().join("scratch-disk.img");

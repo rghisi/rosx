@@ -65,9 +65,6 @@ fn parse_size(raw: &str, line: &str) -> usize {
 
 #[test]
 fn shell_ping_capability_data_roundtrip() {
-    if tests_integration::arch::not_ported_to_x86_32() {
-        return;
-    }
     let mut session = QemuSession::spawn();
 
     let mark = session.mark();
