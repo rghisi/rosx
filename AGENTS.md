@@ -33,11 +33,14 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    elf/ ipc/ (mailbox, data) future/ syscall/ kstatsd task*  platform/ (cpu, elf, interrupt, output, portio HAL traits + per-task port grants)  kconfig  rom/
 ├── system/      # ABI treaty: syscall numbers, wire layout, ROM image layout, error numbers
 ├── usrlib/      # User-space libc: syscall, out, arch/{x86_64,x86_32}
-├── vfs-protocol/# VFS wire codec + typed client (user-space RPC treaty)
-├── ata-protocol/# ATA wire codec + typed client (user-space RPC treaty)
+├── protocol/                # Service RPC treaties, one sub-crate each (workspace glob protocol/*)
+│    vfs/         # package vfs-protocol: wire codec + typed client
+│    input/       # package input-protocol: wire codec
+│    ata/         # package ata-protocol: wire codec + typed client
 ├── arch/
 │    x86_64/        # entry, cpu, interrupts, framebuffer, terminal_fonts, *.S (global_asm)
-│    x86_32/        # entry, cpu, interrupts, portio, boot.S (Multiboot2)
+│    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
+│    x86-generic/   # shared x86-family mechanism: port executor, VGA text buffer, debug console, ANSI parser
 │    x86_64-runner/ # standalone: BiosBoot → QEMU (NOT bootimage)
 └── apps/
      [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, mem, vfsd, vfs, snake, tetris, conway, threads, waitset, stress, inputd, ps2d, atad, ata
@@ -109,6 +112,7 @@ cargo xtask test [--skip-integration] # Run unit tests; --skip-integration exclu
 2. **Understand the architecture layer:**
    - `kernel/` should remain platform-agnostic
    - Architecture-specific code goes in `arch/[platform]/`
+   - x86-family-specific but not bit-width-specific code lives in `arch/x86-generic/`; anything else stays in its port
    - Use traits to abstract platform differences
 
 3. **Assembly code:**

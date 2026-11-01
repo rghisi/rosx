@@ -1,9 +1,10 @@
 [package]
 authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
-name = "input-protocol"
+name = "ata-protocol"
 publish = false
 version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-system = { path = "../system" }
+system = { path = "../../system" }
+usrlib = { path = "../../usrlib" }

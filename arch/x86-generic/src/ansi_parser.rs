@@ -105,12 +105,11 @@ impl AnsiParser {
                         self.has_param = false;
                     }
                     b'm' => {
-                        // SGR - Select Graphic Rendition
                         if self.has_param {
                             self.params[self.param_idx] = self.current_param;
                             self.param_idx += 1;
                         }
-                        
+
                         if self.param_idx == 0 {
                              self.push_command(AnsiCommand::ResetAttributes);
                         } else {
@@ -129,7 +128,6 @@ impl AnsiParser {
                         self.state = AnsiState::Normal;
                     }
                     b'H' | b'f' => {
-                        // CUP - Cursor Position
                         if self.has_param {
                             self.params[self.param_idx] = self.current_param;
                             self.param_idx += 1;
@@ -140,17 +138,14 @@ impl AnsiParser {
                         self.state = AnsiState::Normal;
                     }
                     b'J' => {
-                        // ED - Erase Display
                         self.push_command(AnsiCommand::ClearScreen);
                         self.state = AnsiState::Normal;
                     }
                     b'K' => {
-                        // EL - Erase Line
                         self.push_command(AnsiCommand::ClearLine);
                         self.state = AnsiState::Normal;
                     }
                     _ => {
-                        // Unknown or unsupported sequence
                         self.state = AnsiState::Normal;
                     }
                 }
@@ -194,5 +189,159 @@ impl AnsiParser {
             7 => AnsiColor::BrightWhite,
             _ => AnsiColor::BrightWhite,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::vec::Vec;
+
+    fn parse(input: &[u8]) -> Vec<AnsiCommand> {
+        let mut parser = AnsiParser::new();
+        let mut commands = Vec::new();
+        for byte in input {
+            parser.handle_byte(*byte);
+            while let Some(command) = parser.next_command() {
+                commands.push(command);
+            }
+        }
+        while let Some(command) = parser.next_command() {
+            commands.push(command);
+        }
+        commands
+    }
+
+    #[test]
+    fn empty_input_yields_no_commands() {
+        assert_eq!(parse(b""), Vec::new());
+    }
+
+    #[test]
+    fn plain_text_prints_in_order() {
+        assert_eq!(
+            parse(b"hi"),
+            vec![AnsiCommand::PrintChar(b'h'), AnsiCommand::PrintChar(b'i')]
+        );
+    }
+
+    #[test]
+    fn escape_followed_by_regular_byte_prints_that_byte() {
+        assert_eq!(parse(b"\x1bA"), vec![AnsiCommand::PrintChar(b'A')]);
+    }
+
+    #[test]
+    fn sgr_without_params_resets_attributes() {
+        assert_eq!(parse(b"\x1b[m"), vec![AnsiCommand::ResetAttributes]);
+    }
+
+    #[test]
+    fn sgr_zero_param_resets_attributes() {
+        assert_eq!(parse(b"\x1b[0m"), vec![AnsiCommand::ResetAttributes]);
+    }
+
+    #[test]
+    fn sgr_sets_foreground_and_background() {
+        assert_eq!(
+            parse(b"\x1b[31;42m"),
+            vec![
+                AnsiCommand::SetForeground(AnsiColor::Red),
+                AnsiCommand::SetBackground(AnsiColor::Green),
+            ]
+        );
+    }
+
+    #[test]
+    fn sgr_sets_bright_colors() {
+        assert_eq!(
+            parse(b"\x1b[91;100m"),
+            vec![
+                AnsiCommand::SetForeground(AnsiColor::BrightRed),
+                AnsiCommand::SetBackground(AnsiColor::BrightBlack),
+            ]
+        );
+    }
+
+    #[test]
+    fn sgr_ignores_unsupported_params() {
+        assert_eq!(
+            parse(b"\x1b[1;35m"),
+            vec![AnsiCommand::SetForeground(AnsiColor::Magenta)]
+        );
+    }
+
+    #[test]
+    fn cup_places_cursor_with_one_based_params() {
+        assert_eq!(
+            parse(b"\x1b[3;5H"),
+            vec![AnsiCommand::SetCursorPos { row: 2, col: 4 }]
+        );
+    }
+
+    #[test]
+    fn cup_without_params_homes_the_cursor() {
+        assert_eq!(
+            parse(b"\x1b[H"),
+            vec![AnsiCommand::SetCursorPos { row: 0, col: 0 }]
+        );
+    }
+
+    #[test]
+    fn cup_f_finalizer_places_cursor() {
+        assert_eq!(
+            parse(b"\x1b[2;3f"),
+            vec![AnsiCommand::SetCursorPos { row: 1, col: 2 }]
+        );
+    }
+
+    #[test]
+    fn cup_zero_params_saturate_to_origin() {
+        assert_eq!(
+            parse(b"\x1b[0;0H"),
+            vec![AnsiCommand::SetCursorPos { row: 0, col: 0 }]
+        );
+    }
+
+    #[test]
+    fn ed_clears_screen() {
+        assert_eq!(parse(b"\x1b[2J"), vec![AnsiCommand::ClearScreen]);
+    }
+
+    #[test]
+    fn el_clears_line() {
+        assert_eq!(parse(b"\x1b[1K"), vec![AnsiCommand::ClearLine]);
+    }
+
+    #[test]
+    fn unknown_csi_byte_aborts_sequence_without_command() {
+        assert_eq!(
+            parse(b"\x1b[?m"),
+            vec![AnsiCommand::PrintChar(b'm')]
+        );
+    }
+
+    #[test]
+    fn printing_resumes_after_a_sequence() {
+        assert_eq!(
+            parse(b"\x1b[Jhi"),
+            vec![
+                AnsiCommand::ClearScreen,
+                AnsiCommand::PrintChar(b'h'),
+                AnsiCommand::PrintChar(b'i'),
+            ]
+        );
+    }
+
+    #[test]
+    fn queue_keeps_fifteen_pending_commands_and_drops_the_rest() {
+        let mut parser = AnsiParser::new();
+        for _ in 0..20 {
+            parser.handle_byte(b'A');
+        }
+        let mut kept = 0;
+        while parser.next_command().is_some() {
+            kept += 1;
+        }
+        assert_eq!(kept, 15);
     }
 }
