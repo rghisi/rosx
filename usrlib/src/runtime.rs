@@ -1,24 +1,34 @@
 use crate::arch;
-use crate::syscall::Syscall;
 use alloc::vec::Vec;
+#[cfg(not(feature = "slab-allocator"))]
 use core::alloc::{GlobalAlloc, Layout};
 use core::ffi::CStr;
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 use system::syscall_numbers::SyscallNum;
 
+#[cfg(feature = "slab-allocator")]
+use crate::allocator::UsrAllocator;
+
+#[cfg(feature = "slab-allocator")]
+#[global_allocator]
+static RUNTIME_ALLOCATOR: UsrAllocator = UsrAllocator;
+
+#[cfg(not(feature = "slab-allocator"))]
 struct SyscallAllocator;
 
+#[cfg(not(feature = "slab-allocator"))]
 unsafe impl GlobalAlloc for SyscallAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        Syscall::alloc(layout.size(), layout.align())
+        crate::syscall::Syscall::alloc(layout.size(), layout.align())
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        Syscall::dealloc(ptr, layout.size(), layout.align());
+        crate::syscall::Syscall::dealloc(ptr, layout.size(), layout.align());
     }
 }
 
+#[cfg(not(feature = "slab-allocator"))]
 #[global_allocator]
 static RUNTIME_ALLOCATOR: SyscallAllocator = SyscallAllocator;
 
@@ -26,12 +36,7 @@ static ARGUMENT_COUNT: AtomicI32 = AtomicI32::new(0);
 static ARGUMENT_VECTORS: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
 
 #[lang = "start"]
-fn start<T: 'static>(
-    main: fn() -> T,
-    argc: isize,
-    argv: *const *const u8,
-    _sigpipe: u8,
-) -> isize {
+fn start<T: 'static>(main: fn() -> T, argc: isize, argv: *const *const u8, _sigpipe: u8) -> isize {
     ARGUMENT_COUNT.store(argc as i32, Ordering::Relaxed);
     ARGUMENT_VECTORS.store(argv as *mut u8, Ordering::Relaxed);
     main();
@@ -76,7 +81,12 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 fn print_raw(text: &str) {
-    arch::raw_syscall(SyscallNum::Print as usize, text.as_ptr() as usize, text.len(), 0);
+    arch::raw_syscall(
+        SyscallNum::Print as usize,
+        text.as_ptr() as usize,
+        text.len(),
+        0,
+    );
 }
 
 fn print_number(value: u32) {
