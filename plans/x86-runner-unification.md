@@ -271,8 +271,9 @@ disk image (today a message, §2.8); on x86_32 the GRUB ISO.
 - `xtask image`: x86_64 arm re-creates the disk image; x86_32 arm calls
   `create_grub_image`; `build-image.sh` deleted; usage line updated.
 - CI step approved 2026-11-01 and added: `build-artifacts.yml` runs
-  `cargo xtask image x86_32` after installing the GRUB toolchain and
-  uploads `rosx-x86_32-iso`.
+  `cargo xtask image x86_32` after installing the GRUB toolchain
+  (`grub-pc-bin grub-common xorriso mtools` — the first dispatch run
+  failed without mtools, see §2.7) and uploads `rosx-x86_32-iso`.
 - **Gate:** `cargo xtask image x86_32` produces a bootable ISO —
   `qemu-system-i386 -cdrom <iso> -debugcon stdio` reaches the prompt
   (**`unverified`** — needs grub-mkrescue locally); missing-tools message
