@@ -15,6 +15,7 @@ pub const MAX_DEPTH: usize = 512;
 pub const MAX_OPEN: usize = 64;
 pub const MIN_INODES: u64 = 64;
 pub const MIN_DATA_BLOCKS: u64 = 32;
+pub const CACHE_SLOTS: usize = 64;
 pub const DEFAULT_BYTES_PER_INODE: u32 = 16384;
 pub const ROOT_INODE: u32 = 1;
 pub const BLOCKS_PER_BITMAP_BLOCK: u64 = (BLOCK_BYTES as u64) * 8;
