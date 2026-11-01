@@ -51,19 +51,44 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
     let raw_blocks = parse_memory_map(multiboot_info as *const u8);
     let memory_blocks = trim_to_safe_memory(raw_blocks);
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
-    kernel::kprintln!("[x86] Bootstrapped");
+    kernel::kprintln!("[KERNEL] Initializing");
 
     let mut kernel = kernel::kernel::Kernel::new(&KCONFIG);
     kernel.setup();
+    static ROM_IMAGE: &[u8] = include_bytes!("../../../target/rosx-i686-user/rom.img");
+    kernel::rom::init(ROM_IMAGE);
     let _ = kernel.schedule(kernel::task::FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main));
+    static RANDOMD_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/randomd");
+    let _ = kernel.schedule(kernel::task::new_elf_task(RANDOMD_ELF));
+    static ECHO_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/echo");
+    let _ = kernel.schedule(kernel::task::new_elf_task(ECHO_ELF));
+    static BULK_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/bulk");
+    let _ = kernel.schedule(kernel::task::new_elf_task(BULK_ELF));
+    static PONG_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/pong");
+    let _ = kernel.schedule(kernel::task::new_elf_task(PONG_ELF));
+    static VFSD_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/vfsd");
+    let _ = kernel.schedule(kernel::task::new_elf_task(VFSD_ELF));
     static INPUTD_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/inputd");
     let _ = kernel.schedule(kernel::task::new_elf_task(INPUTD_ELF));
     static PS2D_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/ps2d");
     let _ = kernel.schedule(kernel::task::new_elf_task(PS2D_ELF));
+    static ATAD_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/atad");
+    match kernel.schedule_with_task_handle(kernel::task::new_elf_task(ATAD_ELF)) {
+        Ok((atad_handle, _)) => {
+            if !kernel::platform::portio::grant(atad_handle, 0x1F0, 0x1F7) {
+                kernel::kprintln!("[KERNEL] atad primary taskfile grant failed");
+            }
+            if !kernel::platform::portio::grant(atad_handle, 0x3F6, 0x3F6) {
+                kernel::kprintln!("[KERNEL] atad alternate status grant failed");
+            }
+        }
+        Err(()) => kernel::kprintln!("[KERNEL] atad schedule failed"),
+    }
     static SHELL_ELF: &[u8] = include_bytes!("../../../target/rosx-i686-user/release/shell");
     let _ = kernel.schedule(kernel::task::new_elf_task(SHELL_ELF));
+    kernel::kprintln!("[KERNEL] Starting");
     kernel.start();
-    panic!("[x86] kernel.start() returned");
+    panic!("[KERNEL] Crashed spectacularly, should never reached here.");
 }
 
 unsafe extern "C" {
