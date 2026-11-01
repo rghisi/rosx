@@ -101,7 +101,6 @@ fn launch_multiboot(debug: bool, spec: &ArchSpec) {
     cmd.current_dir(workspace_root())
         .arg("-kernel").arg(&kernel)
         .arg("-debugcon").arg("stdio")
-        .arg("-display").arg("none")
         .arg("-no-reboot")
         .arg("-no-shutdown");
     println!("==> booting {} in {}", spec.name, spec.qemu_binary);
