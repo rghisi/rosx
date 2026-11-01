@@ -80,6 +80,9 @@ fn window_diagnostics(content: &str) -> String {
 
 #[test]
 fn shell_random_capability_ipc_roundtrip() {
+    if tests_integration::arch::not_ported_to_x86_32() {
+        return;
+    }
     let mut session = QemuSession::spawn();
     session.expect_output("[IPC Server] Random", READY_TIMEOUT);
     session.expect_output("rose>", READY_TIMEOUT);

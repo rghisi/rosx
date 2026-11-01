@@ -56,6 +56,9 @@ fn window_diagnostics(content: &str) -> String {
 
 #[test]
 fn shell_vfs_filesystem_roundtrip() {
+    if tests_integration::arch::not_ported_to_x86_32() {
+        return;
+    }
     let mut session = QemuSession::spawn();
 
     let mark = session.mark();

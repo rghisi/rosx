@@ -6,6 +6,9 @@ const REPLY_BUDGET: Duration = Duration::from_secs(30);
 
 #[test]
 fn ata_client_reads_the_mbr_through_atad() {
+    if tests_integration::arch::not_ported_to_x86_32() {
+        return;
+    }
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);
 

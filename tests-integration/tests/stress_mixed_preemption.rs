@@ -13,6 +13,9 @@ const MEM_PROGRESS_50: &str = "Progress: 50/1000";
 
 #[test]
 fn busy_mem_worker_is_preempted_for_ctx_worker() {
+    if tests_integration::arch::not_ported_to_x86_32() {
+        return;
+    }
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);
     let mark = session.mark();

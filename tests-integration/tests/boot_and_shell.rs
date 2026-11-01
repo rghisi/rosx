@@ -25,6 +25,9 @@ fn shell_echoes_keystrokes() {
 
 #[test]
 fn shell_ls_and_unknown_command() {
+    if tests_integration::arch::not_ported_to_x86_32() {
+        return;
+    }
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", Duration::from_secs(60));
     let after_prompt = session.mark();

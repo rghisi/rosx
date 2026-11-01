@@ -85,6 +85,9 @@ fn decode_identify_model(words: &[u16]) -> String {
 
 #[test]
 fn qemu_exposes_the_boot_disk_on_the_primary_ide_channel() {
+    if tests_integration::arch::not_ported_to_x86_32() {
+        return;
+    }
     let session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);
 

@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+use crate::arch::Arch;
+
 pub fn kernel_elf() -> PathBuf {
     if let Some(from_env) = env::var_os("ROSX_KERNEL_ELF") {
         if !from_env.is_empty() {
@@ -29,8 +31,9 @@ fn build_kernel() -> PathBuf {
     };
 
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    let manifest_path = repo_root.join("arch").join("x86_64").join("Cargo.toml");
-    let target_spec = repo_root.join("arch").join("x86_64").join("rosx.json");
+    let arch = Arch::current();
+    let manifest_path = repo_root.join(arch.kernel_manifest());
+    let target_spec = repo_root.join(arch.kernel_target_spec());
 
     let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let mut command = Command::new(&cargo);
@@ -71,9 +74,9 @@ fn build_kernel() -> PathBuf {
 
     let artifact = repo_root
         .join("target")
-        .join("rosx")
+        .join(arch.kernel_dir_name())
         .join(profile_dir)
-        .join("rosx");
+        .join(arch.kernel_binary());
     if !artifact.is_file() {
         panic!(
             "kernel ELF not found at '{}'; set ROSX_KERNEL_ELF to a prebuilt kernel ELF",
