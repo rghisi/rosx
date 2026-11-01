@@ -33,6 +33,9 @@ pub struct FileSystem<D: BlockDevice> {
     inode_hint: u64,
     opens: [Option<OpenEntry>; MAX_OPEN],
     unclean_previous: bool,
+    pending_free_blocks: Vec<(u64, u64)>,
+    pending_free_inodes: Vec<u32>,
+    sb_dirty: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +145,7 @@ impl<D: BlockDevice> FileSystem<D> {
         write(&mut dev, SUPERBLOCK_BLOCK, &sb_block)?;
         write(&mut dev, geometry.backup_superblock, &sb_block)?;
         dev.flush().map_err(FsError::Io)?;
+        sb.mount_state = CHECK_UNCLEAN;
 
         Ok(FileSystem {
             dev,
@@ -154,6 +158,9 @@ impl<D: BlockDevice> FileSystem<D> {
             inode_hint: 2,
             opens: [None; MAX_OPEN],
             unclean_previous: false,
+            pending_free_blocks: Vec::new(),
+            pending_free_inodes: Vec::new(),
+            sb_dirty: false,
         })
     }
 
@@ -217,22 +224,66 @@ impl<D: BlockDevice> FileSystem<D> {
             inode_hint: 2,
             opens: [None; MAX_OPEN],
             unclean_previous,
+            pending_free_blocks: Vec::new(),
+            pending_free_inodes: Vec::new(),
+            sb_dirty: false,
         })
     }
 
+    pub fn sync(&mut self) -> Result<(), FsError> {
+        self.commit(false)
+    }
+
     pub fn unmount(mut self) -> Result<D, FsError> {
-        self.cache.flush(&mut self.dev)?;
-        let mut sb = self.sb;
-        sb.mount_state = CHECK_CLEAN;
-        sb.free_blocks = self.block_bitmap.free_count();
-        sb.free_inodes = self.inode_bitmap.free_count() as u32;
-        sb.alloc_hint = self.block_hint as u32;
+        self.commit(true)?;
+        Ok(self.dev)
+    }
+
+    fn commit(&mut self, clean: bool) -> Result<(), FsError> {
+        let has_frees =
+            !self.pending_free_blocks.is_empty() || !self.pending_free_inodes.is_empty();
+        let work = self.cache.any_dirty() || has_frees;
+        if work {
+            if self.cache.any_dirty() {
+                self.store_bitmaps()?;
+                self.cache.flush(&mut self.dev)?;
+            }
+            if has_frees {
+                for (start, len) in self.pending_free_blocks.drain(..) {
+                    self.block_bitmap.free_range(start, len);
+                }
+                for inode_no in self.pending_free_inodes.drain(..) {
+                    self.inode_bitmap.set_free(inode_no as u64);
+                }
+                self.store_bitmaps()?;
+            }
+        }
+        let state = if clean { CHECK_CLEAN } else { CHECK_UNCLEAN };
+        if !work && !self.sb_dirty && self.sb.mount_state == state {
+            return Ok(());
+        }
+        if work {
+            self.sb.txg += 1;
+        }
+        self.sb.mount_state = state;
+        self.sb.free_blocks = self.block_bitmap.free_count();
+        self.sb.free_inodes = self.inode_bitmap.free_count() as u32;
+        self.sb.alloc_hint = self.block_hint as u32;
         let mut sb_block = [0u8; BLOCK_BYTES];
-        sb.encode(&mut sb_block);
+        self.sb.encode(&mut sb_block);
         write(&mut self.dev, SUPERBLOCK_BLOCK, &sb_block)?;
         write(&mut self.dev, self.geometry.backup_superblock, &sb_block)?;
         self.dev.flush().map_err(FsError::Io)?;
-        Ok(self.dev)
+        self.sb_dirty = false;
+        Ok(())
+    }
+
+    fn store_bitmaps(&mut self) -> Result<(), FsError> {
+        self.block_bitmap
+            .store(&mut self.dev, self.geometry.block_bitmap_start)?;
+        self.inode_bitmap
+            .store(&mut self.dev, self.geometry.inode_bitmap_start)?;
+        Ok(())
     }
 
     pub fn superblock(&self) -> &Superblock {
@@ -245,10 +296,11 @@ impl<D: BlockDevice> FileSystem<D> {
 
     pub fn free_blocks(&self) -> u64 {
         self.block_bitmap.free_count()
+            + self.pending_free_blocks.iter().map(|(_, len)| *len).sum::<u64>()
     }
 
     pub fn free_inodes(&self) -> u64 {
-        self.inode_bitmap.free_count()
+        self.inode_bitmap.free_count() + self.pending_free_inodes.len() as u64
     }
 
     pub fn lookup(&mut self, path_bytes: &[u8]) -> Result<Stat, FsError> {
@@ -544,8 +596,8 @@ impl<D: BlockDevice> FileSystem<D> {
     fn release_inode(&mut self, inode_no: u32) -> Result<(), FsError> {
         let (inode, extents) = self.load_inode(inode_no)?;
         for extent in &extents {
-            self.block_bitmap
-                .free_range(extent.start as u64, extent.length as u64);
+            self.pending_free_blocks
+                .push((extent.start as u64, extent.length as u64));
             self.cache.invalidate(extent.start as u64);
         }
         let mut next = inode.spill_block;
@@ -555,7 +607,7 @@ impl<D: BlockDevice> FileSystem<D> {
                 .inspect(&mut self.dev, next as u64, |data| {
                     u32::from_le_bytes([data[0], data[1], data[2], data[3]])
                 })?;
-            self.block_bitmap.set_free(next as u64);
+            self.pending_free_blocks.push((next as u64, 1));
             self.cache.invalidate(next as u64);
             next = peek;
         }
@@ -566,7 +618,7 @@ impl<D: BlockDevice> FileSystem<D> {
                 (&mut data[slot_off..slot_off + INODE_SIZE]).try_into().unwrap();
             inode::encode(&freed, &[], target);
         })?;
-        self.inode_bitmap.set_free(inode_no as u64);
+        self.pending_free_inodes.push(inode_no);
         Ok(())
     }
 
@@ -884,13 +936,19 @@ mod tests {
     #[derive(Clone)]
     struct SharedDisk {
         bytes: Rc<RefCell<Vec<u8>>>,
+        writes: Rc<RefCell<usize>>,
     }
 
     impl SharedDisk {
         fn new(blocks: u64) -> SharedDisk {
             SharedDisk {
                 bytes: Rc::new(RefCell::new(vec![0u8; blocks as usize * BLOCK_BYTES])),
+                writes: Rc::new(RefCell::new(0)),
             }
+        }
+
+        fn write_count(&self) -> usize {
+            *self.writes.borrow()
         }
 
         fn poke(&mut self, block: u64, data: &[u8; BLOCK_BYTES]) {
@@ -928,6 +986,7 @@ mod tests {
         }
 
         fn write_block(&mut self, block: u64, buf: &[u8]) -> Result<(), crate::error::IoError> {
+            *self.writes.borrow_mut() += 1;
             let mut bytes = self.bytes.borrow_mut();
             let start = usize::try_from(block)
                 .map_err(|_| crate::error::IoError::Device)?
@@ -1608,5 +1667,92 @@ mod tests {
         let mut fs = FileSystem::mount(fs.unmount().unwrap()).unwrap();
         assert_eq!(fs.lookup(b"/sp1").err(), Some(FsError::NotFound));
         assert_eq!(fs.lookup(b"/sp2").unwrap().size, f2_size as u64);
+    }
+
+    #[test]
+    fn sync_makes_writes_survive_power_loss() {
+        let disk = SharedDisk::new(SMALL_BLOCKS);
+        let mut fs = format_shared(disk.clone());
+        let h = fs.create(b"/durable").unwrap();
+        let data = pattern_bytes(5_000, 3);
+        fs.write(h, 0, &data).unwrap();
+        fs.sync().unwrap();
+        core::mem::forget(fs);
+        let mut fs = FileSystem::mount(disk).unwrap();
+        assert!(fs.unclean_previous());
+        let st = fs.lookup(b"/durable").unwrap();
+        assert_eq!(st.size, 5_000);
+        let h = fs.open(b"/durable").unwrap();
+        let mut buf = vec![0u8; 5_000];
+        fs.read(h, 0, &mut buf).unwrap();
+        assert_eq!(buf, data);
+    }
+
+    #[test]
+    fn no_op_sync_touches_no_disk() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        let quiet = fs.dev.write_count();
+        fs.sync().unwrap();
+        fs.sync().unwrap();
+        assert_eq!(fs.dev.write_count(), quiet);
+        fs.create(b"/x").unwrap();
+        fs.sync().unwrap();
+        assert!(fs.dev.write_count() > quiet);
+        let after_work = fs.dev.write_count();
+        fs.sync().unwrap();
+        assert_eq!(fs.dev.write_count(), after_work);
+    }
+
+    #[test]
+    fn sync_bumps_txg_only_on_work() {
+        let mut fs = format_shared(SharedDisk::new(SMALL_BLOCKS));
+        assert_eq!(fs.superblock().txg, 0);
+        fs.sync().unwrap();
+        assert_eq!(fs.superblock().txg, 0);
+        fs.mkdir(b"/t").unwrap();
+        fs.sync().unwrap();
+        assert_eq!(fs.superblock().txg, 1);
+        fs.sync().unwrap();
+        assert_eq!(fs.superblock().txg, 1);
+    }
+
+    #[test]
+    fn unsynced_remove_never_overwrites_durable_file() {
+        let disk = SharedDisk::new(SMALL_BLOCKS);
+        let mut fs = format_shared(disk.clone());
+        let f = fs.create(b"/keeper").unwrap();
+        let keep = pattern_bytes(8 * BLOCK_BYTES, 42);
+        fs.write(f, 0, &keep).unwrap();
+        fs.close(f).unwrap();
+        fs.sync().unwrap();
+        fs.remove(b"/keeper").unwrap();
+        let g = fs.create(b"/squatter").unwrap();
+        fs.write(g, 0, &vec![0x5Au8; 8 * BLOCK_BYTES]).unwrap();
+        fs.close(g).unwrap();
+        core::mem::forget(fs);
+        let mut fs = FileSystem::mount(disk).unwrap();
+        let st = fs.lookup(b"/keeper").unwrap();
+        assert_eq!(st.size, keep.len() as u64);
+        let h = fs.open(b"/keeper").unwrap();
+        let mut buf = vec![0u8; keep.len()];
+        fs.read(h, 0, &mut buf).unwrap();
+        assert_eq!(buf, keep);
+        assert_eq!(fs.lookup(b"/squatter").err(), Some(FsError::NotFound));
+    }
+
+    #[test]
+    fn remove_committed_by_sync_survives() {
+        let disk = SharedDisk::new(SMALL_BLOCKS);
+        let mut fs = format_shared(disk.clone());
+        let h = fs.create(b"/temporary").unwrap();
+        fs.write(h, 0, &vec![1u8; 4 * BLOCK_BYTES]).unwrap();
+        fs.close(h).unwrap();
+        fs.remove(b"/temporary").unwrap();
+        fs.sync().unwrap();
+        core::mem::forget(fs);
+        let mut fs = FileSystem::mount(disk).unwrap();
+        assert_eq!(fs.lookup(b"/temporary").err(), Some(FsError::NotFound));
+        assert_eq!(fs.free_blocks(), 973);
+        assert_eq!(fs.free_inodes(), 238);
     }
 }

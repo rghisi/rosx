@@ -53,6 +53,10 @@ impl MetaCache {
         Ok(read(&slot.data))
     }
 
+    pub fn any_dirty(&self) -> bool {
+        self.slots.iter().any(|slot| slot.dirty)
+    }
+
     pub fn invalidate(&mut self, block: u64) {
         let index = self.index(block);
         let slot = &mut self.slots[index];
