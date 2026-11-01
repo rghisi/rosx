@@ -95,6 +95,36 @@ fn pack_rom(spec: &ArchSpec) {
     println!("==> packed ROM image {}", rom_path.display());
 }
 
+fn launch_multiboot(debug: bool, spec: &ArchSpec) {
+    let kernel = spec.kernel_elf(if debug { "debug" } else { "release" });
+    let mut cmd = Command::new(spec.qemu_binary);
+    cmd.current_dir(workspace_root())
+        .arg("-kernel").arg(&kernel)
+        .arg("-debugcon").arg("stdio")
+        .arg("-display").arg("none")
+        .arg("-no-reboot")
+        .arg("-no-shutdown");
+    println!("==> booting {} in {}", spec.name, spec.qemu_binary);
+    let status = cmd.status().expect("failed to spawn qemu");
+    if !status.success() {
+        eprintln!("failed: boot {} in {}", spec.name, spec.qemu_binary);
+        process::exit(status.code().unwrap_or(1));
+    }
+}
+
+fn build_grub_image(debug: bool) {
+    let mut cmd = Command::new("bash");
+    cmd.current_dir(workspace_root())
+        .arg("arch/x86_32/build-image.sh")
+        .env("PROFILE", if debug { "debug" } else { "release" });
+    println!("==> create x86_32 GRUB image");
+    let status = cmd.status().expect("failed to spawn build-image.sh");
+    if !status.success() {
+        eprintln!("failed: create x86_32 GRUB image");
+        process::exit(status.code().unwrap_or(1));
+    }
+}
+
 fn run_tests(skip_integration: bool) {
     build_apps(&X86_64);
     pack_rom(&X86_64);
@@ -112,7 +142,7 @@ fn run_tests(skip_integration: bool) {
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | test [--skip-integration]>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_32] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | test [--skip-integration]>"
     );
 }
 
@@ -178,15 +208,29 @@ fn main() {
         }
         "run" => {
             let (spec, rest) = split_arch(extras);
-            if spec.image_kind != ImageKind::BiosBoot {
-                eprintln!("run for {} lands with the multiboot boot milestone", spec.name);
-                process::exit(2);
-            }
             let debug = parse_optional_flag(&rest, "--debug");
             build_apps(spec);
             pack_rom(spec);
             build_kernel(debug, spec);
-            build_image(debug, true, spec);
+            match spec.image_kind {
+                ImageKind::BiosBoot => build_image(debug, true, spec),
+                ImageKind::Multiboot => launch_multiboot(debug, spec),
+            }
+        }
+        "image" => {
+            let (spec, rest) = split_arch(extras);
+            let debug = parse_optional_flag(&rest, "--debug");
+            match spec.image_kind {
+                ImageKind::BiosBoot => {
+                    println!("==> x86_64 disk image is produced by `cargo xtask build`");
+                }
+                ImageKind::Multiboot => {
+                    build_apps(spec);
+                    pack_rom(spec);
+                    build_kernel(debug, spec);
+                    build_grub_image(debug);
+                }
+            }
         }
         "rom" => {
             let (spec, rest) = split_arch(extras);
