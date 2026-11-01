@@ -59,7 +59,7 @@ impl Arch {
     pub fn kernel_binary(self) -> &'static str {
         match self {
             Arch::X86_64 => "rosx",
-            Arch::X86_32 => "rosx-x86",
+            Arch::X86_32 => "rosx-x86_32",
         }
     }
 

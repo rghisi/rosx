@@ -34,11 +34,11 @@ pub static X86_64: ArchSpec = ArchSpec {
 
 pub static X86_32: ArchSpec = ArchSpec {
     name: "x86_32",
-    kernel_package: "rosx-x86",
+    kernel_package: "rosx-x86_32",
     kernel_target_spec: "arch/x86_32/rosx-i686.json",
     user_target_spec: "arch/x86_32/rosx-i686-user.json",
     kernel_dir_name: "rosx-i686",
-    kernel_binary: "rosx-x86",
+    kernel_binary: "rosx-x86_32",
     user_dir_name: "rosx-i686-user",
     qemu_binary: "qemu-system-i386",
     image_kind: ImageKind::Multiboot,

@@ -84,7 +84,7 @@ jobs:
         with:
           name: rosx-x86_32
           path: |
-            target/rosx-i686/release/rosx-x86
+            target/rosx-i686/release/rosx-x86_32
             target/rosx-i686-user/rom.img
           if-no-files-found: error
 

@@ -17,7 +17,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 KERNEL = os.environ.get(
     "ROSX_KERNEL_ELF",
-    os.path.join(WORKSPACE_ROOT, "target", "rosx-i686", "debug", "rosx-x86"),
+    os.path.join(WORKSPACE_ROOT, "target", "rosx-i686", "debug", "rosx-x86_32"),
 )
 QEMU = os.environ.get("QEMU_BINARY", "qemu-system-i386")
 BOOTS = int(os.environ.get("ECHO_BOOTS", "10"))
