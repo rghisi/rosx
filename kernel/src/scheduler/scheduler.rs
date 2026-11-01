@@ -110,6 +110,7 @@ impl Scheduler {
     }
 
     pub fn push_task(&mut self, handle: TaskHandle) {
+        let _section = crate::irq_guard::SCHED_SECTION.acquire();
         crate::wake_probe::sched_enter("push_task", "caller");
         match self.ports.tasks.get_state(handle) {
             TaskState::Ready => self.algorithm.push_ready(handle),
@@ -119,6 +120,7 @@ impl Scheduler {
     }
 
     pub fn wake_tasks(&mut self, handles: Vec<TaskHandle>) {
+        let _section = crate::irq_guard::SCHED_SECTION.acquire();
         crate::wake_probe::sched_enter("wake_tasks", "caller");
         for handle in handles {
             if self.ports.tasks.get_state(handle) != TaskState::Terminated {

@@ -12,6 +12,7 @@ pub mod ipc;
 pub mod kconfig;
 pub mod kernel;
 pub(crate) mod kernel_cell;
+pub(crate) mod irq_guard;
 pub(crate) mod kernel_services;
 pub mod kstatsd;
 pub mod memory;

@@ -299,29 +299,80 @@ primitive keeps the detector as a production tripwire for regressions of
 this class, and the guarded structures no longer depend on tribal
 IF-discipline.
 
+#### M3.2 — `IrqGuard` primitive + wiring (DONE 2026-11-01, covers steps 2–4)
+
+Primitive (`kernel/src/irq_guard.rs`, platform-agnostic — built on the
+`Cpu` trait only):
+
+- `IrqCell { name, depth, trip_budget }`; `acquire` = `depth.fetch_add`
+  (trip if prior > 0), then save-and-disable IF via `Cpu`; `Drop` =
+  decrement, re-enable only if the acquire found IF set. Nesting on one
+  cell is safe (only the outer guard restores IF) and trips exactly once
+  per violation; budget 3 with CAS-saturated decrement (M2 lesson:
+  `fetch_sub` wraps) and a `kprintln` that fires on trip only — silent on
+  the happy path, per the `shell_echoes_keystrokes` artifact note.
+- Acquire never blocks: mask-and-proceed, so trips *detect* overlap, they
+  don't prevent it — prevention is the masking itself. No deadlock is
+  structurally possible.
+- Three cells: `SCHED_SECTION`, `MAILBOX_SECTION`, `FUTURE_SECTION`; the
+  `Cpu` slot is registered from `Kernel::new` (`irq_guard::init_cpu`).
+
+Wiring (the step-2 primitive ships with its step-3/4 callers in one
+commit — no-test-only-surface rule):
+
+- SCHED: `Kernel::preempt` (the `should_preempt` borrow, IRQ side),
+  `Scheduler::wake_tasks`, `Scheduler::push_task`.
+- MAILBOX: `push_back`, `pop_front_async`.
+- FUTURE: `notify`, `register_waiter`, `consume`, `attach`, `drop_waitset`.
+  `notify` splits into a guarded public entry + `notify_inner`; the
+  `cascade_to_waitsets` recursion, `attach`'s child-completed notify, and
+  `drop_waitset` call the inner halves under their own single acquisition
+  (same-cell recursion would trip).
+- Order by construction: MAILBOX → FUTURE → SCHED, no reverse edges
+  (`Scheduler::step` deliberately unguarded — `swap_context` inside a
+  guard would run `Drop` on the resume side; its mutual exclusion is
+  M3.1's masking).
+- Step-4 atomicity: masking is global, so the outermost guard in the
+  `push_back` → `notify` → `wake_tasks` chain masks the whole chain;
+  cells add per-structure tripwire identity, not exclusion granularity.
+
+Verification:
+
+- Host: 5 new unit tests in the module (mask/restore, masked-context does
+  not re-enable, reentrant trip + depth release, budget saturation,
+  held-tracking; serialized around the shared cpu slot) — 362/362.
+- x86_32 debug `kstats_mem`: **6/6 PASS, zero `IRQGUARD` trips**
+  (`/tmp/opencode/m32/`).
+- x86_64 smoke (`boot_and_shell` ×4 incl. `shell_echoes_keystrokes`,
+  `ipc_ping`, `stress_mixed_preemption`): **6/6 ok, zero trips**.
+
+Step 5: no residual trips observed; nothing further to fix.
+
 1. **IF discipline (arch):** remove `sti` from `swap_context` on x86_32 (and
    x86_64 if M1 shows it is needed for correctness there too); re-enable
    interrupts only at the true boundaries — int80 `iretd` (already restores
    user IF via the saved eflags), the syscall-return path, the idle loop
    before `hlt`, and the scheduler-thread top loop. Kernel bookkeeping after
-   a resume stays IF=0. Verify: debug `kstats_mem` 6/6.
+   a resume stays IF=0. Verify: debug `kstats_mem` 6/6. — **done in M3.1**
 2. **`IrqGuard` primitive:** new kernel module (~50 lines, built on the
    `Cpu` trait — stays platform-agnostic per the HAL rule): save-and-disable
    on acquire, restore on `Drop`, per-structure held-flag re-entry detection
    that fails loudly. The M2 detector survives as this guard's core; it also
    formalizes the pattern `memory_manager.rs` already hand-rolls. Its unit
    tests live in the module's `#[cfg(test)]` block; the production callers are
-   steps 3–4.
+   steps 3–4. — **done in M3.2**
 3. **Guard the IRQ-reachable structures M2 proved re-entrant** (candidates:
    scheduler algorithm + `ExecutionState`, `FutureRegistry::waiters`,
    `MailboxManager`), replacing their ad-hoc masking convention with the
-   guard.
+   guard. — **done in M3.2** (`ExecutionState` stays outside: its writers are
+   the switch path itself, always masked since M3.1)
 4. **Notify atomicity:** make `push_back` → `notify_waiters` →
    `complete_ipc_message` → `notify` → `wake_tasks` → `push_ready` one
    `IrqGuard` section, closing the split-borrow window at
-   `mailbox_manager.rs:93-109` for both kernel-task and IRQ senders.
+   `mailbox_manager.rs:93-109` for both kernel-task and IRQ senders. —
+   **done in M3.2** via global masking under the outermost chain guard
 5. Any residual corruption the guard still flags gets its own smallest fix,
-   discussed and approved before coding.
+   discussed and approved before coding. — **no residuals**
 
 Each numbered fix is its own commit and must keep the x86_64 suite green.
 

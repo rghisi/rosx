@@ -159,6 +159,7 @@ impl FutureRegistry {
     }
 
     pub fn register_waiter(&mut self, future_handle: FutureHandle, task_handle: TaskHandle) {
+        let _section = crate::irq_guard::FUTURE_SECTION.acquire();
         crate::wake_probe::fr_enter("register_waiter", "caller");
         self.waiters.entry(future_handle).or_default().push(task_handle);
         crate::wake_probe::fr_exit();
@@ -173,6 +174,7 @@ impl FutureRegistry {
     }
 
     pub fn consume(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
+        let _section = crate::irq_guard::FUTURE_SECTION.acquire();
         crate::wake_probe::fr_enter("consume", "caller");
         let result = self.consume_inner(handle);
         crate::wake_probe::fr_exit();
@@ -203,6 +205,11 @@ impl FutureRegistry {
     }
 
     pub fn notify(&mut self, handle: FutureHandle) {
+        let _section = crate::irq_guard::FUTURE_SECTION.acquire();
+        self.notify_inner(handle);
+    }
+
+    fn notify_inner(&mut self, handle: FutureHandle) {
         crate::wake_probe::fr_enter("notify", "caller");
         let waiters = self.waiters.remove(&handle).unwrap_or_default();
         crate::wake_probe::notify(handle.index() as usize, waiters.len());
@@ -219,6 +226,7 @@ impl FutureRegistry {
     }
 
     pub(crate) fn attach(&mut self, set: FutureHandle, child: FutureHandle, tag: u32) -> Result<(), AttachError> {
+        let _section = crate::irq_guard::FUTURE_SECTION.acquire();
         let child_completed = match self.arena.borrow(child.into()) {
             Ok(future) => {
                 if is_waitset(future) {
@@ -249,7 +257,7 @@ impl FutureRegistry {
         }
         self.parents_of[child.index() as usize].push(ParentLink { parent: set, tag });
         if child_completed {
-            self.notify(set);
+            self.notify_inner(set);
         }
         Ok(())
     }
@@ -294,6 +302,7 @@ impl FutureRegistry {
     }
 
     pub(crate) fn drop_waitset(&mut self, set: FutureHandle) {
+        let _section = crate::irq_guard::FUTURE_SECTION.acquire();
         let children = match self.arena.borrow_mut(set.into()) {
             Ok(future) => match as_waitset(future) {
                 Some(waitset) => waitset.child_handles(),
@@ -304,8 +313,8 @@ impl FutureRegistry {
         for child in children {
             let _ = self.detach(set, child);
         }
-        self.notify(set);
-        let _ = self.consume(set);
+        self.notify_inner(set);
+        let _ = self.consume_inner(set);
     }
 
     fn is_live(&mut self, handle: FutureHandle) -> bool {
@@ -348,7 +357,7 @@ impl FutureRegistry {
         }
         self.parents_of[index] = kept;
         for parent in awakened {
-            self.notify(parent);
+            self.notify_inner(parent);
         }
     }
 

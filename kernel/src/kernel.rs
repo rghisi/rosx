@@ -99,6 +99,7 @@ impl Kernel {
         let elf_arch = kconfig.elf_arch;
         let port_io = kconfig.port_io;
         crate::kernel_services::init();
+        crate::irq_guard::init_cpu(cpu);
         let scheduler_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
         let scheduler_task_handler = services()
             .task_manager
@@ -251,17 +252,17 @@ impl Kernel {
     }
 
     pub fn preempt(&mut self) {
-        let should = {
-            crate::wake_probe::sched_enter("should_preempt", "tick");
-            let result = services().scheduler.borrow_mut().should_preempt();
-            crate::wake_probe::sched_exit();
-            result
-        };
-        if self.execution_state.preemption_enabled && should {
-            if let Some(task_handle) = self.execution_state.current_task {
-                services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
+        if self.execution_state.preemption_enabled {
+            let should = {
+                let _section = crate::irq_guard::SCHED_SECTION.acquire();
+                services().scheduler.borrow_mut().should_preempt()
+            };
+            if should {
+                if let Some(task_handle) = self.execution_state.current_task {
+                    services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
+                }
+                self.execution_state.pending_preemption = true;
             }
-            self.execution_state.pending_preemption = true;
         }
     }
 

@@ -56,6 +56,7 @@ impl MailboxManager {
     }
 
     pub(crate) fn push_back(&mut self, handle: MailboxHandle, message: Message) -> Result<(), IpcSendError> {
+        let _section = crate::irq_guard::MAILBOX_SECTION.acquire();
         crate::wake_probe::mm_enter("push_back", "caller");
         let result = self.push_back_inner(handle, message);
         crate::wake_probe::mm_exit();
@@ -77,6 +78,7 @@ impl MailboxManager {
     }
 
     pub(crate) fn pop_front_async(&mut self, handle: MailboxHandle) -> FutureHandle {
+        let _section = crate::irq_guard::MAILBOX_SECTION.acquire();
         crate::wake_probe::mm_enter("pop_front_async", "caller");
         let future_handle = self.pop_front_async_inner(handle);
         crate::wake_probe::mm_exit();
