@@ -4,7 +4,8 @@ use std::process::{self, Command};
 
 mod arch;
 
-use arch::{ArchSpec, ImageKind, X86_64};
+use arch::{ArchSpec, X86_64};
+use x86_runner::{BootMedium, LaunchMode};
 
 const USER_APPS: [&str; 20] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "bench", "atad", "ata"];
 
@@ -57,17 +58,22 @@ fn build_kernel(debug: bool, spec: &ArchSpec) {
     run(&mut cmd, &format!("build {} kernel", spec.name));
 }
 
-fn build_image(debug: bool, launch_qemu: bool, spec: &ArchSpec) {
-    let profile = if debug { "debug" } else { "release" };
-    let kernel = spec.kernel_elf(profile);
-    let medium = x86_runner::prepare_run_medium(&kernel, x86_runner::Arch::X86_64)
-        .expect("failed to create x86_64 disk image");
-    println!("==> create x86_64 disk image");
-    if launch_qemu {
-        let mut cmd =
-            x86_runner::qemu_command(x86_runner::Arch::X86_64, &medium, x86_runner::LaunchMode::Interactive);
-        run(&mut cmd, "boot x86_64 in qemu");
+fn prepare_medium(debug: bool, spec: &ArchSpec) -> BootMedium {
+    let kernel = spec.kernel_elf(if debug { "debug" } else { "release" });
+    let medium = x86_runner::prepare_run_medium(&kernel, spec.boot)
+        .expect("failed to prepare boot medium");
+    match &medium {
+        BootMedium::DiskImage(_) => println!("==> created {} disk image", spec.name),
+        BootMedium::MultibootKernel(elf) => {
+            println!("==> bootable multiboot artifact: {}", elf.display())
+        }
     }
+    medium
+}
+
+fn launch(medium: &BootMedium, spec: &ArchSpec) {
+    let mut cmd = x86_runner::qemu_command(spec.boot, medium, LaunchMode::Interactive);
+    run(&mut cmd, &format!("boot {} in qemu", spec.name));
 }
 
 fn pack_rom(spec: &ArchSpec) {
@@ -90,23 +96,6 @@ fn pack_rom(spec: &ArchSpec) {
     let rom_path = spec.rom_path();
     std::fs::write(&rom_path, image).expect("failed to write ROM image");
     println!("==> packed ROM image {}", rom_path.display());
-}
-
-fn launch_multiboot(debug: bool, spec: &ArchSpec) {
-    let kernel = spec.kernel_elf(if debug { "debug" } else { "release" });
-    let mut cmd = Command::new(spec.qemu_binary);
-    cmd.current_dir(workspace_root())
-        .arg("-kernel").arg(&kernel)
-        .arg("-debugcon").arg("stdio")
-        .arg("-display").arg("none")
-        .arg("-no-reboot")
-        .arg("-no-shutdown");
-    println!("==> booting {} in {}", spec.name, spec.qemu_binary);
-    let status = cmd.status().expect("failed to spawn qemu");
-    if !status.success() {
-        eprintln!("failed: boot {} in {}", spec.name, spec.qemu_binary);
-        process::exit(status.code().unwrap_or(1));
-    }
 }
 
 fn build_grub_image(debug: bool) {
@@ -195,13 +184,7 @@ fn main() {
             build_apps(spec);
             pack_rom(spec);
             build_kernel(debug, spec);
-            match spec.image_kind {
-                ImageKind::BiosBoot => build_image(debug, false, spec),
-                ImageKind::Multiboot => println!(
-                    "==> bootable multiboot artifact: {}",
-                    spec.kernel_elf(if debug { "debug" } else { "release" }).display()
-                ),
-            }
+            prepare_medium(debug, spec);
         }
         "run" => {
             let (spec, rest) = split_arch(extras);
@@ -209,19 +192,17 @@ fn main() {
             build_apps(spec);
             pack_rom(spec);
             build_kernel(debug, spec);
-            match spec.image_kind {
-                ImageKind::BiosBoot => build_image(debug, true, spec),
-                ImageKind::Multiboot => launch_multiboot(debug, spec),
-            }
+            let medium = prepare_medium(debug, spec);
+            launch(&medium, spec);
         }
         "image" => {
             let (spec, rest) = split_arch(extras);
             let debug = parse_optional_flag(&rest, "--debug");
-            match spec.image_kind {
-                ImageKind::BiosBoot => {
+            match spec.boot {
+                x86_runner::Arch::X86_64 => {
                     println!("==> x86_64 disk image is produced by `cargo xtask build`");
                 }
-                ImageKind::Multiboot => {
+                x86_runner::Arch::X86_32 => {
                     build_apps(spec);
                     pack_rom(spec);
                     build_kernel(debug, spec);
