@@ -1,6 +1,8 @@
 # Unified x86 Runner — Standardizing Run & Image Creation
 
-> **Status:** Plan (no code written). Written 2026-11-01.
+> **Status:** Executed 2026-11-01 (M1–M5). AMENDED during execution at
+> §2.10/§3.2 (member topology, `prepare_run_medium` added to the API) and
+> §8 (results recorded there). Written 2026-11-01.
 > **Branch base:** `origin/main` at `62c530d` (#98). All milestones apply to
 > this base directly.
 > **Feature:** one `arch/x86-runner` crate that owns *how a built kernel is
@@ -307,18 +309,21 @@ disk image (today a message, §2.8); on x86_32 the GRUB ISO.
 
 ## 8. Verification matrix
 
-| Command (cwd) | Proves | Status |
+| Command (cwd) | Proves | Result (2026-11-01) |
 |---|---|---|
-| `cargo xtask build` / `cargo xtask build x86_32` (root) | both full build chains incl. in-process image creation | green today, re-proven every milestone |
-| `cargo xtask test` (root) | x86_64 QEMU suite through the runner (M3+) | needs `qemu-system-x86_64` |
-| `ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1` | x86_32 QEMU suite through the runner | green today |
-| `cargo run` / `cargo xtask run [arch]` | interactive boot to shell, window behavior | manual, **unverified** |
-| `cargo xtask image` / `cargo xtask image x86_32` (+ `-cdrom` boot) | symmetric artifacts, bootable ISO | **unverified** until M4 |
-| image byte-compare pre/post M1 | BiosBoot call unchanged | orchestrator captures baseline first |
+| `cargo xtask build` / `cargo xtask build x86_32` (root) | both full build chains incl. in-process image creation | **green** at every milestone |
+| `cargo xtask test` (root) | x86_64 QEMU suite through the runner (M3+) | **green** (M1, M3) |
+| `ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1` | x86_32 QEMU suite through the runner | **green** (M2, M3) |
+| `cargo run` / `cargo xtask run [arch]` | interactive boot to shell, window behavior | chain proven to QEMU display init on both arches (headless box: `gtk initialization failed` is the terminal proof); full window boot **unverified** here |
+| `cargo xtask image` / `cargo xtask image x86_32` (+ `-cdrom` boot) | symmetric artifacts, bootable ISO | x86_64 **green**; x86_32 missing-tools UX **green** (no xorriso on this box), ISO boot **unverified** — needs a host with the full GRUB toolchain |
+| image byte-compare pre/post M1 | BiosBoot call unchanged | **identical** at M1, M2, M4 vs pre-change baseline |
 
 ## 9. Interfaces summary
-After M4 the runner crate's public surface is exactly §3.3's six items;
-its binary keeps today's argv contract `<kernel-binary> <arch> [--no-run]`.
+After M4 the runner crate's public surface is §3.3's seven items
+(`Arch`, `BootMedium`, `LaunchMode`, `run_medium`, `prepare_run_medium`,
+`create_bios_disk_image`, `create_grub_image`, `qemu_command` plus the two
+error types); its binary keeps today's argv contract
+`<kernel-binary> <arch> [--no-run]`.
 xtask's user-facing contract changes only in the honest direction:
 `cargo xtask image` now means "produce the flashable artifact for this
 arch" on **both** arches. No kernel, treaty, protocol, or app interface
