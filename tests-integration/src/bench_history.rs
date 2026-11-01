@@ -27,6 +27,8 @@ pub struct Context {
     pub host_cpus: usize,
     pub cpu_model: String,
     pub mem_total_kb: u64,
+    pub virtualization: String,
+    pub kvm_available: bool,
     pub kernel_profile: String,
     pub qemu_version: String,
     pub git_commit: String,
@@ -44,6 +46,8 @@ impl Context {
             host_cpus: detect_host_cpus(),
             cpu_model: detect_cpu_model(),
             mem_total_kb: detect_mem_total_kb(),
+            virtualization: detect_virtualization(),
+            kvm_available: detect_kvm_available(),
             kernel_profile: detect_kernel_profile(),
             qemu_version: detect_qemu_version(),
             git_commit: detect_git_commit(),
@@ -52,12 +56,14 @@ impl Context {
 
     pub fn header(&self) -> String {
         format!(
-            "# rosx-bench-record v2\n\
+            "# rosx-bench-record v3\n\
              # recorded_at_utc={}\n\
              # host={}\n\
              # host_cpus={}\n\
              # cpu_model={}\n\
              # mem_total_kb={}\n\
+             # virtualization={}\n\
+             # kvm_available={}\n\
              # kernel_profile={}\n\
              # qemu={}\n\
              # git_commit={}\n",
@@ -66,6 +72,8 @@ impl Context {
             self.host_cpus,
             self.cpu_model,
             self.mem_total_kb,
+            self.virtualization,
+            yes_no(self.kvm_available),
             self.kernel_profile,
             self.qemu_version,
             self.git_commit
@@ -75,18 +83,22 @@ impl Context {
     fn comparable(&self) -> Vec<(&'static str, String)> {
         vec![
             ("host", self.host.clone()),
-            (
-                "host_cpus",
-                self.host_cpus.to_string(),
-            ),
+            ("host_cpus", self.host_cpus.to_string()),
             ("cpu_model", self.cpu_model.clone()),
-            (
-                "mem_total_kb",
-                self.mem_total_kb.to_string(),
-            ),
+            ("mem_total_kb", self.mem_total_kb.to_string()),
+            ("virtualization", self.virtualization.clone()),
+            ("kvm_available", yes_no(self.kvm_available).to_string()),
             ("kernel_profile", self.kernel_profile.clone()),
             ("qemu", self.qemu_version.clone()),
         ]
+    }
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value {
+        "yes"
+    } else {
+        "no"
     }
 }
 
@@ -354,6 +366,38 @@ fn detect_mem_total_kb() -> u64 {
         .unwrap_or(0)
 }
 
+fn detect_virtualization() -> String {
+    if let Ok(output) = Command::new("systemd-detect-virt").output() {
+        if output.status.success() {
+            let kind = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !kind.is_empty() {
+                return kind;
+            }
+        }
+    }
+    fs::read_to_string("/proc/cpuinfo")
+        .ok()
+        .and_then(|cpuinfo| {
+            cpuinfo
+                .lines()
+                .find(|line| line.starts_with("flags"))
+                .and_then(|line| {
+                    line.split_whitespace()
+                        .any(|flag| flag == "hypervisor")
+                        .then(|| "hypervisor".to_string())
+                })
+        })
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn detect_kvm_available() -> bool {
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/kvm")
+        .is_ok()
+}
+
 fn detect_kernel_profile() -> String {
     if env::var_os("ROSX_KERNEL_ELF").is_some_and(|value| !value.is_empty()) {
         return "custom".to_string();
@@ -413,6 +457,8 @@ mod tests {
             host_cpus: 8,
             cpu_model: "Test CPU @ 3.00GHz".to_string(),
             mem_total_kb: 33_554_432,
+            virtualization: "kvm".to_string(),
+            kvm_available: false,
             kernel_profile: "dev".to_string(),
             qemu_version: "QEMU emulator version 9.2.0".to_string(),
             git_commit: "abc1234".to_string(),
@@ -443,6 +489,8 @@ mod tests {
         assert_eq!(header["host_cpus"], "8");
         assert_eq!(header["cpu_model"], "Test CPU @ 3.00GHz");
         assert_eq!(header["mem_total_kb"], "33554432");
+        assert_eq!(header["virtualization"], "kvm");
+        assert_eq!(header["kvm_available"], "no");
         assert_eq!(header["kernel_profile"], "dev");
         assert_eq!(parsed, measurements);
     }
@@ -495,6 +543,8 @@ mod tests {
         header.insert("host_cpus".to_string(), "8".to_string());
         header.insert("cpu_model".to_string(), "Test CPU @ 3.00GHz".to_string());
         header.insert("mem_total_kb".to_string(), "33554432".to_string());
+        header.insert("virtualization".to_string(), "kvm".to_string());
+        header.insert("kvm_available".to_string(), "no".to_string());
         header.insert("kernel_profile".to_string(), "dev".to_string());
         header.insert("qemu".to_string(), "QEMU emulator version 9.2.0".to_string());
         let mismatches = context_mismatches(&context, &header);
@@ -510,7 +560,7 @@ mod tests {
         header.insert("kernel_profile".to_string(), "dev".to_string());
         header.insert("qemu".to_string(), "QEMU emulator version 9.2.0".to_string());
         let mismatches = context_mismatches(&context, &header);
-        assert_eq!(mismatches.len(), 3);
+        assert_eq!(mismatches.len(), 5);
         assert!(mismatches.iter().all(|problem| problem.contains("differs")));
     }
 
@@ -577,6 +627,8 @@ mod tests {
         assert!(detect_host_cpus() >= 1);
         assert_ne!(detect_cpu_model(), "unknown");
         assert!(detect_mem_total_kb() > 0);
+        assert!(!detect_virtualization().is_empty());
+        let _ = detect_kvm_available();
     }
 
     #[test]
