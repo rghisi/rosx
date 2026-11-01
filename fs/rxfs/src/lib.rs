@@ -6,5 +6,6 @@ pub mod bitmap;
 pub mod checksum;
 pub mod device;
 pub mod error;
+pub mod extent;
 pub mod spec;
 pub mod superblock;
