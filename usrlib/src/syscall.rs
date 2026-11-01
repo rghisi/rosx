@@ -44,6 +44,10 @@ impl Syscall {
         arch::raw_syscall(SyscallNum::Sleep as usize, ms as usize, 0, 0);
     }
 
+    pub fn now() -> u64 {
+        arch::raw_syscall(SyscallNum::Now as usize, 0, 0, 0) as u64
+    }
+
     pub fn wait_future(handle: UserFutureHandle) {
         arch::raw_syscall(
             SyscallNum::WaitFuture as usize,

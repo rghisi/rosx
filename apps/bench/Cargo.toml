@@ -1,0 +1,18 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "bench"
+publish = false
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "bench"
+bench = false
+test = false
+
+[dependencies]
+system = { path = "../../system" }
+usrlib = { path = "../../usrlib" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+usrlib = { path = "../../usrlib", features = ["runtime"] }
