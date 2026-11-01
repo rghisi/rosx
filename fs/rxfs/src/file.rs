@@ -1,9 +1,9 @@
 use crate::device::BlockDevice;
 use crate::error::IoError;
 use crate::spec::BLOCK_BYTES;
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+#[cfg(feature = "std")] use std::fs::{File, OpenOptions};
+#[cfg(feature = "std")] use std::io::{Read, Seek, SeekFrom, Write};
+#[cfg(feature = "std")] use std::path::Path;
 
 pub struct FileDevice {
     file: File,
