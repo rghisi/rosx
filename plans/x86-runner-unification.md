@@ -301,6 +301,13 @@ disk image (today a message, §2.8); on x86_32 the GRUB ISO.
   case) — candidate once `create_grub_image` has proven out.
 - **`-d cpu_reset`** stays x86_64-only; promoting it to canonical (or
   deleting) is a diagnostics decision for whoever next debugs a reset.
+- **x86_32 GRUB-boot kernel defect** (found by this plan's ISO gate):
+  boots via GRUB to `[KERNEL] Starting`, then `#GP(0x8)`/`#DF`/triple at
+  an indirect-dispatch return; identical ELF boots fine via `-kernel`.
+  Needs a dedicated diagnosis plan (suggested: start by forcing `cli` on
+  `boot.S` entry and auditing the setup order against the first PIT
+  tick; reproduce with `qemu-system-i386 -cdrom … -boot order=d
+  -d int,cpu_reset`).
 
 ## 7. Risks
 
@@ -321,7 +328,7 @@ disk image (today a message, §2.8); on x86_32 the GRUB ISO.
 | `cargo xtask test` (root) | x86_64 QEMU suite through the runner (M3+) | **green** (M1, M3) |
 | `ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1` | x86_32 QEMU suite through the runner | **green** (M2, M3) |
 | `cargo run` / `cargo xtask run [arch]` | interactive boot to shell, window behavior | chain proven to QEMU display init on both arches (headless box: `gtk initialization failed` is the terminal proof); full window boot **unverified** here |
-| `cargo xtask image` / `cargo xtask image x86_32` (+ `-cdrom` boot) | symmetric artifacts, bootable ISO | x86_64 **green**; x86_32 missing-tools UX **green** (no xorriso on this box); full-toolchain build verified via the `build-artifacts.yml` re-run after the §2.7 amendment; `-cdrom` boot of the artifact remains manual |
+| `cargo xtask image` / `cargo xtask image x86_32` (+ `-cdrom` boot) | symmetric artifacts, bootable ISO | x86_64 **green**; x86_32 missing-tools UX **green**; full-toolchain build verified locally **and** in `build-artifacts.yml` after the §2.7 amendment. `-cdrom` boot (with dev box granted `xorriso`+`mtools`): GRUB loads the kernel, mbi mmap parses, `[KERNEL] Starting` prints — then `#GP(error 0x8)` at the return of an indirect dispatch (`0x118013`), `#DF`, triple fault, QEMU exits. The **same kernel ELF boots to the `rose>` prompt via `-kernel`**, both maps are identical, and the staged ISO inputs are byte-equivalent to the deleted bash script's, so the defect is pre-existing kernel-side sensitivity to the GRUB environment (prime suspect: inherited EFLAGS/PIC/PIT state around the first context switch), not runner-side. Boot diagnosis is its own follow-up plan. |
 | image byte-compare pre/post M1 | BiosBoot call unchanged | **identical** at M1, M2, M4 vs pre-change baseline |
 
 ## 9. Interfaces summary
