@@ -40,8 +40,11 @@
 - **No CI job restructuring.** The only workflow change contemplated is the
   optional ISO artifact in M4; artifact paths today keep working (§2.9).
 - **No change to the GRUB toolchain requirement** (`grub-mkrescue`,
-  `xorriso`) for the x86_32 flashable image; the (unused) `mtools` check
-  disappears because nothing calls it (§2.7).
+  `xorriso`, mtools) for the x86_32 flashable image. AMENDED during
+  execution: the plan first claimed the script's `mcopy` check was dead
+  weight — wrong. The script never calls `mcopy` directly, but
+  `grub-mkrescue` invokes `mformat` (mtools) internally; CI proved it
+  (§2.7 amendment). The ported checks probe `mformat` directly instead.
 
 ## 2. Verified baseline facts (2026-11-01, paths)
 
@@ -92,8 +95,10 @@
 7. **The GRUB path** is `arch/x86_32/build-image.sh` (bash), invoked only by
    `xtask/src/main.rs::build_grub_image`. It checks for
    `grub-mkrescue`/`grub2-mkrescue`, `xorriso`, **and `mcopy`**, but never
-   calls `mcopy` — only `grub-mkrescue` is used, on a temp tree with a
-   generated `grub.cfg` (`multiboot /boot/kernel`). Output:
+   calls `mcopy` directly — the check is nonetheless load-bearing:
+   `grub-mkrescue` itself invokes `mformat` (mtools), proven when the new
+   CI job without mtools failed with "grub-mkrescue: error: \`mformat\`
+   invocation failed". Output:
    `target/rosx-i686/<profile>/rosx-x86_32.img` (an ISO9660 image; `dd`-able
    to USB per its own message).
 8. **`xtask image` is asymmetric:** for x86_32 it builds the GRUB ISO; for
@@ -177,9 +182,9 @@ pub fn qemu_command(arch: Arch, medium: &BootMedium, mode: LaunchMode) -> Comman
     suite's current semantics (§2.4).
 - `create_grub_image` ports `build-image.sh`'s real work to Rust: temp
   tree, two-file `grub.cfg`, spawn `grub-mkrescue`/`grub2-mkrescue`, with
-  the same friendly missing-tools message **minus the mcopy check**
-  (§2.7). This runs only from `xtask image x86_32` — CI paths that don't
-  have GRUB never touch it.
+  the same friendly missing-tools message; the mtools check survives as a
+  direct `mformat` probe (§2.7 amendment). This runs only from
+  `xtask image x86_32` — CI paths that don't have GRUB never touch it.
 
 ### 3.4 Who owns which "Arch"
 Three tables exist today (xtask `ArchSpec`, tests `Arch`, runner argv
@@ -302,7 +307,7 @@ disk image (today a message, §2.8); on x86_32 the GRUB ISO.
 |---|------|------------|
 | 1 | Flag drift changes QEMU behavior under the tests | §3.3 canonical sets are transcribed from the §2.5 table, per-mode, deliberately unequal (headless keeps no `-no-shutdown`); M3's gate is the full dual-arch QEMU suite |
 | 2 | Nested-cargo lock deadlock via `run.sh` | AMENDED at M1: nested sequential same-workspace cargo is the xtask pattern and holds no lock while its child runs; M1/M2 gates still run `cargo run` to prove it end-to-end |
-| 3 | GRUB re-implementation subtly differs from `build-image.sh` | The bash script's *only* external effect is the grub-mkrescue call on a 3-file tree; M4 gate boots the produced ISO in QEMU and keeps the missing-tools UX; script stays in git history |
+| 3 | GRUB re-implementation subtly differs from `build-image.sh` | Materialized: the port dropped the mtools probe believing the script's check dead; CI failed on grub-mkrescue's internal `mformat` (§2.7 amendment). Restored with a probe of the actually-invoked tool; the real toolchain (CI's) is the standing oracle |
 | 4 | Artifact path breaks CI or debug docs | §3.5 freezes both paths; `if-no-files-found: error` in CI catches any slip immediately |
 | 5 | Interactive x86_32 window surprises stdio-trained users | It fixes an unusable keyboard path (§2.6); PR body records it; Headless mode remains for scripts |
 | 6 | `x86-runner` path-dep on an external workspace misbehaves | Already the shape of the `bootloader` ecosystem (bin-component crates located at runtime); M1 gate compiles xtask + tests against the lib immediately |
@@ -315,7 +320,7 @@ disk image (today a message, §2.8); on x86_32 the GRUB ISO.
 | `cargo xtask test` (root) | x86_64 QEMU suite through the runner (M3+) | **green** (M1, M3) |
 | `ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1` | x86_32 QEMU suite through the runner | **green** (M2, M3) |
 | `cargo run` / `cargo xtask run [arch]` | interactive boot to shell, window behavior | chain proven to QEMU display init on both arches (headless box: `gtk initialization failed` is the terminal proof); full window boot **unverified** here |
-| `cargo xtask image` / `cargo xtask image x86_32` (+ `-cdrom` boot) | symmetric artifacts, bootable ISO | x86_64 **green**; x86_32 missing-tools UX **green** (no xorriso on this box), ISO boot **unverified** — needs a host with the full GRUB toolchain |
+| `cargo xtask image` / `cargo xtask image x86_32` (+ `-cdrom` boot) | symmetric artifacts, bootable ISO | x86_64 **green**; x86_32 missing-tools UX **green** (no xorriso on this box); full-toolchain build verified via the `build-artifacts.yml` re-run after the §2.7 amendment; `-cdrom` boot of the artifact remains manual |
 | image byte-compare pre/post M1 | BiosBoot call unchanged | **identical** at M1, M2, M4 vs pre-change baseline |
 
 ## 9. Interfaces summary

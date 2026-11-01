@@ -71,7 +71,7 @@ cargo run -p rosx              # run.sh -> arch/x86-runner -> BiosBoot disk imag
 ```bash
 cargo xtask build x86_32       # ELF apps + ROM image + kernel (Multiboot2, boot.S)
 cargo xtask run x86_32         # boot QEMU (-kernel, qemu-system-i386) to the shell prompt
-cargo xtask image x86_32       # GRUB bootable ISO (needs grub-mkrescue, xorriso)
+cargo xtask image x86_32       # GRUB bootable ISO (needs grub-mkrescue, xorriso, mtools)
 cargo build -p rosx-x86_32     # kernel only (from arch/x86_32/ — its .cargo/config.toml supplies the rosx-i686 custom target)
 ```
 - The kernel embeds the shell ELF and the ROM image that `cargo xtask build x86_32` produces under `target/rosx-i686-user/release/`; `arch/x86_32/build.rs` asserts both are present before compiling.
@@ -98,7 +98,7 @@ cargo xtask build [arch] [--debug]  # ELF apps + ROM + kernel + boot artifact (a
 cargo xtask apps [arch]             # Build ELF apps only
 cargo xtask rom [arch]              # Pack the ROM image from the built user ELFs
 cargo xtask run [arch] [--debug]    # Build and launch QEMU to the shell prompt
-cargo xtask image [arch] [--debug]  # flashable artifact: x86_64 BiosBoot disk image, x86_32 GRUB ISO (needs grub-mkrescue, xorriso)
+cargo xtask image [arch] [--debug]  # flashable artifact: x86_64 BiosBoot disk image, x86_32 GRUB ISO (needs grub-mkrescue, xorriso, mtools)
 cargo xtask test [--skip-integration] # Run unit tests; --skip-integration excludes the QEMU tests-integration suite
 ```
 

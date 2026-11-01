@@ -89,7 +89,7 @@ impl std::error::Error for GrubTooling {}
 pub fn create_grub_image(kernel_elf: &Path, out: &Path) -> Result<(), GrubTooling> {
     let probe = |name: &str| on_path(name).is_some();
     let mkrescue = resolve_grub_mkrescue(&probe).ok_or_else(|| missing_tooling(&probe))?;
-    if !probe("xorriso") {
+    if !probe("xorriso") || !probe("mformat") {
         return Err(missing_tooling(&probe));
     }
 
@@ -126,6 +126,9 @@ fn missing_tooling(probe: &impl Fn(&str) -> bool) -> GrubTooling {
     if !probe("xorriso") {
         missing.push("xorriso".to_string());
     }
+    if !probe("mformat") {
+        missing.push("mformat (mtools)".to_string());
+    }
     GrubTooling {
         missing,
         install_hint: install_hint(probe),
@@ -134,13 +137,13 @@ fn missing_tooling(probe: &impl Fn(&str) -> bool) -> GrubTooling {
 
 fn install_hint(probe: &impl Fn(&str) -> bool) -> &'static str {
     if probe("apt-get") {
-        "sudo apt install grub-pc-bin grub-common xorriso"
+        "sudo apt install grub-pc-bin grub-common xorriso mtools"
     } else if probe("dnf") {
-        "sudo dnf install grub2-tools xorriso"
+        "sudo dnf install grub2-tools xorriso mtools"
     } else if probe("pacman") {
-        "sudo pacman -S grub xorriso"
+        "sudo pacman -S grub xorriso mtools"
     } else {
-        "Install: grub (grub-pc-bin), xorriso"
+        "Install: grub (grub-pc-bin), xorriso, mtools"
     }
 }
 
@@ -291,10 +294,10 @@ mod tests {
     fn missing_grub_tooling_reports_every_gap_with_a_hint() {
         let probe = |name: &str| name == "grub2-mkrescue";
         let error = missing_tooling(&probe);
-        assert_eq!(error.missing, vec!["xorriso".to_string()]);
+        assert_eq!(error.missing, vec!["xorriso".to_string(), "mformat (mtools)".to_string()]);
         assert_eq!(
             error.to_string(),
-            "missing required tools: xorriso\n\n  Install: grub (grub-pc-bin), xorriso"
+            "missing required tools: xorriso, mformat (mtools)\n\n  Install: grub (grub-pc-bin), xorriso, mtools"
         );
     }
 
