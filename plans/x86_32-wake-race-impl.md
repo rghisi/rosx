@@ -41,16 +41,67 @@ window, unguard `kstats_mem` on x86_32.
 
 ## Milestones
 
-### M0 — Reproducible baseline (no kernel change)
+### M0 — Reproducible baseline (no kernel change) — DONE 2026-11-01
 
-1. `cargo xtask build x86_32 --debug` and release build.
-2. `ROSX_ARCH=x86_32 cargo test -p tests-integration --test kstats_mem -- --test-threads=1`
-   — temporarily drop the guard skip so the test actually runs:
-   - debug profile, 6 rounds → expected 0/6.
-   - release profile, 6 rounds → expected 6/6.
-3. Record the table (QEMU version, kernel hash, round results) in this file.
+Harness ran with the guard in `kstats_mem.rs` temporarily removed; the tree
+was restored afterwards (the commit history of the test file is untouched).
 
-Gate: failure reproduces deterministically in debug.
+Environment: host x86_64, QEMU 10.2.1 (`qemu-system-i386`), tree
+`x86_32-wake-race` @ `f43c277`, user ELFs + ROM from `cargo xtask apps
+x86_32`, kernel built by the harness (`ROSX_QEMU_PROFILE` selects profile).
+
+| profile | kernel sha256 (prefix) | rounds | pass | fail |
+|---|---|---|---|---|
+| debug (`target/rosx-i686/debug/rosx-x86_32`)   | `05fde23e` | 6 | 1 | 5 |
+| release (`target/rosx-i686/release/rosx-x86_32`) | `9408f528` | 6 | 6 | 0 |
+
+Failure signature (all 5 failing debug rounds, rounds 1/2/3/5/6): the shell
+echoes `mem`, then `timed out after 30s waiting for output containing
+"KSTATSD memory snapshot"` — the parked receiver never resumes, exactly the
+parent document's symptom. Release round logs show the full snapshot report
+and the return to `rose>`.
+
+Note against the parent document: the failure rate measured here is 5/6, not
+~100%; the parent doc's harness was the pre-guard merged tree run directly.
+Repro is still overwhelming and profile-dependent, which is what M2
+instrumentation needs.
+
+Gate: PASSED — the race reproduces reliably in debug and is masked in release.
+
+### M0.5 — Stack-overflow hypothesis (user-raised) — REFUTED as the mechanism, 2026-11-01
+
+Hypothesis: the failures are task-stack overflow silently corrupting adjacent
+kernel-heap blocks (no guard page, `KernelCell` has no borrow tracking), which
+would mimic a lost wake. Legitimate precedent: the 8 KiB → 16 KiB bump fixed a
+real overflow-of-this-kind before.
+
+Step 1 (falsifier, no instrumentation): `STACK_WORDS` 4096 → 16384 (64 KiB)
+for 32-bit, debug profile, same harness/machine: **10/10 PASS** vs the 16 KiB
+1/6. Suggestive.
+
+Step 2 (mechanism probe — temporary, fully reverted): task stacks filled with
+a poison word; low-water depth scanned before every swap-out (so every stack
+write is witnessed at the writer's next switch — an overflow at `base()` is
+structurally impossible to miss); crossings at 25/50/75% and `OVERFLOW`
+printed with the task name.
+
+| build | rounds | result | max depth observed | OVERFLOW lines |
+|---|---|---|---|---|
+| 16 KiB + probe | 6 | 0 pass / 6 fail | 9164/16384 B (56%, an `ELF` task at park) | **0** |
+| 64 KiB + probe | 1 | 1 pass | none crossed 25% of 64 KiB (= 16 KiB) | 0 |
+
+`[K] Kstatsd` (the reply sender) never crossed even 25% of 16 KiB (4 KiB);
+`[K] Main Thread` peaked at 4356 B. Failing rounds top out at ~9.2 KiB of the
+16 KiB — no task ever wrote below its base.
+
+Verdict: overflow is not what corrupts the wake in this failure. The 10/10 at
+64 KiB is luck of heap layout / timing, which is exactly the layout
+sensitivity the parent document describes for the true lost-wake race. The
+stack size stays at 16 KiB; the investigation proceeds with M1 (IF/contract
+diff) and M2 (wake-path counters + re-entrancy detector).
+
+Artifacts: `/tmp/opencode/m05-*.log` (round logs incl. console dumps),
+`/tmp/opencode/m0-baseline.sh`. All probe code removed from the tree.
 
 ### M1 — Contract diff of the wake paths (doc only)
 
