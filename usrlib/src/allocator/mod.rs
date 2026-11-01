@@ -1,6 +1,6 @@
 pub mod bins;
 
-#[cfg(all(feature = "slab-allocator", not(test)))]
+#[cfg(all(feature = "runtime", not(test)))]
 mod shim {
     use super::bins::{Binner, SLAB_BYTES, SMALL_MAX, small_class_of};
     use crate::syscall::Syscall;
@@ -73,5 +73,5 @@ mod shim {
     }
 }
 
-#[cfg(all(feature = "slab-allocator", not(test)))]
+#[cfg(all(feature = "runtime", not(test)))]
 pub use shim::UsrAllocator;

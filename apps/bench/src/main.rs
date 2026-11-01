@@ -28,12 +28,12 @@ const BENCHMARKS: &[Benchmark] = &[
     Benchmark {
         name: "alloc_cached",
         run: alloc_cached::run,
-        in_default_sweep: false,
+        in_default_sweep: true,
     },
     Benchmark {
         name: "alloc_churn",
         run: alloc_churn::run,
-        in_default_sweep: false,
+        in_default_sweep: true,
     },
     Benchmark {
         name: "yield",

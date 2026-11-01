@@ -1,36 +1,13 @@
+use crate::allocator::UsrAllocator;
 use crate::arch;
 use alloc::vec::Vec;
-#[cfg(not(feature = "slab-allocator"))]
-use core::alloc::{GlobalAlloc, Layout};
 use core::ffi::CStr;
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 use system::syscall_numbers::SyscallNum;
 
-#[cfg(feature = "slab-allocator")]
-use crate::allocator::UsrAllocator;
-
-#[cfg(feature = "slab-allocator")]
 #[global_allocator]
 static RUNTIME_ALLOCATOR: UsrAllocator = UsrAllocator;
-
-#[cfg(not(feature = "slab-allocator"))]
-struct SyscallAllocator;
-
-#[cfg(not(feature = "slab-allocator"))]
-unsafe impl GlobalAlloc for SyscallAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        crate::syscall::Syscall::alloc(layout.size(), layout.align())
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        crate::syscall::Syscall::dealloc(ptr, layout.size(), layout.align());
-    }
-}
-
-#[cfg(not(feature = "slab-allocator"))]
-#[global_allocator]
-static RUNTIME_ALLOCATOR: SyscallAllocator = SyscallAllocator;
 
 static ARGUMENT_COUNT: AtomicI32 = AtomicI32::new(0);
 static ARGUMENT_VECTORS: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
