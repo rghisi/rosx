@@ -75,6 +75,10 @@ impl<T, const S: usize> GenerationalArena<T, S> {
         self.items[index] = Some(item);
         Ok(handle)
     }
+
+    pub(crate) fn any<F: Fn(&T) -> bool>(&self, predicate: F) -> bool {
+        self.items.iter().flatten().any(|item| predicate(item))
+    }
 }
 
 #[cfg(test)]
@@ -233,5 +237,24 @@ mod tests {
         assert_eq!(h4.index, 0);
         assert_eq!(h5.index, 1);
         assert_eq!(h6.index, 2);
+    }
+
+    #[test]
+    fn should_any_match_nothing_when_arena_is_empty() {
+        let arena: GenerationalArena<i32, 4> = GenerationalArena::new();
+        assert!(!arena.any(|item| *item > 0));
+    }
+
+    #[test]
+    fn should_any_find_only_occupied_slots() {
+        let mut arena: GenerationalArena<i32, 4> = GenerationalArena::new();
+        let h1 = arena.add(7).unwrap();
+        let h2 = arena.add(9).unwrap();
+        assert!(arena.any(|item| *item == 7));
+        assert!(arena.any(|item| *item == 9));
+        assert!(!arena.any(|item| *item == 8));
+        arena.remove(h1).unwrap();
+        arena.remove(h2).unwrap();
+        assert!(!arena.any(|item| *item == 7));
     }
 }

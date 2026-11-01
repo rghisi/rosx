@@ -28,12 +28,12 @@ const BENCHMARKS: &[Benchmark] = &[
     Benchmark {
         name: "alloc_cached",
         run: alloc_cached::run,
-        in_default_sweep: false,
+        in_default_sweep: true,
     },
     Benchmark {
         name: "alloc_churn",
         run: alloc_churn::run,
-        in_default_sweep: false,
+        in_default_sweep: true,
     },
     Benchmark {
         name: "yield",
@@ -91,7 +91,7 @@ fn select<'a>(requested: &[&'a str]) -> Result<Vec<&'static Benchmark>, &'a str>
 }
 
 fn run_benchmark(benchmark: &'static Benchmark) {
-    if let Some(fh) = Syscall::exec(benchmark.run as *const () as usize) {
+    if let Some(fh) = Syscall::spawn(benchmark.run as *const () as usize) {
         Syscall::wait_future(fh);
     } else {
         println!("Cannot spawn benchmark: {}", benchmark.name);

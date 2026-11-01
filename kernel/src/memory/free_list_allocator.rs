@@ -18,7 +18,7 @@ struct AllocHeader {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum BlockOwner {
     Kernel,
-    Task(usize),
+    Group(usize),
 }
 
 const BLOCK_HDR: usize = core::mem::size_of::<FreeBlock>();
@@ -228,8 +228,8 @@ impl FreeListAllocator {
         }
     }
 
-    pub unsafe fn deallocate_by_owner(&mut self, task_id: usize) -> usize {
-        let target = BlockOwner::Task(task_id);
+    pub unsafe fn deallocate_by_owner(&mut self, group_id: usize) -> usize {
+        let target = BlockOwner::Group(group_id);
         let mut freed_usable = 0usize;
         let mut prev_next: *mut *mut AllocHeader = &mut self.alloc_head;
         let mut current = self.alloc_head;
@@ -414,7 +414,7 @@ mod tests {
         let small = Layout::from_size_align(64, 8).unwrap();
         let wide = Layout::from_size_align(64, 16).unwrap();
         let first = unsafe { alloc.allocate(small, BlockOwner::Kernel) }.unwrap();
-        let middle = unsafe { alloc.allocate(wide, BlockOwner::Task(3)) }.unwrap();
+        let middle = unsafe { alloc.allocate(wide, BlockOwner::Group(3)) }.unwrap();
         let last = unsafe { alloc.allocate(small, BlockOwner::Kernel) }.unwrap();
         assert_eq!(middle as usize % 16, 0);
         let bad_before = BAD_FREE_COUNT.load(Ordering::Relaxed);
@@ -532,18 +532,18 @@ mod tests {
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = make_allocator(&[(base, 4096)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        let result = unsafe { alloc.allocate(layout, BlockOwner::Task(1)) };
+        let result = unsafe { alloc.allocate(layout, BlockOwner::Group(1)) };
         assert!(result.is_ok());
     }
 
     #[test]
-    fn deallocate_by_owner_frees_task_blocks() {
+    fn deallocate_by_owner_frees_group_blocks() {
         let region_size = 2 * needed_for(64);
         let mut memory = vec![0u8; region_size];
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = make_allocator(&[(base, region_size)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        unsafe { alloc.allocate(layout, BlockOwner::Task(42)) }.unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Group(42)) }.unwrap();
         unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
         assert!(matches!(
             unsafe { alloc.allocate(layout, BlockOwner::Kernel) },
@@ -570,15 +570,15 @@ mod tests {
     }
 
     #[test]
-    fn deallocate_by_owner_only_frees_matching_task() {
+    fn deallocate_by_owner_only_frees_matching_group() {
         let region_size = 3 * needed_for(64);
         let mut memory = vec![0u8; region_size];
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = make_allocator(&[(base, region_size)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        unsafe { alloc.allocate(layout, BlockOwner::Task(1)) }.unwrap();
-        unsafe { alloc.allocate(layout, BlockOwner::Task(2)) }.unwrap();
-        unsafe { alloc.allocate(layout, BlockOwner::Task(1)) }.unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Group(1)) }.unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Group(2)) }.unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Group(1)) }.unwrap();
         unsafe { alloc.deallocate_by_owner(1) };
         assert!(unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_ok());
         assert!(unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_ok());
@@ -595,9 +595,9 @@ mod tests {
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = make_allocator(&[(base, region_size)]);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        unsafe { alloc.allocate(layout, BlockOwner::Task(7)) }.unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Group(7)) }.unwrap();
         unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
-        unsafe { alloc.allocate(layout, BlockOwner::Task(7)) }.unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Group(7)) }.unwrap();
         assert_eq!(unsafe { alloc.deallocate_by_owner(7) }, 2 * 64);
         assert_eq!(unsafe { alloc.deallocate_by_owner(7) }, 0);
     }

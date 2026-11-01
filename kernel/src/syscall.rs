@@ -30,9 +30,12 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             0
         }
         Ok(SyscallNum::Now) => kernel().get_system_time() as usize,
-        Ok(SyscallNum::Exec) => {
-            let entrypoint = arg1;
-            match kernel().schedule(new_entrypoint_task(entrypoint)).ok() {
+        Ok(SyscallNum::Spawn) => {
+            let caller = kernel().execution_state.current_task();
+            let caller_group = services().task_manager.borrow().get_group(caller);
+            match caller_group
+                .and_then(|group| kernel().schedule(new_entrypoint_task(arg1, group)).ok())
+            {
                 Some(handle) => handle.pack(),
                 None => u64::MAX as usize,
             }
@@ -63,8 +66,15 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::Alloc) => {
             let Ok(layout) = Layout::from_size_align(arg1, arg2) else { return 0 };
-            let owner = BlockOwner::Task(kernel().execution_state.current_task().pack());
-            (unsafe { services().memory_manager.alloc_with_owner(layout, owner) }) as usize
+            let caller = kernel().execution_state.current_task();
+            let Some(group) = services().task_manager.borrow().get_group(caller) else {
+                return 0;
+            };
+            (unsafe {
+                services()
+                    .memory_manager
+                    .alloc_with_owner(layout, BlockOwner::Group(group.value()))
+            }) as usize
         }
         Ok(SyscallNum::Dealloc) => {
             let Ok(layout) = Layout::from_size_align(arg2, arg3) else { return 0 };

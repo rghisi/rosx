@@ -7,6 +7,7 @@ use core::fmt::{Display, Formatter};
 use crate::elf::load_elf;
 use crate::handle::FutureHandle;
 use crate::task_stack::TaskStack;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use system::args::{MAX_ARGUMENT_BYTES, MAX_ARGUMENT_COUNT};
 use system::error::ErrorCode;
 
@@ -49,6 +50,20 @@ impl Display for TaskState {
         }
     }
 }
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct GroupId(usize);
+
+impl GroupId {
+    fn allocate() -> GroupId {
+        static NEXT_GROUP_ID: AtomicUsize = AtomicUsize::new(1);
+        GroupId(NEXT_GROUP_ID.fetch_add(1, Ordering::Relaxed))
+    }
+
+    pub(crate) fn value(&self) -> usize {
+        self.0
+    }
+}
+
 pub struct Task {
     name: &'static str,
     state: TaskState,
@@ -59,6 +74,7 @@ pub struct Task {
     #[allow(dead_code)]
     stack: TaskStack,
     completion_future: Option<FutureHandle>,
+    group: GroupId,
 }
 
 impl Task {
@@ -78,6 +94,7 @@ impl Task {
             entry_param,
             stack,
             completion_future: None,
+            group: GroupId::allocate(),
         })
     }
     pub fn name(&self) -> &'static str {
@@ -136,6 +153,9 @@ impl Task {
     pub fn entry_param(&self) -> usize {
         self.entry_param
     }
+    pub(crate) fn group(&self) -> GroupId {
+        self.group
+    }
 
     pub fn prepare_entry(&mut self, cpu: &dyn Cpu) {
         let new_stack_pointer = cpu.initialize_stack(
@@ -171,8 +191,10 @@ extern "C" fn idle_entry(cpu_ptr: usize) {
     }
 }
 
-pub fn new_entrypoint_task(entrypoint: usize) -> SharedTask {
-    Task::new("EPT", task_wrapper as usize, entrypoint)
+pub fn new_entrypoint_task(entrypoint: usize, group: GroupId) -> SharedTask {
+    let mut task = Task::new("EPT", task_wrapper as usize, entrypoint);
+    task.group = group;
+    task
 }
 
 pub struct ElfTaskContext {
@@ -444,6 +466,20 @@ mod tests {
             read_c_string(unsafe { context.argv().add(1).read() }),
             b"alpha"
         );
+    }
+
+    #[test]
+    fn freshly_loaded_images_get_distinct_groups() {
+        let first = new_elf_task(&[7]);
+        let second = new_elf_task(&[7]);
+        assert_ne!(first.group(), second.group());
+    }
+
+    #[test]
+    fn entrypoint_task_carries_the_caller_group() {
+        let caller = new_elf_task(&[7]);
+        let spawned = new_entrypoint_task(0x1000, caller.group());
+        assert_eq!(spawned.group(), caller.group());
     }
 
     #[test]

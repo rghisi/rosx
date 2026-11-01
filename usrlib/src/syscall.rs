@@ -27,8 +27,8 @@ fn kernel_box<T>(value: T) -> *mut T {
 }
 
 impl Syscall {
-    pub fn exec(entrypoint: usize) -> Option<UserFutureHandle> {
-        let raw = arch::raw_syscall(SyscallNum::Exec as usize, entrypoint as usize, 0, 0);
+    pub fn spawn(entrypoint: usize) -> Option<UserFutureHandle> {
+        let raw = arch::raw_syscall(SyscallNum::Spawn as usize, entrypoint as usize, 0, 0);
         UserFutureHandle::from_token(raw)
     }
 

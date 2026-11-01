@@ -10,7 +10,6 @@ const CHURN_BEST_BUDGET: Duration = Duration::from_secs(180);
 const CHURN_DONE_BUDGET: Duration = Duration::from_secs(60);
 
 #[test]
-#[ignore = "alloc_cached/alloc_churn are the oracle for enabling the slab allocator; keep ignored until the kernel gains task-group ownership (docs/todo.md), which makes per-image caching sound for the exec-spawning bench app"]
 fn bench_allocator_suites_report_machine_readable_lines() {
     let mut session = QemuSession::spawn();
     let boot_mark = session.mark();

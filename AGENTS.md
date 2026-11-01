@@ -32,7 +32,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    collections/ (arena)  handle/ (5 newtypes: task/future/ipc-connection/ipc-binding/ipc-data)
 │    elf/ ipc/ (mailbox, data) future/ syscall/ kstatsd task*  platform/ (cpu, elf, interrupt, output, portio HAL traits + per-task port grants)  kconfig  rom/
 ├── system/      # ABI treaty: syscall numbers, wire layout, ROM image layout, error numbers
-├── usrlib/      # User-space libc: syscall, out, arch/{x86_64,x86_32}
+├── usrlib/      # User-space libc: allocator (binned slabs, global default), syscall, out, arch/{x86_64,x86_32}
 ├── protocol/                # Service RPC treaties, one sub-crate each (workspace glob protocol/*)
 │    vfs/         # package vfs-protocol: wire codec + typed client
 │    input/       # package input-protocol: wire codec
@@ -178,6 +178,7 @@ These principles are the regression guard: the very inversion this rework remove
 - Kernel-hosted IPC services — `kstatsd` is the first: kernel code runs a service loop as a `FunctionTask` (launched by each arch at boot), calling `IpcManager` directly and blocking on futures via `Kernel::wait`. Metrics stay domain-owned (`MemoryManager::stats`); the wire contract lives only in `system::kstats`; user-space clients (`mem`) own rendering.
 - `elf/` — loads standalone user-space ELF binaries into tasks (`new_elf_task`).
 - `task/` + `task_manager/` — task lifecycle, context switch, preemption.
+- **Memory ownership = loaded-image groups** — user blocks are stamped `BlockOwner::Group`: `LoadElf` (and boot loads) starts a fresh group, `Spawn` siblings join the caller's group (they share that image's statics), and the kernel reclaims a group's memory when its last live member terminates.
 - `rom/` — boot-registered immutable ROM image exposed via the opaque `RomRead` syscall; the kernel stays VFS-agnostic, `vfsd` owns mount semantics. The ROM carries the app ELFs (not the shell); its roster names stay underscore-free — a historical constraint from the era when the kernel keyboard dropped shift state, with the rename tracked in `docs/todo.md`.
 
 **Documentation & Comments:**

@@ -3,7 +3,7 @@
 pub enum SyscallNum {
     Print = 0,
     Sleep = 1,
-    Exec = 2,
+    Spawn = 2,
     Yield = 3,
     WaitFuture = 5,
     IsFutureCompleted = 6,
@@ -39,7 +39,7 @@ impl TryFrom<usize> for SyscallNum {
         match v {
             0 => Ok(Self::Print),
             1 => Ok(Self::Sleep),
-            2 => Ok(Self::Exec),
+            2 => Ok(Self::Spawn),
             3 => Ok(Self::Yield),
             5 => Ok(Self::WaitFuture),
             6 => Ok(Self::IsFutureCompleted),
@@ -86,7 +86,7 @@ mod tests {
         let live = [
             SyscallNum::Print,
             SyscallNum::Sleep,
-            SyscallNum::Exec,
+            SyscallNum::Spawn,
             SyscallNum::Yield,
             SyscallNum::WaitFuture,
             SyscallNum::IsFutureCompleted,
