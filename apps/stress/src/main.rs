@@ -87,7 +87,7 @@ fn select<'a>(requested: &[&'a str]) -> Result<Vec<&'static Scenario>, &'a str> 
 }
 
 fn run_scenario(scenario: &'static Scenario) {
-    if let Some(fh) = Syscall::exec(scenario.run as *const () as usize) {
+    if let Some(fh) = Syscall::spawn(scenario.run as *const () as usize) {
         Syscall::wait_future(fh);
     } else {
         println!("Cannot spawn test: {}", scenario.name);
@@ -113,9 +113,9 @@ fn names_of(selected: &[&'static Scenario]) -> String {
 fn worker_mixed_load() {
     println!("[MixWorker] Starting Mixed Load Test...");
 
-    if let Some(mem) = Syscall::exec(allocation_test::run as *const () as usize) {
+    if let Some(mem) = Syscall::spawn(allocation_test::run as *const () as usize) {
         if let Some(ctx) =
-            Syscall::exec(context_switching::worker_context_switch as *const () as usize)
+            Syscall::spawn(context_switching::worker_context_switch as *const () as usize)
         {
             Syscall::wait_future(mem);
             Syscall::wait_future(ctx);

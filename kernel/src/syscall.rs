@@ -30,7 +30,7 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             0
         }
         Ok(SyscallNum::Now) => kernel().get_system_time() as usize,
-        Ok(SyscallNum::Exec) => {
+        Ok(SyscallNum::Spawn) => {
             let entrypoint = arg1;
             match kernel().schedule(new_entrypoint_task(entrypoint)).ok() {
                 Some(handle) => handle.pack(),

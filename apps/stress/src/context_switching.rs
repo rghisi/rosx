@@ -196,7 +196,7 @@ fn worker_yield_spin() {
 fn spawn_all(label: &str, entry: fn(), count: usize) -> Result<Vec<UserFutureHandle>, String> {
     let mut handles = Vec::new();
     for _ in 0..count {
-        match Syscall::exec(entry as *const () as usize) {
+        match Syscall::spawn(entry as *const () as usize) {
             Some(handle) => handles.push(handle),
             None => return Err(format!("cannot spawn {label} worker")),
         }

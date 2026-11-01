@@ -159,7 +159,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exec_failure_sentinel_decodes_to_none() {
+    fn spawn_failure_sentinel_decodes_to_none() {
         assert!(UserFutureHandle::from_token(u64::MAX as usize).is_none());
     }
 
