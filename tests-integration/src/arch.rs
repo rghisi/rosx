@@ -28,10 +28,10 @@ impl Arch {
         }
     }
 
-    pub fn qemu_binary(self) -> &'static str {
+    pub fn boot(self) -> x86_runner::Arch {
         match self {
-            Arch::X86_64 => "qemu-system-x86_64",
-            Arch::X86_32 => "qemu-system-i386",
+            Arch::X86_64 => x86_runner::Arch::X86_64,
+            Arch::X86_32 => x86_runner::Arch::X86_32,
         }
     }
 
@@ -63,9 +63,6 @@ impl Arch {
         }
     }
 
-    pub fn boots_via_disk_image(self) -> bool {
-        self == Arch::X86_64
-    }
 }
 
 pub fn not_ported_to_x86_32() -> bool {
@@ -105,10 +102,8 @@ mod tests {
     }
 
     #[test]
-    fn x86_64_boots_from_a_disk_image_and_x86_32_from_a_multiboot_kernel() {
-        assert!(Arch::X86_64.boots_via_disk_image());
-        assert!(!Arch::X86_32.boots_via_disk_image());
-        assert_eq!(Arch::X86_64.qemu_binary(), "qemu-system-x86_64");
-        assert_eq!(Arch::X86_32.qemu_binary(), "qemu-system-i386");
+    fn selection_maps_to_the_runner_boot_arch() {
+        assert_eq!(Arch::X86_64.boot(), x86_runner::Arch::X86_64);
+        assert_eq!(Arch::X86_32.boot(), x86_runner::Arch::X86_32);
     }
 }

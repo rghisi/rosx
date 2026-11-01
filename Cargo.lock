@@ -657,8 +657,8 @@ dependencies = [
 name = "tests-integration"
 version = "0.1.0"
 dependencies = [
- "bootloader",
  "tempfile",
+ "x86-runner",
 ]
 
 [[package]]
