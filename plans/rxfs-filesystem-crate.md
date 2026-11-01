@@ -384,7 +384,7 @@ Steps 1–9 are pure/self-contained (no cross-module deps beyond spec/error); 10
 
 - **A1** `cargo test -p rxfs` and `cargo test -p rxfs --features std` — exit 0, suites per §8.
 - **A2** `cargo test` (default members incl. `fs/rxfs`) — exit 0.
-- **A3** Bare `no_std` proof: `cargo build -p rxfs --target arch/x86_64/rosx-user.json -Zbuild-std=core,alloc,compiler_builtins -Zbuild-std-features=compiler-builtins-mem` and `cargo build -p rxfs --target arch/x86_32/rosx-i686-user.json` + same `-Z` flags — exit 0 (forms quoted from `xtask/src/arch.rs` + `UNSTABLE`).
+- **A3** Bare `no_std` proof: `cargo build -p rxfs --target arch/x86_64/rosx-user.json -Zbuild-std=core,alloc,compiler_builtins -Zbuild-std-features=compiler-builtins-mem -Zjson-target-spec` and the same with `--target arch/x86_32/rosx-i686-user.json` — exit 0 (flags quoted verbatim from `xtask`'s `UNSTABLE` const, `xtask/src/main.rs:11-15`).
 - **A4** `cargo xtask test --skip-integration` — exit 0 (the change is additive; only `Cargo.toml`/`Cargo.lock` outside `fs/`).
 - **A5** Purity greps: `fs/rxfs/Cargo.toml` `[dependencies]` empty; `grep -rn "extern crate std\|use std" fs/rxfs/src | grep -v "cfg(test)\|feature = \"std\""` empty in lib paths (A3 is the stronger proof; A5 is the tripwire).
 - **A6** Δ-new warnings = 0 vs baseline.
