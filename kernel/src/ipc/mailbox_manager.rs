@@ -7,6 +7,7 @@ use crate::handle::{FutureHandle, Handle};
 use crate::ipc::errors::{IpcReceiveError, IpcSendError};
 use crate::ipc::message_future::IpcMessageFuture;
 use crate::ipc::mailbox::Mailbox;
+use crate::irq_guard::IrqCell;
 use crate::ports::driven::ForNotifyingFutures;
 use system::ipc::Message;
 
@@ -22,6 +23,8 @@ impl ForNotifyingFutures for NoopNotifier {
 static NOOP_NOTIFIER: NoopNotifier = NoopNotifier;
 
 pub(crate) type MailboxHandle = Handle;
+
+static MAILBOX_SECTION: IrqCell = IrqCell::new("mailbox_manager");
 
 pub(crate) struct MailboxManager {
     mailboxes: GenerationalArena<Mailbox, 256>,
@@ -56,6 +59,7 @@ impl MailboxManager {
     }
 
     pub(crate) fn push_back(&mut self, handle: MailboxHandle, message: Message) -> Result<(), IpcSendError> {
+        let _section = MAILBOX_SECTION.acquire();
         let queued = match self.mailboxes.borrow_mut(handle) {
             Ok(mailbox) => mailbox.push_back(message),
             Err(_) => return Err(IpcSendError::ConnectionNotFound),
@@ -70,6 +74,7 @@ impl MailboxManager {
     }
 
     pub(crate) fn pop_front_async(&mut self, handle: MailboxHandle) -> FutureHandle {
+        let _section = MAILBOX_SECTION.acquire();
         if let Ok(mailbox) = self.mailboxes.borrow_mut(handle) {
             if let Some(msg) = mailbox.pop_front() {
                 self.notifier

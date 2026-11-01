@@ -187,6 +187,7 @@ extern "C" fn idle_entry(cpu_ptr: usize) {
     kernel().execution_state.preemption_enabled = true;
     let cpu: &'static dyn Cpu = unsafe { *(cpu_ptr as *const &'static dyn Cpu) };
     loop {
+        cpu.enable_interrupts();
         cpu.halt();
     }
 }

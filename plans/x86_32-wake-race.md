@@ -1,5 +1,15 @@
 # x86_32 IPC wake-path race (follow-up to the main merge, 2026-11-01)
 
+**STATUS: FIXED 2026-11-01** on branch `x86_32-wake-race`. Root cause and
+the full milestone evidence live in `plans/x86_32-wake-race-impl.md`.
+The cure: interrupts stay masked in every kernel context except idle
+`hlt` (`sti` removed from `swap_context` on both arches; x86_32 `int80`
+forces IF=1 only in the saved eflags before `iretd`), plus a production
+`IrqGuard` tripwire (`kernel/src/irq_guard.rs`) around the scheduler,
+future registry, and mailbox manager. Verified: debug x86_32
+`kstats_mem` 6/6 unguarded, both arches' full integration suites green,
+`echo-stress` 30/30 boots clean.
+
 ## Symptom
 
 A user task parked on an IPC reply future is not woken by a `send_message`

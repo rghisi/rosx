@@ -14,10 +14,6 @@ const REPORT_LINES: [&str; 6] = [
 
 #[test]
 fn mem_reports_a_memory_snapshot_over_ipc() {
-    if tests_integration::arch::Arch::current() == tests_integration::arch::Arch::X86_32 {
-        eprintln!("skipped on x86_32: known kernel wake-path race (see plans/x86_32-wake-race.md)");
-        return;
-    }
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);
 
