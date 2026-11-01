@@ -38,7 +38,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    input/       # package input-protocol: wire codec
 │    ata/         # package ata-protocol: wire codec + typed client
 ├── fs/
-│    rxfs/        # no_std filesystem library: superblock/bitmaps/inodes/extents/dirs, leak-safe sync, check()
+│    rxfs/        # no_std filesystem library (vfsd's engine): superblock/bitmaps/inodes/extents/dirs, leak-safe sync, check()
 ├── arch/
 │    x86_64/        # entry, cpu, interrupts, framebuffer, terminal_fonts, *.S (global_asm)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
@@ -179,12 +179,13 @@ These principles are the regression guard: the very inversion this rework remove
 - `ipc/` data family — messages signal; data rides the connection out-of-band via write/read/release tokens; the kernel never interprets message payloads.
 - Input architecture — policy lives in the user-space `INPUTD` daemon (`inputd`), device semantics in driver daemons (`ps2d`); the kernel delivers opaque event frames only.
 - Disk architecture — ATA command semantics live in the user-space `ATAD` daemon (`atad`) over `ata-protocol`; the kernel contributes only the mediated port capability (`portio` grants). v1 polls; IRQ14 delivery is the v2 event path.
+- VFS architecture — the `VFS` daemon (`vfsd`) stores everything through `rxfs` on a fixed 8 MiB `MemoryDevice` volume (2048 blocks, 512 inodes, formatted fresh each boot — memory is volatile, nothing mounts). The kernel ROM image is ingested as regular files and stays write/delete-denied via the daemon's name-set. The wire stays flat: names map to `/{name}` paths, and the wire `valid_name` rejects `/`, `.` and `..` to keep that bridge sound. Ownership and open modes are enforced daemon-side (rxfs knows neither); `sync()` commits after every mutating request. Directories on the wire and the ATA `BlockDevice` adapter are later themes.
 - Kernel-hosted IPC services — `kstatsd` is the first: kernel code runs a service loop as a `FunctionTask` (launched by each arch at boot), calling `IpcManager` directly and blocking on futures via `Kernel::wait`. Metrics stay domain-owned (`MemoryManager::stats`); the wire contract lives only in `system::kstats`; user-space clients (`mem`) own rendering.
 - `elf/` — loads standalone user-space ELF binaries into tasks (`new_elf_task`).
 - `task/` + `task_manager/` — task lifecycle, context switch, preemption.
 - **Memory ownership = loaded-image groups** — user blocks are stamped `BlockOwner::Group`: `LoadElf` (and boot loads) starts a fresh group, `Spawn` siblings join the caller's group (they share that image's statics), and the kernel reclaims a group's memory when its last live member terminates.
 - `rom/` — boot-registered immutable ROM image exposed via the opaque `RomRead` syscall; the kernel stays VFS-agnostic, `vfsd` owns mount semantics. The ROM carries the app ELFs (not the shell); its roster names stay underscore-free — a historical constraint from the era when the kernel keyboard dropped shift state, with the rename tracked in `docs/todo.md`.
-- `fs/rxfs` — standalone `no_std` filesystem library (first member of the `fs/` theme, zero deps beyond core/alloc): 4 KiB blocks, u32 addressing, static inode table with inline extents + spill chains, 255-byte byte-transparent names, Fletcher-32 on superblock and inodes. No journal — leak-safe commit ordering (allocation bitmaps hit disk before references, reclamation is deferred until `sync` commits the unlink), primary + backup superblock, and `check()` fsck-lite that repairs leaks, dangling entries, and double references. Proven by a crash-injection harness (every device-write prefix) and differential property tests; not yet wired into the OS — the `fsd` adapter is a later theme.
+- `fs/rxfs` — standalone `no_std` filesystem library (first member of the `fs/` theme, zero deps beyond core/alloc): 4 KiB blocks, u32 addressing, static inode table with inline extents + spill chains, 255-byte byte-transparent names, Fletcher-32 on superblock and inodes. No journal — leak-safe commit ordering (allocation bitmaps hit disk before references, reclamation is deferred until `sync` commits the unlink), primary + backup superblock, and `check()` fsck-lite that repairs leaks, dangling entries, and double references. Proven by a crash-injection harness (every device-write prefix) and differential property tests; wired in as `vfsd`'s storage engine over `MemoryDevice` (see VFS architecture).
 
 **Documentation & Comments:**
 - **CRITICAL: No comments, ever** — the code is the source of truth; make it self-explanatory

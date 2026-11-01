@@ -80,6 +80,9 @@ pub fn valid_name(name: &str) -> bool {
         && bytes.len() <= MAX_NAME_BYTES
         && !bytes.contains(&0x0A)
         && !bytes.contains(&0x00)
+        && !bytes.contains(&b'/')
+        && name != "."
+        && name != ".."
 }
 
 impl Request<'_> {
@@ -178,7 +181,12 @@ fn decode_name<'a>(
     if end > FRAME_BYTES {
         return Err(VfsError::InvalidPath);
     }
-    core::str::from_utf8(&frame[offset..end]).map_err(|_| VfsError::InvalidPath)
+    let name =
+        core::str::from_utf8(&frame[offset..end]).map_err(|_| VfsError::InvalidPath)?;
+    if !valid_name(name) {
+        return Err(VfsError::InvalidPath);
+    }
+    Ok(name)
 }
 
 fn read_u32(frame: &[u8; FRAME_BYTES], at: usize) -> u32 {
@@ -491,6 +499,59 @@ mod tests {
     }
 
     #[test]
+    fn decode_open_rejects_path_separator_name() {
+        let mut frame = [0u8; FRAME_BYTES];
+        frame[0] = OPEN;
+        frame[2] = 3;
+        frame[3..6].copy_from_slice(b"a/b");
+        assert_eq!(Request::decode(&frame), Err(VfsError::InvalidPath));
+    }
+
+    #[test]
+    fn decode_open_rejects_dot_and_dotdot_names() {
+        let mut dot = [0u8; FRAME_BYTES];
+        dot[0] = OPEN;
+        dot[2] = 1;
+        dot[3] = b'.';
+        assert_eq!(Request::decode(&dot), Err(VfsError::InvalidPath));
+        let mut dotdot = [0u8; FRAME_BYTES];
+        dotdot[0] = OPEN;
+        dotdot[2] = 2;
+        dotdot[3..5].copy_from_slice(b"..");
+        assert_eq!(Request::decode(&dotdot), Err(VfsError::InvalidPath));
+    }
+
+    #[test]
+    fn decode_delete_rejects_dot_and_path_separator_names() {
+        let mut dot = [0u8; FRAME_BYTES];
+        dot[0] = DELETE;
+        dot[1] = 1;
+        dot[2] = b'.';
+        assert_eq!(Request::decode(&dot), Err(VfsError::InvalidPath));
+        let mut nested = [0u8; FRAME_BYTES];
+        nested[0] = DELETE;
+        nested[1] = 3;
+        nested[2..5].copy_from_slice(b"a/b");
+        assert_eq!(Request::decode(&nested), Err(VfsError::InvalidPath));
+    }
+
+    #[test]
+    fn decode_open_rejects_newline_and_nul_in_name() {
+        let mut newline = [0u8; FRAME_BYTES];
+        newline[0] = OPEN;
+        newline[2] = 3;
+        newline[3..6].copy_from_slice(b"a\nb");
+        assert_eq!(Request::decode(&newline), Err(VfsError::InvalidPath));
+        let mut nul = [0u8; FRAME_BYTES];
+        nul[0] = OPEN;
+        nul[2] = 3;
+        nul[3] = b'a';
+        nul[4] = 0x00;
+        nul[5] = b'b';
+        assert_eq!(Request::decode(&nul), Err(VfsError::InvalidPath));
+    }
+
+    #[test]
     fn decode_request_unknown_op_outranks_bad_name() {
         let mut frame = Request::Delete { name: "x" }.encode().unwrap();
         frame[0] = 200;
@@ -510,6 +571,19 @@ mod tests {
         assert!(!valid_name(&name_of_len(MAX_NAME_BYTES + 1)));
         assert!(!valid_name("bad\nname"));
         assert!(!valid_name("bad\0name"));
+        assert!(!valid_name("bad/name"));
+        assert!(!valid_name("/"));
+        assert!(!valid_name("/abs"));
+        assert!(!valid_name("."));
+        assert!(!valid_name(".."));
+    }
+
+    #[test]
+    fn valid_name_accepts_dots_inside_names() {
+        assert!(valid_name("..."));
+        assert!(valid_name("notes.txt"));
+        assert!(valid_name("a..b"));
+        assert!(valid_name(".hidden"));
     }
 
     #[test]
