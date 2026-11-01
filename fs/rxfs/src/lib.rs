@@ -7,5 +7,6 @@ pub mod checksum;
 pub mod device;
 pub mod error;
 pub mod extent;
+pub mod inode;
 pub mod spec;
 pub mod superblock;
