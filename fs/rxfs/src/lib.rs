@@ -1,4 +1,4 @@
-#![cfg_attr(not(test), no_std)]
+#![cfg_attr(all(not(test), not(feature = "std")), no_std)]
 
 extern crate alloc;
 
@@ -9,6 +9,8 @@ pub mod device;
 pub mod dir;
 pub mod error;
 pub mod extent;
+#[cfg(feature = "std")]
+pub mod file;
 pub mod inode;
 pub mod path;
 pub mod spec;

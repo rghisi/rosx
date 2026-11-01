@@ -1260,6 +1260,8 @@ mod tests {
     use alloc::rc::Rc;
     use alloc::vec;
     use alloc::vec::Vec;
+    use alloc::collections::{BTreeMap, BTreeSet};
+    use core::cell::Cell;
     use core::cell::RefCell;
 
     const SMALL_BLOCKS: u64 = 1000;
@@ -2291,5 +2293,662 @@ mod tests {
         let mut fs = FileSystem::mount(disk).unwrap();
         let report = fs.check().unwrap();
         assert!(report.hard_corrupt);
+    }
+
+    fn shared_bytes(blocks: u64) -> Rc<RefCell<Vec<u8>>> {
+        Rc::new(RefCell::new(vec![0u8; blocks as usize * BLOCK_BYTES]))
+    }
+
+    struct Stable {
+        bytes: Rc<RefCell<Vec<u8>>>,
+    }
+
+    impl BlockDevice for Stable {
+        fn block_count(&self) -> u64 {
+            (self.bytes.borrow().len() / BLOCK_BYTES) as u64
+        }
+
+        fn read_block(&mut self, block: u64, buf: &mut [u8]) -> Result<(), crate::error::IoError> {
+            let bytes = self.bytes.borrow();
+            let start = block as usize * BLOCK_BYTES;
+            if start + buf.len() > bytes.len() {
+                return Err(crate::error::IoError::Device);
+            }
+            buf.copy_from_slice(&bytes[start..start + buf.len()]);
+            Ok(())
+        }
+
+        fn write_block(&mut self, block: u64, data: &[u8]) -> Result<(), crate::error::IoError> {
+            let mut bytes = self.bytes.borrow_mut();
+            let start = block as usize * BLOCK_BYTES;
+            if start + data.len() > bytes.len() {
+                return Err(crate::error::IoError::Device);
+            }
+            bytes[start..start + data.len()].copy_from_slice(data);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<(), crate::error::IoError> {
+            Ok(())
+        }
+    }
+
+    struct Faulty {
+        bytes: Rc<RefCell<Vec<u8>>>,
+        budget: Rc<Cell<usize>>,
+        writes: Rc<Cell<usize>>,
+    }
+
+    impl BlockDevice for Faulty {
+        fn block_count(&self) -> u64 {
+            (self.bytes.borrow().len() / BLOCK_BYTES) as u64
+        }
+
+        fn read_block(&mut self, block: u64, buf: &mut [u8]) -> Result<(), crate::error::IoError> {
+            Stable { bytes: self.bytes.clone() }.read_block(block, buf)
+        }
+
+        fn write_block(&mut self, block: u64, data: &[u8]) -> Result<(), crate::error::IoError> {
+            if self.budget.get() == 0 {
+                return Err(crate::error::IoError::Device);
+            }
+            self.budget.set(self.budget.get() - 1);
+            self.writes.set(self.writes.get() + 1);
+            Stable { bytes: self.bytes.clone() }.write_block(block, data)
+        }
+
+        fn flush(&mut self) -> Result<(), crate::error::IoError> {
+            Ok(())
+        }
+    }
+
+    struct Volatile {
+        bytes: Rc<RefCell<Vec<u8>>>,
+        pending: BTreeMap<u64, Vec<u8>>,
+    }
+
+    impl BlockDevice for Volatile {
+        fn block_count(&self) -> u64 {
+            (self.bytes.borrow().len() / BLOCK_BYTES) as u64
+        }
+
+        fn read_block(&mut self, block: u64, buf: &mut [u8]) -> Result<(), crate::error::IoError> {
+            if let Some(cached) = self.pending.get(&block) {
+                buf.copy_from_slice(cached);
+                return Ok(());
+            }
+            Stable { bytes: self.bytes.clone() }.read_block(block, buf)
+        }
+
+        fn write_block(&mut self, block: u64, data: &[u8]) -> Result<(), crate::error::IoError> {
+            self.pending.insert(block, data.to_vec());
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<(), crate::error::IoError> {
+            let mut target = Stable { bytes: self.bytes.clone() };
+            for (block, data) in core::mem::take(&mut self.pending) {
+                target.write_block(block, &data)?;
+            }
+            Ok(())
+        }
+    }
+
+    fn script<D: BlockDevice>(fs: &mut FileSystem<D>) -> bool {
+        let mut ok = true;
+        ok &= fs.mkdir(b"/a").is_ok();
+        if let Ok(h) = fs.create(b"/a/f") {
+            ok &= fs.write(h, 0, &pattern_bytes(3 * BLOCK_BYTES, 1)).is_ok();
+            ok &= fs.close(h).is_ok();
+        } else {
+            ok = false;
+        }
+        ok &= fs.sync().is_ok();
+        if let Ok(h) = fs.create(b"/b") {
+            ok &= fs.write(h, 0, &pattern_bytes(2 * BLOCK_BYTES, 2)).is_ok();
+            ok &= fs.close(h).is_ok();
+        } else {
+            ok = false;
+        }
+        ok &= fs.sync().is_ok();
+        if let Ok(h) = fs.open(b"/a/f") {
+            ok &= fs.write(h, 3 * BLOCK_BYTES as u64, &pattern_bytes(2 * BLOCK_BYTES, 3)).is_ok();
+            ok &= fs.close(h).is_ok();
+        } else {
+            ok = false;
+        }
+        ok &= fs.mkdir(b"/c").is_ok();
+        ok &= fs.remove(b"/a/f").is_ok();
+        if let Ok(h) = fs.create(b"/e") {
+            ok &= fs.write(h, 0, &pattern_bytes(6 * BLOCK_BYTES, 5)).is_ok();
+            ok &= fs.close(h).is_ok();
+        } else {
+            ok = false;
+        }
+        if let Ok(h) = fs.create(b"/g") {
+            ok &= fs.write(h, 0, &pattern_bytes(4 * BLOCK_BYTES, 7)).is_ok();
+            ok &= fs.close(h).is_ok();
+        } else {
+            ok = false;
+        }
+        ok &= fs.remove(b"/b").is_ok();
+        ok &= fs.sync().is_ok();
+        if let Ok(h) = fs.create(b"/h") {
+            ok &= fs.write(h, 0, &pattern_bytes(BLOCK_BYTES, 11)).is_ok();
+            ok &= fs.close(h).is_ok();
+        } else {
+            ok = false;
+        }
+        ok
+    }
+
+    const KNOWN_FILES: [&[u8]; 5] = [b"/a/f", b"/b", b"/e", b"/g", b"/h"];
+
+    fn allowed_byte(path: &[u8], offset: usize, byte: u8) -> bool {
+        if byte == 0 {
+            return true;
+        }
+        let segments: &[(usize, usize, u8)] = match path {
+            b"/a/f" => &[(0, 3 * BLOCK_BYTES, 1), (3 * BLOCK_BYTES, 2 * BLOCK_BYTES, 3)],
+            b"/b" => &[(0, 2 * BLOCK_BYTES, 2)],
+            b"/e" => &[(0, 6 * BLOCK_BYTES, 5)],
+            b"/g" => &[(0, 4 * BLOCK_BYTES, 7)],
+            b"/h" => &[(0, BLOCK_BYTES, 11)],
+            _ => return false,
+        };
+        segments.iter().any(|(start, len, seed)| {
+            offset >= *start
+                && offset < start + *len
+                && byte == ((offset - start) as u8).wrapping_mul(31).wrapping_add(*seed)
+        })
+    }
+
+    fn verify_tree<D: BlockDevice>(
+        fs: &mut FileSystem<D>,
+        dir: Vec<u8>,
+        violations: &mut Vec<(Vec<u8>, usize, u8)>,
+        unexpected: &mut Vec<Vec<u8>>,
+    ) {
+        let items = fs.readdir(&dir).unwrap();
+        for item in items {
+            if item.name == b"." || item.name == b".." {
+                continue;
+            }
+            let mut full = dir.clone();
+            if full != b"/" {
+                full.push(b'/');
+            }
+            full.extend_from_slice(&item.name);
+            if item.kind == Kind::Directory {
+                verify_tree(fs, full, violations, unexpected);
+                continue;
+            }
+            if !KNOWN_FILES.iter().any(|known| *known == full.as_slice()) {
+                unexpected.push(full);
+                continue;
+            }
+            let st = fs.lookup(&full).unwrap();
+            let h = fs.open(&full).unwrap();
+            let mut buf = vec![0u8; st.size as usize];
+            if st.size > 0 {
+                fs.read(h, 0, &mut buf).unwrap();
+            }
+            fs.close(h).unwrap();
+            for (offset, byte) in buf.iter().enumerate() {
+                if !allowed_byte(&full, offset, *byte) {
+                    violations.push((full.clone(), offset, *byte));
+                }
+            }
+        }
+    }
+
+    fn recover_and_verify(bytes: Rc<RefCell<Vec<u8>>>) {
+        let mut fs =
+            FileSystem::mount(Stable { bytes: bytes.clone() }).expect("crash must leave volume mountable");
+        let first = fs.check().unwrap();
+        assert!(!first.hard_corrupt);
+        let second = fs.check().unwrap();
+        assert_eq!(second, Report::default(), "repair must converge: {:?}", second);
+        let mut violations: Vec<(Vec<u8>, usize, u8)> = Vec::new();
+        let mut unexpected: Vec<Vec<u8>> = Vec::new();
+        verify_tree(&mut fs, b"/".to_vec(), &mut violations, &mut unexpected);
+        assert!(violations.is_empty(), "foreign bytes found: {:?}", &violations[..violations.len().min(4)]);
+        assert!(unexpected.is_empty(), "unexpected files: {:?}", unexpected);
+    }
+
+    #[test]
+    fn faulty_device_rejects_writes_after_budget() {
+        let bytes = shared_bytes(4);
+        let budget = Rc::new(Cell::new(1usize));
+        let writes = Rc::new(Cell::new(0usize));
+        let mut dev = Faulty { bytes, budget: budget.clone(), writes: writes.clone() };
+        let block = vec![0xA5u8; BLOCK_BYTES];
+        assert!(dev.write_block(1, &block).is_ok());
+        assert_eq!(budget.get(), 0);
+        assert!(dev.write_block(2, &block).is_err());
+        assert_eq!(writes.get(), 1);
+    }
+
+    #[test]
+    fn volatile_device_buffers_until_flush() {
+        let bytes = shared_bytes(4);
+        {
+            let mut dev = Volatile { bytes: bytes.clone(), pending: BTreeMap::new() };
+            let block = vec![0x5Au8; BLOCK_BYTES];
+            dev.write_block(1, &block).unwrap();
+            let mut probe = [0u8; BLOCK_BYTES];
+            assert!(bytes.borrow()[BLOCK_BYTES..2 * BLOCK_BYTES].iter().all(|b| *b == 0));
+            dev.read_block(1, &mut probe).unwrap();
+            assert_eq!(probe, [0x5Au8; BLOCK_BYTES]);
+            dev.flush().unwrap();
+            assert!(bytes.borrow()[BLOCK_BYTES..2 * BLOCK_BYTES].iter().all(|b| *b == 0x5A));
+        }
+        {
+            let mut dev = Volatile { bytes: bytes.clone(), pending: BTreeMap::new() };
+            dev.write_block(2, &vec![0x33u8; BLOCK_BYTES]).unwrap();
+        }
+        assert!(bytes.borrow()[2 * BLOCK_BYTES..3 * BLOCK_BYTES].iter().all(|b| *b == 0));
+    }
+
+    #[test]
+    fn crash_injection_every_write_prefix_stays_consistent() {
+        let bytes = shared_bytes(SMALL_BLOCKS);
+        FileSystem::format(Stable { bytes: bytes.clone() }, &default_params(b"crashvol")).unwrap();
+        let budget = Rc::new(Cell::new(usize::MAX));
+        let writes = Rc::new(Cell::new(0usize));
+        let mut fs = FileSystem::mount(Faulty {
+            bytes: bytes.clone(),
+            budget: budget.clone(),
+            writes: writes.clone(),
+        })
+        .unwrap();
+        assert!(script(&mut fs));
+        let total = writes.get();
+        assert!(total > 10);
+        for prefix in 0..=total + 1 {
+            let bytes = shared_bytes(SMALL_BLOCKS);
+            FileSystem::format(Stable { bytes: bytes.clone() }, &default_params(b"crashvol")).unwrap();
+            let mut fs = FileSystem::mount(Faulty {
+                bytes: bytes.clone(),
+                budget: Rc::new(Cell::new(prefix)),
+                writes: Rc::new(Cell::new(0)),
+            });
+            if let Ok(fs) = &mut fs {
+                let _ = script(fs);
+            }
+            core::mem::forget(fs);
+            recover_and_verify(bytes);
+        }
+    }
+
+    #[test]
+    fn volatile_crash_loses_only_unflushed_writes() {
+        let bytes = shared_bytes(SMALL_BLOCKS);
+        FileSystem::format(Stable { bytes: bytes.clone() }, &default_params(b"crashvol")).unwrap();
+        {
+            let mut fs = FileSystem::mount(Volatile { bytes: bytes.clone(), pending: BTreeMap::new() })
+                .unwrap();
+            assert!(script(&mut fs));
+        }
+        recover_and_verify(bytes);
+    }
+
+    struct Rng {
+        state: u64,
+    }
+
+    impl Rng {
+        fn new(seed: u64) -> Rng {
+            Rng { state: seed }
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            self.state = self.state.wrapping_add(0x9E3779B97F4A7C15);
+            let mut z = self.state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+            z ^ (z >> 31)
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            (self.next_u64() % n as u64) as usize
+        }
+
+        fn fill(&mut self, len: usize) -> Vec<u8> {
+            (0..len).map(|_| (self.next_u64() & 0xFF) as u8 | 1).collect()
+        }
+    }
+
+    struct Model {
+        files: BTreeMap<Vec<u8>, Vec<u8>>,
+        dirs: BTreeSet<Vec<u8>>,
+    }
+
+    impl Model {
+        fn new() -> Model {
+            let mut dirs = BTreeSet::new();
+            dirs.insert(b"/".to_vec());
+            Model { files: BTreeMap::new(), dirs }
+        }
+
+        fn parent(path: &[u8]) -> Vec<u8> {
+            let cut = path.iter().rposition(|b| *b == b'/').unwrap();
+            if cut == 0 { b"/".to_vec() } else { path[..cut].to_vec() }
+        }
+
+        fn exists(&self, path: &[u8]) -> bool {
+            self.files.contains_key(path) || self.dirs.contains(path)
+        }
+
+        fn has_children(&self, dir: &[u8]) -> bool {
+            let mut prefix = dir.to_vec();
+            prefix.push(b'/');
+            self.files.keys().any(|k| k.starts_with(&prefix))
+                || self.dirs.iter().any(|k| k.starts_with(&prefix))
+        }
+
+        fn children_of(&self, dir: &[u8]) -> BTreeSet<(Vec<u8>, bool)> {
+            let mut prefix = dir.to_vec();
+            if !prefix.ends_with(b"/") {
+                prefix.push(b'/');
+            }
+            let mut out = BTreeSet::new();
+            for key in self.files.keys().chain(self.dirs.iter()) {
+                if !key.starts_with(&prefix) || key == &prefix {
+                    continue;
+                }
+                let rest = &key[prefix.len()..];
+                if rest.contains(&b'/') {
+                    continue;
+                }
+                let is_dir = self.dirs.contains(key);
+                out.insert((rest.to_vec(), is_dir));
+            }
+            out
+        }
+    }
+
+    const DIR_CANDIDATES: [&[u8]; 6] = [b"/a", b"/b", b"/c", b"/a/x", b"/b/y", b"/a/x/d"];
+    const FILE_CANDIDATES: [&[u8]; 8] = [
+        b"/f1", b"/f2", b"/a/fa", b"/a/fb", b"/a/x/fx", b"/b/fb", b"/b/y/fy", b"/c/z",
+    ];
+    const MAX_FILE_BYTES: u64 = 64 * 1024;
+
+    fn property_round<D: BlockDevice>(mut fs: FileSystem<D>, seed: u64) {
+        {
+            let mut rng = Rng::new(seed.wrapping_mul(7919).wrapping_add(13));
+            let mut model = Model::new();
+            for step in 0..200usize {
+                let op = rng.below(10);
+                match op {
+                    0 => {
+                        let path = DIR_CANDIDATES[rng.below(DIR_CANDIDATES.len())];
+                        let parent_ok = model.dirs.contains(&Model::parent(path));
+                        let clash = model.exists(path);
+                        let expected_ok = parent_ok && !clash;
+                        let got = fs.mkdir(path);
+                        assert_eq!(got.is_ok(), expected_ok, "seed {seed} step {step} mkdir {path:?}");
+                        if expected_ok {
+                            model.dirs.insert(path.to_vec());
+                        }
+                    }
+                    1 => {
+                        let path = DIR_CANDIDATES[rng.below(DIR_CANDIDATES.len())];
+                        let is_dir = model.dirs.contains(path);
+                        let expected_ok = is_dir && !model.has_children(path);
+                        let got = fs.rmdir(path);
+                        assert_eq!(got.is_ok(), expected_ok, "seed {seed} step {step} rmdir {path:?}");
+                        if expected_ok {
+                            model.dirs.remove(path);
+                        }
+                    }
+                    2 => {
+                        let path = FILE_CANDIDATES[rng.below(FILE_CANDIDATES.len())];
+                        let parent_ok = model.dirs.contains(&Model::parent(path));
+                        let clash = model.exists(path);
+                        let expected_ok = parent_ok && !clash;
+                        let got = fs.create(path);
+                        assert_eq!(got.is_ok(), expected_ok, "seed {seed} step {step} create {path:?}");
+                        if let Ok(h) = got {
+                            fs.close(h).unwrap();
+                            model.files.insert(path.to_vec(), Vec::new());
+                        }
+                    }
+                    3 | 4 => {
+                        let path = FILE_CANDIDATES[rng.below(FILE_CANDIDATES.len())];
+                        let Some(content) = model.files.get(path) else {
+                            assert!(fs.open(path).is_err(), "seed {seed} step {step} open missing");
+                            continue;
+                        };
+                        let size = content.len();
+                        let offset = if op == 4 || size == 0 {
+                            size
+                        } else {
+                            rng.below(size + 1)
+                        };
+                        if offset as u64 + 2048 > MAX_FILE_BYTES {
+                            continue;
+                        }
+                        let len = 1 + rng.below(2048);
+                        let data = rng.fill(len);
+                        let h = fs.open(path).unwrap();
+                        let written = fs.write(h, offset as u64, &data);
+                        fs.close(h).unwrap();
+                        assert_eq!(written.is_ok(), true, "seed {seed} step {step} write {path:?}");
+                        let buf = model.files.get_mut(path).unwrap();
+                        let end = offset + data.len();
+                        if buf.len() < end {
+                            buf.resize(end, 0);
+                        }
+                        buf[offset..end].copy_from_slice(&data);
+                        assert_eq!(fs.lookup(path).unwrap().size, buf.len() as u64);
+                    }
+                    5 => {
+                        let path = FILE_CANDIDATES[rng.below(FILE_CANDIDATES.len())];
+                        let Some(content) = model.files.get(path).cloned() else {
+                            continue;
+                        };
+                        if content.is_empty() {
+                            continue;
+                        }
+                        let h = fs.open(path).unwrap();
+                        let mut buf = vec![0u8; content.len()];
+                        let n = fs.read(h, 0, &mut buf).unwrap();
+                        fs.close(h).unwrap();
+                        assert_eq!(n, content.len(), "seed {seed} step {step} read len");
+                        assert_eq!(buf, content, "seed {seed} step {step} read bytes {path:?}");
+                    }
+                    6 => {
+                        let path = FILE_CANDIDATES[rng.below(FILE_CANDIDATES.len())];
+                        let expected_ok = model.files.contains_key(path);
+                        let got = fs.remove(path);
+                        assert_eq!(got.is_ok(), expected_ok, "seed {seed} step {step} remove {path:?}");
+                        if expected_ok {
+                            model.files.remove(path);
+                        }
+                    }
+                    7 => {
+                        let path = FILE_CANDIDATES[rng.below(FILE_CANDIDATES.len())];
+                        let got = fs.lookup(path);
+                        match model.files.get(path) {
+                            Some(content) => {
+                                assert!(got.is_ok(), "seed {seed} step {step} lookup {path:?}");
+                                assert_eq!(got.unwrap().size, content.len() as u64);
+                            }
+                            None => assert!(got.is_err(), "seed {seed} step {step} lookup ghost {path:?}"),
+                        }
+                    }
+                    8 => {
+                        let dir = if rng.below(2) == 0 { b"/".to_vec() } else {
+                            DIR_CANDIDATES[rng.below(DIR_CANDIDATES.len())].to_vec()
+                        };
+                        let expected = model.children_of(&dir);
+                        let present = expected
+                            .iter()
+                            .filter(|(name, _)| !(name.as_slice() == b"." || name.as_slice() == b".."))
+                            .cloned()
+                            .collect::<BTreeSet<(Vec<u8>, bool)>>();
+                        let got = fs.readdir(&dir);
+                        if model.dirs.contains(&dir) {
+                            let items = got.unwrap();
+                            let mut actual = BTreeSet::new();
+                            for item in &items {
+                                if item.name == b"." || item.name == b".." {
+                                    continue;
+                                }
+                                actual.insert((item.name.to_vec(), item.kind == Kind::Directory));
+                            }
+                            assert_eq!(actual, present, "seed {seed} step {step} readdir {dir:?}");
+                        } else {
+                            assert!(got.is_err(), "seed {seed} step {step} readdir non-dir {dir:?}");
+                        }
+                    }
+                    _ => {
+                        fs.sync().unwrap();
+                    }
+                }
+            }
+            fs.sync().unwrap();
+            let mut actual_files: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+            let mut actual_dirs: BTreeSet<Vec<u8>> = BTreeSet::new();
+            actual_dirs.insert(b"/".to_vec());
+            harvest(&mut fs, b"/".to_vec(), &mut actual_files, &mut actual_dirs);
+            assert_eq!(actual_dirs, model.dirs, "seed {seed} dir set");
+            assert_eq!(
+                actual_files.keys().collect::<Vec<_>>(),
+                model.files.keys().collect::<Vec<_>>(),
+                "seed {seed} file set"
+            );
+            for (path, content) in &model.files {
+                assert_eq!(&actual_files[path], content, "seed {seed} content {path:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn differential_property_against_reference_model() {
+        for seed in 1..=8u64 {
+            let fs = FileSystem::format(
+                Stable { bytes: shared_bytes(SMALL_BLOCKS) },
+                &default_params(b"prop"),
+            )
+            .unwrap();
+            property_round(fs, seed);
+        }
+    }
+
+    #[cfg(feature = "std")]
+    mod host_file {
+        use super::*;
+        use crate::file::FileDevice;
+
+        fn tmp_image(name: &str) -> std::path::PathBuf {
+            let mut path = std::path::PathBuf::from("/tmp/opencode");
+            path.push(format!("rxfs-{name}.img"));
+            path
+        }
+
+        fn layout_ops<D: BlockDevice>(fs: &mut FileSystem<D>) {
+            fs.mkdir(b"/a").unwrap();
+            let h = fs.create(b"/doc").unwrap();
+            fs.write(h, 0, &pattern_bytes(70_000, 4)).unwrap();
+            fs.close(h).unwrap();
+            let h = fs.create(b"/a/inner").unwrap();
+            fs.write(h, 0, b"inside").unwrap();
+            fs.close(h).unwrap();
+            fs.mkdir(b"/temp").unwrap();
+            fs.remove(b"/a/inner").unwrap();
+            fs.rmdir(b"/temp").unwrap();
+            fs.sync().unwrap();
+        }
+
+        #[test]
+        fn volume_matrix_on_host_file() {
+            let path = tmp_image("matrix");
+            let dev = FileDevice::create(&path, SMALL_BLOCKS).unwrap();
+            let mut fs = FileSystem::format(dev, &default_params(b"hostvol")).unwrap();
+            layout_ops(&mut fs);
+            fs.unmount().unwrap();
+            let mut fs = FileSystem::mount(FileDevice::open(&path).unwrap()).unwrap();
+            assert_eq!(fs.lookup(b"/doc").unwrap().size, 70_000);
+            let h = fs.open(b"/doc").unwrap();
+            let mut buf = vec![0u8; 70_000];
+            fs.read(h, 0, &mut buf).unwrap();
+            assert_eq!(buf, pattern_bytes(70_000, 4));
+            fs.close(h).unwrap();
+            assert_eq!(fs.lookup(b"/a/inner").err(), Some(FsError::NotFound));
+            assert_eq!(fs.readdir(b"/a").unwrap().len(), 2);
+            let report = fs.check().unwrap();
+            assert_eq!(report, Report::default());
+            fs.unmount().unwrap();
+            std::fs::remove_file(&path).unwrap();
+        }
+
+        #[test]
+        fn host_file_image_matches_memory_image() {
+            let path = tmp_image("match");
+            let mut host =
+                FileSystem::format(FileDevice::create(&path, SMALL_BLOCKS).unwrap(), &default_params(b"same"))
+                    .unwrap();
+            layout_ops(&mut host);
+            host.unmount().unwrap();
+            let bytes = shared_bytes(SMALL_BLOCKS);
+            let mut mem = FileSystem::format(
+                Stable { bytes: bytes.clone() },
+                &default_params(b"same"),
+            )
+            .unwrap();
+            layout_ops(&mut mem);
+            mem.unmount().unwrap();
+            let on_disk = std::fs::read(&path).unwrap();
+            assert_eq!(on_disk, *bytes.borrow());
+            std::fs::remove_file(&path).unwrap();
+        }
+
+        #[test]
+        fn property_seeds_replay_on_host_file() {
+            for seed in 1..=3u64 {
+                let path = tmp_image(&format!("prop{seed}"));
+                let fs = FileSystem::format(
+                    FileDevice::create(&path, SMALL_BLOCKS).unwrap(),
+                    &default_params(b"prop"),
+                )
+                .unwrap();
+                property_round(fs, seed);
+                std::fs::remove_file(&path).unwrap();
+            }
+        }
+    }
+
+    fn harvest<D: BlockDevice>(
+        fs: &mut FileSystem<D>,
+        dir: Vec<u8>,
+        files: &mut BTreeMap<Vec<u8>, Vec<u8>>,
+        dirs: &mut BTreeSet<Vec<u8>>,
+    ) {
+        let items = fs.readdir(&dir).unwrap();
+        for item in items {
+            if item.name == b"." || item.name == b".." {
+                continue;
+            }
+            let mut full = dir.clone();
+            if full != b"/" {
+                full.push(b'/');
+            }
+            full.extend_from_slice(&item.name);
+            if item.kind == Kind::Directory {
+                dirs.insert(full.clone());
+                harvest(fs, full, files, dirs);
+            } else {
+                let st = fs.lookup(&full).unwrap();
+                let h = fs.open(&full).unwrap();
+                let mut buf = vec![0u8; st.size as usize];
+                if st.size > 0 {
+                    fs.read(h, 0, &mut buf).unwrap();
+                }
+                fs.close(h).unwrap();
+                files.insert(full, buf);
+            }
+        }
     }
 }
