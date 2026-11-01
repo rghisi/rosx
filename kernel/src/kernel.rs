@@ -265,7 +265,7 @@ impl Kernel {
     pub(crate) fn terminate_and_yield(&mut self) -> ! {
         self.execution_state.preemption_enabled = false;
         if let Some(task_handle) = self.execution_state.current_task.take() {
-            unsafe { services().memory_manager.release_task_allocations(task_handle.pack()) };
+            let group = services().task_manager.borrow().get_group(task_handle);
             services()
                 .task_manager
                 .borrow_mut()
@@ -274,6 +274,11 @@ impl Kernel {
                 services().task_manager.borrow().get_completion_future(task_handle) {
                     services().future_registry.borrow_mut().notify(completion_handle);
                 }
+            if let Some(group) = group {
+                if !services().task_manager.borrow().group_has_live_members(group) {
+                    unsafe { services().memory_manager.release_group_allocations(group.value()) };
+                }
+            }
             self.execution_state.current_task = Some(task_handle);
         }
         self.execution_state.switch_to_scheduler();

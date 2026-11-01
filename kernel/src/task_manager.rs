@@ -1,6 +1,6 @@
 use crate::collections::arena::GenerationalArena;
 use crate::task::TaskState::Terminated;
-use crate::task::{SharedTask, Task, TaskHandle, TaskState, YieldReason};
+use crate::task::{GroupId, SharedTask, Task, TaskHandle, TaskState, YieldReason};
 use core::ptr::null_mut;
 use crate::handle::FutureHandle;
 
@@ -53,6 +53,15 @@ impl TaskManager {
         }
     }
 
+    pub(crate) fn get_group(&self, handle: TaskHandle) -> Option<GroupId> {
+        self.tasks.borrow(handle.into()).ok().map(|task| task.group())
+    }
+
+    pub(crate) fn group_has_live_members(&self, group: GroupId) -> bool {
+        self.tasks
+            .any(|task| task.group() == group && task.state() != Terminated)
+    }
+
     pub(crate) fn set_yield_reason(&mut self, handle: TaskHandle, reason: YieldReason) {
         if let Ok(task) = self.tasks.borrow_mut(handle.into()) {
             task.set_yield_reason(reason)
@@ -98,6 +107,7 @@ impl TaskManager {
 mod tests {
     use super::*;
     use crate::task::Task;
+    use crate::task::new_entrypoint_task;
     use crate::collections::arena::GenerationalArena;
 
     fn make_future_handle() -> FutureHandle {
@@ -121,5 +131,55 @@ mod tests {
         let fh = make_future_handle();
         manager.set_completion_future(handle, fh);
         assert_eq!(manager.get_completion_future(handle), Some(fh));
+    }
+
+    #[test]
+    fn fresh_tasks_belong_to_distinct_groups() {
+        let mut manager = TaskManager::new();
+        let first = manager.add_task(Task::new("first", 0, 0)).unwrap();
+        let second = manager.add_task(Task::new("second", 0, 0)).unwrap();
+        assert_ne!(manager.get_group(first), manager.get_group(second));
+    }
+
+    #[test]
+    fn spawned_task_inherits_caller_group() {
+        let mut manager = TaskManager::new();
+        let caller = manager.add_task(Task::new("caller", 0, 0)).unwrap();
+        let caller_group = manager.get_group(caller).unwrap();
+        let spawned = manager.add_task(new_entrypoint_task(0, caller_group)).unwrap();
+        assert_eq!(manager.get_group(spawned), Some(caller_group));
+    }
+
+    #[test]
+    fn group_stays_live_until_its_last_member_terminates() {
+        let mut manager = TaskManager::new();
+        let caller = manager.add_task(Task::new("caller", 0, 0)).unwrap();
+        let group = manager.get_group(caller).unwrap();
+        let sibling = manager.add_task(new_entrypoint_task(0, group)).unwrap();
+        assert!(manager.group_has_live_members(group));
+        manager.set_state(caller, Terminated);
+        assert!(manager.group_has_live_members(group));
+        manager.set_state(sibling, Terminated);
+        assert!(!manager.group_has_live_members(group));
+    }
+
+    #[test]
+    fn terminating_one_group_leaves_other_groups_live() {
+        let mut manager = TaskManager::new();
+        let first = manager.add_task(Task::new("first", 0, 0)).unwrap();
+        let second = manager.add_task(Task::new("second", 0, 0)).unwrap();
+        let first_group = manager.get_group(first).unwrap();
+        let second_group = manager.get_group(second).unwrap();
+        manager.set_state(first, Terminated);
+        assert!(!manager.group_has_live_members(first_group));
+        assert!(manager.group_has_live_members(second_group));
+    }
+
+    #[test]
+    fn removed_task_has_no_group() {
+        let mut manager = TaskManager::new();
+        let handle = manager.add_task(Task::new("gone", 0, 0)).unwrap();
+        manager.remove_task(handle);
+        assert_eq!(manager.get_group(handle), None);
     }
 }
