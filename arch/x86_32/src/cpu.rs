@@ -142,8 +142,7 @@ core::arch::global_asm!(
     "    pop esi",
     "    pop ebx",
     "    pop ebp",
-    "    sti",
-    "    ret",                   // jump to next task's saved return address
+    "    ret",                   // jump to next task's saved return address, IF stays 0
 );
 
 // int80_handler — raw entry point for `int 0x80` system calls.
@@ -161,8 +160,10 @@ core::arch::global_asm!(
 // The IDT entry is a trap gate, so IF survives entry with the caller's value (1).
 // cli here closes the interrupt window across handle_syscall so a task parking on
 // a future cannot be preempted between blocking and waiter registration — the
-// window SFMASK closes on x86_64. Exits: swap_context re-enables via sti when the
-// task switches away; iretd restores the caller's IF=1 on a plain return.
+// window SFMASK closes on x86_64. Kernel contexts never re-enable: swap_context
+// leaves IF cleared, so resumed bookkeeping runs masked and interrupts return
+// only with this handler's iretd, which forces IF=1 in the saved eflags (mirrors
+// the or r11,0x200 boundary in x86_64 syscall.S).
 //
 // ebx, ecx, edx are saved/restored so the caller sees them unchanged (mirrors
 // the Linux int 0x80 ABI and matches the usrlib asm declaration).
@@ -188,5 +189,7 @@ core::arch::global_asm!(
     "    pop esi",
     "    pop edi",
     "    pop ebp",
+    "    or dword ptr [esp + 8], 0x200", // force IF=1 in the saved eflags: the only
+                                        // kernel→task interrupt boundary on x86_32
     "    iretd",
 );

@@ -37,5 +37,4 @@ skip_save:
     pop r13
     pop r14
     pop r15
-    sti
-    ret      # Jump to task's RIP
+    ret      # Jump to task's RIP; IF stays cleared, syscall.S restores it at the user boundary

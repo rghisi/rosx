@@ -249,6 +249,56 @@ disappear when the windows close); removed in M4.
 
 Ordered by likely evidence; stop when M2's verdict is addressed:
 
+#### M3.1 — IF-boundary rework (DONE 2026-11-01, gates below)
+
+M2 showed every proven window needs an IF=1 *kernel* context as the holder.
+M3.1 removes that category entirely: no kernel-mode code runs with IF=1
+except the idle `sti`/`hlt` loop.
+
+Changes (both arches — M1 established the contract is shared):
+
+- `swap_context` no longer ends with `sti; ret` (`arch/x86_32/src/cpu.rs`,
+  `arch/x86_64/src/context_switching.S`): a resumed context continues at
+  IF=0, so all post-swap kernel bookkeeping runs masked.
+- x86_32 `int80_handler` forces IF=1 in the saved eflags before `iretd`
+  (`or dword ptr [esp + 8], 0x200`) — the x86_32 counterpart of the
+  existing `or r11, 0x200` in x86_64 `syscall.S`. Without this the forced
+  IF=0 from `swap_context` would poison the caller's eflags snapshot and
+  no user task could ever be preempted again.
+- `idle_entry` re-enables before every `halt` (`kernel/src/task.rs`): the
+  kernel-mode interrupt boundary.
+- Consequences: kernel-task service loops (kstatsd…) run their short
+  bodies at IF=0 and park on futures — cooperative in kernel mode, exactly
+  the microkernel shape; user-mode preemption is unchanged (ticks land on
+  IF=1 user code, gate masks, handoff runs masked). Cold-start first slice
+  of a fresh task runs masked until its first syscall returns — bounded,
+  every app syscalls immediately.
+- Host-test safety of the (temporary) probe: `ifflag()` stubs to 0 under
+  `cfg(test)`; probe prints compile to nothing under `cfg(test)`.
+
+Verification:
+
+- x86_32 debug `kstats_mem` **6/6 PASS** with the M2 probe still mounted:
+  **zero `REENTER`** lines and zero `park ... if=1` — consistent with the
+  design: `holder_if == 1` is now impossible, so the W1–W4 family is
+  structurally dead, not merely rare.
+- Host unit tests: 357/357.
+- x86_64 full integration suite: **20/20 result blocks ok, exit 0**
+  (`/tmp/opencode/m3x64/suite-final.log`).
+- Artifact found during the x86_64 gate: with probe *prints* active,
+  `shell_echoes_keystrokes` failed 2/2 (the probe's per-scancode
+  `kprintln` from IRQ context contends with the console path). Bisected:
+  same failure vanishes (3/3 + in-suite pass) with prints muted under
+  identical M3.1 code — pure instrumentation artifact, no regression.
+  Probe device-side prints are now muted; this is also a design note for
+  `IrqGuard`: production path must be silent (trip once, loudly, and
+  rarely).
+
+Remaining M3 steps (2–5) now become defense-in-depth: the `IrqGuard`
+primitive keeps the detector as a production tripwire for regressions of
+this class, and the guarded structures no longer depend on tribal
+IF-discipline.
+
 1. **IF discipline (arch):** remove `sti` from `swap_context` on x86_32 (and
    x86_64 if M1 shows it is needed for correctness there too); re-enable
    interrupts only at the true boundaries — int80 `iretd` (already restores

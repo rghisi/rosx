@@ -3,6 +3,16 @@ use crate::kernel_services::services;
 use crate::task::TaskHandle;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering::Relaxed};
 
+#[cfg(not(test))]
+macro_rules! probe_out {
+    ($($arg:tt)*) => {};
+}
+
+#[cfg(test)]
+macro_rules! probe_out {
+    ($($arg:tt)*) => {};
+}
+
 struct BusyCell {
     depth: AtomicUsize,
     holder_if: AtomicUsize,
@@ -34,10 +44,17 @@ impl BusyCell {
 }
 
 fn ifflag() -> u8 {
-    if kernel().interrupts_enabled() {
-        1
-    } else {
+    #[cfg(test)]
+    {
         0
+    }
+    #[cfg(not(test))]
+    {
+        if kernel().interrupts_enabled() {
+            1
+        } else {
+            0
+        }
     }
 }
 
@@ -68,7 +85,7 @@ pub(crate) fn mm_exit() {
 
 fn reenter(cell: &'static str, op: &str, ctx: &str) {
     if REENTER_BUDGET.fetch_sub(1, Relaxed) > 0 {
-        crate::kprintln!(
+        probe_out!(
             "[PROBE] REENTER cell={} op={} ctx={} if={}",
             cell,
             op,
@@ -88,18 +105,18 @@ fn name_of(handle: TaskHandle) -> &'static str {
 }
 
 pub(crate) fn park(task: &str, fh: usize) {
-    crate::kprintln!("[PROBE] park task={} fh={} if={}", task, fh, ifflag());
+    probe_out!("[PROBE] park task={} fh={} if={}", task, fh, ifflag());
 }
 
 pub(crate) fn notify(fh: usize, waiters: usize) {
     if waiters > 0 {
-        crate::kprintln!("[PROBE] notify fh={} waiters={} if={}", fh, waiters, ifflag());
+        probe_out!("[PROBE] notify fh={} waiters={} if={}", fh, waiters, ifflag());
     }
 }
 
 pub(crate) fn wake(handle: TaskHandle) {
     PENDING_WAKE[handle.index() as usize % 256].store(1, Relaxed);
-    crate::kprintln!(
+    probe_out!(
         "[PROBE] wake task={} hidx={} if={}",
         name_of(handle),
         handle.index(),
@@ -108,7 +125,7 @@ pub(crate) fn wake(handle: TaskHandle) {
 }
 
 pub(crate) fn pushed(handle: TaskHandle) {
-    crate::kprintln!(
+    probe_out!(
         "[PROBE] pushed task={} hidx={} if={}",
         name_of(handle),
         handle.index(),
@@ -118,7 +135,7 @@ pub(crate) fn pushed(handle: TaskHandle) {
 
 pub(crate) fn picked(handle: TaskHandle) {
     if PENDING_WAKE[handle.index() as usize % 256].load(Relaxed) == 1 {
-        crate::kprintln!(
+        probe_out!(
             "[PROBE] picked task={} hidx={} if={}",
             name_of(handle),
             handle.index(),
@@ -129,7 +146,7 @@ pub(crate) fn picked(handle: TaskHandle) {
 
 pub(crate) fn swapped_in(handle: TaskHandle) {
     if PENDING_WAKE[handle.index() as usize % 256].swap(0, Relaxed) == 1 {
-        crate::kprintln!(
+        probe_out!(
             "[PROBE] swapped-in task={} hidx={} if={}",
             name_of(handle),
             handle.index(),
