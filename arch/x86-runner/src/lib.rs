@@ -70,6 +70,97 @@ pub fn prepare_run_medium(kernel_elf: &Path, arch: Arch) -> Result<BootMedium, I
     Ok(medium)
 }
 
+#[derive(Debug)]
+pub struct GrubTooling {
+    missing: Vec<String>,
+    install_hint: &'static str,
+}
+
+impl fmt::Display for GrubTooling {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "missing required tools: {}", self.missing.join(", "))?;
+        write!(f, "{}", self.install_hint)
+    }
+}
+
+impl std::error::Error for GrubTooling {}
+
+pub fn create_grub_image(kernel_elf: &Path, out: &Path) -> Result<(), GrubTooling> {
+    let probe = |name: &str| on_path(name).is_some();
+    let mkrescue = resolve_grub_mkrescue(&probe).ok_or_else(|| missing_tooling(&probe))?;
+    if !probe("xorriso") {
+        return Err(missing_tooling(&probe));
+    }
+
+    let work = tempfile::tempdir().expect("failed to create grub image staging directory");
+    std::fs::create_dir_all(work.path().join("boot/grub")).expect("failed to stage boot/grub");
+    std::fs::copy(kernel_elf, work.path().join("boot/kernel"))
+        .expect("failed to stage kernel into the grub image");
+    std::fs::write(work.path().join("boot/grub/grub.cfg"), grub_cfg_contents())
+        .expect("failed to write grub.cfg");
+
+    let status = Command::new(mkrescue)
+        .arg("-o")
+        .arg(out)
+        .arg(work.path())
+        .status()
+        .expect("failed to run grub-mkrescue");
+    if !status.success() {
+        panic!("grub-mkrescue exited with {:?}", status.code());
+    }
+    Ok(())
+}
+
+fn resolve_grub_mkrescue(probe: &impl Fn(&str) -> bool) -> Option<&'static str> {
+    ["grub-mkrescue", "grub2-mkrescue"]
+        .into_iter()
+        .find(|tool| probe(tool))
+}
+
+fn missing_tooling(probe: &impl Fn(&str) -> bool) -> GrubTooling {
+    let mut missing = Vec::new();
+    if resolve_grub_mkrescue(probe).is_none() {
+        missing.push("grub-mkrescue".to_string());
+    }
+    if !probe("xorriso") {
+        missing.push("xorriso".to_string());
+    }
+    GrubTooling {
+        missing,
+        install_hint: install_hint(probe),
+    }
+}
+
+fn install_hint(probe: &impl Fn(&str) -> bool) -> &'static str {
+    if probe("apt-get") {
+        "  sudo apt install grub-pc-bin grub-common xorriso"
+    } else if probe("dnf") {
+        "  sudo dnf install grub2-tools xorriso"
+    } else if probe("pacman") {
+        "  sudo pacman -S grub xorriso"
+    } else {
+        "  Install: grub (grub-pc-bin), xorriso"
+    }
+}
+
+fn grub_cfg_contents() -> String {
+    "set timeout=0\n\
+     set default=0\n\
+     \n\
+     menuentry \"rosx\" {\n\
+         multiboot /boot/kernel\n\
+         boot\n\
+     }\n"
+        .to_string()
+}
+
+fn on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
 pub fn create_bios_disk_image(kernel_elf: &Path) -> Result<PathBuf, ImageError> {
     let image = bios_disk_image_path(kernel_elf);
     bootloader::BiosBoot::new(kernel_elf)
@@ -179,6 +270,38 @@ mod tests {
         assert!(contains(&args, "-no-shutdown"));
         assert!(!contains(&args, "cpu_reset"));
         assert!(!contains(&args, "-display"));
+    }
+
+    #[test]
+    fn grub_mkrescue_resolution_prefers_then_falls_back() {
+        assert_eq!(
+            resolve_grub_mkrescue(&|n| n == "grub-mkrescue"),
+            Some("grub-mkrescue")
+        );
+        assert_eq!(
+            resolve_grub_mkrescue(&|n| n == "grub2-mkrescue"),
+            Some("grub2-mkrescue")
+        );
+        assert_eq!(resolve_grub_mkrescue(&|_| false), None);
+    }
+
+    #[test]
+    fn grub_config_multiboots_the_staged_kernel() {
+        assert_eq!(
+            grub_cfg_contents(),
+            "set timeout=0\nset default=0\n\nmenuentry \"rosx\" {\n    multiboot /boot/kernel\n    boot\n}\n"
+        );
+    }
+
+    #[test]
+    fn missing_grub_tooling_reports_every_gap_with_a_hint() {
+        let probe = |name: &str| name == "grub2-mkrescue";
+        let error = missing_tooling(&probe);
+        assert_eq!(error.missing, vec!["xorriso".to_string()]);
+        assert_eq!(
+            error.to_string(),
+            "missing required tools: xorriso\nInstall: grub (grub-pc-bin), xorriso"
+        );
     }
 
     #[test]

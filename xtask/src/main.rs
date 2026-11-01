@@ -98,16 +98,24 @@ fn pack_rom(spec: &ArchSpec) {
     println!("==> packed ROM image {}", rom_path.display());
 }
 
-fn build_grub_image(debug: bool) {
-    let mut cmd = Command::new("bash");
-    cmd.current_dir(workspace_root())
-        .arg("arch/x86_32/build-image.sh")
-        .env("PROFILE", if debug { "debug" } else { "release" });
-    println!("==> create x86_32 GRUB image");
-    let status = cmd.status().expect("failed to spawn build-image.sh");
-    if !status.success() {
-        eprintln!("failed: create x86_32 GRUB image");
-        process::exit(status.code().unwrap_or(1));
+fn create_flashable_image(debug: bool, spec: &ArchSpec) {
+    let kernel = spec.kernel_elf(if debug { "debug" } else { "release" });
+    match spec.boot {
+        x86_runner::Arch::X86_64 => {
+            let image = x86_runner::create_bios_disk_image(&kernel).unwrap_or_else(|err| {
+                eprintln!("error: {err}");
+                process::exit(1);
+            });
+            println!("==> created x86_64 disk image {}", image.display());
+        }
+        x86_runner::Arch::X86_32 => {
+            let image = kernel.with_extension("img");
+            x86_runner::create_grub_image(&kernel, &image).unwrap_or_else(|err| {
+                eprintln!("error: {err}");
+                process::exit(1);
+            });
+            println!("==> created x86_32 GRUB image {}", image.display());
+        }
     }
 }
 
@@ -128,7 +136,7 @@ fn run_tests(skip_integration: bool) {
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_32] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | test [--skip-integration]>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | test [--skip-integration]>"
     );
 }
 
@@ -198,17 +206,10 @@ fn main() {
         "image" => {
             let (spec, rest) = split_arch(extras);
             let debug = parse_optional_flag(&rest, "--debug");
-            match spec.boot {
-                x86_runner::Arch::X86_64 => {
-                    println!("==> x86_64 disk image is produced by `cargo xtask build`");
-                }
-                x86_runner::Arch::X86_32 => {
-                    build_apps(spec);
-                    pack_rom(spec);
-                    build_kernel(debug, spec);
-                    build_grub_image(debug);
-                }
-            }
+            build_apps(spec);
+            pack_rom(spec);
+            build_kernel(debug, spec);
+            create_flashable_image(debug, spec);
         }
         "rom" => {
             let (spec, rest) = split_arch(extras);
