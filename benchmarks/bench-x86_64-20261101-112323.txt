@@ -1,0 +1,32 @@
+# rosx-bench-record v2
+# recorded_at_utc=2026-11-01T11:23:23Z
+# host=dev
+# host_cpus=4
+# cpu_model=QEMU Virtual CPU version 2.5+
+# mem_total_kb=7503904
+# kernel_profile=dev
+# qemu=QEMU emulator version 10.2.1 (Debian 1:10.2.1+ds-1ubuntu3.2)
+# git_commit=269ae0c
+alloc size=16 align=8 ops_per_sec=47407
+alloc size=24 align=8 ops_per_sec=47407
+alloc size=32 align=8 ops_per_sec=47407
+alloc size=64 align=8 ops_per_sec=47407
+alloc size=128 align=8 ops_per_sec=47407
+alloc size=256 align=8 ops_per_sec=47407
+alloc size=512 align=8 ops_per_sec=47407
+alloc size=1000 align=8 ops_per_sec=47407
+alloc size=1024 align=8 ops_per_sec=47407
+alloc size=2048 align=8 ops_per_sec=46545
+alloc size=4096 align=8 ops_per_sec=46545
+alloc size=4097 align=8 ops_per_sec=48188
+alloc size=8192 align=8 ops_per_sec=46811
+alloc size=16384 align=8 ops_per_sec=46545
+alloc size=32768 align=8 ops_per_sec=46545
+alloc size=65536 align=8 ops_per_sec=46811
+alloc size=131072 align=8 ops_per_sec=46811
+alloc size=262144 align=8 ops_per_sec=46811
+alloc size=524288 align=8 ops_per_sec=45714
+alloc size=1048576 align=8 ops_per_sec=44137
+alloc size=2097152 align=8 ops_per_sec=44912
+alloc size=4194304 align=8 ops_per_sec=44281
+yield shape=voluntary ops_per_sec=5161

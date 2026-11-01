@@ -4,6 +4,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const RECORD_PREFIX: &str = "bench-x86_64-";
@@ -23,6 +24,9 @@ pub type Measurements = BTreeMap<String, u64>;
 pub struct Context {
     pub recorded_at_utc: String,
     pub host: String,
+    pub host_cpus: usize,
+    pub cpu_model: String,
+    pub mem_total_kb: u64,
     pub kernel_profile: String,
     pub qemu_version: String,
     pub git_commit: String,
@@ -37,6 +41,9 @@ impl Context {
         Context {
             recorded_at_utc: format_utc(seconds),
             host: detect_host(),
+            host_cpus: detect_host_cpus(),
+            cpu_model: detect_cpu_model(),
+            mem_total_kb: detect_mem_total_kb(),
             kernel_profile: detect_kernel_profile(),
             qemu_version: detect_qemu_version(),
             git_commit: detect_git_commit(),
@@ -45,19 +52,38 @@ impl Context {
 
     pub fn header(&self) -> String {
         format!(
-            "# rosx-bench-record v1\n\
+            "# rosx-bench-record v2\n\
              # recorded_at_utc={}\n\
              # host={}\n\
+             # host_cpus={}\n\
+             # cpu_model={}\n\
+             # mem_total_kb={}\n\
              # kernel_profile={}\n\
              # qemu={}\n\
              # git_commit={}\n",
-            self.recorded_at_utc, self.host, self.kernel_profile, self.qemu_version, self.git_commit
+            self.recorded_at_utc,
+            self.host,
+            self.host_cpus,
+            self.cpu_model,
+            self.mem_total_kb,
+            self.kernel_profile,
+            self.qemu_version,
+            self.git_commit
         )
     }
 
     fn comparable(&self) -> Vec<(&'static str, String)> {
         vec![
             ("host", self.host.clone()),
+            (
+                "host_cpus",
+                self.host_cpus.to_string(),
+            ),
+            ("cpu_model", self.cpu_model.clone()),
+            (
+                "mem_total_kb",
+                self.mem_total_kb.to_string(),
+            ),
             ("kernel_profile", self.kernel_profile.clone()),
             ("qemu", self.qemu_version.clone()),
         ]
@@ -295,6 +321,39 @@ fn detect_host() -> String {
         .unwrap_or_else(|_| "unknown".to_string())
 }
 
+fn detect_host_cpus() -> usize {
+    thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(0)
+}
+
+fn detect_cpu_model() -> String {
+    fs::read_to_string("/proc/cpuinfo")
+        .ok()
+        .and_then(|cpuinfo| {
+            cpuinfo
+                .lines()
+                .find_map(|line| line.strip_prefix("model name"))
+                .and_then(|rest| rest.split_once(':'))
+                .map(|(_, model)| model.trim().to_string())
+        })
+        .filter(|model| !model.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn detect_mem_total_kb() -> u64 {
+    fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|meminfo| {
+            meminfo
+                .lines()
+                .find(|line| line.starts_with("MemTotal:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|kb| kb.parse().ok())
+        })
+        .unwrap_or(0)
+}
+
 fn detect_kernel_profile() -> String {
     if env::var_os("ROSX_KERNEL_ELF").is_some_and(|value| !value.is_empty()) {
         return "custom".to_string();
@@ -347,6 +406,19 @@ mod tests {
          === Bench Finished ===\n"
     }
 
+    fn sample_context() -> Context {
+        Context {
+            recorded_at_utc: "2026-11-01T12:00:00Z".to_string(),
+            host: "testhost".to_string(),
+            host_cpus: 8,
+            cpu_model: "Test CPU @ 3.00GHz".to_string(),
+            mem_total_kb: 33_554_432,
+            kernel_profile: "dev".to_string(),
+            qemu_version: "QEMU emulator version 9.2.0".to_string(),
+            git_commit: "abc1234".to_string(),
+        }
+    }
+
     #[test]
     fn parses_only_best_lines_into_identity_and_rate() {
         let measurements = parse_bench_lines(sample_output());
@@ -364,16 +436,13 @@ mod tests {
     #[test]
     fn record_roundtrips_through_render_and_parse() {
         let measurements = parse_bench_lines(sample_output());
-        let context = Context {
-            recorded_at_utc: "2026-11-01T12:00:00Z".to_string(),
-            host: "testhost".to_string(),
-            kernel_profile: "dev".to_string(),
-            qemu_version: "QEMU emulator version 9.2.0".to_string(),
-            git_commit: "abc1234".to_string(),
-        };
+        let context = sample_context();
         let (header, parsed) = parse_record(&render_record(&context, &measurements));
         assert_eq!(header["recorded_at_utc"], "2026-11-01T12:00:00Z");
         assert_eq!(header["host"], "testhost");
+        assert_eq!(header["host_cpus"], "8");
+        assert_eq!(header["cpu_model"], "Test CPU @ 3.00GHz");
+        assert_eq!(header["mem_total_kb"], "33554432");
         assert_eq!(header["kernel_profile"], "dev");
         assert_eq!(parsed, measurements);
     }
@@ -418,19 +487,31 @@ mod tests {
     #[test]
     fn context_mismatch_detected_for_comparable_fields_only() {
         let context = Context {
-            recorded_at_utc: "2026-11-01T12:00:00Z".to_string(),
-            host: "testhost".to_string(),
             kernel_profile: "release".to_string(),
-            qemu_version: "QEMU emulator version 9.2.0".to_string(),
-            git_commit: "abc1234".to_string(),
+            ..sample_context()
         };
         let mut header = BTreeMap::new();
         header.insert("host".to_string(), "testhost".to_string());
+        header.insert("host_cpus".to_string(), "8".to_string());
+        header.insert("cpu_model".to_string(), "Test CPU @ 3.00GHz".to_string());
+        header.insert("mem_total_kb".to_string(), "33554432".to_string());
         header.insert("kernel_profile".to_string(), "dev".to_string());
         header.insert("qemu".to_string(), "QEMU emulator version 9.2.0".to_string());
         let mismatches = context_mismatches(&context, &header);
         assert_eq!(mismatches.len(), 1);
         assert!(mismatches[0].contains("kernel_profile"));
+    }
+
+    #[test]
+    fn missing_hardware_context_keys_are_reported_as_mismatches() {
+        let context = sample_context();
+        let mut header = BTreeMap::new();
+        header.insert("host".to_string(), "testhost".to_string());
+        header.insert("kernel_profile".to_string(), "dev".to_string());
+        header.insert("qemu".to_string(), "QEMU emulator version 9.2.0".to_string());
+        let mismatches = context_mismatches(&context, &header);
+        assert_eq!(mismatches.len(), 3);
+        assert!(mismatches.iter().all(|problem| problem.contains("differs")));
     }
 
     #[test]
@@ -461,13 +542,7 @@ mod tests {
     #[test]
     fn append_record_writes_unique_timestamped_files() {
         let directory = tempfile::tempdir().unwrap();
-        let context = Context {
-            recorded_at_utc: "2026-11-01T12:00:00Z".to_string(),
-            host: "testhost".to_string(),
-            kernel_profile: "dev".to_string(),
-            qemu_version: "QEMU emulator version 9.2.0".to_string(),
-            git_commit: "abc1234".to_string(),
-        };
+        let context = sample_context();
         let mut measurements = Measurements::new();
         measurements.insert("yield shape=voluntary".to_string(), 5333);
         let first = append_record(directory.path(), &context, &measurements, None).unwrap();
@@ -479,13 +554,7 @@ mod tests {
 
     #[test]
     fn rendered_records_order_sizes_numerically() {
-        let context = Context {
-            recorded_at_utc: "2026-11-01T12:00:00Z".to_string(),
-            host: "testhost".to_string(),
-            kernel_profile: "dev".to_string(),
-            qemu_version: "QEMU emulator version 9.2.0".to_string(),
-            git_commit: "abc1234".to_string(),
-        };
+        let context = sample_context();
         let mut measurements = Measurements::new();
         measurements.insert("alloc size=1024 align=8".to_string(), 1);
         measurements.insert("alloc size=64 align=8".to_string(), 1);
@@ -501,6 +570,13 @@ mod tests {
             sorted.sort();
             sorted
         });
+    }
+
+    #[test]
+    fn hardware_detection_returns_plausible_values_on_linux_hosts() {
+        assert!(detect_host_cpus() >= 1);
+        assert_ne!(detect_cpu_model(), "unknown");
+        assert!(detect_mem_total_kb() > 0);
     }
 
     #[test]
