@@ -60,17 +60,14 @@ fn build_kernel(debug: bool, spec: &ArchSpec) {
 fn build_image(debug: bool, launch_qemu: bool, spec: &ArchSpec) {
     let profile = if debug { "debug" } else { "release" };
     let kernel = spec.kernel_elf(profile);
-    let mut cmd = cargo();
-    cmd.arg("run")
-        .arg("--manifest-path")
-        .arg("arch/x86_64-runner/Cargo.toml")
-        .arg("--")
-        .arg(&kernel)
-        .arg("x86_64");
-    if !launch_qemu {
-        cmd.arg("--no-run");
+    let medium = x86_runner::prepare_run_medium(&kernel, x86_runner::Arch::X86_64)
+        .expect("failed to create x86_64 disk image");
+    println!("==> create x86_64 disk image");
+    if launch_qemu {
+        let mut cmd =
+            x86_runner::qemu_command(x86_runner::Arch::X86_64, &medium, x86_runner::LaunchMode::Interactive);
+        run(&mut cmd, "boot x86_64 in qemu");
     }
-    run(&mut cmd, "create x86_64 disk image");
 }
 
 fn pack_rom(spec: &ArchSpec) {

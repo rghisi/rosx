@@ -1,9 +1,8 @@
 [package]
-name = "runner"
+name = "x86-runner"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1"
 bootloader = { version = "0.11", features = ["bios"] }
-
-[workspace]

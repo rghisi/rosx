@@ -104,12 +104,17 @@
    `arch/x86_64/DEBUG_SETUP.md:147` expects the debug-profile image at
    `target/rosx/debug/rosx-x86_64.img` — a path derived from
    `<stem>-<arch>.img` that must not change.
-10. **Topology constraint for nested cargo.** `cargo run -p rosx` executes
-    `run.sh`, which today spawns a *second* cargo for the runner. This works
-    because the runner is a separate workspace with its own target dir. If
-    the runner became a root-workspace member, that nested cargo would want
-    the shared target-dir lock while the outer `cargo run` is executing its
-    runner script. Decision in §3.2 follows this fact.
+10. **Nested same-workspace cargo is safe.** `cargo run -p rosx` executes
+    `run.sh`, which spawns a *second* cargo for the runner. AMENDED at M1:
+    the original reasoning ("keep the runner a standalone workspace to
+    dodge a target-dir lock hazard") was empirically wrong twice over —
+    (a) `cargo xtask build` is itself a nested same-workspace cargo chain
+    (outer `cargo run -p xtask` spawns `cargo build …` against the shared
+    target dir, sequentially, and works); and (b) cargo *refuses* a
+    path-dependency from a member onto a package that keeps its own
+    `[workspace]` marker inside the workspace directory ("multiple
+    workspace roots found in the same workspace", hit on the first M1
+    gate). §3.2 re-decided: the runner becomes a root-workspace member.
 11. **Repo rules this plan honors** (AGENTS.md): no comments (assembly
     exception not applicable — no asm moves); no test-only production
     surface (every runner API gets a real caller in xtask, run.sh, or the
@@ -125,21 +130,20 @@ Rename `arch/x86_64-runner/` → **`arch/x86-runner/`**, package
 `x86-generic` precedent: named for the family it serves, not one port.
 The old name would be a lie the moment the x86_32 strategy lands.
 
-### 3.2 Topology: stays a standalone workspace, gains a library
-`arch/x86-runner/` keeps its `[workspace]` marker and `Cargo.lock`
-(§2.10). It is consumed two ways:
+### 3.2 Topology (amended at M1): root-workspace member with a lib + bin
+`arch/x86-runner/` is a **root workspace member** (its `[workspace]`
+marker and own `Cargo.lock` removed — cargo forbids member path-deps onto
+nested workspace roots, §2.10). It is consumed two ways:
 - **As a path-dependency lib** by `xtask` and `tests-integration`
   (`x86-runner = { path = "../arch/x86-runner" }`) — image creation and
   QEMU-command building happen *in-process*, removing both nested cargo
   spawns from xtask (`build_image`, and `launch_multiboot` becomes a
   `Command` it can exec) and the direct `bootloader` dep from the harness.
-- **As a binary via `--manifest-path`** from `run.sh` (both ports), exactly
-  the today-proven invocation shape:
-  `cargo run --manifest-path "$ROOT/arch/x86-runner/Cargo.toml" -- <kernel> <arch>`.
-  The bin `main.rs` stays a thin argv→lib shim.
+- **As a binary** from `run.sh` (both ports) via
+  `cargo run --manifest-path …/arch/x86-runner/Cargo.toml -- <kernel> <arch>`;
+  nested sequential cargo on the shared target dir is what xtask already
+  does daily (§2.10). The bin `main.rs` stays a thin argv→lib shim.
 
-Rejected: making it a root-workspace member — the nested-lock hazard above,
-for zero gain (a path dep on an external workspace builds the same code).
 Rejected: deleting the bin and rewriting `run.sh` to call xtask — xtask's
 `run` subcommand *rebuilds apps+ROM first*, wrong job for
 `cargo run -p rosx`.
@@ -153,7 +157,8 @@ pub enum BootMedium {                          // what QEMU is pointed at
 }
 pub enum LaunchMode { Interactive, Headless }
 
-pub fn run_medium(kernel_elf: &Path, arch: Arch) -> BootMedium;
+pub fn run_medium(kernel_elf: &Path, arch: Arch) -> BootMedium;      // pure classification
+pub fn prepare_run_medium(kernel_elf: &Path, arch: Arch) -> Result<BootMedium, ImageError>;
 pub fn create_bios_disk_image(kernel_elf: &Path) -> Result<PathBuf, ImageError>;
 pub fn create_grub_image(kernel_elf: &Path, out: &Path) -> Result<(), GrubTooling>;
 pub fn qemu_command(arch: Arch, medium: &BootMedium, mode: LaunchMode) -> Command;
@@ -294,7 +299,7 @@ disk image (today a message, §2.8); on x86_32 the GRUB ISO.
 | # | Risk | Mitigation |
 |---|------|------------|
 | 1 | Flag drift changes QEMU behavior under the tests | §3.3 canonical sets are transcribed from the §2.5 table, per-mode, deliberately unequal (headless keeps no `-no-shutdown`); M3's gate is the full dual-arch QEMU suite |
-| 2 | Nested-cargo lock deadlock via `run.sh` | Topology decision §3.2 keeps the runner a standalone workspace — identical lock shape to today; M1/M2 gates run `cargo run` manually |
+| 2 | Nested-cargo lock deadlock via `run.sh` | AMENDED at M1: nested sequential same-workspace cargo is the xtask pattern and holds no lock while its child runs; M1/M2 gates still run `cargo run` to prove it end-to-end |
 | 3 | GRUB re-implementation subtly differs from `build-image.sh` | The bash script's *only* external effect is the grub-mkrescue call on a 3-file tree; M4 gate boots the produced ISO in QEMU and keeps the missing-tools UX; script stays in git history |
 | 4 | Artifact path breaks CI or debug docs | §3.5 freezes both paths; `if-no-files-found: error` in CI catches any slip immediately |
 | 5 | Interactive x86_32 window surprises stdio-trained users | It fixes an unusable keyboard path (§2.6); PR body records it; Headless mode remains for scripts |

@@ -41,7 +41,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    x86_64/        # entry, cpu, interrupts, framebuffer, terminal_fonts, *.S (global_asm)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
 │    x86-generic/   # shared x86-family mechanism: port executor, VGA text buffer, debug console, ANSI parser
-│    x86_64-runner/ # standalone: BiosBoot → QEMU (NOT bootimage)
+│    x86-runner/    # workspace member: kernel → boot medium + QEMU launcher for both ports (NOT bootimage)
 └── apps/
      [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, mem, vfsd, vfs, snake, tetris, conway, threads, waitset, stress, inputd, ps2d, atad, ata
 ```
@@ -59,9 +59,9 @@ cargo xtask apps               # ELF apps only
 cargo xtask rom                # ROM image from built apps
 cargo xtask test               # all host unit tests
 cargo build -p rosx            # kernel only (from arch/x86_64 directory or with target)
-cargo run -p rosx              # run.sh -> arch/x86_64-runner -> BiosBoot disk image -> QEMU
+cargo run -p rosx              # run.sh -> arch/x86-runner -> BiosBoot disk image -> QEMU
 ```
-- `cargo run` uses the **custom runner** (`.cargo/config.toml` → `./run.sh`), which invokes `arch/x86_64-runner` to make a BIOS disk image with the `bootloader` crate's `BiosBoot`, then starts `qemu-system-x86_64`. **Not bootimage.**
+- `cargo run` uses the **custom runner** (`.cargo/config.toml` → `./run.sh`), which invokes `arch/x86-runner` to make a BIOS disk image with the `bootloader` crate's `BiosBoot`, then starts `qemu-system-x86_64`. **Not bootimage.**
 - Target spec: `arch/x86_64/rosx.json` — bare-metal `no_std`, `build-std` = core/alloc/compiler_builtins.
 - User-space ELF apps (pi, randomd, snake, tetris, conway) are workspace members; build with `cargo xtask apps` or `cargo xtask build`.
 - The shell is a user ELF: each arch port embeds `target/rosx-user/release/shell` with `include_bytes!` and boots it via `new_elf_task`. It keeps five built-ins (`ls clear rose sleep random`) and resolves every other prompt name through VFS, so ROM/RAM files execute by name with arguments (`rose> snake fast`).
@@ -202,7 +202,7 @@ These principles are the regression guard: the very inversion this rework remove
 ### Build Issues?
 - Toolchain: `rust-toolchain.toml` pins **nightly** with the `rust-src` component (`rustup component add rust-src`).
 - Custom targets: `arch/x86_64/rosx.json` (+ `rosx-user.json`), `arch/x86_32/rosx-i686.json` (+ `rosx-i686-user.json`).
-- No bootimage — the disk image comes from `arch/x86_64-runner` (the `bootloader` crate). To build it standalone: `cargo run --manifest-path arch/x86_64-runner/Cargo.toml -- <kernel-binary> x86_64 --no-run`.
+- No bootimage — the disk image comes from `arch/x86-runner` (the `bootloader` crate). To build it standalone: `cargo run --manifest-path arch/x86-runner/Cargo.toml -- <kernel-binary> x86_64 --no-run`.
 
 ---
 
