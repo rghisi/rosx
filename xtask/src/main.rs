@@ -117,7 +117,6 @@ fn launch_multiboot(debug: bool, spec: &ArchSpec) {
         .arg("-kernel").arg(&kernel)
         .arg("-drive").arg(format!("if=ide,index=0,media=disk,format=raw,file={}", disk.display()))
         .arg("-debugcon").arg("stdio")
-        .arg("-display").arg("none")
         .arg("-no-reboot")
         .arg("-no-shutdown");
     println!("==> booting {} in {}", spec.name, spec.qemu_binary);
