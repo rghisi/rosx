@@ -22,6 +22,7 @@ members = [
     "apps/tetris",
     "apps/conway",
     "apps/stress",
+    "apps/bench",
     "apps/threads",
     "apps/waitset",
     "apps/inputd",
