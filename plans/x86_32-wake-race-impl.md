@@ -39,6 +39,40 @@ window, unguard `kstats_mem` on x86_32.
    `notify(fh)` as two operations (`kernel/src/ipc/mailbox_manager.rs:93-109`),
    interruptible between them in kernel-task context.
 
+## Architecture decision (2026-11-01): formal locks over raw IF manipulation
+
+Question raised: replace the IF-discipline fix with proper concurrency
+handling (mutexes, semaphores)? Analysis:
+
+- RosX is uniprocessor; the only concurrent mutator is the interrupt handler
+  re-entering task-context structures. Sleeping locks cannot serve IRQ
+  context, and a task-held spinlock without preemption control deadlocks when
+  its holder is preempted. The correct classical primitive for this model is
+  the irqsave spinlock: save IF, `cli`, restore on release — interrupt masking
+  is not replaced, it is *encapsulated*.
+- The codebase already converged on this pattern implicitly:
+  `memory_manager.rs` hand-rolls `are_interrupts_enabled → disable → op →
+  enable` around every allocator entry via the `Cpu` HAL trait.
+- A general mutex/semaphore framework is rejected: most of it is ceremony
+  around IF masking on UP, the sleeping-synchronization layer already exists
+  as futures/waitsets (this kernel's semaphore analogue), and it would add
+  deadlock classes the current model structurally cannot have
+  (termination-while-held, priority inversion).
+
+Decision — Option C, adopted incrementally and evidence-driven:
+
+1. Keep the arch-level IF-boundary fix (interrupts enabled only at true
+   boundaries). This shrinks the set of critical sections that need locks to
+   "sequences an IRQ can interrupt in kernel-task context". No lock layer can
+   cover context-switch assembly; IF=0 across kernel bookkeeping remains the
+   invariant that makes lock scope finite.
+2. Introduce one tiny primitive — `IrqGuard`: save/disable via the `Cpu`
+   trait, restore on `Drop`, plus a per-structure held-flag whose re-entry
+   triggers a loud failure. This is the M2 re-entrancy detector promoted to
+   production; nothing built for the investigation is wasted.
+3. Wrap only the structures M2 proves re-entrant. If SMP ever arrives, the
+   migration surface is the guard's internals, not its call sites.
+
 ## Milestones
 
 ### M0 — Reproducible baseline (no kernel change) — DONE 2026-11-01
@@ -103,25 +137,66 @@ diff) and M2 (wake-path counters + re-entrancy detector).
 Artifacts: `/tmp/opencode/m05-*.log` (round logs incl. console dumps),
 `/tmp/opencode/m0-baseline.sh`. All probe code removed from the tree.
 
-### M1 — Contract diff of the wake paths (doc only)
+### M1 — Contract diff of the wake paths (doc only) — DONE 2026-11-01
 
-Table, one row per step, columns: step | IF state x86_32 | IF state x86_64 |
-KernelCell structures mutated | IRQ-reentrant? Covering:
+Scope covered: park, notify (user sender, kernel-task sender, keyboard IRQ),
+scheduler handoff, timer tick, per-arch IF state at each step.
 
-- park: `receive_message_async` syscall → `pop_front_async` → `wait_future`
-  (`is_future_completed` → `block_current_task` → `register_waiter` →
-  `switch_to_scheduler` → `swap_context`).
-- notify (user sender and kernel-task sender): `send_message`/`reply` →
-  `push_back` → `notify_waiters` → `complete_ipc_message` → `notify` →
-  `wake_tasks` → `set_state(Ready)` + `push_ready`.
-- kernel-originated: `deliver_to_service` from the keyboard IRQ.
-- scheduler handoff: `step` → `pick_next` → `set_state(Running)` →
-  `switch_to_task` → `swap_context` → `sti; ret` → post-swap bookkeeping →
-  syscall/IRQ epilogue.
-- timer tick: entry gate IF behavior, `preempt`, `apply_pending_preemption`.
+IF-state contract per step (both arches):
 
-Append the per-arch IF-state conclusion table to this file. Output must state
-where the arches actually diverge (refutation or confirmation of correction 1).
+| step | IF x86_32 | IF x86_64 | KernelCells mutated | IRQ-reentrant |
+|---|---|---|---|---|
+| fresh syscall entry | trap gate + `cli` → 0 | `syscall` + SFMASK → 0 | — | no |
+| park: `receive_message_async` (pop_front / waiter register) | 0 | 0 | `mailbox_manager`, `future_registry` | no |
+| park: wait (`is_future_completed` → `block_current_task` → `register_waiter` → `switch_to_scheduler` → swap) | 0 throughout | 0 throughout | `future_registry`, `task_manager`, `execution_state` | no |
+| kernel-task context (kstatsd loop, any reply send) | **1** | **1** | all it touches | **yes** |
+| notify: `push_back` → `notify_waiters` → `complete_ipc_message` → `notify` → `wake_tasks` → `push_ready` | **1** | **1** | `mailbox_manager`, `future_registry`, `task_manager`, `scheduler` | **yes** |
+| keyboard IRQ entry | interrupt gate → 0 | interrupt gate → 0 | — | (is the IRQ) |
+| timer IRQ entry (PIT / PIC or APIC; x86_64 EOI before handler, mask-unmask around) | 0 | 0 | — | (is the IRQ) |
+| post-swap bookkeeping on a resumed task (state.rs epilogue, `wait_future` consume, syscall epilogue up to `iretd`/`popfq`) | **1** (`sti; ret`) | **1** (`sti; ret` — SFMASK masked only entry) | whatever the resume path runs | **yes** |
+| scheduler thread post-swap bookkeeping (`reconcile_returned_task` → `start_next_task` → loop) | **1** | **1** | `task_manager`, `scheduler` | **yes** |
+
+Conclusion on correction 1: confirmed — the two arches' IF contracts are
+structurally **identical**; divergence is quantitative only (frame sizes,
+window widths, tick source jitter). x86_64 shares every window below and has
+merely never lost the timing lottery. The fix must be arch-neutral.
+
+Confirmed re-entrancy / aliasing windows (targets for M2 detection and M3
+guards):
+
+- **W1 — `Scheduler` held across a swap.** `Scheduler::run` is
+  `loop { services().scheduler.borrow_mut().step(); }`: one `&mut Scheduler`
+  is live for the whole `step()`, including inside `switch_to_task`'s swap.
+  While the scheduler thread runs with IF=1 (reconcile/start_next_task
+  between swaps), a tick's `preempt()` borrows the same cell and mutates
+  `MlfqStrategy` — a second live `&mut Scheduler`; `apply_pending_preemption`
+  can even re-enter `switch_to_scheduler` there.
+- **W2 — wake sequence interruptible mid-mutation.** Kernel-task
+  `wake_tasks` runs at IF=1 holding `&mut scheduler` + `&mut task_manager`
+  across `set_state(Ready)` → `push_ready`. A tick can preempt at any
+  instruction there; if `preempt` decides to switch, kstatsd is suspended
+  *mid-run-queue mutation* and the scheduler thread's `step()` mutates the
+  same MLFQ state while the suspended frame is halfway through it.
+- **W3 — split notify chain.** `notify_waiters` holds `&mut` into
+  `MailboxManager.waiters` while calling `complete_ipc_message` (borrows
+  `future_registry`) and `notify`; suspend anywhere in that chain (tick, or
+  keyboard IRQ `deliver_to_service` on a mailbox task too) lets other
+  mutators touch both cells before the suspended frame continues with live
+  references into them.
+- **W4 — post-swap consume.** A resumed parked task runs
+  `FutureRegistry::consume` at IF=1 (after `sti; ret`); a tick suspending it
+  mid-arena-mutation leaves a live `&mut future_registry` in the suspended
+  frame while the next task's IPC syscalls mutate the same arena.
+- **W5 — `ExecutionState` epilogue race.** Between `swap_context`'s `sti` and
+  the epilogue's `self.preemption_enabled = false`, a tick sees
+  `preemption_enabled == true` with `current_task` already loaded, and
+  `apply_pending_preemption` → `switch_to_scheduler` can take that
+  just-resumed handle and switch away again mid-handoff.
+
+Reading of the set: every window needs only (a) an IRQ landing on an
+IF=1 kernel-context instruction while an outer `&mut` of a cell it touches is
+live. That is the precise contract M2's detector enforces and M3's `IrqGuard`
+closes.
 
 ### M2 — Instrumentation; prove the lost wake (temporary, reverted in M4)
 
@@ -139,14 +214,16 @@ Re-entrancy detector: a bit set while `Scheduler` (algorithm + ExecutionState)
 or `FutureRegistry`/`MailboxManager` is being mutated, checked at the entry of
 every IRQ-driven mutation (`preempt`, `apply_pending_preemption`,
 `deliver_to_service`); print `REENTER` with the structure name when it trips.
+This detector is not throwaway — per the architecture decision above it is the
+seed of the production `IrqGuard` held-flag (M3.2).
 
-Reproduce once. Decision matrix:
+Reproduce once. Decision matrix (row labels reference M1's windows):
 
 | observation | verdict |
 |---|---|
-| `pushed(mem)` yes, `picked(mem)` never | run-queue corruption through the IF window (suspect 1 family) |
-| `wake(mem)` never, `notify(fh)` yes | lost wake inside notify/waiter registration (suspect 2) |
-| `REENTER` fires before the hang | re-entrant `&mut` corruption; the structure name localizes the fix |
+| `pushed(mem)` yes, `picked(mem)` never | run-queue corruption — W1/W2 |
+| `wake(mem)` never, `notify(fh)` yes | lost wake inside the split notify chain — W3/W4 |
+| `REENTER` fires before the hang | re-entrant `&mut` corruption; the structure name localizes the window (W1–W5) |
 
 Gate: one instrumented run explains mechanically why `mem` never resumes.
 
@@ -154,26 +231,37 @@ Gate: one instrumented run explains mechanically why `mem` never resumes.
 
 Ordered by likely evidence; stop when M2's verdict is addressed:
 
-1. **IF discipline:** remove `sti` from `swap_context` on x86_32 (and x86_64 if
-   M1 shows it is needed for correctness there too); re-enable interrupts only
-   at the true boundaries — int80 `iretd` (already restores user IF via the
-   saved eflags), the syscall-return path, the idle loop before `hlt`, and the
-   scheduler-thread top loop. Kernel bookkeeping after a resume stays IF=0.
-   Verify: debug `kstats_mem` 6/6.
-2. **Notify atomicity:** make `push_back` → `notify_waiters` →
-   `complete_ipc_message` → `notify` → `wake_tasks` one IRQ-atomic region
-   (interrupts disabled around the sequence in kernel-task context), if M2
-   shows a notify-side loss.
-3. Any residual corruption the re-entrancy detector still shows gets its own
-   smallest fix, discussed and approved before coding.
+1. **IF discipline (arch):** remove `sti` from `swap_context` on x86_32 (and
+   x86_64 if M1 shows it is needed for correctness there too); re-enable
+   interrupts only at the true boundaries — int80 `iretd` (already restores
+   user IF via the saved eflags), the syscall-return path, the idle loop
+   before `hlt`, and the scheduler-thread top loop. Kernel bookkeeping after
+   a resume stays IF=0. Verify: debug `kstats_mem` 6/6.
+2. **`IrqGuard` primitive:** new kernel module (~50 lines, built on the
+   `Cpu` trait — stays platform-agnostic per the HAL rule): save-and-disable
+   on acquire, restore on `Drop`, per-structure held-flag re-entry detection
+   that fails loudly. The M2 detector survives as this guard's core; it also
+   formalizes the pattern `memory_manager.rs` already hand-rolls. Its unit
+   tests live in the module's `#[cfg(test)]` block; the production callers are
+   steps 3–4.
+3. **Guard the IRQ-reachable structures M2 proved re-entrant** (candidates:
+   scheduler algorithm + `ExecutionState`, `FutureRegistry::waiters`,
+   `MailboxManager`), replacing their ad-hoc masking convention with the
+   guard.
+4. **Notify atomicity:** make `push_back` → `notify_waiters` →
+   `complete_ipc_message` → `notify` → `wake_tasks` → `push_ready` one
+   `IrqGuard` section, closing the split-borrow window at
+   `mailbox_manager.rs:93-109` for both kernel-task and IRQ senders.
+5. Any residual corruption the guard still flags gets its own smallest fix,
+   discussed and approved before coding.
 
 Each numbered fix is its own commit and must keep the x86_64 suite green.
 
 ### M4 — Verification and unguard
 
-1. Remove all M2 instrumentation and the re-entrancy detector (or keep the
-   detector only if a production caller exists per the no-test-only-surface
-   rule — default is remove).
+1. Remove the M2 counters and trace prints. `IrqGuard` stays: its
+   held-flag detector is production code with real callers (M3.2–4) per the
+   no-test-only-surface rule.
 2. Debug x86_32: `kstats_mem` 6/6; then the full suite
    `ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1`.
 3. x86_64 full suite (must not regress).
