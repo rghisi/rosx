@@ -79,7 +79,8 @@ pub struct GrubTooling {
 impl fmt::Display for GrubTooling {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "missing required tools: {}", self.missing.join(", "))?;
-        write!(f, "{}", self.install_hint)
+        writeln!(f)?;
+        write!(f, "  {}", self.install_hint)
     }
 }
 
@@ -133,25 +134,18 @@ fn missing_tooling(probe: &impl Fn(&str) -> bool) -> GrubTooling {
 
 fn install_hint(probe: &impl Fn(&str) -> bool) -> &'static str {
     if probe("apt-get") {
-        "  sudo apt install grub-pc-bin grub-common xorriso"
+        "sudo apt install grub-pc-bin grub-common xorriso"
     } else if probe("dnf") {
-        "  sudo dnf install grub2-tools xorriso"
+        "sudo dnf install grub2-tools xorriso"
     } else if probe("pacman") {
-        "  sudo pacman -S grub xorriso"
+        "sudo pacman -S grub xorriso"
     } else {
-        "  Install: grub (grub-pc-bin), xorriso"
+        "Install: grub (grub-pc-bin), xorriso"
     }
 }
 
 fn grub_cfg_contents() -> String {
-    "set timeout=0\n\
-     set default=0\n\
-     \n\
-     menuentry \"rosx\" {\n\
-         multiboot /boot/kernel\n\
-         boot\n\
-     }\n"
-        .to_string()
+    "set timeout=0\nset default=0\n\nmenuentry \"rosx\" {\n    multiboot /boot/kernel\n    boot\n}\n".to_string()
 }
 
 fn on_path(name: &str) -> Option<PathBuf> {
@@ -300,7 +294,7 @@ mod tests {
         assert_eq!(error.missing, vec!["xorriso".to_string()]);
         assert_eq!(
             error.to_string(),
-            "missing required tools: xorriso\nInstall: grub (grub-pc-bin), xorriso"
+            "missing required tools: xorriso\n\n  Install: grub (grub-pc-bin), xorriso"
         );
     }
 
