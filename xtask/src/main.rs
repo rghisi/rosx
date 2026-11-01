@@ -2,6 +2,10 @@ use std::env;
 use std::path::PathBuf;
 use std::process::{self, Command};
 
+mod arch;
+
+use arch::{ArchSpec, ImageKind, X86_64};
+
 const USER_APPS: [&str; 19] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "atad", "ata"];
 
 const UNSTABLE: [&str; 3] = [
@@ -29,37 +33,33 @@ fn run(cmd: &mut Command, description: &str) {
     }
 }
 
-fn build_apps() {
+fn build_apps(spec: &ArchSpec) {
     let mut cmd = cargo();
     cmd.arg("build").arg("--release");
     for app in USER_APPS {
         cmd.arg("-p").arg(app);
     }
     cmd.arg("-p").arg("shell");
-    cmd.arg("--target").arg("arch/x86_64/rosx-user.json");
+    cmd.arg("--target").arg(spec.user_target_spec);
     cmd.args(UNSTABLE);
-    run(&mut cmd, "build user-space ELF apps");
+    run(&mut cmd, &format!("build user-space ELF apps for {}", spec.name));
 }
 
-fn build_kernel(debug: bool) {
+fn build_kernel(debug: bool, spec: &ArchSpec) {
     let mut cmd = cargo();
     cmd.arg("build");
     if !debug {
         cmd.arg("--release");
     }
-    cmd.arg("-p").arg("rosx");
-    cmd.arg("--target").arg("arch/x86_64/rosx.json");
+    cmd.arg("-p").arg(spec.kernel_package);
+    cmd.arg("--target").arg(spec.kernel_target_spec);
     cmd.args(UNSTABLE);
-    run(&mut cmd, "build x86_64 kernel");
+    run(&mut cmd, &format!("build {} kernel", spec.name));
 }
 
-fn build_image(debug: bool, launch_qemu: bool) {
+fn build_image(debug: bool, launch_qemu: bool, spec: &ArchSpec) {
     let profile = if debug { "debug" } else { "release" };
-    let kernel = workspace_root()
-        .join("target")
-        .join("rosx")
-        .join(profile)
-        .join("rosx");
+    let kernel = spec.kernel_elf(profile);
     let mut cmd = cargo();
     cmd.arg("run")
         .arg("--manifest-path")
@@ -73,16 +73,13 @@ fn build_image(debug: bool, launch_qemu: bool) {
     run(&mut cmd, "create x86_64 disk image");
 }
 
-fn pack_rom() {
+fn pack_rom(spec: &ArchSpec) {
     let mut files: Vec<(&str, Vec<u8>)> = Vec::new();
+    let release_dir = spec.user_release_dir();
     for name in USER_APPS {
-        let path = workspace_root()
-            .join("target")
-            .join("rosx-user")
-            .join("release")
-            .join(name);
+        let path = release_dir.join(name);
         let Ok(bytes) = std::fs::read(&path) else {
-            eprintln!("missing user ELF {}; run `cargo xtask apps` first", path.display());
+            eprintln!("missing user ELF {}; run `cargo xtask apps {}` first", path.display(), spec.name);
             process::exit(1);
         };
         files.push((name, bytes));
@@ -93,14 +90,14 @@ fn pack_rom() {
         .map(|(name, bytes)| (*name, bytes.as_slice()))
         .collect();
     let image = system::rom::encode(&pairs);
-    let rom_path = workspace_root().join("target").join("rosx-user").join("rom.img");
+    let rom_path = spec.rom_path();
     std::fs::write(&rom_path, image).expect("failed to write ROM image");
     println!("==> packed ROM image {}", rom_path.display());
 }
 
 fn run_tests(skip_integration: bool) {
-    build_apps();
-    pack_rom();
+    build_apps(&X86_64);
+    pack_rom(&X86_64);
     let mut cmd = cargo();
     cmd.arg("test").arg("--workspace");
     let description = if skip_integration {
@@ -115,7 +112,7 @@ fn run_tests(skip_integration: bool) {
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [--debug] | run [x86_64] [--debug] | apps | rom | test [--skip-integration]>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | test [--skip-integration]>"
     );
 }
 
@@ -133,51 +130,68 @@ fn parse_optional_flag(extras: &[String], flag: &str) -> bool {
     found
 }
 
+fn split_arch(extras: &[String]) -> (&'static ArchSpec, &[String]) {
+    match extras.first() {
+        Some(token) if !token.starts_with('-') => match arch::find(token) {
+            Some(spec) => (spec, &extras[1..]),
+            None => {
+                eprintln!("unsupported arch: {token}");
+                usage();
+                process::exit(2);
+            }
+        },
+        _ => (&X86_64, extras),
+    }
+}
+
+fn require_no_extras(extras: &[String]) {
+    if let Some(arg) = extras.first() {
+        eprintln!("unknown flag: {arg}");
+        usage();
+        process::exit(2);
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let subcommand = args.first().map(String::as_str).unwrap_or("build");
     let extras = args.get(1..).unwrap_or(&[]);
     match subcommand {
         "apps" => {
-            if let Some(arg) = extras.first() {
-                eprintln!("unknown flag: {arg}");
-                usage();
-                process::exit(2);
-            }
-            build_apps();
+            let (spec, rest) = split_arch(extras);
+            require_no_extras(rest);
+            build_apps(spec);
         }
         "build" => {
-            let debug = parse_optional_flag(extras, "--debug");
-            build_apps();
-            pack_rom();
-            build_kernel(debug);
-            build_image(debug, false);
+            let (spec, rest) = split_arch(extras);
+            let debug = parse_optional_flag(&rest, "--debug");
+            build_apps(spec);
+            pack_rom(spec);
+            build_kernel(debug, spec);
+            match spec.image_kind {
+                ImageKind::BiosBoot => build_image(debug, false, spec),
+                ImageKind::Multiboot => println!(
+                    "==> bootable multiboot artifact: {}",
+                    spec.kernel_elf(if debug { "debug" } else { "release" }).display()
+                ),
+            }
         }
         "run" => {
-            let extras = match args.get(1) {
-                Some(arch) if !arch.starts_with('-') => {
-                    if arch != "x86_64" {
-                        eprintln!("unsupported arch: {arch}");
-                        usage();
-                        process::exit(2);
-                    }
-                    &args[2..]
-                }
-                _ => extras,
-            };
-            let debug = parse_optional_flag(extras, "--debug");
-            build_apps();
-            pack_rom();
-            build_kernel(debug);
-            build_image(debug, true);
-        }
-        "rom" => {
-            if let Some(arg) = extras.first() {
-                eprintln!("unknown flag: {arg}");
-                usage();
+            let (spec, rest) = split_arch(extras);
+            if spec.image_kind != ImageKind::BiosBoot {
+                eprintln!("run for {} lands with the multiboot boot milestone", spec.name);
                 process::exit(2);
             }
-            pack_rom();
+            let debug = parse_optional_flag(&rest, "--debug");
+            build_apps(spec);
+            pack_rom(spec);
+            build_kernel(debug, spec);
+            build_image(debug, true, spec);
+        }
+        "rom" => {
+            let (spec, rest) = split_arch(extras);
+            require_no_extras(rest);
+            pack_rom(spec);
         }
         "test" => {
             let skip_integration = parse_optional_flag(extras, "--skip-integration");
