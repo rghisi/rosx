@@ -29,6 +29,8 @@
   size classes, one spinlock, zero per-allocation metadata.
 - Prove the win with the existing bench machinery: same workload shapes, new
   machine-readable suites, new baseline record, gate green.
+- Close by comparing the post-change numbers against the pre-change baseline
+  (§2.8) and reporting the observed results in a small document.
 
 ### Non-Goals
 - **No kernel or ABI changes.** The existing `Alloc = 7` / `Dealloc = 8`
@@ -94,10 +96,31 @@
    (`kernel/src/kernel.rs:255-259`, `apply_pending_preemption`). Any shared
    allocator state in `usrlib` statics can therefore be entered by a sibling
    task after a preemption. There is no TLS and no current-task-id syscall.
-8. **Measured cost today** (`benchmarks/bench-x86_64-20261101-113130.txt`):
-   alloc+dealloc pairs run 43.4k–48.2k ops/s across the whole 16 B…4 MiB
-   ladder — **~21–23 µs per pair, flat with size**, confirming fixed
-   syscall + scan overhead dominates. Yield floor: 5,333 yields/s.
+8. **Measured cost today — the baseline for the post-change comparison.**
+   The checked-in record `benchmarks/bench-x86_64-20261101-113130.txt`
+   (v3 format; `host=dev`, `kernel_profile=dev`, QEMU 10.2.1,
+   `git_commit=931a982`) is the pre-change baseline. alloc+dealloc pairs,
+   `align=8`, best of 3 reps:
+
+   | size (B) | pairs/s | size (B) | pairs/s |
+   |---|---|---|---|
+   | 16 | 48 188 | 4 097 | 45 714 |
+   | 24 | 46 545 | 8 192 | 45 511 |
+   | 32 | 46 545 | 16 384 | 44 912 |
+   | 64 | 45 511 | 32 768 | 44 800 |
+   | 128 | 46 545 | 65 536 | 44 912 |
+   | 256 | 45 714 | 131 072 | 44 912 |
+   | 512 | 45 714 | 262 144 | 44 281 |
+   | 1 000 | 45 714 | 524 288 | 44 912 |
+   | 1 024 | 45 714 | 1 048 576 | 43 076 |
+   | 2 048 | 45 714 | 2 097 152 | 43 921 |
+   | 4 096 | 45 714 | 4 194 304 | 43 389 |
+
+   43.4k–48.2k pairs/s across the whole 16 B…4 MiB ladder — **~21–23 µs per
+   pair, flat with size**, confirming fixed syscall + scan overhead
+   dominates. Yield floor: 5 333 yields/s. These are exactly the numbers
+   `alloc_cached` (M3) must beat on the ≤ 4 096 rows and match on the
+   ≥ 4 097 rows.
 9. **The bench harness and gate are the oracle.** `apps/bench/src/windows.rs`
    calibrates each phase to a ≥200 ms window, warms up, and reports best of 3
    as machine-readable `bench.<suite>.best` lines.
@@ -285,7 +308,22 @@ Record a new baseline (`BENCH_RECORD=1 cargo test -p tests-integration
 --test bench_baseline -- --ignored`) on the gate host and commit the record;
 the gate then enforces ±20 % from it. Wire the new suites into
 `tests-integration` line-shape tests the way `bench_alloc.rs` does.
-**Verify:** gate green; `bench list` shows four suites; games still play.
+
+**Closing deliverable — baseline comparison and results report.** Once the
+change is in place (M2 wired, M3 suites green), run the full `bench` suite on
+the gate host and compare the new `alloc_cached` / `alloc_churn` numbers
+against the pre-change baseline table in §2.8
+(`benchmarks/bench-x86_64-20261101-113130.txt`). Produce a short
+human-readable report — `docs/userspace-allocator-results.md` — stating, per
+size, the baseline pairs/s vs the cached pairs/s and the speedup factor, the
+churn result, the observed `MAX_ITERATIONS`-cap behavior on the fast sizes,
+and confirmation that the ≥ 4 097 passthrough rows stayed within the ±20 %
+gate. It closes by recording the aggregate win and any regression found. This
+report is the last commit of the plan; it is prose for a reader, not a second
+machine record (the committed `.txt` record already serves that role).
+**Verify:** gate green; `bench list` shows four suites; games still play;
+`docs/userspace-allocator-results.md` exists and cites both the §2.8 baseline
+and the new record.
 
 ### M4 — Deferred (out of scope, tracked in docs/todo.md)
 Task-local caches (tcache) behind a new `TaskId` syscall; slab trim
