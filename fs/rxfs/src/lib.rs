@@ -9,5 +9,6 @@ pub mod dir;
 pub mod error;
 pub mod extent;
 pub mod inode;
+pub mod path;
 pub mod spec;
 pub mod superblock;

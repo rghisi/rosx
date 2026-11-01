@@ -10,4 +10,9 @@ pub enum FsError {
     Corrupt,
     DeviceTooSmall,
     VolumeTooLarge,
+    NameTooLong,
+    PathTooLong,
+    InvalidName,
+    InvalidPath,
+    DepthExceeded,
 }
