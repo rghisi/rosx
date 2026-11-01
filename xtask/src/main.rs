@@ -8,6 +8,9 @@ use arch::{ArchSpec, ImageKind, X86_64};
 
 const USER_APPS: [&str; 20] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "bench", "atad", "ata"];
 
+const RUN_DISK_BYTES: usize = 1024 * 1024;
+const MBR_SIGNATURE_OFFSET: usize = 510;
+
 const UNSTABLE: [&str; 3] = [
     "-Zbuild-std=core,alloc,compiler_builtins",
     "-Zbuild-std-features=compiler-builtins-mem",
@@ -95,11 +98,24 @@ fn pack_rom(spec: &ArchSpec) {
     println!("==> packed ROM image {}", rom_path.display());
 }
 
+fn create_run_disk(spec: &ArchSpec) -> PathBuf {
+    let path = workspace_root()
+        .join("target")
+        .join(format!("{}-run-disk.img", spec.kernel_dir_name));
+    let mut image = vec![0u8; RUN_DISK_BYTES];
+    image[MBR_SIGNATURE_OFFSET] = 0x55;
+    image[MBR_SIGNATURE_OFFSET + 1] = 0xAA;
+    std::fs::write(&path, image).expect("failed to create run disk image");
+    path
+}
+
 fn launch_multiboot(debug: bool, spec: &ArchSpec) {
     let kernel = spec.kernel_elf(if debug { "debug" } else { "release" });
+    let disk = create_run_disk(spec);
     let mut cmd = Command::new(spec.qemu_binary);
     cmd.current_dir(workspace_root())
         .arg("-kernel").arg(&kernel)
+        .arg("-drive").arg(format!("if=ide,index=0,media=disk,format=raw,file={}", disk.display()))
         .arg("-debugcon").arg("stdio")
         .arg("-display").arg("none")
         .arg("-no-reboot")
