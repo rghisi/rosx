@@ -205,8 +205,15 @@ impl Kernel {
 
     pub fn wait_future(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
         if !self.is_future_completed(handle) {
-            self.execution_state.block_current_task();
             let task_handle = self.execution_state.current_task();
+            let name = services()
+                .task_manager
+                .borrow_mut()
+                .borrow_task_mut(task_handle)
+                .map(|task| task.name())
+                .unwrap_or("?");
+            crate::wake_probe::park(name, handle.index() as usize);
+            self.execution_state.block_current_task();
             services().future_registry.borrow_mut().register_waiter(handle, task_handle);
             self.execution_state.switch_to_scheduler();
         }
@@ -244,7 +251,13 @@ impl Kernel {
     }
 
     pub fn preempt(&mut self) {
-        if self.execution_state.preemption_enabled && services().scheduler.borrow_mut().should_preempt() {
+        let should = {
+            crate::wake_probe::sched_enter("should_preempt", "tick");
+            let result = services().scheduler.borrow_mut().should_preempt();
+            crate::wake_probe::sched_exit();
+            result
+        };
+        if self.execution_state.preemption_enabled && should {
             if let Some(task_handle) = self.execution_state.current_task {
                 services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
             }
@@ -283,6 +296,10 @@ impl Kernel {
     #[inline(always)]
     pub fn get_system_time(&self) -> u64 {
         self.cpu.get_system_time()
+    }
+
+    pub fn interrupts_enabled(&self) -> bool {
+        self.cpu.are_interrupts_enabled()
     }
 
     fn schedule_task(&mut self, task_handle: TaskHandle) {

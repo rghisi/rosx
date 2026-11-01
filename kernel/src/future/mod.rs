@@ -159,7 +159,9 @@ impl FutureRegistry {
     }
 
     pub fn register_waiter(&mut self, future_handle: FutureHandle, task_handle: TaskHandle) {
+        crate::wake_probe::fr_enter("register_waiter", "caller");
         self.waiters.entry(future_handle).or_default().push(task_handle);
+        crate::wake_probe::fr_exit();
     }
 
     pub fn get(&mut self, handle: FutureHandle) -> Option<bool> {
@@ -171,6 +173,13 @@ impl FutureRegistry {
     }
 
     pub fn consume(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
+        crate::wake_probe::fr_enter("consume", "caller");
+        let result = self.consume_inner(handle);
+        crate::wake_probe::fr_exit();
+        result
+    }
+
+    fn consume_inner(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
         let removed = self.arena.remove(handle.into())?;
         if let Some(row_slot) = self.parents_of.get_mut(handle.index() as usize) {
             let row = core::mem::take(row_slot);
@@ -194,9 +203,12 @@ impl FutureRegistry {
     }
 
     pub fn notify(&mut self, handle: FutureHandle) {
+        crate::wake_probe::fr_enter("notify", "caller");
         let waiters = self.waiters.remove(&handle).unwrap_or_default();
+        crate::wake_probe::notify(handle.index() as usize, waiters.len());
         self.wake_controller.wake_tasks(waiters);
         self.cascade_to_waitsets(handle);
+        crate::wake_probe::fr_exit();
     }
 
     pub(crate) fn is_waitset(&mut self, handle: FutureHandle) -> bool {

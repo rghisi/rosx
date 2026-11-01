@@ -22,6 +22,7 @@ pub mod ports;
 pub mod rom;
 pub mod scheduler;
 pub(crate) mod state;
+pub(crate) mod wake_probe;
 pub mod syscall;
 pub mod task;
 pub(crate) mod task_manager;

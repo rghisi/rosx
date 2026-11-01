@@ -198,34 +198,52 @@ IF=1 kernel-context instruction while an outer `&mut` of a cell it touches is
 live. That is the precise contract M2's detector enforces and M3's `IrqGuard`
 closes.
 
-### M2 — Instrumentation; prove the lost wake (temporary, reverted in M4)
+### M2 — Instrumentation; prove the lost wake — DONE 2026-11-01
 
-Counters printed to the debug console, all tagged with the handle they act on
-and `are_interrupts_enabled()` at that point:
+Probe: `kernel/src/wake_probe.rs` (temporary). Guards on three cells
+(`scheduler`, `future_registry`, `mailbox_manager`) with depth counting;
+`REENTER` fires when an IRQ-context entry (IF=0) lands on a cell whose live
+holder entered at IF=1. Lifecycle counters `park/notify/wake/pushed/picked/
+swapped-in` tagged with task name + IF.
 
-- `park(future)` in `wait_future` / `wait_waitset`,
-- `notify(future)` in `FutureRegistry::notify`,
-- `wake(handle)` in `Scheduler::wake_tasks`,
-- `pushed(handle)` in `push_ready`,
-- `picked(handle)` in `start_next_task`,
-- `swapped-in(handle)` after `swap_context` returns.
+Rounds (`/tmp/opencode/m2/round-*.log`): 3/3 FAIL, all with REENTER firing
+before the hang:
 
-Re-entrancy detector: a bit set while `Scheduler` (algorithm + ExecutionState)
-or `FutureRegistry`/`MailboxManager` is being mutated, checked at the entry of
-every IRQ-driven mutation (`preempt`, `apply_pending_preemption`,
-`deliver_to_service`); print `REENTER` with the structure name when it trips.
-This detector is not throwaway — per the architecture decision above it is the
-seed of the production `IrqGuard` held-flag (M3.2).
+| round | REENTER scheduler | REENTER mailbox | REENTER future_registry | hang point |
+|---|---|---|---|---|
+| 1 | 47 | 8 | 0 | after `[ATAD] ATA disk driver`, drive-ready line never printed |
+| 2 | 48 | 4 | 0 | `ROSE Shell` banner drawn, `rose>` prompt never appeared |
+| 3 | 42 | 6 | 0 | same as round 1; last probe = `park [K] Kstatsd if=1` |
 
-Reproduce once. Decision matrix (row labels reference M1's windows):
+Verdicts:
 
-| observation | verdict |
-|---|---|
-| `pushed(mem)` yes, `picked(mem)` never | run-queue corruption — W1/W2 |
-| `wake(mem)` never, `notify(fh)` yes | lost wake inside the split notify chain — W3/W4 |
-| `REENTER` fires before the hang | re-entrant `&mut` corruption; the structure name localizes the window (W1–W5) |
+1. **W1 + W3 are real and frequent.** The `tick → should_preempt` overlap on
+   an IF=1-held `scheduler` cell (W1/W2) and `pop_front_async` (IF=0, inside
+   a user `int 0x80`) landing on an IF=1-held `mailbox_manager` cell (W3)
+   both occur tens of times per boot. The guards only print — the
+   interleavings they expose exist identically without the probe; the probe's
+   extra prints merely widen the windows and move the victim earlier
+   (boot-time hang instead of the M0 `mem` hang; the failing victim varies
+   round to round — classic corruption spread).
+2. **Kernel-task park runs at IF=1.** `park task=[K] Kstatsd fh=NN if=1` is
+   the last probe event in rounds 1 and 3: the kernel-task park sequence
+   (`is_future_completed` → `block` → `register_waiter` → switch) is NOT
+   atomic — a delivery completing the future between check and registration
+   loses the wake (suspect 2's composite window confirmed to be open; the
+   per-call FR guards do not cover the composite).
+3. **`future_registry` shows zero IRQ overlap** — the corruption surface is
+   `scheduler` + `mailbox_manager`, not the registry's own cells.
 
-Gate: one instrumented run explains mechanically why `mem` never resumes.
+Note for M3: the probe's REENTER budget uses `fetch_sub` on an unsigned
+counter (wraps to huge after exhaustion) — the production guard must use
+`saturating_sub`.
+
+Gate: PASSED — instrumented runs explain mechanically why wakes get lost:
+IRQ/syscall re-entry mutates cells whose borrows are live from IF=1 contexts
+(W1/W2/W3), and the kernel-task park composite is non-atomic.
+
+Probe stays in-tree until M3 fixes are verified (REENTER lines should
+disappear when the windows close); removed in M4.
 
 ### M3 — Fix, one change at a time
 
