@@ -55,6 +55,12 @@ jobs:
       - name: Build
         run: cargo xtask build x86_32
 
+      - name: Install GRUB toolchain
+        run: sudo apt-get update && sudo apt-get install -y grub-pc-bin grub-common xorriso mtools
+
+      - name: Build GRUB image
+        run: cargo xtask image x86_32
+
       - name: Upload multiboot kernel
         uses: actions/upload-artifact@v4
         with:
@@ -62,5 +68,13 @@ jobs:
           path: |
             target/rosx-i686/release/rosx-x86_32
             target/rosx-i686-user/rom.img
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload GRUB image
+        uses: actions/upload-artifact@v4
+        with:
+          name: rosx-x86_32-iso
+          path: target/rosx-i686/release/rosx-x86_32.img
           if-no-files-found: error
           retention-days: 1

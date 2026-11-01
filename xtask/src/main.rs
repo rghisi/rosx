@@ -4,7 +4,8 @@ use std::process::{self, Command};
 
 mod arch;
 
-use arch::{ArchSpec, ImageKind, X86_64};
+use arch::{ArchSpec, X86_64};
+use x86_runner::{BootMedium, LaunchMode};
 
 const USER_APPS: [&str; 20] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "bench", "atad", "ata"];
 
@@ -60,20 +61,27 @@ fn build_kernel(debug: bool, spec: &ArchSpec) {
     run(&mut cmd, &format!("build {} kernel", spec.name));
 }
 
-fn build_image(debug: bool, launch_qemu: bool, spec: &ArchSpec) {
-    let profile = if debug { "debug" } else { "release" };
-    let kernel = spec.kernel_elf(profile);
-    let mut cmd = cargo();
-    cmd.arg("run")
-        .arg("--manifest-path")
-        .arg("arch/x86_64-runner/Cargo.toml")
-        .arg("--")
-        .arg(&kernel)
-        .arg("x86_64");
-    if !launch_qemu {
-        cmd.arg("--no-run");
+fn prepare_medium(debug: bool, spec: &ArchSpec) -> BootMedium {
+    let kernel = spec.kernel_elf(if debug { "debug" } else { "release" });
+    let medium = x86_runner::prepare_run_medium(&kernel, spec.boot)
+        .expect("failed to prepare boot medium");
+    match &medium {
+        BootMedium::DiskImage(_) => println!("==> created {} disk image", spec.name),
+        BootMedium::MultibootKernel(elf) => {
+            println!("==> bootable multiboot artifact: {}", elf.display())
+        }
     }
-    run(&mut cmd, "create x86_64 disk image");
+    medium
+}
+
+fn launch(medium: &BootMedium, spec: &ArchSpec) {
+    let mut cmd = x86_runner::qemu_command(spec.boot, medium, LaunchMode::Interactive);
+    if let BootMedium::MultibootKernel(_) = medium {
+        let disk = create_run_disk(spec);
+        cmd.arg("-drive")
+            .arg(format!("if=ide,index=0,media=disk,format=raw,file={}", disk.display()));
+    }
+    run(&mut cmd, &format!("boot {} in qemu", spec.name));
 }
 
 fn pack_rom(spec: &ArchSpec) {
@@ -109,34 +117,24 @@ fn create_run_disk(spec: &ArchSpec) -> PathBuf {
     path
 }
 
-fn launch_multiboot(debug: bool, spec: &ArchSpec) {
+fn create_flashable_image(debug: bool, spec: &ArchSpec) {
     let kernel = spec.kernel_elf(if debug { "debug" } else { "release" });
-    let disk = create_run_disk(spec);
-    let mut cmd = Command::new(spec.qemu_binary);
-    cmd.current_dir(workspace_root())
-        .arg("-kernel").arg(&kernel)
-        .arg("-drive").arg(format!("if=ide,index=0,media=disk,format=raw,file={}", disk.display()))
-        .arg("-debugcon").arg("stdio")
-        .arg("-no-reboot")
-        .arg("-no-shutdown");
-    println!("==> booting {} in {}", spec.name, spec.qemu_binary);
-    let status = cmd.status().expect("failed to spawn qemu");
-    if !status.success() {
-        eprintln!("failed: boot {} in {}", spec.name, spec.qemu_binary);
-        process::exit(status.code().unwrap_or(1));
-    }
-}
-
-fn build_grub_image(debug: bool) {
-    let mut cmd = Command::new("bash");
-    cmd.current_dir(workspace_root())
-        .arg("arch/x86_32/build-image.sh")
-        .env("PROFILE", if debug { "debug" } else { "release" });
-    println!("==> create x86_32 GRUB image");
-    let status = cmd.status().expect("failed to spawn build-image.sh");
-    if !status.success() {
-        eprintln!("failed: create x86_32 GRUB image");
-        process::exit(status.code().unwrap_or(1));
+    match spec.boot {
+        x86_runner::Arch::X86_64 => {
+            let image = x86_runner::create_bios_disk_image(&kernel).unwrap_or_else(|err| {
+                eprintln!("error: {err}");
+                process::exit(1);
+            });
+            println!("==> created x86_64 disk image {}", image.display());
+        }
+        x86_runner::Arch::X86_32 => {
+            let image = kernel.with_extension("img");
+            x86_runner::create_grub_image(&kernel, &image).unwrap_or_else(|err| {
+                eprintln!("error: {err}");
+                process::exit(1);
+            });
+            println!("==> created x86_32 GRUB image {}", image.display());
+        }
     }
 }
 
@@ -157,7 +155,7 @@ fn run_tests(skip_integration: bool) {
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_32] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | test [--skip-integration]>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | test [--skip-integration]>"
     );
 }
 
@@ -213,13 +211,7 @@ fn main() {
             build_apps(spec);
             pack_rom(spec);
             build_kernel(debug, spec);
-            match spec.image_kind {
-                ImageKind::BiosBoot => build_image(debug, false, spec),
-                ImageKind::Multiboot => println!(
-                    "==> bootable multiboot artifact: {}",
-                    spec.kernel_elf(if debug { "debug" } else { "release" }).display()
-                ),
-            }
+            prepare_medium(debug, spec);
         }
         "run" => {
             let (spec, rest) = split_arch(extras);
@@ -227,25 +219,16 @@ fn main() {
             build_apps(spec);
             pack_rom(spec);
             build_kernel(debug, spec);
-            match spec.image_kind {
-                ImageKind::BiosBoot => build_image(debug, true, spec),
-                ImageKind::Multiboot => launch_multiboot(debug, spec),
-            }
+            let medium = prepare_medium(debug, spec);
+            launch(&medium, spec);
         }
         "image" => {
             let (spec, rest) = split_arch(extras);
             let debug = parse_optional_flag(&rest, "--debug");
-            match spec.image_kind {
-                ImageKind::BiosBoot => {
-                    println!("==> x86_64 disk image is produced by `cargo xtask build`");
-                }
-                ImageKind::Multiboot => {
-                    build_apps(spec);
-                    pack_rom(spec);
-                    build_kernel(debug, spec);
-                    build_grub_image(debug);
-                }
-            }
+            build_apps(spec);
+            pack_rom(spec);
+            build_kernel(debug, spec);
+            create_flashable_image(debug, spec);
         }
         "rom" => {
             let (spec, rest) = split_arch(extras);

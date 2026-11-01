@@ -2,13 +2,12 @@ use std::env;
 use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::arch::Arch;
-use crate::disk_image;
 use crate::kernel_build;
 use crate::monitor::Monitor;
 use crate::output::{self, strip_ansi, SharedOutput};
@@ -46,12 +45,14 @@ impl QemuSession {
         let arch = Arch::current();
         let monitor_socket = temp_dir.path().join("monitor.sock");
 
-        let mut command = Command::new(arch.qemu_binary());
-        if arch.boots_via_disk_image() {
-            let disk = disk_image::create_disk_image(&kernel_elf, temp_dir.path());
-            command.arg("-drive").arg(format!("format=raw,file={}", disk.display()));
-        } else {
-            command.arg("-kernel").arg(&kernel_elf);
+        let medium = x86_runner::prepare_run_medium(&kernel_elf, arch.boot())
+            .unwrap_or_else(|err| panic!(
+                "failed to prepare boot medium for kernel '{}': {err}",
+                kernel_elf.display()
+            ));
+        let mut command =
+            x86_runner::qemu_command(arch.boot(), &medium, x86_runner::LaunchMode::Headless);
+        if let x86_runner::BootMedium::MultibootKernel(_) = medium {
             let master = temp_dir.path().join("primary-master-disk.img");
             let mut image = vec![0u8; MASTER_DISK_BYTES];
             image[MBR_SIGNATURE_OFFSET] = 0x55;
@@ -76,16 +77,11 @@ impl QemuSession {
                 ));
         }
         let mut child = command
-            .arg("-debugcon")
-            .arg("stdio")
-            .arg("-display")
-            .arg("none")
             .arg("-monitor")
             .arg(format!(
                 "unix:{},server=on,wait=off",
                 monitor_socket.display()
             ))
-            .arg("-no-reboot")
             .arg("-serial")
             .arg("none")
             .arg("-parallel")
@@ -97,7 +93,7 @@ impl QemuSession {
             .unwrap_or_else(|err| {
                 panic!(
                     "failed to spawn {}; install QEMU and ensure it is on the PATH: {err}",
-                    arch.qemu_binary()
+                    arch.boot().qemu_binary()
                 )
             });
 
