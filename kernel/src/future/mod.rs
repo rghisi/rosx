@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use core::any::Any;
 use crate::collections::arena::{Error, GenerationalArena};
 use crate::handle::FutureHandle;
+use crate::irq_guard::IrqCell;
 use crate::task::TaskHandle;
 use crate::kernel_services::services;
 use crate::ports::driven::ForWakingTasks;
@@ -13,6 +14,8 @@ use self::waitset::{AttachError, ParentLink, WaitsetFuture, WaitsetTake, WAITSET
 use system::waitset::WaitEvent;
 
 pub(crate) const FUTURE_SLOTS: usize = 1024;
+
+static FUTURE_SECTION: IrqCell = IrqCell::new("future_registry");
 
 pub trait Future: Send + Sync {
     fn is_completed(&self) -> bool;
@@ -159,7 +162,7 @@ impl FutureRegistry {
     }
 
     pub fn register_waiter(&mut self, future_handle: FutureHandle, task_handle: TaskHandle) {
-        let _section = crate::irq_guard::FUTURE_SECTION.acquire();
+        let _section = FUTURE_SECTION.acquire();
         self.waiters.entry(future_handle).or_default().push(task_handle);
     }
 
@@ -172,7 +175,7 @@ impl FutureRegistry {
     }
 
     pub fn consume(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
-        let _section = crate::irq_guard::FUTURE_SECTION.acquire();
+        let _section = FUTURE_SECTION.acquire();
         self.consume_inner(handle)
     }
 
@@ -200,7 +203,7 @@ impl FutureRegistry {
     }
 
     pub fn notify(&mut self, handle: FutureHandle) {
-        let _section = crate::irq_guard::FUTURE_SECTION.acquire();
+        let _section = FUTURE_SECTION.acquire();
         self.notify_inner(handle);
     }
 
@@ -218,7 +221,7 @@ impl FutureRegistry {
     }
 
     pub(crate) fn attach(&mut self, set: FutureHandle, child: FutureHandle, tag: u32) -> Result<(), AttachError> {
-        let _section = crate::irq_guard::FUTURE_SECTION.acquire();
+        let _section = FUTURE_SECTION.acquire();
         let child_completed = match self.arena.borrow(child.into()) {
             Ok(future) => {
                 if is_waitset(future) {
@@ -294,7 +297,7 @@ impl FutureRegistry {
     }
 
     pub(crate) fn drop_waitset(&mut self, set: FutureHandle) {
-        let _section = crate::irq_guard::FUTURE_SECTION.acquire();
+        let _section = FUTURE_SECTION.acquire();
         let children = match self.arena.borrow_mut(set.into()) {
             Ok(future) => match as_waitset(future) {
                 Some(waitset) => waitset.child_handles(),

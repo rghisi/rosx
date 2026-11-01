@@ -314,14 +314,20 @@ Primitive (`kernel/src/irq_guard.rs`, platform-agnostic — built on the
 - Acquire never blocks: mask-and-proceed, so trips *detect* overlap, they
   don't prevent it — prevention is the masking itself. No deadlock is
   structurally possible.
-- Three cells: `SCHED_SECTION`, `MAILBOX_SECTION`, `FUTURE_SECTION`; the
-  `Cpu` slot is registered from `Kernel::new` (`irq_guard::init_cpu`).
+- Three cells, owned by their subsystems (mechanism/policy split per the
+  ownership principle): `SCHED_SECTION` in `scheduler/scheduler.rs`,
+  `FUTURE_SECTION` in `future/mod.rs`, `MAILBOX_SECTION` in
+  `ipc/mailbox_manager.rs`, all module-private; `irq_guard` exports only
+  `IrqCell`/`IrqGuard` and the cpu slot registered from `Kernel::new`
+  (`irq_guard::init_cpu`). Acquisition surface is exactly the owning
+  module's methods.
 
 Wiring (the step-2 primitive ships with its step-3/4 callers in one
 commit — no-test-only-surface rule):
 
-- SCHED: `Kernel::preempt` (the `should_preempt` borrow, IRQ side),
-  `Scheduler::wake_tasks`, `Scheduler::push_task`.
+- SCHED: inside `Scheduler::should_preempt` (the IRQ-side borrow —
+  `Kernel::preempt` stays guard-unaware), `Scheduler::wake_tasks`,
+  `Scheduler::push_task`.
 - MAILBOX: `push_back`, `pop_front_async`.
 - FUTURE: `notify`, `register_waiter`, `consume`, `attach`, `drop_waitset`.
   `notify` splits into a guarded public entry + `notify_inner`; the

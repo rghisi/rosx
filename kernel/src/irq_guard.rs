@@ -14,7 +14,7 @@ pub(crate) struct IrqGuard<'a> {
 }
 
 impl IrqCell {
-    const fn new(name: &'static str) -> Self {
+    pub(crate) const fn new(name: &'static str) -> Self {
         Self {
             name,
             depth: AtomicU32::new(0),
@@ -75,10 +75,6 @@ impl Drop for IrqGuard<'_> {
 }
 
 static GUARD_CPU: KernelCell<Option<&'static dyn Cpu>> = KernelCell::new(None);
-
-pub(crate) static SCHED_SECTION: IrqCell = IrqCell::new("scheduler");
-pub(crate) static MAILBOX_SECTION: IrqCell = IrqCell::new("mailbox_manager");
-pub(crate) static FUTURE_SECTION: IrqCell = IrqCell::new("future_registry");
 
 pub(crate) fn init_cpu(cpu: &'static dyn Cpu) {
     GUARD_CPU.replace(Some(cpu));

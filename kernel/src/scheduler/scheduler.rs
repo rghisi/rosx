@@ -1,6 +1,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use crate::handle::FutureHandle;
+use crate::irq_guard::IrqCell;
 use crate::scheduler::algorithm::SchedulingAlgorithm;
 use crate::task::{TaskHandle, TaskState};
 use crate::ports::driven::ForCompletingExpiredTimers;
@@ -43,6 +44,8 @@ impl ForManagingTasks for NoopTasks {
     fn remove_task(&self, _handle: TaskHandle) {}
 }
 static NOOP_TASKS: NoopTasks = NoopTasks;
+
+static SCHED_SECTION: IrqCell = IrqCell::new("scheduler");
 
 #[derive(Clone, Copy)]
 pub struct SchedulerPorts {
@@ -108,7 +111,7 @@ impl Scheduler {
     }
 
     pub fn push_task(&mut self, handle: TaskHandle) {
-        let _section = crate::irq_guard::SCHED_SECTION.acquire();
+        let _section = SCHED_SECTION.acquire();
         match self.ports.tasks.get_state(handle) {
             TaskState::Ready => self.algorithm.push_ready(handle),
             _ => {}
@@ -116,7 +119,7 @@ impl Scheduler {
     }
 
     pub fn wake_tasks(&mut self, handles: Vec<TaskHandle>) {
-        let _section = crate::irq_guard::SCHED_SECTION.acquire();
+        let _section = SCHED_SECTION.acquire();
         for handle in handles {
             if self.ports.tasks.get_state(handle) != TaskState::Terminated {
                 self.ports.tasks.set_state(handle, TaskState::Ready);
@@ -135,6 +138,7 @@ impl Scheduler {
     }
 
     pub fn should_preempt(&mut self) -> bool {
+        let _section = SCHED_SECTION.acquire();
         self.algorithm.should_preempt()
     }
 

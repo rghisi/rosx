@@ -245,17 +245,13 @@ impl Kernel {
     }
 
     pub fn preempt(&mut self) {
-        if self.execution_state.preemption_enabled {
-            let should = {
-                let _section = crate::irq_guard::SCHED_SECTION.acquire();
-                services().scheduler.borrow_mut().should_preempt()
-            };
-            if should {
-                if let Some(task_handle) = self.execution_state.current_task {
-                    services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
-                }
-                self.execution_state.pending_preemption = true;
+        if self.execution_state.preemption_enabled
+            && services().scheduler.borrow_mut().should_preempt()
+        {
+            if let Some(task_handle) = self.execution_state.current_task {
+                services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
             }
+            self.execution_state.pending_preemption = true;
         }
     }
 
