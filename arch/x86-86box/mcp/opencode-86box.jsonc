@@ -1,0 +1,23 @@
+// Drop-in MCP registration for the 86Box driver (86box-mcp).
+// Merge the "mcp" block into ~/.config/opencode/opencode.jsonc, then
+// restart OpenCode: all 86Box tools arrive as tools["86box"].* in Code
+// Mode — strictly preferable to a side CLI. Adjust the command path to
+// your 86box-mcp clone (the session's scratch clone lived under /tmp)
+// and BOX86_ROMS to your ROM install.
+//
+// The `sg docker -c` wrapper is load-bearing: agent session process
+// groups do not pick up the `docker` group; see docs/gotchas.md.
+{
+  "mcp": {
+    "servers": {
+      "86box": {
+        "type": "local",
+        "command": ["sg", "docker", "-c", "/tmp/opencode/86box-mcp/server/.venv/bin/box86mcp"],
+        "environment": {
+          "BOX86_ROMS": "/home/ghisi/.local/share/86Box/roms",
+          "BOX86_WINDOW": "0"
+        }
+      }
+    }
+  }
+}
