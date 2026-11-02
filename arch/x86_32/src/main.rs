@@ -45,7 +45,7 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
     }
 
     x86_generic::vga_buffer::init(0);
-    let raw_blocks = parse_memory_map(multiboot_info as *const u8);
+    let raw_blocks = unsafe { x86_generic::multiboot::usable_memory(multiboot_info as *const u8) };
     let memory_blocks = trim_to_safe_memory(raw_blocks);
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kernel::kprintln!("[KERNEL] Initializing");
@@ -92,16 +92,18 @@ unsafe extern "C" {
     static kernel_end: u8;
 }
 
-fn trim_to_safe_memory(raw: MemoryBlocks) -> MemoryBlocks {
+fn trim_to_safe_memory(raw: x86_generic::multiboot::BootMemory) -> MemoryBlocks {
     let safe_start = core::ptr::addr_of!(kernel_end) as usize;
     let mut out = MemoryBlocks {
         blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),
         count: 0,
     };
-    for i in 0..raw.count {
-        let b = raw.blocks[i];
-        let region_end = b.start + b.size;
-        let start = b.start.max(safe_start);
+    for region in raw.regions() {
+        if out.count == out.blocks.len() {
+            break;
+        }
+        let region_end = region.start + region.size;
+        let start = region.start.max(safe_start);
         if start < region_end {
             out.blocks[out.count] = MemoryBlock { start, size: region_end - start };
             out.count += 1;
@@ -110,42 +112,3 @@ fn trim_to_safe_memory(raw: MemoryBlocks) -> MemoryBlocks {
     out
 }
 
-fn parse_memory_map(info_ptr: *const u8) -> MemoryBlocks {
-    let mut memory_blocks = MemoryBlocks {
-        blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),
-        count: 0,
-    };
-
-    // Multiboot v1 info layout (flat struct):
-    //   offset  0: flags (u32)        — bit 6 = mmap fields valid
-    //   offset 44: mmap_length (u32)  — byte length of the mmap buffer
-    //   offset 48: mmap_addr (u32)    — physical address of the mmap buffer
-    let flags = unsafe { (info_ptr as *const u32).read_unaligned() };
-    if flags & (1 << 6) == 0 {
-        return memory_blocks;
-    }
-
-    let mmap_length = unsafe { (info_ptr as *const u32).add(11).read_unaligned() } as usize;
-    let mmap_addr   = unsafe { (info_ptr as *const u32).add(12).read_unaligned() } as usize;
-
-    // Each mmap entry: [size: u32][addr: u64][len: u64][type: u32]
-    // `size` covers everything after itself; advance by size + 4 per entry.
-    let mut offset = 0;
-    while offset < mmap_length && memory_blocks.count < memory_blocks.blocks.len() {
-        let entry = (mmap_addr + offset) as *const u8;
-        let size     = unsafe { (entry as *const u32).read_unaligned() } as usize;
-        let addr     = unsafe { (entry.add(4)  as *const u64).read_unaligned() };
-        let len      = unsafe { (entry.add(12) as *const u64).read_unaligned() };
-        let mem_type = unsafe {  entry.add(20).cast::<u32>().read_unaligned() };
-
-        if mem_type == 1 && addr + len <= usize::MAX as u64 {
-            memory_blocks.blocks[memory_blocks.count] =
-                MemoryBlock { start: addr as usize, size: len as usize };
-            memory_blocks.count += 1;
-        }
-
-        offset += size + 4;
-    }
-
-    memory_blocks
-}
