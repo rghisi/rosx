@@ -1,5 +1,5 @@
 [build]
-target = "rosx-i686.json"
+target = "rosx-i486.json"
 
 [unstable]
 build-std-features = ["compiler-builtins-mem"]

@@ -46,7 +46,7 @@ impl IdtEntry {
         let addr = handler as *const () as usize as u32;
         Self {
             offset_low: (addr & 0xFFFF) as u16,
-            selector: 0x08,  // GDT[1] — kernel code segment supplied by GRUB
+            selector: 0x08,  // code segment of the kernel's own GDT, installed by boot.S
             zero: 0,
             type_attr: 0x8E, // P=1, DPL=0, type=0xE (32-bit interrupt gate)
             offset_high: ((addr >> 16) & 0xFFFF) as u16,
