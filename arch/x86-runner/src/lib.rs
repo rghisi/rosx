@@ -169,6 +169,9 @@ pub fn create_bios_disk_image(kernel_elf: &Path) -> Result<PathBuf, ImageError> 
 
 pub fn qemu_command(arch: Arch, medium: &BootMedium, mode: LaunchMode) -> Command {
     let mut command = Command::new(arch.qemu_binary());
+    if arch == Arch::X86_32 {
+        command.args(["-cpu", "486"]);
+    }
     match medium {
         BootMedium::DiskImage(image) => {
             command.arg("-drive").arg(format!("format=raw,file={}", image.display()));
@@ -216,6 +219,10 @@ mod tests {
         args.iter().any(|arg| arg == flag)
     }
 
+    fn contains_pair(args: &[String], flag: &str, value: &str) -> bool {
+        args.windows(2).any(|pair| pair[0] == flag && pair[1] == value)
+    }
+
     #[test]
     fn parses_both_arch_names() {
         assert_eq!(Arch::from_name("x86_64"), Some(Arch::X86_64));
@@ -260,6 +267,7 @@ mod tests {
         assert!(contains(&args, "-no-shutdown"));
         assert!(contains(&args, "-d"));
         assert!(!contains(&args, "-display"));
+        assert!(!contains(&args, "-cpu"));
     }
 
     #[test]
@@ -270,6 +278,7 @@ mod tests {
         let args = args_of(&command);
         assert!(contains(&args, "-kernel"));
         assert!(contains(&args, "-no-shutdown"));
+        assert!(contains_pair(&args, "-cpu", "486"));
         assert!(!contains(&args, "cpu_reset"));
         assert!(!contains(&args, "-display"));
     }
@@ -281,6 +290,7 @@ mod tests {
         assert_eq!(command.get_program(), "qemu-system-i386");
         let args = args_of(&command);
         assert!(contains(&args, "-cdrom"));
+        assert!(contains_pair(&args, "-cpu", "486"));
         let boot_at = args.iter().position(|arg| arg == "-boot").expect("missing -boot");
         assert_eq!(args[boot_at + 1], "order=d");
     }
@@ -334,6 +344,10 @@ mod tests {
             );
             assert!(contains(&args, "-debugcon"));
             assert!(contains(&args, "-no-reboot"));
+            match arch {
+                Arch::X86_32 => assert!(contains_pair(&args, "-cpu", "486")),
+                Arch::X86_64 => assert!(!contains(&args, "-cpu")),
+            }
         }
     }
 }
