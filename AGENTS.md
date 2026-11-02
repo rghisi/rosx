@@ -1,6 +1,6 @@
 # RosX - Agent Context Document
 
-> **Last Updated:** 2026-11-01
+> **Last Updated:** 2026-11-02
 > **Purpose:** Compact, always-accurate context for AI coding agents working on RosX.
 
 ---
@@ -13,7 +13,7 @@
 - **Language:** Rust (with minimal assembly for architecture-specific code)
 - **Target Platforms (status):**
   - **x86_64** — bootstrap platform, complete.
-  - **x86_32** — complete (Multiboot2/GRUB, `arch/x86_32/`).
+  - **x86_32** — complete (Multiboot v1/GRUB, `arch/x86_32/`); 486-class hardware is a maintained baseline.
   - **ARM, RISC-V, m68k** — future (no `arch/` dirs exist yet; m68k is feasibility-stage only).
 - **Scope:** Full-featured OS — scheduling, interrupts, IPC, ELF user-space; networking is a goal, not yet implemented.
 - **Project Type:** Learning/hobby project with practical goals
@@ -41,8 +41,8 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    rxfs/        # no_std filesystem library: superblock/bitmaps/inodes/extents/dirs, leak-safe sync, check()
 ├── arch/
 │    x86_64/        # entry, cpu, interrupts, framebuffer, terminal_fonts, *.S (global_asm)
-│    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
-│    x86-generic/   # shared x86-family mechanism: port executor, VGA text buffer, debug console, ANSI parser
+│    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot v1)
+│    x86-generic/   # shared x86-family mechanism: port executor, VGA text buffer, debug console, ANSI parser, Multiboot v1 memory decode
 │    x86-runner/    # workspace member: kernel → boot medium + QEMU launcher for both ports (NOT bootimage)
 └── apps/
      [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, mem, vfsd, vfs, snake, tetris, conway, threads, waitset, stress, inputd, ps2d, atad, ata
@@ -71,7 +71,7 @@ cargo run -p rosx              # run.sh -> arch/x86-runner -> BiosBoot disk imag
 
 ### x86_32
 ```bash
-cargo xtask build x86_32       # ELF apps + ROM image + kernel (Multiboot2, boot.S)
+cargo xtask build x86_32       # ELF apps + ROM image + kernel (Multiboot v1, boot.S)
 cargo xtask run x86_32         # boot QEMU (-kernel, qemu-system-i386) to the shell prompt
 cargo xtask image x86_32       # GRUB bootable ISO (needs grub-mkrescue, xorriso, mtools)
 cargo build -p rosx-x86_32     # kernel only (from arch/x86_32/ — its .cargo/config.toml supplies the rosx-i686 custom target)
@@ -114,6 +114,7 @@ cargo xtask apps [arch]             # Build ELF apps only
 cargo xtask rom [arch]              # Pack the ROM image from the built user ELFs
 cargo xtask run [arch] [--debug]    # Build and launch QEMU to the shell prompt
 cargo xtask image [arch] [--debug]  # flashable artifact: x86_64 BiosBoot disk image, x86_32 GRUB ISO (needs grub-mkrescue, xorriso, mtools)
+cargo xtask check-isa x86_32        # objdump audit: kernel + every user ELF must contain only 486-era mnemonics
 cargo xtask test [--skip-integration] # Run unit tests; --skip-integration excludes the QEMU tests-integration suite
 ```
 
@@ -146,6 +147,17 @@ cargo xtask test [--skip-integration] # Run unit tests; --skip-integration exclu
    - Integration testing: Use dummy tasks for scheduler/task testing
    - Use longer delays to observe task switching behavior in QEMU
    - Verify behavior in QEMU and eventually real hardware
+
+### 486 baseline (x86_32)
+
+The x86_32 port runs on 486-class CPUs and must stay that way — the invariant, not the bug, is the default:
+
+- **The pinned feature strings are the floor.** `arch/x86_32/rosx-i686.json` and `rosx-i686-user.json` compile against `-mmx,-sse,-sse2,-cmov,-fxsr,-cx8`; never widen them. `-cx8` pins `cmpxchg8b` out to keep the 486SX door open. Note: `RUSTFLAGS` in the environment *replaces* the `[target.rosx-*-user]` rustflags in `.cargo/config.toml` (which carry the `linker.ld` script) — never build user ELFs with an exported `RUSTFLAGS`.
+- **No floating point on any 32-bit target** — kernel, usrlib, or apps. `swap_context` saves GPRs only, so any FP state would silently corrupt across task switches, and a 486SX has no FPU at all.
+- **No `cpuid`-probed features** — `cpuid` itself is 586-era; the port runs flat protected mode with 386-era mechanism only (no paging, no CR4 bits).
+- **Keep atomics ≤ 32 bits** on 32-bit paths; an `AtomicU64` there needs `cmpxchg8b`.
+- **The machine guards:** `cargo xtask check-isa x86_32` audits the kernel and every user ELF against a 486 mnemonic allow-list (CI runs it in `build-x86_32`), and every x86_32 QEMU session boots `-cpu 486`. A regression must fail one of these, never a board.
+- Provenance: `plans/x86_32-i486-plan.md` and the evidence log `plans/x86_32-i486-impl.md`.
 
 ### Code Style
 
