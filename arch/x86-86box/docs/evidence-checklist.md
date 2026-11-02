@@ -18,7 +18,10 @@ Two boot scenarios, two run dirs:
   (item 1's fallback branch), via the boundary-probe stop.
 
 Setup for both (and teardown, per gotchas.md): clean strays →
-`vm_create(config=...)` → place media → `vm_start(held=true)`.
+`vm_create(config=...)` → place media → `vm_start(held=true, binary=<86box-mcp>/docker/86box.sh)`
+— the `binary` argument must be the container launcher, not the ELF path
+(gotchas.md), and one `486sp3c` VM can serve both runs back-to-back
+(`reset(kind:"hard")` between them; the entry breakpoint survives it).
 
 Derived inputs, never hardcoded — read them from the exact shipped ELF:
 
@@ -32,7 +35,7 @@ Run directory per §5 of the plan — `target/86box/runs/<UTC>-<machine>/`:
 | file | produced by | when |
 |---|---|---|
 | `screen.txt` | `screen_text` | POST, bootloader banner, kernel banner, `rose>` |
-| `screenshot.png` | `screenshot` | at `rose>` |
+| `screenshot.png` | `record_start(directory, sound:false)` → `step ms:600` → `record_stop`; copy one frame (`screenshot` alone returns the image inline, never a file) | at `rose>` |
 | `vm-info.json` | `vm_info` | boot start and end (`hard_resets` both ends) |
 | `mbi.hex` | `read_memory` at `%ebx` (run B only needs none — run A's stop) | first-instruction stop |
 | `facts.md` | written last | observation table keyed to M5 items |
@@ -45,12 +48,13 @@ Analog: a GRUB build that lacks the mmap buffer, synthesized at the true
 handoff point. **run B sequence:**
 
 ```
-vm_start(held=true, debugger=true)
+vm_start(held=true, debugger=true, binary=<86box-mcp>/docker/86box.sh)
 breakpoint_set(addr=<ELF entry>, kind="exec")
-step …  until run_until_break stops at the kernel's first instruction
+run_until_break  — repeat; each call covers ~10 s of emulated time, the
+                   handoff lands near t≈15.5 s (Award POST + 5 s GRUB menu)
 registers                      → %eax must be 0x2BADB002; %ebx = MBI pointer
 read_memory(addr=%ebx, len=56) → decode FLAGS; record original (0x3E7)
-write_memory(addr=%ebx, data=01 00 00 00)   → sizes-only MBI
+write_memory(addr=%ebx, hex_bytes="01 00 00 00")   → sizes-only MBI
 debug_continue
 wait_for_text("rose>", timeout_ms=180000)
 screen_text                    → [MEMORY] Region/Total sized from mem_upper

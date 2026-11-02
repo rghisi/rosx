@@ -108,9 +108,13 @@ arch/x86-86box/scripts/build-legacy-hdd.sh \
    applies its primed CMOS NVR for `486sp3c`, so first boot needs no SETUP.
 3. Copy the built `hdd.img` into the VM directory as `hdd.img` (the cfg's
    `hdd_01_fn`), or use `cdrom_insert`/`floppy_insert` for the other media.
-4. `vm_start(held=true)`; `step ms:2000` → POST screen via `screen_text`
-   (`80486SX CPU at 25MHz`, `Memory Test: 8192K OK`); `reset(kind:"hard")`,
-   re-insert media, `wait_for_text("rose>", timeout_ms=180000)`.
+4. `vm_start(held=true, binary=<86box-mcp>/docker/86box.sh)` — the binary
+   must be the container launcher (docs/gotchas.md); with `debugger=true`
+   the GDB stub joins for the boundary probes. `step ms:2000` → POST screen
+   via `screen_text` (`80486SX CPU at 25MHz`, `Memory Test: 8192K OK`);
+   `reset(kind:"hard")`, re-insert media, `wait_for_text("rose>", timeout_ms=180000)`.
+   Complete measured runs: `target/86box/runs/<UTC>-<machine>/` (see
+   `docs/evidence-checklist.md` for the full protocol).
 
 Template keys (file kept comment-free, byte-identical to the verified
 session): `time_sync=disabled` + `cpu_use_dynarec=0` keep runs

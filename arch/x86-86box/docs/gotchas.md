@@ -31,9 +31,24 @@ hour, not a CI failure — CI cannot see any of this.
 
 ## Emulator discipline
 
+- `vm_start` needs `binary=/tmp/opencode/86box-mcp/docker/86box.sh` (the
+  container launcher) on the Docker build path: the server's default binary
+  resolution points at the container-built ELF and execs it on the *host*,
+  which lacks `libopenal` ("error while loading shared libraries"). The
+  wrapper runs the same ELF inside the `86box-mcp` image and keeps VM/ROM/
+  socket paths identical (`$HOME`, `/tmp`, repo are mounted at host paths).
 - Keep held mode (server default): emulated time advances only inside
   tool calls. Boots become deterministic and interruptible;
   `step ms:1000` plus `read_memory` is the PIT timing instrument.
+- A `breakpoint_set` address survives `reset(kind:"hard")`: re-setting the
+  same entry fails with `GdbError … 'E22'` (duplicate) — harmless, the old
+  breakpoint fires on the next boot; just `run_until_break` again.
+- `screenshot` returns the frame to the agent inline, never a file. For the
+  evidence directory's `screenshot.png`: `record_start(directory=…, sound:false)`
+  → `step ms:600` → `record_stop`, then copy one frame PNG.
+- `write_memory` takes the bytes as `hex_bytes` (a string like
+  `"01 00 00 00"`); `data`/`value`-style arguments fail with
+  "give hex_bytes or value".
 - Prefer `reset(kind:"hard")`. `kind:"cad"` (Ctrl+Alt+Del) was ignored
   once RosX owns the keyboard; hard reset always works. Boot-cycle
   evidence comes from hard resets only.
