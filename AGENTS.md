@@ -44,6 +44,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot v1)
 │    x86-generic/   # shared x86-family mechanism: port executor, VGA text buffer, debug console, ANSI parser, Multiboot v1 memory decode
 │    x86-runner/    # workspace member: kernel → boot medium + QEMU launcher for both ports (NOT bootimage)
+│    x86-86box/     # data-and-scripts (no crate): era-VM template, GRUB Legacy media recipes, provenance manifest, runbook
 └── apps/
      [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, mem, vfsd, vfs, snake, tetris, conway, threads, waitset, stress, inputd, ps2d, atad, ata
 ```
@@ -83,7 +84,7 @@ cargo build -p rosx-x86_32     # kernel only (from arch/x86_32/ — its .cargo/c
 
 ### Real hardware (x86_32)
 
-Boot recipe: copy `target/rosx-i486/release/rosx-x86_32` (a Multiboot v1 ELF) onto an IDE disk or CF adapter carrying GRUB Legacy 0.97 or GRUB 2, and chain to it — GRUB Legacy: `kernel /boot/rosx` then `boot`; GRUB 2: `multiboot /boot/rosx` then `boot`. Every QEMU x86_32 session already runs `-cpu 486`, and `cargo xtask check-isa x86_32` audits the shipped ELFs; silicon still needs its own evidence. **Hardware verification checklist — every item open until executed on a board; no item may be marked green without hardware evidence:**
+Boot recipe: copy `target/rosx-i486/release/rosx-x86_32` (a Multiboot v1 ELF) onto an IDE disk or CF adapter carrying GRUB Legacy 0.97 or GRUB 2, and chain to it — GRUB Legacy: `kernel /boot/rosx` then `boot`; GRUB 2: `multiboot /boot/rosx` then `boot`. This era path is now scripted: `cargo xtask era-image x86_32` produces the GRUB Legacy 0.97-67 FAT16 HDD image (the recipe below, executed literally) and the El Torito ISO, and the emulator-side rehearsal lives in `arch/x86-86box/` (its README is the runbook). Every QEMU x86_32 session already runs `-cpu 486`, and `cargo xtask check-isa x86_32` audits the shipped ELFs; silicon still needs its own evidence. **Hardware verification checklist — every item open until executed on a board; no item may be marked green without hardware evidence:**
 
 1. Memory detection through a v1 bootloader: `[MEMORY]` banner appears after GRUB; on a GRUB build that lacks the mmap buffer, the `mem_lower`/`mem_upper` fallback must still yield a usable heap (`[MEMORY] Total:` on 4–64 MB expected).
 2. `PAUSE`-as-NOP: no `#UD` at first `Once` contention during early boot.
@@ -114,7 +115,9 @@ cargo xtask apps [arch]             # Build ELF apps only
 cargo xtask rom [arch]              # Pack the ROM image from the built user ELFs
 cargo xtask run [arch] [--debug]    # Build and launch QEMU to the shell prompt
 cargo xtask image [arch] [--debug]  # flashable artifact: x86_64 BiosBoot disk image, x86_32 GRUB ISO (needs grub-mkrescue, xorriso, mtools)
+cargo xtask era-image x86_32        # era boot media for 86Box/hardware: GRUB Legacy 0.97-67 El Torito ISO + FAT16 HDD (needs mtools, sfdisk, xorriso, docker for the grub shell; see arch/x86-86box/README.md)
 cargo xtask check-isa x86_32        # objdump audit: kernel + every user ELF must contain only 486-era mnemonics
+cargo xtask check-isa --stages [dir] # audit the pinned GRUB Legacy stage binaries (default target/grub-legacy/stages; fetch via arch/x86-86box/scripts/fetch-grub-legacy.sh)
 cargo xtask test [--skip-integration] # Run unit tests; --skip-integration excludes the QEMU tests-integration suite
 ```
 
@@ -156,7 +159,7 @@ The x86_32 port runs on 486-class CPUs and must stay that way — the invariant,
 - **No floating point on any 32-bit target** — kernel, usrlib, or apps. `swap_context` saves GPRs only, so any FP state would silently corrupt across task switches, and a 486SX has no FPU at all.
 - **No `cpuid`-probed features** — `cpuid` itself is 586-era; the port runs flat protected mode with 386-era mechanism only (no paging, no CR4 bits).
 - **Keep atomics ≤ 32 bits** on 32-bit paths; an `AtomicU64` there needs `cmpxchg8b`.
-- **The machine guards:** `cargo xtask check-isa x86_32` audits the kernel and every user ELF against a 486 mnemonic allow-list (CI runs it in `build-x86_32`), and every x86_32 QEMU session boots `-cpu 486`. A regression must fail one of these, never a board.
+- **The machine guards:** `cargo xtask check-isa x86_32` audits the kernel and every user ELF against a 486 mnemonic allow-list, `cargo xtask check-isa x86_32 --stages` audits the pinned GRUB Legacy stage binaries against a post-486 denylist (CI runs both in `build-x86_32`), and every x86_32 QEMU session boots `-cpu 486`. A regression must fail one of these, never a board.
 - Provenance: `plans/x86_32-i486-plan.md` and the evidence log `plans/x86_32-i486-impl.md`.
 
 ### Code Style
