@@ -21,10 +21,10 @@ fn main() {
     println!("cargo::rerun-if-changed=../../apps/atad/Cargo.toml");
     println!("cargo::rerun-if-changed=../../usrlib/linker.ld");
     println!("cargo::rerun-if-changed=../../.cargo/config.toml");
-    println!("cargo::rerun-if-changed=../../target/rosx-i686-user/rom.img");
-    println!("cargo::rerun-if-changed=../../target/rosx-i686-user/release/shell");
+    println!("cargo::rerun-if-changed=../../target/rosx-i486-user/rom.img");
+    println!("cargo::rerun-if-changed=../../target/rosx-i486-user/release/shell");
 
-    let rom_path = "../../target/rosx-i686-user/rom.img";
+    let rom_path = "../../target/rosx-i486-user/rom.img";
     if !Path::new(rom_path).exists() {
         panic!("missing ROM image {rom_path}; run `cargo xtask build x86_32` first");
     }
@@ -39,7 +39,7 @@ fn main() {
         "atad",
         "shell",
     ] {
-        let elf_path = format!("../../target/rosx-i686-user/release/{elf}");
+        let elf_path = format!("../../target/rosx-i486-user/release/{elf}");
         if !Path::new(&elf_path).exists() {
             panic!("missing user ELF {elf_path}; run `cargo xtask apps x86_32` first");
         }

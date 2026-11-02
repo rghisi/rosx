@@ -4,5 +4,5 @@ xtask = ["run", "--package", "xtask", "--"]
 [target.rosx-user]
 rustflags = ["-C", "link-arg=-Tlinker.ld", "-C", "link-arg=--pie"]
 
-[target.rosx-i686-user]
+[target.rosx-i486-user]
 rustflags = ["-C", "link-arg=-Tlinker.ld", "-C", "link-arg=--pie"]

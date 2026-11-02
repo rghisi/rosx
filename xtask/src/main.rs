@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::process::{self, Command};
 
 mod arch;
+mod check_isa;
 
 use arch::{ArchSpec, X86_64};
 use x86_runner::{BootMedium, LaunchMode};
@@ -156,9 +157,35 @@ fn run_tests(skip_integration: bool) {
     run(&mut cmd, description);
 }
 
+fn check_isa_command(spec: &ArchSpec) {
+    if spec.boot != x86_runner::Arch::X86_32 {
+        eprintln!("check-isa audits the x86_32 486 baseline; {} carries no such pin", spec.name);
+        process::exit(2);
+    }
+    let mut elfs: Vec<&str> = USER_APPS.to_vec();
+    elfs.push("shell");
+    match check_isa::run_check_isa(spec, &elfs) {
+        Err(message) => {
+            eprintln!("error: {message}");
+            process::exit(1);
+        }
+        Ok(failures) => {
+            if failures.is_empty() {
+                println!("==> check-isa {}: kernel and {} user ELFs are 486-clean", spec.name, elfs.len());
+                return;
+            }
+            eprintln!("non-486 mnemonics found:");
+            for failure in &failures {
+                eprintln!("  {failure}");
+            }
+            process::exit(1);
+        }
+    }
+}
+
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | test [--skip-integration]>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 | test [--skip-integration]>"
     );
 }
 
@@ -237,6 +264,11 @@ fn main() {
             let (spec, rest) = split_arch(extras);
             require_no_extras(rest);
             pack_rom(spec);
+        }
+        "check-isa" => {
+            let (spec, rest) = split_arch(extras);
+            require_no_extras(rest);
+            check_isa_command(spec);
         }
         "test" => {
             let skip_integration = parse_optional_flag(extras, "--skip-integration");

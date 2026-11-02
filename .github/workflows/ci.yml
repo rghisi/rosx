@@ -78,14 +78,17 @@ jobs:
       - name: Build
         run: cargo xtask build x86_32
 
+      - name: ISA audit (486 baseline)
+        run: cargo xtask check-isa x86_32
+
       - name: Upload multiboot kernel
         if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: rosx-x86_32
           path: |
-            target/rosx-i686/release/rosx-x86_32
-            target/rosx-i686-user/rom.img
+            target/rosx-i486/release/rosx-x86_32
+            target/rosx-i486-user/rom.img
           if-no-files-found: error
 
   test-x86_32-integration:

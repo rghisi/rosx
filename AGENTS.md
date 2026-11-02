@@ -1,6 +1,6 @@
 # RosX - Agent Context Document
 
-> **Last Updated:** 2026-11-01
+> **Last Updated:** 2026-11-02
 > **Purpose:** Compact, always-accurate context for AI coding agents working on RosX.
 
 ---
@@ -13,7 +13,7 @@
 - **Language:** Rust (with minimal assembly for architecture-specific code)
 - **Target Platforms (status):**
   - **x86_64** — bootstrap platform, complete.
-  - **x86_32** — complete (Multiboot2/GRUB, `arch/x86_32/`).
+  - **x86_32** — complete (Multiboot v1/GRUB, `arch/x86_32/`); 486-class hardware is a maintained baseline.
   - **ARM, RISC-V, m68k** — future (no `arch/` dirs exist yet; m68k is feasibility-stage only).
 - **Scope:** Full-featured OS — scheduling, interrupts, IPC, ELF user-space; networking is a goal, not yet implemented.
 - **Project Type:** Learning/hobby project with practical goals
@@ -41,8 +41,8 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    rxfs/        # no_std filesystem library: superblock/bitmaps/inodes/extents/dirs, leak-safe sync, check()
 ├── arch/
 │    x86_64/        # entry, cpu, interrupts, framebuffer, terminal_fonts, *.S (global_asm)
-│    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot2)
-│    x86-generic/   # shared x86-family mechanism: port executor, VGA text buffer, debug console, ANSI parser
+│    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot v1)
+│    x86-generic/   # shared x86-family mechanism: port executor, VGA text buffer, debug console, ANSI parser, Multiboot v1 memory decode
 │    x86-runner/    # workspace member: kernel → boot medium + QEMU launcher for both ports (NOT bootimage)
 └── apps/
      [workspace members]  shell, dummy, pi, randomd, echo, bulk, pong, ping, mem, vfsd, vfs, snake, tetris, conway, threads, waitset, stress, inputd, ps2d, atad, ata
@@ -71,15 +71,27 @@ cargo run -p rosx              # run.sh -> arch/x86-runner -> BiosBoot disk imag
 
 ### x86_32
 ```bash
-cargo xtask build x86_32       # ELF apps + ROM image + kernel (Multiboot2, boot.S)
+cargo xtask build x86_32       # ELF apps + ROM image + kernel (Multiboot v1, boot.S)
 cargo xtask run x86_32         # boot QEMU (-kernel, qemu-system-i386) to the shell prompt
 cargo xtask image x86_32       # GRUB bootable ISO (needs grub-mkrescue, xorriso, mtools)
-cargo build -p rosx-x86_32     # kernel only (from arch/x86_32/ — its .cargo/config.toml supplies the rosx-i686 custom target)
+cargo build -p rosx-x86_32     # kernel only (from arch/x86_32/ — its .cargo/config.toml supplies the rosx-i486 custom target)
 ```
-- The kernel embeds the shell ELF and the ROM image that `cargo xtask build x86_32` produces under `target/rosx-i686-user/release/`; `arch/x86_32/build.rs` asserts both are present before compiling.
+- The kernel embeds the shell ELF and the ROM image that `cargo xtask build x86_32` produces under `target/rosx-i486-user/release/`; `arch/x86_32/build.rs` asserts both are present before compiling.
 - The boot roster matches x86_64 (randomd, echo, bulk, pong, vfsd, inputd, ps2d, atad with ATA port grants, then the shell), so programs run by name from the prompt and the disk stack works there.
 - Integration tests run on x86_32 with `ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1`; the harness boots the kernel ELF directly and synthesizes the two-drive IDE topology for the ata suites. `ipc_vfs` and `ata_env_spike` stay x86_64-only; `kstats_mem` runs unguarded on both arches (the wake-path race is fixed — `plans/x86_32-wake-race.md`).
 - 32-bit targets use a 16 KiB task stack (`STACK_WORDS` in `kernel/src/task_stack.rs`): the deepest debug syscall chain with a nested IRQ frame overflows the 8 KiB x86_64 stack and corrupts adjacent kernel heap blocks.
+
+### Real hardware (x86_32)
+
+Boot recipe: copy `target/rosx-i486/release/rosx-x86_32` (a Multiboot v1 ELF) onto an IDE disk or CF adapter carrying GRUB Legacy 0.97 or GRUB 2, and chain to it — GRUB Legacy: `kernel /boot/rosx` then `boot`; GRUB 2: `multiboot /boot/rosx` then `boot`. Every QEMU x86_32 session already runs `-cpu 486`, and `cargo xtask check-isa x86_32` audits the shipped ELFs; silicon still needs its own evidence. **Hardware verification checklist — every item open until executed on a board; no item may be marked green without hardware evidence:**
+
+1. Memory detection through a v1 bootloader: `[MEMORY]` banner appears after GRUB; on a GRUB build that lacks the mmap buffer, the `mem_lower`/`mem_upper` fallback must still yield a usable heap (`[MEMORY] Total:` on 4–64 MB expected).
+2. `PAUSE`-as-NOP: no `#UD` at first `Once` contention during early boot.
+3. PIT 100 Hz / 8259A cascade timing on VLB/PCI chipsets: `SYSTEM_TIME_MS` advances, shell echo works.
+4. 16-bit IDE PIO on a real drive: atad identify + LBA read (timing margins, IORDY).
+5. VGA text console standalone: writes to the unclaimed debug port 0xE9 must stay harmless; VGA is the only output.
+6. The `rep bsf` idiom (objdump prints `tzcnt`): executes as `BSF` (F3 ignored) on silicon.
+7. 486SX sub-case (only if SX support is ever chosen): boot with no FPU present.
 
 ### Unit tests (run on host)
 ```bash
@@ -102,6 +114,7 @@ cargo xtask apps [arch]             # Build ELF apps only
 cargo xtask rom [arch]              # Pack the ROM image from the built user ELFs
 cargo xtask run [arch] [--debug]    # Build and launch QEMU to the shell prompt
 cargo xtask image [arch] [--debug]  # flashable artifact: x86_64 BiosBoot disk image, x86_32 GRUB ISO (needs grub-mkrescue, xorriso, mtools)
+cargo xtask check-isa x86_32        # objdump audit: kernel + every user ELF must contain only 486-era mnemonics
 cargo xtask test [--skip-integration] # Run unit tests; --skip-integration excludes the QEMU tests-integration suite
 ```
 
@@ -134,6 +147,17 @@ cargo xtask test [--skip-integration] # Run unit tests; --skip-integration exclu
    - Integration testing: Use dummy tasks for scheduler/task testing
    - Use longer delays to observe task switching behavior in QEMU
    - Verify behavior in QEMU and eventually real hardware
+
+### 486 baseline (x86_32)
+
+The x86_32 port runs on 486-class CPUs and must stay that way — the invariant, not the bug, is the default:
+
+- **The pinned feature strings are the floor.** `arch/x86_32/rosx-i486.json` and `rosx-i486-user.json` compile against `-mmx,-sse,-sse2,-cmov,-fxsr,-cx8`; never widen them. `-cx8` pins `cmpxchg8b` out to keep the 486SX door open. Note: `RUSTFLAGS` in the environment *replaces* the `[target.rosx-*-user]` rustflags in `.cargo/config.toml` (which carry the `linker.ld` script) — never build user ELFs with an exported `RUSTFLAGS`.
+- **No floating point on any 32-bit target** — kernel, usrlib, or apps. `swap_context` saves GPRs only, so any FP state would silently corrupt across task switches, and a 486SX has no FPU at all.
+- **No `cpuid`-probed features** — `cpuid` itself is 586-era; the port runs flat protected mode with 386-era mechanism only (no paging, no CR4 bits).
+- **Keep atomics ≤ 32 bits** on 32-bit paths; an `AtomicU64` there needs `cmpxchg8b`.
+- **The machine guards:** `cargo xtask check-isa x86_32` audits the kernel and every user ELF against a 486 mnemonic allow-list (CI runs it in `build-x86_32`), and every x86_32 QEMU session boots `-cpu 486`. A regression must fail one of these, never a board.
+- Provenance: `plans/x86_32-i486-plan.md` and the evidence log `plans/x86_32-i486-impl.md`.
 
 ### Code Style
 
@@ -205,8 +229,11 @@ These principles are the regression guard: the very inversion this rework remove
 
 ### Build Issues?
 - Toolchain: `rust-toolchain.toml` pins **nightly** with the `rust-src` component (`rustup component add rust-src`).
-- Custom targets: `arch/x86_64/rosx.json` (+ `rosx-user.json`), `arch/x86_32/rosx-i686.json` (+ `rosx-i686-user.json`).
+- Custom targets: `arch/x86_64/rosx.json` (+ `rosx-user.json`), `arch/x86_32/rosx-i486.json` (+ `rosx-i486-user.json`).
 - No bootimage — the disk image comes from `arch/x86-runner` (the `bootloader` crate). To build it standalone: `cargo run --manifest-path arch/x86-runner/Cargo.toml -- <kernel-binary> x86_64 --no-run`.
+
+### GitHub CLI?
+- `gh pr edit` on `rghisi/rosx` fails here with a Projects (classic) deprecation GraphQL error (`repository.pullRequest.projectCards`) even when touching no project field. Update PRs through the REST API instead: `gh api -X PATCH repos/rghisi/rosx/pulls/<n> -f title="..." -F body=@<file>`.
 
 ---
 

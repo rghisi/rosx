@@ -27,11 +27,11 @@ pub static X86_64: ArchSpec = ArchSpec {
 pub static X86_32: ArchSpec = ArchSpec {
     name: "x86_32",
     kernel_package: "rosx-x86_32",
-    kernel_target_spec: "arch/x86_32/rosx-i686.json",
-    user_target_spec: "arch/x86_32/rosx-i686-user.json",
-    kernel_dir_name: "rosx-i686",
+    kernel_target_spec: "arch/x86_32/rosx-i486.json",
+    user_target_spec: "arch/x86_32/rosx-i486-user.json",
+    kernel_dir_name: "rosx-i486",
     kernel_binary: "rosx-x86_32",
-    user_dir_name: "rosx-i686-user",
+    user_dir_name: "rosx-i486-user",
     boot: x86_runner::Arch::X86_32,
 };
 
