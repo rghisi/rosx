@@ -12,6 +12,7 @@ pub const WRITE: u8 = 3;
 pub const CLOSE: u8 = 4;
 pub const DELETE: u8 = 5;
 pub const LIST: u8 = 6;
+pub const STAT: u8 = 7;
 
 pub const REPLY_ACK: u8 = 0x10;
 pub const REPLY_ERROR: u8 = 0x11;
@@ -20,6 +21,28 @@ pub const REPLY_OPENED: u8 = 0x13;
 pub const REPLY_READ_DATA: u8 = 0x14;
 pub const REPLY_WRITTEN: u8 = 0x15;
 pub const REPLY_LISTED: u8 = 0x16;
+pub const REPLY_STAT: u8 = 0x17;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[repr(u8)]
+pub enum EntityKind {
+    File = 0,
+    Directory = 1,
+}
+
+impl EntityKind {
+    pub fn to_byte(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_byte(byte: u8) -> Option<EntityKind> {
+        match byte {
+            0 => Some(EntityKind::File),
+            1 => Some(EntityKind::Directory),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
@@ -61,6 +84,7 @@ pub enum Request<'a> {
     Close { handle: u32 },
     Delete { name: &'a str },
     List,
+    Stat { name: &'a str },
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -72,6 +96,7 @@ pub enum Reply {
     ReadData { token: u32, count: u32 },
     Written { bytes: u32 },
     Listed { token: u32, total: u32 },
+    Stat { kind: EntityKind, size: u64 },
 }
 
 pub fn valid_name(name: &str) -> bool {
@@ -136,6 +161,16 @@ impl Request<'_> {
                 frame[0] = LIST;
                 Ok(frame)
             }
+            Request::Stat { name } => {
+                if !valid_name(name) {
+                    return Err(VfsError::InvalidPath);
+                }
+                let mut frame = [0u8; FRAME_BYTES];
+                frame[0] = STAT;
+                frame[1] = name.len() as u8;
+                frame[2..2 + name.len()].copy_from_slice(name.as_bytes());
+                Ok(frame)
+            }
         }
     }
 
@@ -164,6 +199,10 @@ impl Request<'_> {
                 Ok(Request::Delete { name })
             }
             LIST => Ok(Request::List),
+            STAT => {
+                let name = decode_name(frame, 2, frame[1] as usize)?;
+                Ok(Request::Stat { name })
+            }
             _ => Err(VfsError::Protocol),
         }
     }
@@ -225,6 +264,11 @@ impl Reply {
                 frame[1..5].copy_from_slice(&token.to_le_bytes());
                 frame[5..9].copy_from_slice(&total.to_le_bytes());
             }
+            Reply::Stat { kind, size } => {
+                frame[0] = REPLY_STAT;
+                frame[1] = kind.to_byte();
+                frame[2..10].copy_from_slice(&size.to_le_bytes());
+            }
         }
         frame
     }
@@ -263,6 +307,13 @@ impl Reply {
                     return Err(());
                 }
                 Ok(Reply::Listed { token, total })
+            }
+            REPLY_STAT => {
+                let kind = EntityKind::from_byte(frame[1]).ok_or(())?;
+                Ok(Reply::Stat {
+                    kind,
+                    size: read_u64(frame, 2),
+                })
             }
             _ => Err(()),
         }
@@ -447,8 +498,53 @@ mod tests {
     }
 
     #[test]
+    fn stat_frame_pins_offsets_for_short_name() {
+        let frame = Request::Stat { name: "a.txt" }.encode().unwrap();
+        assert_eq!(frame[0], STAT);
+        assert_eq!(frame[1], 5);
+        assert_eq!(&frame[2..7], b"a.txt");
+        assert!(frame[7..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn stat_request_roundtrips() {
+        let frame = Request::Stat { name: "notes.txt" }.encode().unwrap();
+        assert_eq!(
+            Request::decode(&frame),
+            Ok(Request::Stat { name: "notes.txt" })
+        );
+    }
+
+    #[test]
+    fn stat_request_roundtrips_maximum_name() {
+        let name = name_of_len(MAX_NAME_BYTES);
+        let frame = Request::Stat { name: &name }.encode().unwrap();
+        assert_eq!(Request::decode(&frame), Ok(Request::Stat { name: &name }));
+    }
+
+    #[test]
+    fn decode_stat_rejects_invalid_names() {
+        let mut nested = [0u8; FRAME_BYTES];
+        nested[0] = STAT;
+        nested[1] = 3;
+        nested[2..5].copy_from_slice(b"a/b");
+        assert_eq!(Request::decode(&nested), Err(VfsError::InvalidPath));
+        let mut dot = [0u8; FRAME_BYTES];
+        dot[0] = STAT;
+        dot[1] = 1;
+        dot[2] = b'.';
+        assert_eq!(Request::decode(&dot), Err(VfsError::InvalidPath));
+        let mut nul = [0u8; FRAME_BYTES];
+        nul[0] = STAT;
+        nul[1] = 3;
+        nul[2] = b'a';
+        nul[4] = b'b';
+        assert_eq!(Request::decode(&nul), Err(VfsError::InvalidPath));
+    }
+
+    #[test]
     fn decode_request_rejects_unknown_op_bytes() {
-        for op in [0u8, 7, 255] {
+        for op in [0u8, 8, 255] {
             let mut frame = Request::List.encode().unwrap();
             frame[0] = op;
             assert_eq!(
@@ -467,6 +563,9 @@ mod tests {
         let mut delete_frame = Request::Delete { name: "x" }.encode().unwrap();
         delete_frame[1] = 0;
         assert_eq!(Request::decode(&delete_frame), Err(VfsError::InvalidPath));
+        let mut stat_frame = Request::Stat { name: "x" }.encode().unwrap();
+        stat_frame[1] = 0;
+        assert_eq!(Request::decode(&stat_frame), Err(VfsError::InvalidPath));
     }
 
     #[test]
@@ -477,6 +576,9 @@ mod tests {
         let mut delete_frame = Request::Delete { name: "x" }.encode().unwrap();
         delete_frame[1] = 58;
         assert_eq!(Request::decode(&delete_frame), Err(VfsError::InvalidPath));
+        let mut stat_frame = Request::Stat { name: "x" }.encode().unwrap();
+        stat_frame[1] = 58;
+        assert_eq!(Request::decode(&stat_frame), Err(VfsError::InvalidPath));
     }
 
     #[test]
@@ -489,6 +591,10 @@ mod tests {
         delete_frame[0] = DELETE;
         delete_frame[1] = 255;
         assert_eq!(Request::decode(&delete_frame), Err(VfsError::InvalidPath));
+        let mut stat_frame = [0u8; FRAME_BYTES];
+        stat_frame[0] = STAT;
+        stat_frame[1] = 255;
+        assert_eq!(Request::decode(&stat_frame), Err(VfsError::InvalidPath));
     }
 
     #[test]
@@ -606,6 +712,12 @@ mod tests {
             Request::Delete { name: "bad\nname" }.encode(),
             Err(VfsError::InvalidPath)
         );
+        assert_eq!(Request::Stat { name: "" }.encode(), Err(VfsError::InvalidPath));
+        assert_eq!(
+            Request::Stat { name: "bad/name" }.encode(),
+            Err(VfsError::InvalidPath)
+        );
+        assert_eq!(Request::Stat { name: ".." }.encode(), Err(VfsError::InvalidPath));
     }
 
     #[test]
@@ -643,13 +755,17 @@ mod tests {
         assert_eq!(REPLY_READ_DATA, 0x14);
         assert_eq!(REPLY_WRITTEN, 0x15);
         assert_eq!(REPLY_LISTED, 0x16);
+        assert_eq!(REPLY_STAT, 0x17);
         assert_eq!(OPEN, 1);
         assert_eq!(READ, 2);
         assert_eq!(WRITE, 3);
         assert_eq!(CLOSE, 4);
         assert_eq!(DELETE, 5);
         assert_eq!(LIST, 6);
-        let opcodes = [OPEN, READ, WRITE, CLOSE, DELETE, LIST];
+        assert_eq!(STAT, 7);
+        assert_eq!(EntityKind::File.to_byte(), 0);
+        assert_eq!(EntityKind::Directory.to_byte(), 1);
+        let opcodes = [OPEN, READ, WRITE, CLOSE, DELETE, LIST, STAT];
         let tags = [
             REPLY_ACK,
             REPLY_ERROR,
@@ -658,6 +774,7 @@ mod tests {
             REPLY_READ_DATA,
             REPLY_WRITTEN,
             REPLY_LISTED,
+            REPLY_STAT,
         ];
         for tag in tags {
             assert!(!opcodes.contains(&tag), "tag {tag:#04x} collides with opcode");
@@ -731,6 +848,67 @@ mod tests {
     }
 
     #[test]
+    fn stat_reply_pins_tag_kind_and_size_offset() {
+        let file = Reply::Stat {
+            kind: EntityKind::File,
+            size: 0x0102_0304_0506_0708,
+        }
+        .encode();
+        assert_eq!(file[0], REPLY_STAT);
+        assert_eq!(file[1], 0);
+        assert_eq!(
+            &file[2..10],
+            &[0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01]
+        );
+        assert!(file[10..].iter().all(|byte| *byte == 0));
+        let dir = Reply::Stat {
+            kind: EntityKind::Directory,
+            size: 4096,
+        }
+        .encode();
+        assert_eq!(dir[0], REPLY_STAT);
+        assert_eq!(dir[1], 1);
+        assert_eq!(&dir[2..10], &[0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn entity_kind_bytes_roundtrip_and_reject_unknown() {
+        for kind in [EntityKind::File, EntityKind::Directory] {
+            assert_eq!(EntityKind::from_byte(kind.to_byte()), Some(kind));
+        }
+        for byte in [2u8, 3, 128, 255] {
+            assert_eq!(EntityKind::from_byte(byte), None, "byte {byte} accepted");
+        }
+    }
+
+    #[test]
+    fn reply_decode_rejects_unknown_entity_kind_byte() {
+        let mut frame = Reply::Stat {
+            kind: EntityKind::File,
+            size: 1,
+        }
+        .encode();
+        frame[1] = 2;
+        assert_eq!(Reply::decode(&frame), Err(()));
+    }
+
+    #[test]
+    fn stat_reply_accepts_zero_size_empty_file() {
+        let frame = Reply::Stat {
+            kind: EntityKind::File,
+            size: 0,
+        }
+        .encode();
+        assert_eq!(
+            Reply::decode(&frame),
+            Ok(Reply::Stat {
+                kind: EntityKind::File,
+                size: 0,
+            })
+        );
+    }
+
+    #[test]
     fn reply_all_variants_roundtrip() {
         let replies = [
             Reply::Ack,
@@ -743,6 +921,14 @@ mod tests {
             },
             Reply::Written { bytes: 1024 },
             Reply::Listed { token: 5, total: 9 },
+            Reply::Stat {
+                kind: EntityKind::File,
+                size: 0,
+            },
+            Reply::Stat {
+                kind: EntityKind::Directory,
+                size: 0xFFFF_FFFF_FFFF_FF00,
+            },
         ];
         for reply in replies {
             assert_eq!(Reply::decode(&reply.encode()), Ok(reply));
@@ -751,7 +937,7 @@ mod tests {
 
     #[test]
     fn reply_decode_rejects_unknown_tag() {
-        for tag in [0x00u8, 0x0F, 0x17, 0xFF] {
+        for tag in [0x00u8, 0x0F, 0x18, 0xFF] {
             let mut frame = [0u8; FRAME_BYTES];
             frame[0] = tag;
             assert_eq!(Reply::decode(&frame), Err(()), "tag {tag:#04x} accepted");

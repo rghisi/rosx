@@ -7,7 +7,7 @@ use usrlib::error::DataError;
 use usrlib::handle::{UserConnectionHandle, UserDataHandle};
 use usrlib::syscall::Syscall;
 
-pub use crate::wire::{MODE_CREATE, MODE_WRITE};
+pub use crate::wire::{EntityKind, MODE_CREATE, MODE_WRITE};
 
 const CONNECT_ATTEMPTS: usize = 50;
 const CONNECT_RETRY_DELAY_MS: u64 = 100;
@@ -52,6 +52,12 @@ fn transact(
     Reply::decode(received.data()).map_err(|_| ClientError::Protocol)
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Entity {
+    pub kind: EntityKind,
+    pub size: u64,
+}
+
 pub struct Vfs {
     connection: UserConnectionHandle,
 }
@@ -84,6 +90,15 @@ impl Vfs {
         let request = wire::Request::Delete { name };
         match transact(self.connection, request)? {
             Reply::Ack => Ok(()),
+            Reply::Err(error) => Err(ClientError::Vfs(error)),
+            _ => Err(ClientError::Protocol),
+        }
+    }
+
+    pub fn stat(&self, name: &str) -> Result<Entity, ClientError> {
+        let request = wire::Request::Stat { name };
+        match transact(self.connection, request)? {
+            Reply::Stat { kind, size } => Ok(Entity { kind, size }),
             Reply::Err(error) => Err(ClientError::Vfs(error)),
             _ => Err(ClientError::Protocol),
         }
