@@ -45,6 +45,16 @@ fn volume_path(name: &str) -> Vec<u8> {
     path
 }
 
+fn sort_names(names: &mut [&[u8]]) {
+    for i in 1..names.len() {
+        let mut j = i;
+        while j > 0 && names[j - 1] > names[j] {
+            names.swap(j - 1, j);
+            j -= 1;
+        }
+    }
+}
+
 fn dot_entry(name: &[u8]) -> bool {
     name == b".".as_slice() || name == b"..".as_slice()
 }
@@ -227,7 +237,7 @@ impl VfsStore {
             .map(|item| item.name.as_slice())
             .filter(|name| !dot_entry(name))
             .collect();
-        names.sort_unstable();
+        sort_names(&mut names);
         let mut blob = Vec::new();
         for name in names {
             if !blob.is_empty() {
