@@ -2,6 +2,8 @@
 pub enum FsError {
     NotFound,
     AlreadyExists,
+    NotADirectory,
+    IsADirectory,
     InvalidPath,
     PathTooLong,
     NameTooLong,
