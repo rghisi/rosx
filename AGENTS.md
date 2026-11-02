@@ -232,6 +232,9 @@ These principles are the regression guard: the very inversion this rework remove
 - Custom targets: `arch/x86_64/rosx.json` (+ `rosx-user.json`), `arch/x86_32/rosx-i486.json` (+ `rosx-i486-user.json`).
 - No bootimage — the disk image comes from `arch/x86-runner` (the `bootloader` crate). To build it standalone: `cargo run --manifest-path arch/x86-runner/Cargo.toml -- <kernel-binary> x86_64 --no-run`.
 
+### GitHub CLI?
+- `gh pr edit` on `rghisi/rosx` fails here with a Projects (classic) deprecation GraphQL error (`repository.pullRequest.projectCards`) even when touching no project field. Update PRs through the REST API instead: `gh api -X PATCH repos/rghisi/rosx/pulls/<n> -f title="..." -F body=@<file>`.
+
 ---
 
 ## Notes for AI Assistants
