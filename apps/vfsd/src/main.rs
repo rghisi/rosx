@@ -136,6 +136,10 @@ impl VfsServer {
                 Err(error) => Reply::Err(error),
             },
             Request::List => self.list_reply(connection, owner),
+            Request::Stat { name } => match self.fs.stat(name) {
+                Ok((kind, size)) => Reply::Stat { kind, size },
+                Err(error) => Reply::Err(error),
+            },
         }
     }
 

@@ -8,8 +8,7 @@ use rxfs::spec::DEFAULT_BYTES_PER_INODE;
 use rxfs::superblock::UUID_BYTES;
 use rxfs::volume::{FileSystem, FormatParams, Handle};
 use system::rom::{RomError, RomImage};
-use vfs_protocol::wire;
-use vfs_protocol::wire::VfsError;
+use vfs_protocol::wire::{self, EntityKind, VfsError};
 
 const VOLUME_BLOCKS: u64 = 2048;
 const VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ram-vol-001";
@@ -207,6 +206,18 @@ impl VfsStore {
         }
         self.fs.remove(&volume_path(name)).map_err(map_fs_error)?;
         self.fs.sync().map_err(map_fs_error)
+    }
+
+    pub fn stat(&mut self, name: &str) -> Result<(EntityKind, u64), VfsError> {
+        if !wire::valid_name(name) {
+            return Err(VfsError::InvalidPath);
+        }
+        let stat = self.fs.lookup(&volume_path(name)).map_err(map_fs_error)?;
+        let kind = match stat.kind {
+            rxfs::volume::Kind::Regular => EntityKind::File,
+            rxfs::volume::Kind::Directory => EntityKind::Directory,
+        };
+        Ok((kind, stat.size))
     }
 
     pub fn list(&mut self) -> Result<Vec<u8>, VfsError> {
@@ -477,6 +488,67 @@ mod tests {
     fn delete_missing_is_not_found() {
         let mut fs = VfsStore::new();
         assert_eq!(fs.delete("ghost.txt"), Err(VfsError::NotFound));
+    }
+
+    #[test]
+    fn stat_missing_is_not_found() {
+        let mut fs = VfsStore::new();
+        assert_eq!(fs.stat("ghost.txt"), Err(VfsError::NotFound));
+    }
+
+    #[test]
+    fn stat_created_empty_file_is_zero_size() {
+        let mut fs = VfsStore::new();
+        create(&mut fs, OWNER, "a.txt");
+        assert_eq!(fs.stat("a.txt").unwrap(), (EntityKind::File, 0));
+    }
+
+    #[test]
+    fn stat_tracks_writes_and_holes() {
+        let mut fs = VfsStore::new();
+        let handle = create(&mut fs, OWNER, "a.txt");
+        fs.write(OWNER, handle, 0, b"ab").unwrap();
+        fs.write(OWNER, handle, 4096, b"c").unwrap();
+        assert_eq!(fs.stat("a.txt").unwrap(), (EntityKind::File, 4097));
+    }
+
+    #[test]
+    fn stat_of_deleted_name_is_not_found() {
+        let mut fs = VfsStore::new();
+        create(&mut fs, OWNER, "a.txt");
+        fs.delete("a.txt").unwrap();
+        assert_eq!(fs.stat("a.txt"), Err(VfsError::NotFound));
+    }
+
+    #[test]
+    fn stat_invalid_name_is_invalid_path() {
+        let mut fs = VfsStore::new();
+        assert_eq!(fs.stat(""), Err(VfsError::InvalidPath));
+        assert_eq!(fs.stat("bad/name"), Err(VfsError::InvalidPath));
+        assert_eq!(fs.stat("."), Err(VfsError::InvalidPath));
+        assert_eq!(fs.stat(".."), Err(VfsError::InvalidPath));
+    }
+
+    #[test]
+    fn stat_succeeds_when_all_engine_slots_are_open() {
+        let mut fs = VfsStore::new();
+        create(&mut fs, OWNER, "probe.txt");
+        for index in 0..63u32 {
+            create(&mut fs, OWNER, &format!("s{index}"));
+        }
+        assert_eq!(
+            fs.open(OWNER, wire::MODE_CREATE, "overflow"),
+            Err(VfsError::ServerResource)
+        );
+        assert_eq!(fs.stat("probe.txt").unwrap(), (EntityKind::File, 0));
+    }
+
+    #[test]
+    fn rom_file_stat_reports_exact_length() {
+        let mut fs = VfsStore::new();
+        fs.attach_rom(&fabricated_rom()).unwrap();
+        assert_eq!(fs.stat("alpha.bin").unwrap(), (EntityKind::File, 5));
+        assert_eq!(fs.stat("beta.bin").unwrap(), (EntityKind::File, 12));
     }
 
     #[test]
