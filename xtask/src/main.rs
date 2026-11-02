@@ -183,9 +183,50 @@ fn check_isa_command(spec: &ArchSpec) {
     }
 }
 
+fn check_isa_stages_command(stages_dir: &std::path::Path) {
+    match check_isa::run_check_stages(stages_dir) {
+        Err(message) => {
+            eprintln!("error: {message}");
+            process::exit(1);
+        }
+        Ok(failures) => {
+            if failures.is_empty() {
+                println!(
+                    "==> check-isa --stages: {} bootloader stages under {} are 486-clean",
+                    check_isa::STAGE_FILES.len(),
+                    stages_dir.display()
+                );
+                return;
+            }
+            eprintln!("post-486 mnemonics found in bootloader stages (the 0.97-67 floor is the last clean build):");
+            for failure in &failures {
+                eprintln!("  {failure}");
+            }
+            process::exit(1);
+        }
+    }
+}
+
+fn parse_stages_option(extras: &[String]) -> Result<Option<std::path::PathBuf>, String> {
+    let mut iter = extras.iter();
+    match iter.next() {
+        None => return Ok(None),
+        Some(token) if token == "--stages" => {}
+        Some(token) => return Err(format!("unknown flag: {token}")),
+    }
+    let dir = match iter.next() {
+        None => workspace_root().join("target").join("grub-legacy").join("stages"),
+        Some(path) => std::path::PathBuf::from(path),
+    };
+    if let Some(extra) = iter.next() {
+        return Err(format!("unknown flag: {extra}"));
+    }
+    Ok(Some(dir))
+}
+
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 | test [--skip-integration]>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | test [--skip-integration]>"
     );
 }
 
@@ -267,8 +308,15 @@ fn main() {
         }
         "check-isa" => {
             let (spec, rest) = split_arch(extras);
-            require_no_extras(rest);
-            check_isa_command(spec);
+            match parse_stages_option(rest) {
+                Ok(Some(dir)) => check_isa_stages_command(&dir),
+                Ok(None) => check_isa_command(spec),
+                Err(message) => {
+                    eprintln!("{message}");
+                    usage();
+                    process::exit(2);
+                }
+            }
         }
         "test" => {
             let skip_integration = parse_optional_flag(extras, "--skip-integration");
