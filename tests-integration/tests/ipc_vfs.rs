@@ -12,12 +12,15 @@ const DONE_LINE: &str = "vfs done";
 const ERROR_PREFIX: &str = "vfs error:";
 const FORBIDDEN_STRINGS: [&str; 2] = ["fail", "Panic"];
 
-const EXPECTED_OK: [&str; 19] = [
+const EXPECTED_OK: [&str; 24] = [
+    "vfs ok: stat ghost denied",
+    "vfs ok: stat randomd rom intact",
     "vfs ok: create notes.txt",
     "vfs ok: write 4096 at 0",
     "vfs ok: write 1024 at 8192",
     "vfs ok: read 9216 hole zeroed",
     "vfs ok: eof at 9216",
+    "vfs ok: stat notes.txt 9216",
     "vfs ok: zero write accepted",
     "vfs ok: write denied mode 0",
     "vfs ok: reopen kept 9216",
@@ -26,9 +29,11 @@ const EXPECTED_OK: [&str; 19] = [
     "vfs ok: open missing denied",
     "vfs ok: chunked write 131072",
     "vfs ok: chunked read 131072 verified",
+    "vfs ok: stat blob.bin 131072",
     "vfs ok: list got blob.bin notes.txt",
     "vfs ok: delete notes.txt",
     "vfs ok: delete twice denied",
+    "vfs ok: stat after delete denied",
     "vfs ok: list got blob.bin",
     "vfs ok: delete blob.bin",
     "vfs ok: list empty",

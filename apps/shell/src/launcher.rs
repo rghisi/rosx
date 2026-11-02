@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use system::args::{MAX_ARGUMENT_BYTES, MAX_ARGUMENT_COUNT};
 use usrlib::println;
 use usrlib::syscall::Syscall;
-use vfs_protocol::client::{ClientError, Vfs, VfsFile};
+use vfs_protocol::client::{ClientError, EntityKind, Vfs, VfsFile};
 use vfs_protocol::wire::VfsError;
 
 const ELF_MAGIC: &[u8; 4] = b"\x7fELF";
@@ -17,6 +17,24 @@ pub fn run(cmd: &Command) {
             return;
         }
     };
+    let entity = match vfs.stat(cmd.name.as_str()) {
+        Ok(entity) => entity,
+        Err(ClientError::Vfs(VfsError::NotFound)) => {
+            println!("Unknown command: {}", cmd.name);
+            vfs.disconnect();
+            return;
+        }
+        Err(error) => {
+            println!("Cannot stat {}: {:?}", cmd.name, error);
+            vfs.disconnect();
+            return;
+        }
+    };
+    if entity.kind == EntityKind::Directory {
+        println!("Not an executable: {}", cmd.name);
+        vfs.disconnect();
+        return;
+    }
     let mut file = match vfs.open(cmd.name.as_str(), 0) {
         Ok(file) => file,
         Err(ClientError::Vfs(VfsError::NotFound)) => {
@@ -30,7 +48,7 @@ pub fn run(cmd: &Command) {
             return;
         }
     };
-    let image = read_whole_file(&mut file, &cmd.name);
+    let image = read_whole_file(&mut file, &cmd.name, entity.size);
     let _ = file.close();
     vfs.disconnect();
     let Some(image) = image else { return };
@@ -41,12 +59,16 @@ pub fn run(cmd: &Command) {
     launch(image, cmd);
 }
 
-fn read_whole_file(file: &mut VfsFile, name: &str) -> Option<Vec<u8>> {
+fn read_whole_file(file: &mut VfsFile, name: &str, size: u64) -> Option<Vec<u8>> {
     let mut image: Vec<u8> = Vec::new();
     let mut staging = [0u8; READ_CHUNK_BYTES];
-    loop {
-        match file.read(&mut staging) {
-            Ok(0) => return Some(image),
+    while (image.len() as u64) < size {
+        let wanted = (size - image.len() as u64).min(READ_CHUNK_BYTES as u64) as usize;
+        match file.read(&mut staging[..wanted]) {
+            Ok(0) => {
+                println!("Cannot read {}: truncated image", name);
+                return None;
+            }
             Ok(count) => image.extend_from_slice(&staging[..count]),
             Err(error) => {
                 println!("Cannot read {}: {:?}", name, error);
@@ -54,6 +76,7 @@ fn read_whole_file(file: &mut VfsFile, name: &str) -> Option<Vec<u8>> {
             }
         }
     }
+    Some(image)
 }
 
 fn launch(image: Vec<u8>, cmd: &Command) {
