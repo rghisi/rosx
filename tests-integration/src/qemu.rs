@@ -2,7 +2,7 @@ use std::env;
 use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -43,7 +43,6 @@ impl QemuSession {
         let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
         let kernel_elf = kernel_build::kernel_elf();
         let arch = Arch::current();
-        let monitor_socket = temp_dir.path().join("monitor.sock");
 
         let medium = x86_runner::prepare_run_medium(&kernel_elf, arch.boot())
             .unwrap_or_else(|err| panic!(
@@ -76,6 +75,19 @@ impl QemuSession {
                     scratch.display()
                 ));
         }
+        Self::spawn_capturing(command, temp_dir)
+    }
+
+    pub fn spawn_cdrom(cdrom: &Path) -> QemuSession {
+        let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
+        let medium = x86_runner::BootMedium::CdImage(cdrom.to_path_buf());
+        let command =
+            x86_runner::qemu_command(Arch::current().boot(), &medium, x86_runner::LaunchMode::Headless);
+        Self::spawn_capturing(command, temp_dir)
+    }
+
+    fn spawn_capturing(mut command: Command, temp_dir: tempfile::TempDir) -> QemuSession {
+        let monitor_socket = temp_dir.path().join("monitor.sock");
         let mut child = command
             .arg("-monitor")
             .arg(format!(
@@ -93,7 +105,7 @@ impl QemuSession {
             .unwrap_or_else(|err| {
                 panic!(
                     "failed to spawn {}; install QEMU and ensure it is on the PATH: {err}",
-                    arch.boot().qemu_binary()
+                    Arch::current().boot().qemu_binary()
                 )
             });
 

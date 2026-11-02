@@ -36,6 +36,7 @@ impl Arch {
 pub enum BootMedium {
     DiskImage(PathBuf),
     MultibootKernel(PathBuf),
+    CdImage(PathBuf),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -175,6 +176,10 @@ pub fn qemu_command(arch: Arch, medium: &BootMedium, mode: LaunchMode) -> Comman
         BootMedium::MultibootKernel(kernel) => {
             command.arg("-kernel").arg(kernel);
         }
+        BootMedium::CdImage(iso) => {
+            command.arg("-cdrom").arg(iso);
+            command.arg("-boot").arg("order=d");
+        }
     }
     command.arg("-debugcon").arg("stdio").arg("-no-reboot");
     match mode {
@@ -267,6 +272,17 @@ mod tests {
         assert!(contains(&args, "-no-shutdown"));
         assert!(!contains(&args, "cpu_reset"));
         assert!(!contains(&args, "-display"));
+    }
+
+    #[test]
+    fn cd_image_medium_boots_from_the_drive() {
+        let medium = BootMedium::CdImage(PathBuf::from("/tmp/rosx-grub.iso"));
+        let command = qemu_command(Arch::X86_32, &medium, LaunchMode::Headless);
+        assert_eq!(command.get_program(), "qemu-system-i386");
+        let args = args_of(&command);
+        assert!(contains(&args, "-cdrom"));
+        let boot_at = args.iter().position(|arg| arg == "-boot").expect("missing -boot");
+        assert_eq!(args[boot_at + 1], "order=d");
     }
 
     #[test]

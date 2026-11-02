@@ -70,6 +70,9 @@ fn prepare_medium(debug: bool, spec: &ArchSpec) -> BootMedium {
         BootMedium::MultibootKernel(elf) => {
             println!("==> bootable multiboot artifact: {}", elf.display())
         }
+        BootMedium::CdImage(_) => {
+            unreachable!("prepare_run_medium only yields a disk image or the multiboot kernel")
+        }
     }
     medium
 }
