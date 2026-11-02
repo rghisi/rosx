@@ -74,16 +74,16 @@ cargo run -p rosx              # run.sh -> arch/x86-runner -> BiosBoot disk imag
 cargo xtask build x86_32       # ELF apps + ROM image + kernel (Multiboot v1, boot.S)
 cargo xtask run x86_32         # boot QEMU (-kernel, qemu-system-i386) to the shell prompt
 cargo xtask image x86_32       # GRUB bootable ISO (needs grub-mkrescue, xorriso, mtools)
-cargo build -p rosx-x86_32     # kernel only (from arch/x86_32/ — its .cargo/config.toml supplies the rosx-i686 custom target)
+cargo build -p rosx-x86_32     # kernel only (from arch/x86_32/ — its .cargo/config.toml supplies the rosx-i486 custom target)
 ```
-- The kernel embeds the shell ELF and the ROM image that `cargo xtask build x86_32` produces under `target/rosx-i686-user/release/`; `arch/x86_32/build.rs` asserts both are present before compiling.
+- The kernel embeds the shell ELF and the ROM image that `cargo xtask build x86_32` produces under `target/rosx-i486-user/release/`; `arch/x86_32/build.rs` asserts both are present before compiling.
 - The boot roster matches x86_64 (randomd, echo, bulk, pong, vfsd, inputd, ps2d, atad with ATA port grants, then the shell), so programs run by name from the prompt and the disk stack works there.
 - Integration tests run on x86_32 with `ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1`; the harness boots the kernel ELF directly and synthesizes the two-drive IDE topology for the ata suites. `ipc_vfs` and `ata_env_spike` stay x86_64-only; `kstats_mem` runs unguarded on both arches (the wake-path race is fixed — `plans/x86_32-wake-race.md`).
 - 32-bit targets use a 16 KiB task stack (`STACK_WORDS` in `kernel/src/task_stack.rs`): the deepest debug syscall chain with a nested IRQ frame overflows the 8 KiB x86_64 stack and corrupts adjacent kernel heap blocks.
 
 ### Real hardware (x86_32)
 
-Boot recipe: copy `target/rosx-i686/release/rosx-x86_32` (a Multiboot v1 ELF) onto an IDE disk or CF adapter carrying GRUB Legacy 0.97 or GRUB 2, and chain to it — GRUB Legacy: `kernel /boot/rosx` then `boot`; GRUB 2: `multiboot /boot/rosx` then `boot`. Every QEMU x86_32 session already runs `-cpu 486`, and `cargo xtask check-isa x86_32` audits the shipped ELFs; silicon still needs its own evidence. **Hardware verification checklist — every item open until executed on a board; no item may be marked green without hardware evidence:**
+Boot recipe: copy `target/rosx-i486/release/rosx-x86_32` (a Multiboot v1 ELF) onto an IDE disk or CF adapter carrying GRUB Legacy 0.97 or GRUB 2, and chain to it — GRUB Legacy: `kernel /boot/rosx` then `boot`; GRUB 2: `multiboot /boot/rosx` then `boot`. Every QEMU x86_32 session already runs `-cpu 486`, and `cargo xtask check-isa x86_32` audits the shipped ELFs; silicon still needs its own evidence. **Hardware verification checklist — every item open until executed on a board; no item may be marked green without hardware evidence:**
 
 1. Memory detection through a v1 bootloader: `[MEMORY]` banner appears after GRUB; on a GRUB build that lacks the mmap buffer, the `mem_lower`/`mem_upper` fallback must still yield a usable heap (`[MEMORY] Total:` on 4–64 MB expected).
 2. `PAUSE`-as-NOP: no `#UD` at first `Once` contention during early boot.
@@ -152,7 +152,7 @@ cargo xtask test [--skip-integration] # Run unit tests; --skip-integration exclu
 
 The x86_32 port runs on 486-class CPUs and must stay that way — the invariant, not the bug, is the default:
 
-- **The pinned feature strings are the floor.** `arch/x86_32/rosx-i686.json` and `rosx-i686-user.json` compile against `-mmx,-sse,-sse2,-cmov,-fxsr,-cx8`; never widen them. `-cx8` pins `cmpxchg8b` out to keep the 486SX door open. Note: `RUSTFLAGS` in the environment *replaces* the `[target.rosx-*-user]` rustflags in `.cargo/config.toml` (which carry the `linker.ld` script) — never build user ELFs with an exported `RUSTFLAGS`.
+- **The pinned feature strings are the floor.** `arch/x86_32/rosx-i486.json` and `rosx-i486-user.json` compile against `-mmx,-sse,-sse2,-cmov,-fxsr,-cx8`; never widen them. `-cx8` pins `cmpxchg8b` out to keep the 486SX door open. Note: `RUSTFLAGS` in the environment *replaces* the `[target.rosx-*-user]` rustflags in `.cargo/config.toml` (which carry the `linker.ld` script) — never build user ELFs with an exported `RUSTFLAGS`.
 - **No floating point on any 32-bit target** — kernel, usrlib, or apps. `swap_context` saves GPRs only, so any FP state would silently corrupt across task switches, and a 486SX has no FPU at all.
 - **No `cpuid`-probed features** — `cpuid` itself is 586-era; the port runs flat protected mode with 386-era mechanism only (no paging, no CR4 bits).
 - **Keep atomics ≤ 32 bits** on 32-bit paths; an `AtomicU64` there needs `cmpxchg8b`.
@@ -229,7 +229,7 @@ These principles are the regression guard: the very inversion this rework remove
 
 ### Build Issues?
 - Toolchain: `rust-toolchain.toml` pins **nightly** with the `rust-src` component (`rustup component add rust-src`).
-- Custom targets: `arch/x86_64/rosx.json` (+ `rosx-user.json`), `arch/x86_32/rosx-i686.json` (+ `rosx-i686-user.json`).
+- Custom targets: `arch/x86_64/rosx.json` (+ `rosx-user.json`), `arch/x86_32/rosx-i486.json` (+ `rosx-i486-user.json`).
 - No bootimage — the disk image comes from `arch/x86-runner` (the `bootloader` crate). To build it standalone: `cargo run --manifest-path arch/x86-runner/Cargo.toml -- <kernel-binary> x86_64 --no-run`.
 
 ---

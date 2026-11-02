@@ -45,14 +45,14 @@ impl Arch {
     pub fn kernel_target_spec(self) -> &'static str {
         match self {
             Arch::X86_64 => "arch/x86_64/rosx.json",
-            Arch::X86_32 => "arch/x86_32/rosx-i686.json",
+            Arch::X86_32 => "arch/x86_32/rosx-i486.json",
         }
     }
 
     pub fn kernel_dir_name(self) -> &'static str {
         match self {
             Arch::X86_64 => "rosx",
-            Arch::X86_32 => "rosx-i686",
+            Arch::X86_32 => "rosx-i486",
         }
     }
 

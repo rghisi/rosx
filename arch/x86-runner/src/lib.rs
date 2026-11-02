@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn x86_32_runs_from_the_multiboot_kernel_itself() {
-        let kernel = Path::new("/build/target/rosx-i686/release/rosx-x86_32");
+        let kernel = Path::new("/build/target/rosx-i486/release/rosx-x86_32");
         match run_medium(kernel, Arch::X86_32) {
             BootMedium::MultibootKernel(runs) => assert_eq!(runs, kernel),
             other => panic!("expected the multiboot kernel, got {other:?}"),

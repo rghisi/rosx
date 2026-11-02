@@ -66,8 +66,8 @@ jobs:
         with:
           name: rosx-x86_32
           path: |
-            target/rosx-i686/release/rosx-x86_32
-            target/rosx-i686-user/rom.img
+            target/rosx-i486/release/rosx-x86_32
+            target/rosx-i486-user/rom.img
           if-no-files-found: error
           retention-days: 1
 
@@ -75,6 +75,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rosx-x86_32-iso
-          path: target/rosx-i686/release/rosx-x86_32.img
+          path: target/rosx-i486/release/rosx-x86_32.img
           if-no-files-found: error
           retention-days: 1
