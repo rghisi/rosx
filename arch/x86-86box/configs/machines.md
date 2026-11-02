@@ -5,7 +5,9 @@ Selection criteria (plan §2.4), applied before spending any bring-up time:
 1. accepts `cpu_family = i486sx` (the no-FPU floor — the harshest CPU the
    port must run on),
 2. on-board IDE (the boot media are HDD/IDE),
-3. RAM covering the 8 MB era board and beyond,
+3. RAM covering the era boards with headroom for the live VFS: the
+   fixed 8 MiB rxfs volume proved hostile to an 8 MB board (5 MB heap),
+   so the baseline ships 32 MB,
 4. BIOS of the SX era,
 5. a primed CMOS NVR shipped by 86box-mcp (tiebreaker: first boot needs no
    interactive SETUP session).
@@ -14,7 +16,7 @@ Selection criteria (plan §2.4), applied before spending any bring-up time:
 
 | id | machine | BIOS | CPU | FPU | RAM | IDE | CD boot | primed NVR | status |
 |---|---|---|---|---|---|---|---|---|---|
-| `486sp3c` | [SiS 496] ASUS PVI-486SP3 | Award PCI, 06/25/96 | i486SX-25 | none | 8 MB (7168K extended) | yes | **no** — Boot Sequence C,A only, no El Torito | yes | **verified baseline**: GRUB Legacy 0.97-67 HDD boots RosX to `rose>`; GRUB floppy chain boots; `fpu_registers` reports `no FPU` while the kernel runs FP-free |
+| `486sp3c` | [SiS 496] ASUS PVI-486SP3 | Award PCI, 06/25/96 | i486SX-25 | none | 32 MB (template) | yes | **no** — Boot Sequence C,A only, no El Torito | yes | **verified baseline**: GRUB Legacy 0.97-67 HDD boots RosX to `rose>`; GRUB floppy chain boots; `fpu_registers` reports `no FPU` while the kernel runs FP-free |
 
 BIOS-era findings on `486sp3c` (settled by evidence, plan §2.4):
 
