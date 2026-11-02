@@ -56,6 +56,9 @@ fn is_486_safe(bytes: &str, mnemonic: &str) -> bool {
     if mnemonic == "tzcnt" {
         return bytes.split_whitespace().next() == Some("f3");
     }
+    if mnemonic == "ud2" {
+        return matches!(bytes, "0f 0b");
+    }
     if (mnemonic.len() == 2 || mnemonic.len() == 3) && mnemonic.starts_with('j') {
         return true;
     }
@@ -294,6 +297,21 @@ mod tests {
         let found = audit(&[objdump_line("0f bc c9", "tzcnt  %ecx,%ecx")]);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].mnemonic, "tzcnt");
+    }
+
+    #[test]
+    fn reserved_opcode_trap_encoding_is_486_safe() {
+        let found = audit(&[objdump_line("0f 0b", "ud2")]);
+        assert_eq!(found, vec![]);
+    }
+
+    #[test]
+    fn ud2_with_any_extra_byte_is_a_violation() {
+        for bytes in ["f3 0f 0b", "66 0f 0b", "0f 0b 0f 0b"] {
+            let found = audit(&[objdump_line(bytes, "ud2")]);
+            assert_eq!(found.len(), 1, "{bytes} must be rejected");
+            assert_eq!(found[0].mnemonic, "ud2");
+        }
     }
 
     #[test]
