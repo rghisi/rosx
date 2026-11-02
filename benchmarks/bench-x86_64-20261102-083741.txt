@@ -1,0 +1,57 @@
+# rosx-bench-record v3
+# recorded_at_utc=2026-11-02T08:37:41Z
+# host=dev
+# host_cpus=4
+# cpu_model=Intel(R) Core(TM) i5-8500 CPU @ 3.00GHz
+# mem_total_kb=7503864
+# virtualization=kvm
+# kvm_available=yes
+# kernel_profile=dev
+# qemu=QEMU emulator version 10.2.1 (Debian 1:10.2.1+ds-1ubuntu3.2)
+# git_commit=23e76f7
+alloc size=16 align=8 ops_per_sec=51200
+alloc size=24 align=8 ops_per_sec=51200
+alloc size=32 align=8 ops_per_sec=50196
+alloc size=64 align=8 ops_per_sec=51200
+alloc size=128 align=8 ops_per_sec=51200
+alloc size=256 align=8 ops_per_sec=50196
+alloc size=512 align=8 ops_per_sec=51200
+alloc size=1000 align=8 ops_per_sec=50196
+alloc size=1024 align=8 ops_per_sec=50196
+alloc size=2048 align=8 ops_per_sec=50196
+alloc size=4096 align=8 ops_per_sec=49230
+alloc size=4097 align=8 ops_per_sec=49230
+alloc size=8192 align=8 ops_per_sec=49230
+alloc size=16384 align=8 ops_per_sec=49648
+alloc size=32768 align=8 ops_per_sec=49230
+alloc size=65536 align=8 ops_per_sec=49230
+alloc size=131072 align=8 ops_per_sec=49648
+alloc size=262144 align=8 ops_per_sec=48301
+alloc size=524288 align=8 ops_per_sec=48301
+alloc size=1048576 align=8 ops_per_sec=47407
+alloc size=2097152 align=8 ops_per_sec=47407
+alloc size=4194304 align=8 ops_per_sec=45714
+alloc_cached size=16 align=8 ops_per_sec=5825422
+alloc_cached size=24 align=8 ops_per_sec=5851428
+alloc_cached size=32 align=8 ops_per_sec=5825422
+alloc_cached size=64 align=8 ops_per_sec=5825422
+alloc_cached size=128 align=8 ops_per_sec=5851428
+alloc_cached size=256 align=8 ops_per_sec=5825422
+alloc_cached size=512 align=8 ops_per_sec=5825422
+alloc_cached size=1000 align=8 ops_per_sec=5851428
+alloc_cached size=1024 align=8 ops_per_sec=5825422
+alloc_cached size=2048 align=8 ops_per_sec=5851428
+alloc_cached size=4096 align=8 ops_per_sec=5851428
+alloc_cached size=4097 align=8 ops_per_sec=48188
+alloc_cached size=8192 align=8 ops_per_sec=48301
+alloc_cached size=16384 align=8 ops_per_sec=47407
+alloc_cached size=32768 align=8 ops_per_sec=46811
+alloc_cached size=65536 align=8 ops_per_sec=47407
+alloc_cached size=131072 align=8 ops_per_sec=46545
+alloc_cached size=262144 align=8 ops_per_sec=46811
+alloc_cached size=524288 align=8 ops_per_sec=46545
+alloc_cached size=1048576 align=8 ops_per_sec=46545
+alloc_cached size=2097152 align=8 ops_per_sec=46545
+alloc_cached size=4194304 align=8 ops_per_sec=45714
+alloc_churn shape=mixed align=8 band=256-1024 ops_per_sec=6168094
+yield shape=voluntary ops_per_sec=5714
