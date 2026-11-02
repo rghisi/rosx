@@ -7,7 +7,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use usrlib::println;
 use usrlib::syscall::Syscall;
-use vfs_protocol::client::{ClientError, Vfs, MODE_CREATE, MODE_WRITE};
+use vfs_protocol::client::{ClientError, EntityKind, Vfs, MODE_CREATE, MODE_WRITE};
 use vfs_protocol::wire::VfsError;
 
 const NOTES_BYTES: usize = 9216;
@@ -28,6 +28,18 @@ fn failed(check: &str) -> bool {
 }
 
 fn run(vfs: &Vfs) -> bool {
+    match vfs.stat("notes.txt") {
+        Err(ClientError::Vfs(VfsError::NotFound)) => {}
+        _ => return failed("stat ghost denied"),
+    }
+    println!("vfs ok: stat ghost denied");
+
+    match vfs.stat("randomd") {
+        Ok(entity) if entity.kind == EntityKind::File && entity.size > 0 => {}
+        _ => return failed("stat randomd rom intact"),
+    }
+    println!("vfs ok: stat randomd rom intact");
+
     let Ok(mut notes) = vfs.open("notes.txt", MODE_WRITE | MODE_CREATE) else {
         return failed("create notes.txt");
     };
@@ -89,6 +101,12 @@ fn run(vfs: &Vfs) -> bool {
     if notes.close().is_err() {
         return failed("eof at 9216");
     }
+
+    match vfs.stat("notes.txt") {
+        Ok(entity) if entity.kind == EntityKind::File && entity.size == NOTES_BYTES as u64 => {}
+        _ => return failed("stat notes.txt 9216"),
+    }
+    println!("vfs ok: stat notes.txt 9216");
 
     let Ok(mut notes) = vfs.open("notes.txt", MODE_WRITE) else {
         return failed("zero write accepted");
@@ -177,6 +195,12 @@ fn run(vfs: &Vfs) -> bool {
         return failed("chunked read 131072 verified");
     }
 
+    match vfs.stat("blob.bin") {
+        Ok(entity) if entity.kind == EntityKind::File && entity.size == BLOB_BYTES as u64 => {}
+        _ => return failed("stat blob.bin 131072"),
+    }
+    println!("vfs ok: stat blob.bin 131072");
+
     match vfs.list() {
         Ok(names) if listed(&names, "blob.bin") && listed(&names, "notes.txt") => {
             println!("  list: {}", names.iter().fold(String::new(), |acc, x| acc + &x.to_string() + ", "));
@@ -195,6 +219,12 @@ fn run(vfs: &Vfs) -> bool {
         _ => return failed("delete twice denied"),
     }
     println!("vfs ok: delete twice denied");
+
+    match vfs.stat("notes.txt") {
+        Err(ClientError::Vfs(VfsError::NotFound)) => {}
+        _ => return failed("stat after delete denied"),
+    }
+    println!("vfs ok: stat after delete denied");
 
     match vfs.list() {
         Ok(names) if listed(&names, "blob.bin") && !listed(&names, "notes.txt") => {
