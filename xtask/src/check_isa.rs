@@ -201,7 +201,7 @@ pub fn run_check_stages(stages_dir: &Path) -> Result<Vec<String>, String> {
     Ok(failures)
 }
 
-fn on_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .map(|dir| dir.join(name))

@@ -121,6 +121,90 @@ fn create_run_disk(spec: &ArchSpec) -> PathBuf {
     path
 }
 
+fn era_script(name: &str) -> PathBuf {
+    workspace_root()
+        .join("arch")
+        .join("x86-86box")
+        .join("scripts")
+        .join(name)
+}
+
+fn docker_reachable() -> bool {
+    let direct = Command::new("docker")
+        .args(["info", "-f", "{{.ServerVersion}}"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if direct {
+        return true;
+    }
+    Command::new("sg")
+        .args(["docker", "-c", "docker info -f {{.ServerVersion}}"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn require_era_tools() {
+    let mut missing: Vec<String> = [
+        ("sfdisk", "util-linux"),
+        ("mformat", "mtools"),
+        ("mmd", "mtools"),
+        ("mcopy", "mtools"),
+        ("xorriso", "xorriso"),
+        ("curl", "curl"),
+        ("dpkg-deb", "dpkg"),
+    ]
+    .into_iter()
+    .filter(|(tool, _)| check_isa::on_path(tool).is_none())
+    .map(|(tool, package)| format!("{tool} ({package})"))
+    .collect();
+    if !docker_reachable() {
+        missing.push("docker, nor reachable via `sg docker` (grub-shell container)".to_string());
+    }
+    if !missing.is_empty() {
+        eprintln!("era-image needs host tools that are missing:");
+        for tool in &missing {
+            eprintln!("  {tool}");
+        }
+        process::exit(1);
+    }
+}
+
+fn create_era_images(debug: bool, spec: &ArchSpec) {
+    let profile = if debug { "debug" } else { "release" };
+    let kernel = spec.kernel_elf(profile);
+    let stages = workspace_root().join("target").join("grub-legacy").join("stages");
+    let iso = kernel.with_file_name(format!("{}-legacy.iso", spec.kernel_binary));
+    let hdd = kernel.with_file_name(format!("{}-legacy-hdd.img", spec.kernel_binary));
+
+    let mut fetch = Command::new("sh");
+    fetch.arg(era_script("fetch-grub-legacy.sh"));
+    run(&mut fetch, "fetch the pinned 486-clean GRUB Legacy stages");
+
+    let mut iso_cmd = Command::new("sh");
+    iso_cmd
+        .arg(era_script("build-legacy-iso.sh"))
+        .arg(&kernel)
+        .arg(&stages)
+        .arg(&iso);
+    run(&mut iso_cmd, "build the GRUB Legacy El Torito era ISO");
+
+    let mut hdd_cmd = Command::new("sh");
+    hdd_cmd
+        .arg(era_script("build-legacy-hdd.sh"))
+        .arg(&kernel)
+        .arg(&stages)
+        .arg(&hdd);
+    run(&mut hdd_cmd, "build the GRUB Legacy FAT16 era HDD image");
+
+    println!("==> era artifacts: {} and {}", iso.display(), hdd.display());
+}
+
 fn create_flashable_image(debug: bool, spec: &ArchSpec) {
     let kernel = spec.kernel_elf(if debug { "debug" } else { "release" });
     match spec.boot {
@@ -226,7 +310,7 @@ fn parse_stages_option(extras: &[String]) -> Result<Option<std::path::PathBuf>, 
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | test [--skip-integration]>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | test [--skip-integration]>"
     );
 }
 
@@ -300,6 +384,19 @@ fn main() {
             pack_rom(spec);
             build_kernel(debug, spec);
             create_flashable_image(debug, spec);
+        }
+        "era-image" => {
+            let (spec, rest) = split_arch(extras);
+            if spec.boot != x86_runner::Arch::X86_32 {
+                eprintln!("era images are the x86_32 GRUB Legacy boot media; {} boots differently", spec.name);
+                process::exit(2);
+            }
+            let debug = parse_optional_flag(&rest, "--debug");
+            require_era_tools();
+            build_apps(spec);
+            pack_rom(spec);
+            build_kernel(debug, spec);
+            create_era_images(debug, spec);
         }
         "rom" => {
             let (spec, rest) = split_arch(extras);
