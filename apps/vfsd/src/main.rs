@@ -9,7 +9,7 @@ use usrlib::handle::{UserConnectionHandle, UserDataHandle};
 use usrlib::println;
 use usrlib::syscall::Syscall;
 use vfs_protocol::wire::{self, Reply, Request, VfsError};
-use vfsd::fs::RamFs;
+use vfsd::fs::VfsStore;
 
 const INCOMING_READ_CHUNK_BYTES: usize = 4096;
 
@@ -48,14 +48,14 @@ fn read_rom_image() -> Vec<u8> {
 }
 
 struct VfsServer {
-    fs: RamFs,
+    fs: VfsStore,
     held: Vec<(u32, UserDataHandle)>,
 }
 
 impl VfsServer {
     fn new() -> VfsServer {
         VfsServer {
-            fs: RamFs::new(),
+            fs: VfsStore::new(),
             held: Vec::new(),
         }
     }
@@ -65,7 +65,7 @@ impl VfsServer {
         if image.is_empty() {
             return;
         }
-        if let Err(err) = self.fs.attach_rom(image) {
+        if let Err(err) = self.fs.attach_rom(&image) {
             panic!("VFS rom mount error: {err:?}");
         }
     }

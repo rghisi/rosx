@@ -15,6 +15,7 @@ bench = false
 test = false
 
 [dependencies]
+rxfs = { path = "../../fs/rxfs" }
 system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }
 vfs-protocol = { path = "../../protocol/vfs" }

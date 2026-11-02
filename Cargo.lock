@@ -747,6 +747,7 @@ dependencies = [
 name = "vfsd"
 version = "0.1.0"
 dependencies = [
+ "rxfs",
  "system",
  "usrlib",
  "vfs-protocol",
