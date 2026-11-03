@@ -1,6 +1,7 @@
 use crate::collections::arena::GenerationalArena;
 use crate::task::TaskState::Terminated;
 use crate::task::{GroupId, SharedTask, Task, TaskHandle, TaskState, YieldReason};
+use crate::task_stack::{StackObservation, STACK_WORDS};
 use core::ptr::null_mut;
 use crate::handle::FutureHandle;
 
@@ -86,6 +87,27 @@ impl TaskManager {
         match self.tasks.borrow_mut(handle.into()) {
             Ok(task) => task.stack_pointer_mut(),
             Err(_) => null_mut(),
+        }
+    }
+
+    pub(crate) fn observe_task_stack(&mut self, handle: TaskHandle) {
+        if let Ok(task) = self.tasks.borrow_mut(handle.into()) {
+            match task.observe_stack() {
+                StackObservation::WithinBudget => {}
+                StackObservation::SpillIntoGuard => panic!(
+                    "stack overflow: task '{}' suspended inside its stack guard (sp 0x{:x}, stack base 0x{:x}, {} words)",
+                    task.name(),
+                    task.stack_pointer(),
+                    task.stack_base(),
+                    STACK_WORDS
+                ),
+                StackObservation::Exhausted => panic!(
+                    "stack overflow: task '{}' consumed all {} stack words (stack base 0x{:x})",
+                    task.name(),
+                    STACK_WORDS,
+                    task.stack_base()
+                ),
+            }
         }
     }
 
@@ -181,5 +203,22 @@ mod tests {
         let handle = manager.add_task(Task::new("gone", 0, 0)).unwrap();
         manager.remove_task(handle);
         assert_eq!(manager.get_group(handle), None);
+    }
+
+    #[test]
+    fn observe_task_stack_accepts_shallow_task() {
+        let mut manager = TaskManager::new();
+        let handle = manager.add_task(Task::new("shallow", 0, 0)).unwrap();
+        manager.observe_task_stack(handle);
+    }
+
+    #[test]
+    #[should_panic(expected = "stack overflow")]
+    fn observe_task_stack_panics_when_saved_sp_sits_in_the_guard() {
+        let mut manager = TaskManager::new();
+        let handle = manager.add_task(Task::new("deep", 0, 0)).unwrap();
+        let base = manager.borrow_task_mut(handle).unwrap().stack_base();
+        manager.borrow_task_mut(handle).unwrap().set_stack_pointer(base + 8);
+        manager.observe_task_stack(handle);
     }
 }

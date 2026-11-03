@@ -85,7 +85,7 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             if arg1 == 0 { return u64::MAX as usize; }
             let elf_bytes: &[u8] = unsafe { *Box::from_raw(arg1 as *mut &[u8]) };
             if arg2 == 0 && arg3 == 0 {
-                return match kernel().schedule(new_elf_task(elf_bytes)).ok() {
+                return match kernel().schedule(new_elf_task("ELF", elf_bytes)).ok() {
                     Some(handle) => handle.pack(),
                     None => u64::MAX as usize,
                 };
@@ -94,7 +94,7 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             if arg2 == 0 || arg3 == 0 { return ErrorCode::ElfArgumentBlobMalformed.to_reg(); }
             let blob = unsafe { core::slice::from_raw_parts(arg2 as *const u8, arg3) };
             if let Err(code) = validate_arguments_blob(blob) { return code.to_reg(); }
-            match kernel().schedule(new_elf_task_with_arguments(elf_bytes, Vec::from(blob))).ok() {
+            match kernel().schedule(new_elf_task_with_arguments("ELF", elf_bytes, Vec::from(blob))).ok() {
                 Some(handle) => handle.pack(),
                 None => u64::MAX as usize,
             }

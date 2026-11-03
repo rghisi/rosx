@@ -37,6 +37,10 @@ static KERNEL_CONTEXT_SWITCHER: KernelContextSwitcher = KernelContextSwitcher;
 impl ForSwitchingTaskContext for KernelContextSwitcher {
     fn switch_to_task(&self, handle: TaskHandle) -> SwitchOutcome {
         let returned = kernel().execution_state.switch_to_task(handle);
+        services()
+            .task_manager
+            .borrow_mut()
+            .observe_task_stack(returned);
         match services().task_manager.borrow().get_state(returned) {
             TaskState::Running => {
                 let reason = services().task_manager.borrow().get_yield_reason(returned).unwrap_or(YieldReason::Voluntary);
