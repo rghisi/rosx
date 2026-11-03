@@ -85,6 +85,7 @@ fn launch(medium: &BootMedium, spec: &ArchSpec) {
         cmd.arg("-drive")
             .arg(format!("if=ide,index=0,media=disk,format=raw,file={}", disk.display()));
     }
+    x86_runner::attach_persistent_hdd(&mut cmd);
     run(&mut cmd, &format!("boot {} in qemu", spec.name));
 }
 

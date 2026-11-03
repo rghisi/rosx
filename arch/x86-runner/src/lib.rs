@@ -39,6 +39,9 @@ pub enum BootMedium {
     CdImage(PathBuf),
 }
 
+pub const HDD_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
+pub const HDD_IMAGE_NAME: &str = "rosx-hdd.img";
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LaunchMode {
     Interactive,
@@ -199,6 +202,46 @@ pub fn qemu_command(arch: Arch, medium: &BootMedium, mode: LaunchMode) -> Comman
     command
 }
 
+pub fn persistent_hdd_image() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    ensure_hdd_image(&PathBuf::from(home).join("tmp"))
+}
+
+fn ensure_hdd_image(dir: &Path) -> Option<PathBuf> {
+    std::fs::create_dir_all(dir).ok()?;
+    let image = dir.join(HDD_IMAGE_NAME);
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&image)
+    {
+        Ok(file) => {
+            file.set_len(HDD_IMAGE_BYTES).ok()?;
+            Some(image)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Some(image),
+        Err(_) => None,
+    }
+}
+
+fn hdd_drive_arg(image: &Path) -> String {
+    format!(
+        "if=ide,index=1,media=disk,format=raw,file={}",
+        image.display()
+    )
+}
+
+pub fn attach_persistent_hdd(command: &mut Command) {
+    match persistent_hdd_image() {
+        Some(image) => {
+            command.arg("-drive").arg(hdd_drive_arg(&image));
+        }
+        None => {
+            eprintln!("note: persistent 50MB hard disk not attached (HOME unset or $HOME/tmp unwritable)");
+        }
+    }
+}
+
 fn bios_disk_image_path(kernel_elf: &Path) -> PathBuf {
     let stem = kernel_elf.file_stem().expect("kernel path has no file stem");
     kernel_elf.with_file_name(format!("{}-{}.img", stem.to_string_lossy(), Arch::X86_64.name()))
@@ -324,6 +367,26 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "missing required tools: xorriso, mformat (mtools)\n\n  Install: grub (grub-pc-bin), xorriso, mtools"
+        );
+    }
+
+    #[test]
+    fn hdd_image_is_created_at_exact_size_and_never_reopened_shrinking() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let image = ensure_hdd_image(dir.path()).expect("image must provision");
+        assert_eq!(image.file_name().unwrap(), HDD_IMAGE_NAME);
+        assert_eq!(std::fs::metadata(&image).unwrap().len(), HDD_IMAGE_BYTES);
+        std::fs::write(&image, b"survives").expect("write marker");
+        let again = ensure_hdd_image(dir.path()).expect("second call must return same path");
+        assert_eq!(again, image);
+        assert_eq!(std::fs::read(&image).unwrap(), b"survives");
+    }
+
+    #[test]
+    fn hdd_drive_arg_pins_the_secondary_ide_address() {
+        assert_eq!(
+            hdd_drive_arg(Path::new("/home/dev/tmp/rosx-hdd.img")),
+            "if=ide,index=1,media=disk,format=raw,file=/home/dev/tmp/rosx-hdd.img"
         );
     }
 
