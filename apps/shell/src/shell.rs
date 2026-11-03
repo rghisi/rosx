@@ -6,7 +6,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use crate::command::Command;
 use crate::launcher;
-use vfs_protocol::client::Vfs;
+use vfs_protocol::client::{ClientError, Vfs};
 
 static PROMPT: &str = "\x1B[32mrose>\x1B[m ";
 
@@ -82,12 +82,24 @@ fn clear(_cmd: &Command) {
     print!("\x1B[2J\x1B[H");
 }
 
-fn ls(_cmd: &Command) {
-    COMMANDS.iter().for_each(|(command, _)| print!("{}\t", command));
-    println!();
+fn ls(cmd: &Command) {
+    match cmd.args.first() {
+        None => {
+            COMMANDS.iter().for_each(|(command, _)| print!("{}\t", command));
+            println!();
+            list_through(|vfs| vfs.list());
+        }
+        Some(dir) => {
+            let name = dir.strip_prefix('/').unwrap_or(dir);
+            list_through(|vfs| vfs.list_dir(name));
+        }
+    }
+}
+
+fn list_through(request: impl Fn(&Vfs) -> Result<Vec<String>, ClientError>) {
     match Vfs::connect() {
         Ok(vfs) => {
-            match vfs.list() {
+            match request(&vfs) {
                 Ok(names) => {
                     if !names.is_empty() {
                         names.iter().for_each(|name| print!("{}\t", name));

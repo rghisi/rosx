@@ -39,6 +39,27 @@ impl QemuSession {
         QemuSession::spawn_with_scratch(Some(SCRATCH_DISK_BYTES))
     }
 
+    pub fn spawn_with_hdd_disk(disk: &Path) -> QemuSession {
+        let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
+        let kernel_elf = kernel_build::kernel_elf();
+        let arch = Arch::current();
+        let medium = x86_runner::prepare_run_medium(&kernel_elf, arch.boot())
+            .unwrap_or_else(|err| panic!(
+                "failed to prepare boot medium for kernel '{}': {err}",
+                kernel_elf.display()
+            ));
+        let mut command =
+            x86_runner::qemu_command(arch.boot(), &medium, x86_runner::LaunchMode::Headless);
+        attach_multiboot_master_disk(&mut command, &medium, temp_dir.path());
+        command
+            .arg("-drive")
+            .arg(format!(
+                "if=ide,index=1,media=disk,format=raw,file={}",
+                disk.display()
+            ));
+        Self::spawn_capturing(command, temp_dir)
+    }
+
     fn spawn_with_scratch(scratch_bytes: Option<usize>) -> QemuSession {
         let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
         let kernel_elf = kernel_build::kernel_elf();
@@ -51,19 +72,7 @@ impl QemuSession {
             ));
         let mut command =
             x86_runner::qemu_command(arch.boot(), &medium, x86_runner::LaunchMode::Headless);
-        if let x86_runner::BootMedium::MultibootKernel(_) = medium {
-            let master = temp_dir.path().join("primary-master-disk.img");
-            let mut image = vec![0u8; MASTER_DISK_BYTES];
-            image[MBR_SIGNATURE_OFFSET] = 0x55;
-            image[MBR_SIGNATURE_OFFSET + 1] = 0xAA;
-            std::fs::write(&master, image).expect("failed to create primary master disk image");
-            command
-                .arg("-drive")
-                .arg(format!(
-                    "if=ide,index=0,media=disk,format=raw,file={}",
-                    master.display()
-                ));
-        }
+        attach_multiboot_master_disk(&mut command, &medium, temp_dir.path());
         if let Some(bytes) = scratch_bytes {
             let scratch = temp_dir.path().join("scratch-disk.img");
             std::fs::write(&scratch, vec![0u8; bytes])
@@ -161,6 +170,18 @@ impl QemuSession {
         matches!(child.try_wait(), Ok(None))
     }
 
+    pub fn stderr_tail(&self) -> String {
+        self.stderr_tail
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone()
+    }
+
+    pub fn exit_status(&mut self) -> Option<std::process::ExitStatus> {
+        let mut child = self.child.lock().unwrap_or_else(|err| err.into_inner());
+        child.try_wait().ok().flatten()
+    }
+
     pub fn expect_output(&self, substr: &str, timeout: Duration) {
         self.expect_from_mark(0, substr, timeout);
     }
@@ -242,6 +263,26 @@ impl QemuSession {
 
     fn monitor_socket(&self) -> PathBuf {
         self.temp_dir().join("monitor.sock")
+    }
+}
+
+fn attach_multiboot_master_disk(
+    command: &mut Command,
+    medium: &x86_runner::BootMedium,
+    temp_dir: &Path,
+) {
+    if let x86_runner::BootMedium::MultibootKernel(_) = medium {
+        let master = temp_dir.join("primary-master-disk.img");
+        let mut image = vec![0u8; MASTER_DISK_BYTES];
+        image[MBR_SIGNATURE_OFFSET] = 0x55;
+        image[MBR_SIGNATURE_OFFSET + 1] = 0xAA;
+        std::fs::write(&master, image).expect("failed to create primary master disk image");
+        command
+            .arg("-drive")
+            .arg(format!(
+                "if=ide,index=0,media=disk,format=raw,file={}",
+                master.display()
+            ));
     }
 }
 
