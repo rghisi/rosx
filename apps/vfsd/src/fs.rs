@@ -2,11 +2,12 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use fs_core::engine::{Engine, Kind, MetadataView};
+use fs_core::error::FsError;
 use rxfs::device::MemoryDevice;
-use rxfs::error::FsError;
 use rxfs::spec::DEFAULT_BYTES_PER_INODE;
 use rxfs::superblock::UUID_BYTES;
-use rxfs::volume::{FileSystem, FormatParams, Handle};
+use rxfs::volume::{FileSystem, FormatParams};
 use system::rom::{RomError, RomImage};
 use vfs_protocol::wire::{self, EntityKind, VfsError};
 
@@ -14,11 +15,13 @@ const VOLUME_BLOCKS: u64 = 2048;
 const VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ram-vol-001";
 const VOLUME_NAME: &[u8] = b"rosx-ram";
 
-struct OpenEntry {
+pub type ActiveVolume = FileSystem<MemoryDevice>;
+
+struct OpenEntry<E: Engine> {
     owner: u32,
     mode: u8,
     name: String,
-    rxfs_handle: Handle,
+    engine_handle: E::Handle,
 }
 
 #[derive(Debug)]
@@ -30,9 +33,9 @@ pub enum RomMountError {
     Engine(FsError),
 }
 
-pub struct VfsStore {
-    fs: FileSystem<MemoryDevice>,
-    opens: BTreeMap<u32, OpenEntry>,
+pub struct VfsStore<E: Engine> {
+    engine: E,
+    opens: BTreeMap<u32, OpenEntry<E>>,
     next_handle: u32,
     rom_names: BTreeSet<String>,
     rom_attached: bool,
@@ -61,18 +64,24 @@ fn map_fs_error(error: FsError) -> VfsError {
     }
 }
 
-impl VfsStore {
-    pub fn new() -> VfsStore {
+impl VfsStore<ActiveVolume> {
+    pub fn new() -> VfsStore<ActiveVolume> {
         let params = FormatParams {
             bytes_per_inode: DEFAULT_BYTES_PER_INODE,
             uuid: VOLUME_UUID,
             volume_name: VOLUME_NAME,
             created_at: 0,
         };
-        let fs = FileSystem::format(MemoryDevice::new(VOLUME_BLOCKS), &params)
+        let engine = FileSystem::format(MemoryDevice::new(VOLUME_BLOCKS), &params)
             .expect("fresh memory volume must format");
+        VfsStore::from_engine(engine)
+    }
+}
+
+impl<E: Engine> VfsStore<E> {
+    fn from_engine(engine: E) -> VfsStore<E> {
         VfsStore {
-            fs,
+            engine,
             opens: BTreeMap::new(),
             next_handle: 1,
             rom_names: BTreeSet::new(),
@@ -90,25 +99,25 @@ impl VfsStore {
             if !wire::valid_name(entry.name) {
                 return Err(RomMountError::InvalidName(String::from(entry.name)));
             }
-            if self.fs.lookup(&volume_path(entry.name)).is_ok() {
+            if self.engine.lookup(&volume_path(entry.name)).is_ok() {
                 return Err(RomMountError::Duplicate(String::from(entry.name)));
             }
             staged.push((entry.name, entry.offset, entry.len));
         }
         for (name, offset, len) in staged {
             let handle = self
-                .fs
+                .engine
                 .create(&volume_path(name))
                 .map_err(RomMountError::Engine)?;
             if len > 0 {
-                self.fs
+                self.engine
                     .write(handle, 0, &image[offset..offset + len])
                     .map_err(RomMountError::Engine)?;
             }
-            self.fs.close(handle).map_err(RomMountError::Engine)?;
+            self.engine.close(handle).map_err(RomMountError::Engine)?;
             self.rom_names.insert(String::from(name));
         }
-        self.fs.sync().map_err(RomMountError::Engine)?;
+        self.engine.sync().map_err(RomMountError::Engine)?;
         self.rom_attached = true;
         Ok(())
     }
@@ -118,12 +127,12 @@ impl VfsStore {
             return Err(VfsError::InvalidPath);
         }
         let path = volume_path(name);
-        let rxfs_handle = match self.fs.lookup(&path) {
+        let engine_handle = match self.engine.lookup(&path) {
             Ok(_) if mode & wire::MODE_CREATE != 0 => return Err(VfsError::AlreadyExists),
-            Ok(_) => self.fs.open(&path).map_err(map_fs_error)?,
+            Ok(_) => self.engine.open(&path).map_err(map_fs_error)?,
             Err(FsError::NotFound) if mode & wire::MODE_CREATE != 0 => {
-                let handle = self.fs.create(&path).map_err(map_fs_error)?;
-                self.fs.sync().map_err(map_fs_error)?;
+                let handle = self.engine.create(&path).map_err(map_fs_error)?;
+                self.engine.sync().map_err(map_fs_error)?;
                 handle
             }
             Err(FsError::NotFound) => return Err(VfsError::NotFound),
@@ -137,7 +146,7 @@ impl VfsStore {
                 owner,
                 mode,
                 name: String::from(name),
-                rxfs_handle,
+                engine_handle,
             },
         );
         Ok(handle)
@@ -150,11 +159,11 @@ impl VfsStore {
         offset: u64,
         count: usize,
     ) -> Result<Vec<u8>, VfsError> {
-        let rxfs_handle = self.live_handle(owner, handle)?;
+        let engine_handle = self.live_handle(owner, handle)?;
         let mut buf = vec![0u8; count];
         let copied = self
-            .fs
-            .read(rxfs_handle, offset, &mut buf)
+            .engine
+            .read(engine_handle, offset, &mut buf)
             .map_err(map_fs_error)?;
         buf.truncate(copied);
         Ok(buf)
@@ -181,18 +190,18 @@ impl VfsStore {
         if entry.mode & wire::MODE_WRITE == 0 {
             return Err(VfsError::NotPermitted);
         }
-        let rxfs_handle = entry.rxfs_handle;
+        let engine_handle = entry.engine_handle;
         let written = self
-            .fs
-            .write(rxfs_handle, offset, payload)
+            .engine
+            .write(engine_handle, offset, payload)
             .map_err(map_fs_error)?;
-        self.fs.sync().map_err(map_fs_error)?;
+        self.engine.sync().map_err(map_fs_error)?;
         Ok(written)
     }
 
     pub fn close(&mut self, owner: u32, handle: u32) -> Result<(), VfsError> {
-        let rxfs_handle = self.live_handle(owner, handle)?;
-        self.fs.close(rxfs_handle).map_err(map_fs_error)?;
+        let engine_handle = self.live_handle(owner, handle)?;
+        self.engine.close(engine_handle).map_err(map_fs_error)?;
         self.opens.remove(&handle);
         Ok(())
     }
@@ -204,24 +213,24 @@ impl VfsStore {
         if self.rom_names.contains(name) {
             return Err(VfsError::NotPermitted);
         }
-        self.fs.remove(&volume_path(name)).map_err(map_fs_error)?;
-        self.fs.sync().map_err(map_fs_error)
+        self.engine.remove(&volume_path(name)).map_err(map_fs_error)?;
+        self.engine.sync().map_err(map_fs_error)
     }
 
     pub fn stat(&mut self, name: &str) -> Result<(EntityKind, u64), VfsError> {
         if !wire::valid_name(name) {
             return Err(VfsError::InvalidPath);
         }
-        let stat = self.fs.lookup(&volume_path(name)).map_err(map_fs_error)?;
-        let kind = match stat.kind {
-            rxfs::volume::Kind::Regular => EntityKind::File,
-            rxfs::volume::Kind::Directory => EntityKind::Directory,
+        let stat = self.engine.lookup(&volume_path(name)).map_err(map_fs_error)?;
+        let kind = match stat.kind() {
+            Kind::Regular => EntityKind::File,
+            Kind::Directory => EntityKind::Directory,
         };
-        Ok((kind, stat.size))
+        Ok((kind, stat.size()))
     }
 
     pub fn list(&mut self) -> Result<Vec<u8>, VfsError> {
-        let items = self.fs.readdir(b"/").map_err(map_fs_error)?;
+        let items = self.engine.readdir(b"/").map_err(map_fs_error)?;
         let mut names: Vec<&[u8]> = items
             .iter()
             .map(|item| item.name.as_slice())
@@ -241,9 +250,9 @@ impl VfsStore {
         Ok(blob)
     }
 
-    fn live_handle(&self, owner: u32, handle: u32) -> Result<Handle, VfsError> {
+    fn live_handle(&self, owner: u32, handle: u32) -> Result<E::Handle, VfsError> {
         match self.opens.get(&handle) {
-            Some(entry) if entry.owner == owner => Ok(entry.rxfs_handle),
+            Some(entry) if entry.owner == owner => Ok(entry.engine_handle),
             _ => Err(VfsError::BadHandle),
         }
     }
@@ -257,12 +266,12 @@ mod tests {
     const OWNER: u32 = 0x0010_0001;
     const INTRUDER: u32 = 0x0020_0002;
 
-    fn create(fs: &mut VfsStore, owner: u32, name: &str) -> u32 {
+    fn create(fs: &mut VfsStore<ActiveVolume>, owner: u32, name: &str) -> u32 {
         fs.open(owner, wire::MODE_CREATE | wire::MODE_WRITE, name)
             .expect("create must succeed")
     }
 
-    fn contents(fs: &mut VfsStore, owner: u32, handle: u32) -> Vec<u8> {
+    fn contents(fs: &mut VfsStore<ActiveVolume>, owner: u32, handle: u32) -> Vec<u8> {
         fs.read(owner, handle, 0, wire::RPC_MAX_DATA_BYTES)
             .expect("read must succeed")
     }

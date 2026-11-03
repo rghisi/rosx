@@ -14,6 +14,8 @@ use crate::spec::{
 };
 use crate::superblock::{Superblock, CHECK_CLEAN, CHECK_UNCLEAN, UUID_BYTES, VOLUME_NAME_BYTES};
 use alloc::vec::Vec;
+pub use fs_core::engine::{DirItem, Kind};
+use fs_core::engine::{Engine, MetadataView};
 
 pub struct FormatParams<'a> {
     pub bytes_per_inode: u32,
@@ -51,12 +53,6 @@ pub struct Handle {
     generation: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
-    Regular,
-    Directory,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Report {
     pub leaked_blocks: u64,
@@ -65,13 +61,6 @@ pub struct Report {
     pub double_refs: u64,
     pub fixed: bool,
     pub hard_corrupt: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DirItem {
-    pub inode: u32,
-    pub kind: Kind,
-    pub name: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -559,11 +548,10 @@ impl<D: BlockDevice> FileSystem<D> {
             let mut found = self.cache.inspect(&mut self.dev, physical, |data| {
                 dir::entries(data)
                     .iter()
-                    .map(|entry| (entry.inode, entry.kind, entry.name.to_vec()))
-                    .collect::<Vec<(u32, u8, Vec<u8>)>>()
+                    .map(|entry| (entry.kind, entry.name.to_vec()))
+                    .collect::<Vec<(u8, Vec<u8>)>>()
             })?;
-            items.extend(found.drain(..).map(|(ino, kind, name)| DirItem {
-                inode: ino,
+            items.extend(found.drain(..).map(|(kind, name)| DirItem {
                 kind: kind_to_kind(kind),
                 name,
             }));
@@ -1202,6 +1190,73 @@ fn stat_of(inode_no: u32, inode: &Inode) -> Stat {
         size: inode.size,
         blocks: inode.blocks_used,
         mtime: inode.mtime,
+    }
+}
+
+impl MetadataView for Stat {
+    fn kind(&self) -> Kind {
+        self.kind
+    }
+
+    fn size(&self) -> u64 {
+        self.size
+    }
+}
+
+impl<D: BlockDevice> Engine for FileSystem<D> {
+    type Handle = Handle;
+    type Metadata = Stat;
+
+    fn lookup(&mut self, path_bytes: &[u8]) -> Result<Self::Metadata, FsError> {
+        FileSystem::lookup(self, path_bytes)
+    }
+
+    fn open(&mut self, path_bytes: &[u8]) -> Result<Self::Handle, FsError> {
+        FileSystem::open(self, path_bytes)
+    }
+
+    fn create(&mut self, path_bytes: &[u8]) -> Result<Self::Handle, FsError> {
+        FileSystem::create(self, path_bytes)
+    }
+
+    fn read(
+        &mut self,
+        handle: Self::Handle,
+        offset: u64,
+        buf: &mut [u8],
+    ) -> Result<usize, FsError>
+    {
+        FileSystem::read(self, handle, offset, buf)
+    }
+
+    fn write(
+        &mut self,
+        handle: Self::Handle,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<usize, FsError>
+    {
+        FileSystem::write(self, handle, offset, data)
+    }
+
+    fn stat(&mut self, handle: Self::Handle) -> Result<Self::Metadata, FsError> {
+        FileSystem::stat(self, handle)
+    }
+
+    fn close(&mut self, handle: Self::Handle) -> Result<(), FsError> {
+        FileSystem::close(self, handle)
+    }
+
+    fn remove(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        FileSystem::remove(self, path_bytes)
+    }
+
+    fn readdir(&mut self, path_bytes: &[u8]) -> Result<Vec<DirItem>, FsError> {
+        FileSystem::readdir(self, path_bytes)
+    }
+
+    fn sync(&mut self) -> Result<(), FsError> {
+        FileSystem::sync(self)
     }
 }
 
@@ -1890,7 +1945,6 @@ mod tests {
         assert_eq!(names, vec![&b"."[..], &b".."[..], &b"sub"[..], &b"one"[..]]);
         assert_eq!(items[2].kind, Kind::Directory);
         assert_eq!(items[3].kind, Kind::Regular);
-        assert_eq!(items[0].inode, ROOT_INODE);
     }
 
     #[test]

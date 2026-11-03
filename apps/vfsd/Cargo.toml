@@ -15,6 +15,7 @@ bench = false
 test = false
 
 [dependencies]
+fs-core = { path = "../../fs/core" }
 rxfs = { path = "../../fs/rxfs" }
 system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }

@@ -217,6 +217,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs-core"
+version = "0.1.0"
+
+[[package]]
 name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -457,6 +461,9 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 [[package]]
 name = "ramfs"
 version = "0.1.0"
+dependencies = [
+ "fs-core",
+]
 
 [[package]]
 name = "randomd"
@@ -517,6 +524,9 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 [[package]]
 name = "rxfs"
 version = "0.1.0"
+dependencies = [
+ "fs-core",
+]
 
 [[package]]
 name = "scopeguard"
@@ -751,6 +761,7 @@ dependencies = [
 name = "vfsd"
 version = "0.1.0"
 dependencies = [
+ "fs-core",
  "rxfs",
  "system",
  "usrlib",

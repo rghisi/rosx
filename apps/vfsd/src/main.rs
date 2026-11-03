@@ -9,7 +9,7 @@ use usrlib::handle::{UserConnectionHandle, UserDataHandle};
 use usrlib::println;
 use usrlib::syscall::Syscall;
 use vfs_protocol::wire::{self, Reply, Request, VfsError};
-use vfsd::fs::VfsStore;
+use vfsd::fs::{ActiveVolume, VfsStore};
 
 const INCOMING_READ_CHUNK_BYTES: usize = 4096;
 
@@ -48,7 +48,7 @@ fn read_rom_image() -> Vec<u8> {
 }
 
 struct VfsServer {
-    fs: VfsStore,
+    fs: VfsStore<ActiveVolume>,
     held: Vec<(u32, UserDataHandle)>,
 }
 
