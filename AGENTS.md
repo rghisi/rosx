@@ -39,6 +39,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    ata/         # package ata-protocol: wire codec + typed client
 ├── fs/
 │    rxfs/        # no_std filesystem library (vfsd's engine): superblock/bitmaps/inodes/extents/dirs, leak-safe sync, check()
+│    ramfs/       # no_std in-memory filesystem engine, rxfs-shaped (lookup/open/create/read/write/close/remove/readdir/stat) over a flat byte-name store
 ├── arch/
 │    x86_64/        # entry, cpu, interrupts, framebuffer, terminal_fonts, *.S (global_asm)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot v1)
@@ -100,6 +101,7 @@ cargo xtask test               # all workspace unit tests
 cargo test                     # default-members only
 cargo test -p kernel -- --test-threads=1   # scheduler, memory, elf, ipc, future
 cargo test -p rxfs             # filesystem library (add --features std for the FileDevice suites)
+cargo test -p ramfs            # in-memory filesystem engine (rxfs-shaped flat store)
 ```
 
 ### Integration tests (run on host against QEMU)
@@ -214,6 +216,7 @@ These principles are the regression guard: the very inversion this rework remove
 - **Memory ownership = loaded-image groups** — user blocks are stamped `BlockOwner::Group`: `LoadElf` (and boot loads) starts a fresh group, `Spawn` siblings join the caller's group (they share that image's statics), and the kernel reclaims a group's memory when its last live member terminates.
 - `rom/` — boot-registered immutable ROM image exposed via the opaque `RomRead` syscall; the kernel stays VFS-agnostic, `vfsd` owns mount semantics. The ROM carries the app ELFs (not the shell); its roster names stay underscore-free — a historical constraint from the era when the kernel keyboard dropped shift state, with the rename tracked in `docs/todo.md`.
 - `fs/rxfs` — standalone `no_std` filesystem library (first member of the `fs/` theme, zero deps beyond core/alloc): 4 KiB blocks, u32 addressing, static inode table with inline extents + spill chains, 255-byte byte-transparent names, Fletcher-32 on superblock and inodes. No journal — leak-safe commit ordering (allocation bitmaps hit disk before references, reclamation is deferred until `sync` commits the unlink), primary + backup superblock, and `check()` fsck-lite that repairs leaks, dangling entries, and double references. Proven by a crash-injection harness (every device-write prefix) and differential property tests; wired in as `vfsd`'s storage engine over `MemoryDevice` (see VFS architecture).
+- `fs/ramfs` — second member of the `fs/` theme: a zero-dep `no_std` in-memory engine that mirrors `rxfs::volume::FileSystem`'s signatures (`lookup/open/create/read/write/close/remove/readdir/stat`, plus a no-op `sync`) over a flat byte-name store, so a daemon can swap engines unchanged. Generation-checked handles reject stale and deleted-file use as `BadHandle`; zero-fill past EOF; empty write is a `Ok(0)` no-op; root is the only directory. It carries no daemon policy (no owner/mode, ROM, or wire-name rules — those stay at the daemon edge) and is not yet wired into `vfsd`, which remains RxFS-backed.
 
 **Documentation & Comments:**
 - **CRITICAL: No comments, ever** — the code is the source of truth; make it self-explanatory
