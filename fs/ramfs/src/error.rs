@@ -1,12 +1,1 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FsError {
-    NotFound,
-    AlreadyExists,
-    NotADirectory,
-    IsADirectory,
-    InvalidPath,
-    PathTooLong,
-    NameTooLong,
-    BadHandle,
-    TooManyOpen,
-}
+pub use fs_core::error::FsError;

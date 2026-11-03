@@ -1,6 +1,8 @@
 use crate::error::FsError;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
+pub use fs_core::engine::{DirItem, Kind};
+use fs_core::engine::{Engine, MetadataView};
 
 pub const MAX_NAME_BYTES: usize = 255;
 pub const MAX_PATH_BYTES: usize = 4096;
@@ -13,21 +15,9 @@ pub struct Handle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
-    Regular,
-    Directory,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stat {
     pub kind: Kind,
     pub size: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DirItem {
-    pub kind: Kind,
-    pub name: Vec<u8>,
 }
 
 struct FileEntry {
@@ -246,6 +236,73 @@ impl FileSystem {
             return Err(FsError::BadHandle);
         }
         Ok(file)
+    }
+}
+
+impl MetadataView for Stat {
+    fn kind(&self) -> Kind {
+        self.kind
+    }
+
+    fn size(&self) -> u64 {
+        self.size
+    }
+}
+
+impl Engine for FileSystem {
+    type Handle = Handle;
+    type Metadata = Stat;
+
+    fn lookup(&mut self, path_bytes: &[u8]) -> Result<Self::Metadata, FsError> {
+        FileSystem::lookup(self, path_bytes)
+    }
+
+    fn open(&mut self, path_bytes: &[u8]) -> Result<Self::Handle, FsError> {
+        FileSystem::open(self, path_bytes)
+    }
+
+    fn create(&mut self, path_bytes: &[u8]) -> Result<Self::Handle, FsError> {
+        FileSystem::create(self, path_bytes)
+    }
+
+    fn read(
+        &mut self,
+        handle: Self::Handle,
+        offset: u64,
+        buf: &mut [u8],
+    ) -> Result<usize, FsError>
+    {
+        FileSystem::read(self, handle, offset, buf)
+    }
+
+    fn write(
+        &mut self,
+        handle: Self::Handle,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<usize, FsError>
+    {
+        FileSystem::write(self, handle, offset, data)
+    }
+
+    fn stat(&mut self, handle: Self::Handle) -> Result<Self::Metadata, FsError> {
+        FileSystem::stat(self, handle)
+    }
+
+    fn close(&mut self, handle: Self::Handle) -> Result<(), FsError> {
+        FileSystem::close(self, handle)
+    }
+
+    fn remove(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        FileSystem::remove(self, path_bytes)
+    }
+
+    fn readdir(&mut self, path_bytes: &[u8]) -> Result<Vec<DirItem>, FsError> {
+        FileSystem::readdir(self, path_bytes)
+    }
+
+    fn sync(&mut self) -> Result<(), FsError> {
+        FileSystem::sync(self)
     }
 }
 
