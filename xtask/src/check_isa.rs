@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::arch::ArchSpec;
@@ -55,6 +55,9 @@ fn is_instruction_prefix(word: &str) -> bool {
 fn is_486_safe(bytes: &str, mnemonic: &str) -> bool {
     if mnemonic == "tzcnt" {
         return bytes.split_whitespace().next() == Some("f3");
+    }
+    if mnemonic == "ud2" {
+        return matches!(bytes, "0f 0b");
     }
     if (mnemonic.len() == 2 || mnemonic.len() == 3) && mnemonic.starts_with('j') {
         return true;
@@ -129,7 +132,79 @@ pub fn run_check_isa(spec: &ArchSpec, user_elfs: &[&str]) -> Result<Vec<String>,
     Ok(failures)
 }
 
-fn on_path(name: &str) -> Option<PathBuf> {
+pub const STAGE_FILES: [&str; 4] = ["stage1", "stage2", "fat_stage1_5", "stage2_eltorito"];
+
+pub fn audit_stage_disassembly(text: &str) -> Vec<Violation> {
+    let mut offenders: BTreeMap<String, usize> = BTreeMap::new();
+    for line in text.lines() {
+        let Some((_bytes, mnemonic)) = instruction_of(line) else {
+            continue;
+        };
+        if is_post_486(mnemonic) {
+            *offenders.entry(mnemonic.to_string()).or_insert(0) += 1;
+        }
+    }
+    offenders
+        .into_iter()
+        .map(|(mnemonic, occurrences)| Violation { mnemonic, occurrences })
+        .collect()
+}
+
+fn is_post_486(mnemonic: &str) -> bool {
+    mnemonic.starts_with("cmov")
+        || matches!(
+            mnemonic,
+            "cmpxchg8b"
+                | "cpuid"
+                | "rdtsc"
+                | "rdmsr"
+                | "wrmsr"
+                | "syscall"
+                | "sysenter"
+                | "sysexit"
+                | "fxsave"
+                | "fxrstor"
+        )
+}
+
+pub fn run_check_stages(stages_dir: &Path) -> Result<Vec<String>, String> {
+    let objdump = on_path("objdump").ok_or_else(|| {
+        "objdump not found on PATH; install binutils (sudo apt install binutils)".to_string()
+    })?;
+    if !stages_dir.is_dir() {
+        return Err(format!(
+            "no stage directory at {}; run arch/x86-86box/scripts/fetch-grub-legacy.sh first",
+            stages_dir.display()
+        ));
+    }
+    let mut failures = Vec::new();
+    for name in STAGE_FILES {
+        let stage = stages_dir.join(name);
+        if !stage.is_file() {
+            return Err(format!("missing stage binary {}", stage.display()));
+        }
+        let output = Command::new(&objdump)
+            .args(["-D", "-b", "binary", "-m", "i386"])
+            .arg(&stage)
+            .output()
+            .map_err(|err| format!("failed to run objdump on {}: {err}", stage.display()))?;
+        if !output.status.success() {
+            return Err(format!("objdump failed on {}", stage.display()));
+        }
+        let violations = audit_stage_disassembly(&String::from_utf8_lossy(&output.stdout));
+        if !violations.is_empty() {
+            let detail = violations
+                .iter()
+                .map(|v| format!("{} x{}", v.mnemonic, v.occurrences))
+                .collect::<Vec<_>>()
+                .join(", ");
+            failures.push(format!("{}: {detail}", stage.display()));
+        }
+    }
+    Ok(failures)
+}
+
+pub(crate) fn on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .map(|dir| dir.join(name))
@@ -225,6 +300,21 @@ mod tests {
     }
 
     #[test]
+    fn reserved_opcode_trap_encoding_is_486_safe() {
+        let found = audit(&[objdump_line("0f 0b", "ud2")]);
+        assert_eq!(found, vec![]);
+    }
+
+    #[test]
+    fn ud2_with_any_extra_byte_is_a_violation() {
+        for bytes in ["f3 0f 0b", "66 0f 0b", "0f 0b 0f 0b"] {
+            let found = audit(&[objdump_line(bytes, "ud2")]);
+            assert_eq!(found.len(), 1, "{bytes} must be rejected");
+            assert_eq!(found[0].mnemonic, "ud2");
+        }
+    }
+
+    #[test]
     fn lzcnt_is_a_violation_even_with_prefix() {
         let found = audit(&[objdump_line("f3 0f bd c9", "lzcnt  %ecx,%ecx")]);
         assert_eq!(found.len(), 1);
@@ -253,5 +343,72 @@ mod tests {
         assert_eq!(bad[0].mnemonic, "cmpxchg8b");
         let rep_cmov = audit(&[objdump_line("f3 0f 44 c1", "rep cmovne %ecx,%eax")]);
         assert_eq!(rep_cmov[0].mnemonic, "cmovne");
+    }
+
+    fn stage_lines(entries: &[(&str, &str)]) -> String {
+        entries
+            .iter()
+            .map(|(b, t)| objdump_line(b, t))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn stage_audit_flags_only_post_486_mnemonics() {
+        let clean = stage_lines(&[
+            ("eb 3f", "jmp    42 <.L1>"),
+            ("89 e5", "mov    %esp,%ebp"),
+            ("f3 a5", "rep movsl %ds:(%esi),%es:(%edi)"),
+            ("cd 80", "int    $0x80"),
+            ("cf", "iret"),
+            ("0f b6 c0", "movzbl %al,%eax"),
+            ("66 89 10", "movw   %dx,(%eax)"),
+        ]);
+        assert_eq!(audit_stage_disassembly(&clean), vec![]);
+
+        let dirty = stage_lines(&[
+            ("0f 44 c1", "cmovne %ecx,%eax"),
+            ("0f 44 d0", "cmovne %edx,%eax"),
+            ("0f c7 08", "cmpxchg8b (%eax)"),
+            ("0f a2", "cpuid"),
+            ("31 c0", "xor    %eax,%eax"),
+        ]);
+        let found = audit_stage_disassembly(&dirty);
+        assert_eq!(found.len(), 3);
+        assert_eq!(found[0].mnemonic, "cmovne");
+        assert_eq!(found[0].occurrences, 2);
+        assert_eq!(found[1].mnemonic, "cmpxchg8b");
+        assert_eq!(found[2].mnemonic, "cpuid");
+    }
+
+    #[test]
+    fn stage_audit_tolerates_garbage_decode_of_data_regions() {
+        let fpu_and_386_noise = stage_lines(&[
+            ("d9 c0", "fld    %st(0),%st"),
+            ("de c1", "fmulp  %st,%st(1)"),
+            ("66 0f 6f c1", "pavgb  %xmm1,%xmm0"),
+            ("df f8", "fnstsw %ax"),
+            ("0f 0f c1 00", "nm    %ecx"),
+        ]);
+        assert_eq!(audit_stage_disassembly(&fpu_and_386_noise), vec![]);
+    }
+
+    #[test]
+    fn stage_audit_flags_sysenter_rdtsc_and_fxsave_families() {
+        for mnemonic in [
+            "sysenter",
+            "sysexit",
+            "rdtsc",
+            "rdmsr",
+            "wrmsr",
+            "fxsave",
+            "fxrstor",
+            "cmpxchg8b",
+            "cpuid",
+        ] {
+            let line = stage_lines(&[("0f 34", mnemonic)]);
+            let found = audit_stage_disassembly(&line);
+            assert_eq!(found.len(), 1, "{mnemonic} must be rejected");
+        }
     }
 }

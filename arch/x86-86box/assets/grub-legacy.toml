@@ -1,0 +1,42 @@
+# Provenance manifest for the era GRUB Legacy build used by the 86Box
+# verification flow (plans/x86-86box-integration-plan.md §3.2).
+# The hashes are the regression guard against a silent stage swap: the
+# five-86 offender counts per release (plans/x86_32-i486-impl.md M5
+# supplement, plan §2.5) are 0.97-64/-67: 0, 0.97-70: 1, 0.97-72: 82,
+# 0.97-80: 66 — only etch-era 0.97-67 and older are 486-clean.
+
+[package]
+name = "grub-legacy"
+version = "0.97-67"
+url = "http://archive.debian.org/debian/pool/main/g/grub/grub-legacy_0.97-67_i386.deb"
+sha256 = "a4204cae6e458c5ceaed406d99fc1b328c16c1ae320c957e3856ebb7ab3df357"
+
+# sha256 of every stage file extracted from the deb's /usr/lib/grub/i386-pc.
+# Audited by `cargo xtask check-isa x86_32 --stages` (denylist, raw mode:
+# these are a.out/raw images binutils no longer parses as objects).
+[stages]
+stage1 = "77c1024a494c2170d0236dabdb795131d8a0f1809792735b3dd7f563ef5d951e"
+stage2 = "8594e28bb028849f7edfeaa988e7535b2d5511f2b620fb16b3752833a6586cb7"
+fat_stage1_5 = "57b60b9194cfccdad878b741494b6e36d0dea8e23aaa1243a64aceca2084e910"
+stage2_eltorito = "644c3d3ced8872b5ea30e775d01c1949a8e50206335ea7101d52aa231b0087b9"
+
+# Container images the scripts drive, digest-pinned. i386/debian:bullseye
+# is the last image carrying libtinfo5/libncurses5, which the i386 grub
+# shell binary from the deb needs to run on an x86_64 host; the digest is
+# a pull reference. box86mcp_image is the local image id produced by
+# docker/build.sh at the commit pinned below (build reference, not pull).
+[containers]
+grub_shell = "i386/debian:bullseye@sha256:6abaebc3bb02f0b136b99df679412aba2a4711d35c56ec15eded8333aa6f9fe7"
+box86mcp_image = "1c323883fc2b2bbd10ef19c0e968f907a377d5ee51663d92499daae44cb8ae57"
+
+# Build provenance for the headless 86Box binary the MCP server drives:
+# 86box-mcp's docker/build.sh with AUTOMATION=ON, plus a GDBSTUB=ON
+# reconfigure for the Multiboot boundary probes (plan §2.2). After any
+# reconfigure, verify AUTOMATION/GDBSTUB/QT in .cache/build/CMakeCache.txt
+# — the Qt6GuiPrivate NOT FOUND warning that still linked fine is the
+# cautionary tale (docs/gotchas.md).
+[build]
+box86mcp_repo = "https://github.com/dafugg/86box-mcp"
+box86mcp_commit = "7192991e42b8ef9b3bfd76d9413c4f8c8f96b05c"
+box86_repo = "https://github.com/86Box/86Box"
+box86_commit = "bc65ce3080df22dacdf78541f6455feb0ed5c446"
