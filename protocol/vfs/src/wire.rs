@@ -59,6 +59,8 @@ pub enum VfsError {
     InvalidPath = 5,
     ListTooLarge = 6,
     ServerResource = 7,
+    Busy = 8,
+    NotFormatted = 9,
     Protocol = 255,
 }
 
@@ -76,6 +78,8 @@ impl VfsError {
             5 => VfsError::InvalidPath,
             6 => VfsError::ListTooLarge,
             7 => VfsError::ServerResource,
+            8 => VfsError::Busy,
+            9 => VfsError::NotFormatted,
             _ => VfsError::Protocol,
         }
     }
@@ -90,6 +94,9 @@ pub enum Request<'a> {
     Delete { name: &'a str },
     List,
     Stat { name: &'a str },
+    ListDir { dir: &'a str },
+    Mount { drive: u8, dir: &'a str },
+    Format { drive: u8 },
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -176,6 +183,33 @@ impl Request<'_> {
                 frame[2..2 + name.len()].copy_from_slice(name.as_bytes());
                 Ok(frame)
             }
+            Request::ListDir { dir } => {
+                if !valid_name(dir) {
+                    return Err(VfsError::InvalidPath);
+                }
+                let mut frame = [0u8; FRAME_BYTES];
+                frame[0] = LIST_DIR;
+                frame[1] = dir.len() as u8;
+                frame[2..2 + dir.len()].copy_from_slice(dir.as_bytes());
+                Ok(frame)
+            }
+            Request::Mount { drive, dir } => {
+                if !valid_name(dir) {
+                    return Err(VfsError::InvalidPath);
+                }
+                let mut frame = [0u8; FRAME_BYTES];
+                frame[0] = MOUNT;
+                frame[1] = *drive;
+                frame[2] = dir.len() as u8;
+                frame[3..3 + dir.len()].copy_from_slice(dir.as_bytes());
+                Ok(frame)
+            }
+            Request::Format { drive } => {
+                let mut frame = [0u8; FRAME_BYTES];
+                frame[0] = FORMAT;
+                frame[1] = *drive;
+                Ok(frame)
+            }
         }
     }
 
@@ -208,6 +242,16 @@ impl Request<'_> {
                 let name = decode_name(frame, 2, frame[1] as usize)?;
                 Ok(Request::Stat { name })
             }
+            LIST_DIR => {
+                let dir = decode_name(frame, 2, frame[1] as usize)?;
+                Ok(Request::ListDir { dir })
+            }
+            MOUNT => {
+                let drive = frame[1];
+                let dir = decode_name(frame, 3, frame[2] as usize)?;
+                Ok(Request::Mount { drive, dir })
+            }
+            FORMAT => Ok(Request::Format { drive: frame[1] }),
             _ => Err(VfsError::Protocol),
         }
     }
@@ -528,6 +572,80 @@ mod tests {
     }
 
     #[test]
+    fn list_dir_frame_pins_offsets_for_mount_dir() {
+        let frame = Request::ListDir { dir: MOUNT_DIR }.encode().unwrap();
+        assert_eq!(frame[0], LIST_DIR);
+        assert_eq!(frame[1], 3);
+        assert_eq!(&frame[2..5], b"hdd");
+        assert!(frame[5..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn list_dir_request_roundtrips() {
+        let frame = Request::ListDir { dir: MOUNT_DIR }.encode().unwrap();
+        assert_eq!(Request::decode(&frame), Ok(Request::ListDir { dir: MOUNT_DIR }));
+    }
+
+    #[test]
+    fn list_dir_rejects_invalid_dir_names() {
+        assert_eq!(Request::ListDir { dir: "" }.encode(), Err(VfsError::InvalidPath));
+        assert_eq!(
+            Request::ListDir { dir: "/hdd" }.encode(),
+            Err(VfsError::InvalidPath)
+        );
+        let mut frame = [0u8; FRAME_BYTES];
+        frame[0] = LIST_DIR;
+        frame[1] = 3;
+        frame[2..5].copy_from_slice(b"a/b");
+        assert_eq!(Request::decode(&frame), Err(VfsError::InvalidPath));
+    }
+
+    #[test]
+    fn mount_frame_pins_drive_and_dir_offsets() {
+        let frame = Request::Mount { drive: 1, dir: MOUNT_DIR }.encode().unwrap();
+        assert_eq!(frame[0], MOUNT);
+        assert_eq!(frame[1], 1);
+        assert_eq!(frame[2], 3);
+        assert_eq!(&frame[3..6], b"hdd");
+        assert!(frame[6..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn mount_request_roundtrips() {
+        let frame = Request::Mount { drive: 0, dir: MOUNT_DIR }.encode().unwrap();
+        assert_eq!(
+            Request::decode(&frame),
+            Ok(Request::Mount { drive: 0, dir: MOUNT_DIR })
+        );
+    }
+
+    #[test]
+    fn mount_rejects_invalid_dir_names() {
+        assert_eq!(
+            Request::Mount { drive: 1, dir: "" }.encode(),
+            Err(VfsError::InvalidPath)
+        );
+        assert_eq!(
+            Request::Mount { drive: 1, dir: "bad\nname" }.encode(),
+            Err(VfsError::InvalidPath)
+        );
+    }
+
+    #[test]
+    fn format_frame_pins_drive_offset() {
+        let frame = Request::Format { drive: 1 }.encode().unwrap();
+        assert_eq!(frame[0], FORMAT);
+        assert_eq!(frame[1], 1);
+        assert!(frame[2..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn format_request_roundtrips() {
+        let frame = Request::Format { drive: 0 }.encode().unwrap();
+        assert_eq!(Request::decode(&frame), Ok(Request::Format { drive: 0 }));
+    }
+
+    #[test]
     fn decode_stat_rejects_invalid_names() {
         let mut nested = [0u8; FRAME_BYTES];
         nested[0] = STAT;
@@ -549,7 +667,7 @@ mod tests {
 
     #[test]
     fn decode_request_rejects_unknown_op_bytes() {
-        for op in [0u8, 8, 255] {
+        for op in [0u8, 11, 255] {
             let mut frame = Request::List.encode().unwrap();
             frame[0] = op;
             assert_eq!(
@@ -735,18 +853,22 @@ mod tests {
             VfsError::InvalidPath,
             VfsError::ListTooLarge,
             VfsError::ServerResource,
+            VfsError::Busy,
+            VfsError::NotFormatted,
         ];
         for code in codes {
             assert_eq!(VfsError::from_byte(code.to_byte()), code);
         }
         assert_eq!(VfsError::NotFound.to_byte(), 1);
         assert_eq!(VfsError::ServerResource.to_byte(), 7);
+        assert_eq!(VfsError::Busy.to_byte(), 8);
+        assert_eq!(VfsError::NotFormatted.to_byte(), 9);
         assert_eq!(VfsError::Protocol.to_byte(), 255);
     }
 
     #[test]
     fn unknown_wire_error_bytes_map_to_protocol() {
-        for byte in [0u8, 8, 200, 254] {
+        for byte in [0u8, 10, 200, 254] {
             assert_eq!(VfsError::from_byte(byte), VfsError::Protocol);
         }
     }
@@ -768,9 +890,14 @@ mod tests {
         assert_eq!(DELETE, 5);
         assert_eq!(LIST, 6);
         assert_eq!(STAT, 7);
+        assert_eq!(LIST_DIR, 8);
+        assert_eq!(MOUNT, 9);
+        assert_eq!(FORMAT, 10);
+        assert_eq!(MOUNT_DIR, "hdd");
+        assert!(valid_name(MOUNT_DIR));
         assert_eq!(EntityKind::File.to_byte(), 0);
         assert_eq!(EntityKind::Directory.to_byte(), 1);
-        let opcodes = [OPEN, READ, WRITE, CLOSE, DELETE, LIST, STAT];
+        let opcodes = [OPEN, READ, WRITE, CLOSE, DELETE, LIST, STAT, LIST_DIR, MOUNT, FORMAT];
         let tags = [
             REPLY_ACK,
             REPLY_ERROR,
