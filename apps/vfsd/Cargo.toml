@@ -15,6 +15,7 @@ bench = false
 test = false
 
 [dependencies]
+ata-protocol = { path = "../../protocol/ata" }
 fs-core = { path = "../../fs/core" }
 rxfs = { path = "../../fs/rxfs" }
 system = { path = "../../system" }

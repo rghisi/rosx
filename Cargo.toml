@@ -33,6 +33,8 @@ members = [
     "apps/ps2d",
     "apps/atad",
     "apps/ata",
+    "apps/format",
+    "apps/mount",
     "xtask",
     "tests-integration",
 ]

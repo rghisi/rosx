@@ -217,6 +217,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "format"
+version = "0.1.0"
+dependencies = [
+ "usrlib",
+ "vfs-protocol",
+]
+
+[[package]]
 name = "fs-core"
 version = "0.1.0"
 
@@ -373,6 +381,14 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "mount"
+version = "0.1.0"
+dependencies = [
+ "usrlib",
+ "vfs-protocol",
+]
 
 [[package]]
 name = "once_cell"
@@ -761,6 +777,7 @@ dependencies = [
 name = "vfsd"
 version = "0.1.0"
 dependencies = [
+ "ata-protocol",
  "fs-core",
  "rxfs",
  "system",

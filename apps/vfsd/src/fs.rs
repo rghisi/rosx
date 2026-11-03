@@ -1,7 +1,10 @@
+use crate::hdd::AtaDisk;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use ata_protocol::client::{Ata, ClientError};
+use ata_protocol::wire::AtaError;
 use fs_core::engine::{Engine, Kind, MetadataView};
 use fs_core::error::FsError;
 use rxfs::device::MemoryDevice;
@@ -14,6 +17,8 @@ use vfs_protocol::wire::{self, EntityKind, VfsError};
 const VOLUME_BLOCKS: u64 = 2048;
 const VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ram-vol-001";
 const VOLUME_NAME: &[u8] = b"rosx-ram";
+const HDD_VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ata-vol-001";
+const HDD_VOLUME_NAME: &[u8] = b"rosx-hdd";
 
 pub type ActiveVolume = FileSystem<MemoryDevice>;
 
@@ -22,6 +27,11 @@ struct OpenEntry<E: Engine> {
     mode: u8,
     name: String,
     engine_handle: E::Handle,
+}
+
+struct MountedVolume {
+    drive: u8,
+    fs: FileSystem<AtaDisk>,
 }
 
 #[derive(Debug)]
@@ -35,6 +45,7 @@ pub enum RomMountError {
 
 pub struct VfsStore<E: Engine> {
     engine: E,
+    hdd: Option<MountedVolume>,
     opens: BTreeMap<u32, OpenEntry<E>>,
     next_handle: u32,
     rom_names: BTreeSet<String>,
@@ -64,6 +75,34 @@ fn map_fs_error(error: FsError) -> VfsError {
     }
 }
 
+fn map_ata_error(error: ClientError) -> VfsError {
+    match error {
+        ClientError::Ata(AtaError::NotFound) => VfsError::NotFound,
+        _ => VfsError::ServerResource,
+    }
+}
+
+fn map_mount_error(error: FsError) -> VfsError {
+    match error {
+        FsError::Corrupt | FsError::DeviceTooSmall => VfsError::NotFormatted,
+        other => map_fs_error(other),
+    }
+}
+
+fn names_blob(names: &[&[u8]]) -> Result<Vec<u8>, VfsError> {
+    let mut blob = Vec::new();
+    for name in names {
+        if !blob.is_empty() {
+            blob.push(b'\n');
+        }
+        blob.extend_from_slice(name);
+    }
+    if blob.len() > wire::RPC_MAX_DATA_BYTES {
+        return Err(VfsError::ListTooLarge);
+    }
+    Ok(blob)
+}
+
 impl VfsStore<ActiveVolume> {
     pub fn new() -> VfsStore<ActiveVolume> {
         let params = FormatParams {
@@ -82,6 +121,7 @@ impl<E: Engine> VfsStore<E> {
     fn from_engine(engine: E) -> VfsStore<E> {
         VfsStore {
             engine,
+            hdd: None,
             opens: BTreeMap::new(),
             next_handle: 1,
             rom_names: BTreeSet::new(),
@@ -122,9 +162,67 @@ impl<E: Engine> VfsStore<E> {
         Ok(())
     }
 
+    pub fn format_drive(&mut self, drive: u8) -> Result<(), VfsError> {
+        if self
+            .hdd
+            .as_ref()
+            .is_some_and(|mounted| mounted.drive == drive)
+        {
+            return Err(VfsError::Busy);
+        }
+        let ata = Ata::connect().map_err(map_ata_error)?;
+        let identity = ata.identify(drive).map_err(map_ata_error)?;
+        let params = FormatParams {
+            bytes_per_inode: DEFAULT_BYTES_PER_INODE,
+            uuid: HDD_VOLUME_UUID,
+            volume_name: HDD_VOLUME_NAME,
+            created_at: 0,
+        };
+        let fs = FileSystem::format(AtaDisk::new(ata, drive, identity.sectors), &params)
+            .map_err(map_fs_error)?;
+        fs.unmount()
+            .map(|disk| disk.into_ata().disconnect())
+            .map_err(map_fs_error)
+    }
+
+    pub fn mount_drive(&mut self, drive: u8, dir: &str) -> Result<(), VfsError> {
+        if dir != wire::MOUNT_DIR {
+            return Err(VfsError::NotFound);
+        }
+        if self.hdd.is_some() {
+            return Err(VfsError::Busy);
+        }
+        let ata = Ata::connect().map_err(map_ata_error)?;
+        let identity = ata.identify(drive).map_err(map_ata_error)?;
+        let fs =
+            FileSystem::mount(AtaDisk::new(ata, drive, identity.sectors)).map_err(map_mount_error)?;
+        self.hdd = Some(MountedVolume { drive, fs });
+        Ok(())
+    }
+
+    pub fn list_dir(&mut self, dir: &str) -> Result<Vec<u8>, VfsError> {
+        if dir != wire::MOUNT_DIR {
+            return Err(VfsError::NotFound);
+        }
+        let Some(mounted) = &mut self.hdd else {
+            return Ok(Vec::new());
+        };
+        let items = mounted.fs.readdir(b"/").map_err(map_fs_error)?;
+        let mut names: Vec<&[u8]> = items
+            .iter()
+            .map(|item| item.name.as_slice())
+            .filter(|name| !dot_entry(name))
+            .collect();
+        names.sort_unstable();
+        names_blob(&names)
+    }
+
     pub fn open(&mut self, owner: u32, mode: u8, name: &str) -> Result<u32, VfsError> {
         if !wire::valid_name(name) {
             return Err(VfsError::InvalidPath);
+        }
+        if name == wire::MOUNT_DIR {
+            return Err(VfsError::NotPermitted);
         }
         let path = volume_path(name);
         let engine_handle = match self.engine.lookup(&path) {
@@ -210,6 +308,9 @@ impl<E: Engine> VfsStore<E> {
         if !wire::valid_name(name) {
             return Err(VfsError::InvalidPath);
         }
+        if name == wire::MOUNT_DIR {
+            return Err(VfsError::NotPermitted);
+        }
         if self.rom_names.contains(name) {
             return Err(VfsError::NotPermitted);
         }
@@ -220,6 +321,9 @@ impl<E: Engine> VfsStore<E> {
     pub fn stat(&mut self, name: &str) -> Result<(EntityKind, u64), VfsError> {
         if !wire::valid_name(name) {
             return Err(VfsError::InvalidPath);
+        }
+        if name == wire::MOUNT_DIR {
+            return Ok((EntityKind::Directory, 0));
         }
         let stat = self.engine.lookup(&volume_path(name)).map_err(map_fs_error)?;
         let kind = match stat.kind() {
@@ -236,18 +340,11 @@ impl<E: Engine> VfsStore<E> {
             .map(|item| item.name.as_slice())
             .filter(|name| !dot_entry(name))
             .collect();
+        if !names.contains(&wire::MOUNT_DIR.as_bytes()) {
+            names.push(wire::MOUNT_DIR.as_bytes());
+        }
         names.sort_unstable();
-        let mut blob = Vec::new();
-        for name in names {
-            if !blob.is_empty() {
-                blob.push(b'\n');
-            }
-            blob.extend_from_slice(name);
-        }
-        if blob.len() > wire::RPC_MAX_DATA_BYTES {
-            return Err(VfsError::ListTooLarge);
-        }
-        Ok(blob)
+        names_blob(&names)
     }
 
     fn live_handle(&self, owner: u32, handle: u32) -> Result<E::Handle, VfsError> {
@@ -561,17 +658,17 @@ mod tests {
     }
 
     #[test]
-    fn list_returns_sorted_newline_joined_names() {
+    fn list_returns_sorted_newline_joined_names_with_the_mount_point() {
         let mut fs = VfsStore::new();
         create(&mut fs, OWNER, "notes.txt");
         create(&mut fs, OWNER, "blob.bin");
-        assert_eq!(fs.list().unwrap(), b"blob.bin\nnotes.txt".to_vec());
+        assert_eq!(fs.list().unwrap(), b"blob.bin\nhdd\nnotes.txt".to_vec());
     }
 
     #[test]
-    fn list_empty_store_is_empty() {
+    fn list_of_empty_volume_is_the_mount_point_entry() {
         let mut fs = VfsStore::new();
-        assert_eq!(fs.list().unwrap(), Vec::new());
+        assert_eq!(fs.list().unwrap(), b"hdd".to_vec());
     }
 
     #[test]
@@ -640,7 +737,10 @@ mod tests {
         let mut fs = VfsStore::new();
         fs.attach_rom(&fabricated_rom()).unwrap();
         create(&mut fs, OWNER, "mid.txt");
-        assert_eq!(fs.list().unwrap(), b"alpha.bin\nbeta.bin\nmid.txt".to_vec());
+        assert_eq!(
+            fs.list().unwrap(),
+            b"alpha.bin\nbeta.bin\nhdd\nmid.txt".to_vec()
+        );
     }
 
     #[test]
@@ -697,7 +797,7 @@ mod tests {
         let mut fs = VfsStore::new();
         fs.attach_rom(&fabricated_rom()).unwrap();
         assert_eq!(fs.delete("alpha.bin"), Err(VfsError::NotPermitted));
-        assert_eq!(fs.list().unwrap(), b"alpha.bin\nbeta.bin".to_vec());
+        assert_eq!(fs.list().unwrap(), b"alpha.bin\nbeta.bin\nhdd".to_vec());
     }
 
     #[test]
@@ -717,7 +817,7 @@ mod tests {
             fs.attach_rom(b"not a rom image at all"),
             Err(RomMountError::Format(RomError::BadMagic))
         ));
-        assert_eq!(fs.list().unwrap(), Vec::new());
+        assert_eq!(fs.list().unwrap(), b"hdd".to_vec());
     }
 
     #[test]
@@ -728,7 +828,7 @@ mod tests {
             fs.attach_rom(&image),
             Err(RomMountError::InvalidName(ref name)) if name == "bad\nname"
         ));
-        assert_eq!(fs.list().unwrap(), Vec::new());
+        assert_eq!(fs.list().unwrap(), b"hdd".to_vec());
     }
 
     #[test]
@@ -739,7 +839,7 @@ mod tests {
             fs.attach_rom(&fabricated_rom()),
             Err(RomMountError::Duplicate(ref name)) if name == "alpha.bin"
         ));
-        assert_eq!(fs.list().unwrap(), b"alpha.bin".to_vec());
+        assert_eq!(fs.list().unwrap(), b"alpha.bin\nhdd".to_vec());
         fs.write(OWNER, handle, 0, b"still writable")
             .expect("collision rejection must not convert RAM to ROM");
         assert_eq!(contents(&mut fs, OWNER, handle), b"still writable".to_vec());
@@ -761,6 +861,46 @@ mod tests {
         let beta = fs.open(OWNER, 0, "beta.bin").unwrap();
         let expected_beta: Vec<u8> = (0..4097u32).map(|i| (i % 197) as u8).collect();
         assert_eq!(contents(&mut fs, OWNER, beta), expected_beta);
-        assert_eq!(fs.list().unwrap(), b"alpha.bin\nbeta.bin".to_vec());
+        assert_eq!(fs.list().unwrap(), b"alpha.bin\nbeta.bin\nhdd".to_vec());
+    }
+
+    #[test]
+    fn stat_of_mount_dir_is_directory() {
+        let mut fs = VfsStore::new();
+        assert_eq!(fs.stat("hdd").unwrap(), (EntityKind::Directory, 0));
+    }
+
+    #[test]
+    fn open_mount_dir_is_not_permitted() {
+        let mut fs = VfsStore::new();
+        assert_eq!(fs.open(OWNER, 0, "hdd"), Err(VfsError::NotPermitted));
+        assert_eq!(
+            fs.open(OWNER, wire::MODE_CREATE | wire::MODE_WRITE, "hdd"),
+            Err(VfsError::NotPermitted)
+        );
+    }
+
+    #[test]
+    fn delete_mount_dir_is_not_permitted() {
+        let mut fs = VfsStore::new();
+        assert_eq!(fs.delete("hdd"), Err(VfsError::NotPermitted));
+    }
+
+    #[test]
+    fn list_dir_of_unmounted_volume_is_empty() {
+        let mut fs = VfsStore::new();
+        assert_eq!(fs.list_dir("hdd").unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn list_dir_of_unknown_dir_is_not_found() {
+        let mut fs = VfsStore::new();
+        assert_eq!(fs.list_dir("floppy"), Err(VfsError::NotFound));
+    }
+
+    #[test]
+    fn mount_drive_of_unknown_dir_is_not_found_before_touching_the_service() {
+        let mut fs = VfsStore::new();
+        assert_eq!(fs.mount_drive(1, "floppy"), Err(VfsError::NotFound));
     }
 }

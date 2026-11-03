@@ -140,6 +140,21 @@ impl VfsServer {
                 Ok((kind, size)) => Reply::Stat { kind, size },
                 Err(error) => Reply::Err(error),
             },
+            Request::ListDir { dir } => self.list_dir_reply(connection, owner, dir),
+            Request::Mount { drive, dir } => match self.fs.mount_drive(drive, dir) {
+                Ok(()) => {
+                    println!("[VFSD] mounted rxfs volume on drive {drive} at /{dir}");
+                    Reply::Ack
+                }
+                Err(error) => Reply::Err(error),
+            },
+            Request::Format { drive } => match self.fs.format_drive(drive) {
+                Ok(()) => {
+                    println!("[VFSD] formatted rxfs volume on drive {drive}");
+                    Reply::Ack
+                }
+                Err(error) => Reply::Err(error),
+            },
         }
     }
 
@@ -173,6 +188,24 @@ impl VfsServer {
         owner: u32,
     ) -> Reply {
         let blob = match self.fs.list() {
+            Err(error) => return Reply::Err(error),
+            Ok(blob) => blob,
+        };
+        if blob.is_empty() {
+            return Reply::Eof;
+        }
+        self.attach_payload(connection, owner, &blob, |token, total| {
+            Reply::Listed { token, total }
+        })
+    }
+
+    fn list_dir_reply(
+        &mut self,
+        connection: UserConnectionHandle,
+        owner: u32,
+        dir: &str,
+    ) -> Reply {
+        let blob = match self.fs.list_dir(dir) {
             Err(error) => return Reply::Err(error),
             Ok(blob) => blob,
         };
