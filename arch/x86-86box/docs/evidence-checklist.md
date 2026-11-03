@@ -7,7 +7,7 @@ names below are MCP tools (`tools["86box"].*`); run held (server default).
 
 ## Run protocol
 
-Machine: `configs/486sx-pvi486sp3.cfg` (486sp3c, i486SX-25, no FPU, 8 MB,
+Machine: `configs/486sx-pvi486sp3.cfg` (486sp3c, i486SX-25, no FPU, 32 MB,
 primed NVR). Media: the GRUB-Legacy HDD image from
 `scripts/build-legacy-hdd.sh` (copy it into the VM directory as `hdd.img`).
 Two boot scenarios, two run dirs:
@@ -123,7 +123,7 @@ Emulator runs never flip a silicon checkbox; the seven hardware items
 close on silicon only. This file is emulator evidence for the 486-class
 contract (machine 486sp3c, emulated i486SX-25, no FPU).
 
-- POST: 80486SX CPU at 25MHz / Memory Test: 8192K OK         [screen.txt]
+- POST: 80486SX CPU at 25MHz / Memory Test: 32768K OK        [screen.txt]
 - hard_resets: <start> → <end> (delta explained: <who typed what>)
 - PIT: SYSTEM_TIME_MS <t1> → <t2> over step ms:1000 (delta = <n>)
 - ATAD: <identify line> ; ata app: <55AA line>

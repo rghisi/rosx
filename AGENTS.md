@@ -160,6 +160,7 @@ The x86_32 port runs on 486-class CPUs and must stay that way — the invariant,
 - **No `cpuid`-probed features** — `cpuid` itself is 586-era; the port runs flat protected mode with 386-era mechanism only (no paging, no CR4 bits).
 - **Keep atomics ≤ 32 bits** on 32-bit paths; an `AtomicU64` there needs `cmpxchg8b`.
 - **The machine guards:** `cargo xtask check-isa x86_32` audits the kernel and every user ELF against a 486 mnemonic allow-list, `cargo xtask check-isa x86_32 --stages` audits the pinned GRUB Legacy stage binaries against a post-486 denylist (CI runs both in `build-x86_32`), and every x86_32 QEMU session boots `-cpu 486`. A regression must fail one of these, never a board.
+- **The two byte-gated allow-list exceptions:** `tzcnt` passes only in its legacy `f3`-prefixed form (executes as 386 `BSF`), and `ud2` passes only with the exact reserved `0f 0b` encoding — that opcode raises #UD identically on 486 silicon (Intel chose it for exactly that reason), and the compiler emits it only as a trap after a no-return panic path. Any other bytes decoding as `tzcnt`/`ud2` still fail the audit.
 - Provenance: `plans/x86_32-i486-plan.md` and the evidence log `plans/x86_32-i486-impl.md`.
 
 ### Code Style

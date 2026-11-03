@@ -111,7 +111,7 @@ arch/x86-86box/scripts/build-legacy-hdd.sh \
 4. `vm_start(held=true, binary=<86box-mcp>/docker/86box.sh)` — the binary
    must be the container launcher (docs/gotchas.md); with `debugger=true`
    the GDB stub joins for the boundary probes. `step ms:2000` → POST screen
-   via `screen_text` (`80486SX CPU at 25MHz`, `Memory Test: 8192K OK`);
+   via `screen_text` (`80486SX CPU at 25MHz`, `Memory Test: 32768K OK`);
    `reset(kind:"hard")`, re-insert media, `wait_for_text("rose>", timeout_ms=180000)`.
    Complete measured runs: `target/86box/runs/<UTC>-<machine>/` (see
    `docs/evidence-checklist.md` for the full protocol).
