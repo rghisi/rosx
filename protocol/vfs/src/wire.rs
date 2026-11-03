@@ -13,6 +13,11 @@ pub const CLOSE: u8 = 4;
 pub const DELETE: u8 = 5;
 pub const LIST: u8 = 6;
 pub const STAT: u8 = 7;
+pub const LIST_DIR: u8 = 8;
+pub const MOUNT: u8 = 9;
+pub const FORMAT: u8 = 10;
+
+pub const MOUNT_DIR: &str = "hdd";
 
 pub const REPLY_ACK: u8 = 0x10;
 pub const REPLY_ERROR: u8 = 0x11;
