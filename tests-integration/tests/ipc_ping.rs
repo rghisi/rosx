@@ -73,11 +73,15 @@ fn shell_ping_capability_data_roundtrip() {
 
     session.send_line("ping");
 
-    if let Err(output_tail) =
-        session.wait_until_since(mark, |delta| delta.contains(LAST_SWEEP_LINE), SWEEP_TIMEOUT)
-    {
+    let sweep_complete = |delta: &str| {
+        delta.contains(LAST_SWEEP_LINE)
+            && count_prefixes(delta, CLIENT_PREFIX) == PING_SIZES.len()
+            && count_server_rounds(delta) == PING_SIZES.len()
+    };
+    if let Err(output_tail) = session.wait_until_since(mark, sweep_complete, SWEEP_TIMEOUT) {
         panic!(
-            "timed out after {SWEEP_TIMEOUT:?} waiting for {LAST_SWEEP_LINE:?}; output tail:\n{output_tail}"
+            "timed out after {SWEEP_TIMEOUT:?} waiting for all {} client and server sweep lines; output tail:\n{output_tail}",
+            PING_SIZES.len()
         );
     }
 
