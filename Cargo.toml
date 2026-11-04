@@ -35,6 +35,10 @@ members = [
     "apps/ata",
     "apps/format",
     "apps/mount",
+    "apps/rm",
+    "apps/cp",
+    "apps/mkdir",
+    "apps/rmdir",
     "xtask",
     "tests-integration",
 ]

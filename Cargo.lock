@@ -159,6 +159,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cp"
+version = "0.1.0"
+dependencies = [
+ "usrlib",
+ "vfs-protocol",
+]
+
+[[package]]
 name = "crc"
 version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -383,6 +391,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "mkdir"
+version = "0.1.0"
+dependencies = [
+ "usrlib",
+ "vfs-protocol",
+]
+
+[[package]]
 name = "mount"
 version = "0.1.0"
 dependencies = [
@@ -487,6 +503,22 @@ version = "0.1.0"
 dependencies = [
  "system",
  "usrlib",
+]
+
+[[package]]
+name = "rm"
+version = "0.1.0"
+dependencies = [
+ "usrlib",
+ "vfs-protocol",
+]
+
+[[package]]
+name = "rmdir"
+version = "0.1.0"
+dependencies = [
+ "usrlib",
+ "vfs-protocol",
 ]
 
 [[package]]
