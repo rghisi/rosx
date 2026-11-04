@@ -1,5 +1,6 @@
 use core::arch::asm;
 use core::sync::atomic::Ordering::Relaxed;
+use kernel::kernel::kernel;
 use kernel::platform::cpu::Cpu;
 
 pub struct X86_32 {}
@@ -105,7 +106,9 @@ unsafe extern "C" {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn syscall_handler(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usize {
-    kernel::syscall::handle_syscall(num, arg1, arg2, arg3)
+    let result = kernel::syscall::handle_syscall(num, arg1, arg2, arg3);
+    kernel().maybe_resched();
+    result
 }
 
 // swap_context(store: *mut usize, load: usize)
