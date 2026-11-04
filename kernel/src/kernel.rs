@@ -128,7 +128,7 @@ impl Kernel {
                 scheduler: scheduler_task_handler,
                 current_task: None,
                 preemption_enabled: false,
-                pending_preemption: false,
+                need_resched: false,
                 execution_context: ExecutionContext::Kernel,
                 cpu,
             },
@@ -248,19 +248,24 @@ impl Kernel {
         self.execution_state.switch_to_scheduler();
     }
 
-    pub fn preempt(&mut self) {
-        if self.execution_state.preemption_enabled
-            && services().scheduler.borrow_mut().should_preempt()
-        {
-            if let Some(task_handle) = self.execution_state.current_task {
-                services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
-            }
-            self.execution_state.pending_preemption = true;
+    pub fn mark_resched() {
+        if !KERNEL_PTR.borrow().is_null() {
+            kernel().execution_state.need_resched = true;
         }
     }
 
-    pub fn apply_pending_preemption(&mut self) {
-        if core::mem::take(&mut self.execution_state.pending_preemption) {
+    pub fn maybe_resched(&mut self) {
+        if !self.execution_state.need_resched {
+            return;
+        }
+        if !self.execution_state.preemption_enabled {
+            return;
+        }
+        self.execution_state.need_resched = false;
+        if services().scheduler.borrow_mut().should_preempt() {
+            if let Some(task_handle) = self.execution_state.current_task {
+                services().task_manager.borrow_mut().set_yield_reason(task_handle, YieldReason::Preempted);
+            }
             self.execution_state.switch_to_scheduler();
         }
     }

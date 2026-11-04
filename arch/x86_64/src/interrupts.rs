@@ -5,7 +5,7 @@ use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering::Relaxed;
 use kernel::once::Once;
 use kernel::platform::interrupt::{self, InterruptController};
-use kernel::kernel::kernel;
+use kernel::kernel::{kernel, Kernel};
 use usrlib::println;
 use x86_64::instructions::port::Port;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
@@ -98,14 +98,14 @@ fn set_frequency_to_100hz() {
 
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
     interrupt::dispatch_irq(InterruptIndex::Timer.as_irq());
-    kernel().apply_pending_preemption();
+    kernel().maybe_resched();
 }
 
 const KEYBOARD_PORT: u16 = 0x60;
 
 fn timer_handler(_irq: u32) {
     SYSTEM_TIME_MS.fetch_add(MS_PER_TICK, Relaxed);
-    kernel().preempt();
+    Kernel::mark_resched();
 }
 
 fn keyboard_handler(_irq: u32) {
