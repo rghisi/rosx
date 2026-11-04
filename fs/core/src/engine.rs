@@ -26,6 +26,8 @@ pub trait Engine {
     fn lookup(&mut self, path_bytes: &[u8]) -> Result<Self::Metadata, FsError>;
     fn open(&mut self, path_bytes: &[u8]) -> Result<Self::Handle, FsError>;
     fn create(&mut self, path_bytes: &[u8]) -> Result<Self::Handle, FsError>;
+    fn mkdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError>;
+    fn rmdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError>;
     fn read(
         &mut self,
         handle: Self::Handle,

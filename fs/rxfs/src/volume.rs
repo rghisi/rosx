@@ -1219,6 +1219,14 @@ impl<D: BlockDevice> Engine for FileSystem<D> {
         FileSystem::create(self, path_bytes)
     }
 
+    fn mkdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        FileSystem::mkdir(self, path_bytes)
+    }
+
+    fn rmdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        FileSystem::rmdir(self, path_bytes)
+    }
+
     fn read(
         &mut self,
         handle: Self::Handle,

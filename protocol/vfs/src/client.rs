@@ -38,6 +38,22 @@ fn drain_data_object(token: u32) -> Result<Vec<u8>, ClientError> {
     }
 }
 
+fn listed_names(reply: Reply) -> Result<Vec<String>, ClientError> {
+    match reply {
+        Reply::Eof => Ok(Vec::new()),
+        Reply::Listed { token, total } => {
+            let payload = drain_data_object(token)?;
+            if payload.len() as u32 != total {
+                return Err(ClientError::Protocol);
+            }
+            let text = core::str::from_utf8(&payload).map_err(|_| ClientError::Protocol)?;
+            Ok(text.split('\n').map(String::from).collect())
+        }
+        Reply::Err(error) => Err(ClientError::Vfs(error)),
+        _ => Err(ClientError::Protocol),
+    }
+}
+
 fn transact(
     connection: UserConnectionHandle,
     request: Request<'_>,
@@ -106,16 +122,45 @@ impl Vfs {
 
     pub fn list(&self) -> Result<Vec<String>, ClientError> {
         let request = wire::Request::List;
+        listed_names(transact(self.connection, request)?)
+    }
+
+    pub fn list_dir(&self, dir: &str) -> Result<Vec<String>, ClientError> {
+        let request = wire::Request::ListDir { dir };
+        listed_names(transact(self.connection, request)?)
+    }
+
+    pub fn format(&self, drive: u8) -> Result<(), ClientError> {
+        let request = wire::Request::Format { drive };
         match transact(self.connection, request)? {
-            Reply::Eof => Ok(Vec::new()),
-            Reply::Listed { token, total } => {
-                let payload = drain_data_object(token)?;
-                if payload.len() as u32 != total {
-                    return Err(ClientError::Protocol);
-                }
-                let text = core::str::from_utf8(&payload).map_err(|_| ClientError::Protocol)?;
-                Ok(text.split('\n').map(String::from).collect())
-            }
+            Reply::Ack => Ok(()),
+            Reply::Err(error) => Err(ClientError::Vfs(error)),
+            _ => Err(ClientError::Protocol),
+        }
+    }
+
+    pub fn mount(&self, drive: u8, dir: &str) -> Result<(), ClientError> {
+        let request = wire::Request::Mount { drive, dir };
+        match transact(self.connection, request)? {
+            Reply::Ack => Ok(()),
+            Reply::Err(error) => Err(ClientError::Vfs(error)),
+            _ => Err(ClientError::Protocol),
+        }
+    }
+
+    pub fn mkdir(&self, path: &str) -> Result<(), ClientError> {
+        let request = wire::Request::MkDir { path };
+        match transact(self.connection, request)? {
+            Reply::Ack => Ok(()),
+            Reply::Err(error) => Err(ClientError::Vfs(error)),
+            _ => Err(ClientError::Protocol),
+        }
+    }
+
+    pub fn rmdir(&self, path: &str) -> Result<(), ClientError> {
+        let request = wire::Request::RmDir { path };
+        match transact(self.connection, request)? {
+            Reply::Ack => Ok(()),
             Reply::Err(error) => Err(ClientError::Vfs(error)),
             _ => Err(ClientError::Protocol),
         }

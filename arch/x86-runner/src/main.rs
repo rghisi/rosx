@@ -12,10 +12,11 @@ fn main() {
         .expect("failed to prepare boot medium");
 
     if !no_run {
-        let status =
-            x86_runner::qemu_command(arch, &medium, x86_runner::LaunchMode::Interactive)
-                .status()
-                .expect("failed to run QEMU");
+        let mut command = x86_runner::qemu_command(arch, &medium, x86_runner::LaunchMode::Interactive);
+        x86_runner::attach_persistent_hdd(&mut command);
+        let status = command
+            .status()
+            .expect("failed to run QEMU");
         std::process::exit(status.code().unwrap_or(1));
     }
 }

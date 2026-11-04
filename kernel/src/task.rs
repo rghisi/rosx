@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use core::fmt::{Display, Formatter};
 use crate::elf::load_elf;
 use crate::handle::FutureHandle;
-use crate::task_stack::TaskStack;
+use crate::task_stack::{StackObservation, TaskStack, STACK_GUARD_BYTES};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use system::args::{MAX_ARGUMENT_BYTES, MAX_ARGUMENT_COUNT};
 use system::error::ErrorCode;
@@ -71,7 +71,6 @@ pub struct Task {
     stack_pointer: usize,
     entry_point: usize,
     entry_param: usize,
-    #[allow(dead_code)]
     stack: TaskStack,
     completion_future: Option<FutureHandle>,
     group: GroupId,
@@ -108,6 +107,21 @@ impl Task {
     }
     pub fn set_stack_pointer(&mut self, new_stack_pointer: usize) {
         self.stack_pointer = new_stack_pointer;
+    }
+
+    pub(crate) fn stack_base(&self) -> usize {
+        self.stack.base()
+    }
+
+    pub(crate) fn observe_stack(&mut self) -> StackObservation {
+        self.stack.observe_depth();
+        if self.stack.is_exhausted() {
+            StackObservation::Exhausted
+        } else if self.stack_pointer < self.stack.base() + STACK_GUARD_BYTES {
+            StackObservation::SpillIntoGuard
+        } else {
+            StackObservation::WithinBudget
+        }
     }
     pub(crate) fn state(&self) -> TaskState {
         self.state
@@ -263,14 +277,14 @@ pub fn validate_arguments_blob(blob: &[u8]) -> Result<(), ErrorCode> {
     Ok(())
 }
 
-pub fn new_elf_task(elf: &[u8]) -> SharedTask {
-    let context = ElfTaskContext::new(elf, &["ELF"]);
-    Task::new("ELF", elf_task_wrapper as usize, Box::into_raw(context) as usize)
+pub fn new_elf_task(name: &'static str, elf: &[u8]) -> SharedTask {
+    let context = ElfTaskContext::new(elf, &[name]);
+    Task::new(name, elf_task_wrapper as usize, Box::into_raw(context) as usize)
 }
 
-pub fn new_elf_task_with_arguments(elf: &[u8], arguments_blob: Vec<u8>) -> SharedTask {
+pub fn new_elf_task_with_arguments(name: &'static str, elf: &[u8], arguments_blob: Vec<u8>) -> SharedTask {
     let context = ElfTaskContext::with_blob(elf, arguments_blob);
-    Task::new("ELF", elf_task_wrapper as usize, Box::into_raw(context) as usize)
+    Task::new(name, elf_task_wrapper as usize, Box::into_raw(context) as usize)
 }
 
 pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
@@ -287,6 +301,7 @@ pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
 mod tests {
     use super::*;
     use crate::collections::arena::GenerationalArena;
+    use crate::task_stack::STACK_WATERMARK;
 
     fn make_future_handle() -> FutureHandle {
         let mut arena: GenerationalArena<u8, 1> = GenerationalArena::new();
@@ -304,7 +319,7 @@ mod tests {
         assert!(task.completion_future().is_none());
         assert_ne!(task.stack_pointer(), 0);
         assert_eq!(task.stack_pointer(), task.stack.top());
-        assert!(task.stack.words().iter().all(|w| *w == 0));
+        assert!(task.stack.words().iter().all(|w| *w == STACK_WATERMARK));
     }
 
     #[test]
@@ -448,18 +463,18 @@ mod tests {
     }
 
     #[test]
-    fn new_elf_task_default_context_argv_remains_placeholder() {
-        let task = new_elf_task(&[7]);
-        assert_eq!(task.name(), "ELF");
+    fn new_elf_task_names_the_task_and_its_argv_zero() {
+        let task = new_elf_task("vfsd", &[7]);
+        assert_eq!(task.name(), "vfsd");
         let context = unsafe { Box::from_raw(task.entry_param() as *mut ElfTaskContext) };
         assert_eq!(context.argc(), 1);
-        assert_eq!(read_c_string(unsafe { context.argv().read() }), b"ELF");
+        assert_eq!(read_c_string(unsafe { context.argv().read() }), b"vfsd");
         assert!(unsafe { context.argv().add(1).read().is_null() });
     }
 
     #[test]
     fn new_elf_task_with_arguments_wires_blob_into_task_context() {
-        let task = new_elf_task_with_arguments(&[9], b"pi\0alpha\0".to_vec());
+        let task = new_elf_task_with_arguments("pi", &[9], b"pi\0alpha\0".to_vec());
         let context = unsafe { Box::from_raw(task.entry_param() as *mut ElfTaskContext) };
         assert_eq!(context.argc(), 2);
         assert_eq!(read_c_string(unsafe { context.argv().read() }), b"pi");
@@ -471,14 +486,14 @@ mod tests {
 
     #[test]
     fn freshly_loaded_images_get_distinct_groups() {
-        let first = new_elf_task(&[7]);
-        let second = new_elf_task(&[7]);
+        let first = new_elf_task("app", &[7]);
+        let second = new_elf_task("app", &[7]);
         assert_ne!(first.group(), second.group());
     }
 
     #[test]
     fn entrypoint_task_carries_the_caller_group() {
-        let caller = new_elf_task(&[7]);
+        let caller = new_elf_task("app", &[7]);
         let spawned = new_entrypoint_task(0x1000, caller.group());
         assert_eq!(spawned.group(), caller.group());
     }

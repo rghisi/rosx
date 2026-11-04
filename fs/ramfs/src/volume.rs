@@ -265,6 +265,14 @@ impl Engine for FileSystem {
         FileSystem::create(self, path_bytes)
     }
 
+    fn mkdir(&mut self, _path_bytes: &[u8]) -> Result<(), FsError> {
+        Err(FsError::Unsupported)
+    }
+
+    fn rmdir(&mut self, _path_bytes: &[u8]) -> Result<(), FsError> {
+        Err(FsError::Unsupported)
+    }
+
     fn read(
         &mut self,
         handle: Self::Handle,

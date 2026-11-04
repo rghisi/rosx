@@ -79,21 +79,21 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // kernel.schedule(FunctionTask::new("3", dummy::app::main3));
     // kernel.schedule(FunctionTask::new("4", dummy::app::main4));
     static RANDOMD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/randomd");
-    let _ = kernel.schedule(new_elf_task(RANDOMD_ELF));
+    let _ = kernel.schedule(new_elf_task("randomd", RANDOMD_ELF));
     static ECHO_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/echo");
-    let _ = kernel.schedule(new_elf_task(ECHO_ELF));
+    let _ = kernel.schedule(new_elf_task("echo", ECHO_ELF));
     static BULK_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/bulk");
-    let _ = kernel.schedule(new_elf_task(BULK_ELF));
+    let _ = kernel.schedule(new_elf_task("bulk", BULK_ELF));
     static PONG_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/pong");
-    let _ = kernel.schedule(new_elf_task(PONG_ELF));
+    let _ = kernel.schedule(new_elf_task("pong", PONG_ELF));
     static VFSD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/vfsd");
-    let _ = kernel.schedule(new_elf_task(VFSD_ELF));
+    let _ = kernel.schedule(new_elf_task("vfsd", VFSD_ELF));
     static INPUTD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/inputd");
-    let _ = kernel.schedule(new_elf_task(INPUTD_ELF));
+    let _ = kernel.schedule(new_elf_task("inputd", INPUTD_ELF));
     static PS2D_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/ps2d");
-    let _ = kernel.schedule(new_elf_task(PS2D_ELF));
+    let _ = kernel.schedule(new_elf_task("ps2d", PS2D_ELF));
     static ATAD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/atad");
-    match kernel.schedule_with_task_handle(new_elf_task(ATAD_ELF)) {
+    match kernel.schedule_with_task_handle(new_elf_task("atad", ATAD_ELF)) {
         Ok((atad_handle, _)) => {
             if !kernel::platform::portio::grant(atad_handle, 0x1F0, 0x1F7) {
                 kprintln!("[KERNEL] atad primary taskfile grant failed");
@@ -105,7 +105,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         Err(()) => kprintln!("[KERNEL] atad schedule failed"),
     }
     static SHELL_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/shell");
-    let _ = kernel.schedule(new_elf_task(SHELL_ELF));
+    let _ = kernel.schedule(new_elf_task("shell", SHELL_ELF));
     // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
 
     kprintln!("[KERNEL] Starting");

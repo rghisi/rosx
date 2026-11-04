@@ -28,12 +28,31 @@ fn main() {
     };
     match requested.first().copied() {
         None => show_drive_and_mbr(&ata),
+        Some("list") => list_subcommand(&ata),
         Some("read") => read_subcommand(&ata, &requested[1..]),
         Some("write") => write_subcommand(&ata, &requested[1..]),
         Some("stress") => stress_subcommand(&ata),
         Some(subcommand) => println!("ata unknown subcommand: {subcommand}"),
     }
     ata.disconnect();
+}
+
+const DRIVE_COUNT: u8 = 2;
+const MEGABYTE_SECTORS: u64 = 1024 * 1024 / SECTOR_BYTES as u64;
+
+fn list_subcommand(ata: &Ata) {
+    for drive in 0..DRIVE_COUNT {
+        match ata.identify(drive) {
+            Ok(identity) => println!(
+                "ata disk {drive} sectors={} mb={} model={} firmware={}",
+                identity.sectors,
+                identity.sectors / MEGABYTE_SECTORS,
+                identity.model,
+                identity.firmware_rev
+            ),
+            Err(_) => println!("ata disk {drive} absent"),
+        }
+    }
 }
 
 fn show_drive_and_mbr(ata: &Ata) {

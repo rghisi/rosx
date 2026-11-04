@@ -9,7 +9,7 @@ use usrlib::handle::{UserConnectionHandle, UserDataHandle};
 use usrlib::println;
 use usrlib::syscall::Syscall;
 use vfs_protocol::wire::{self, Reply, Request, VfsError};
-use vfsd::fs::{ActiveVolume, VfsStore};
+use vfsd::fs::ActiveStore;
 
 const INCOMING_READ_CHUNK_BYTES: usize = 4096;
 
@@ -48,14 +48,14 @@ fn read_rom_image() -> Vec<u8> {
 }
 
 struct VfsServer {
-    fs: VfsStore<ActiveVolume>,
+    fs: ActiveStore,
     held: Vec<(u32, UserDataHandle)>,
 }
 
 impl VfsServer {
     fn new() -> VfsServer {
         VfsServer {
-            fs: VfsStore::new(),
+            fs: ActiveStore::new(),
             held: Vec::new(),
         }
     }
@@ -140,6 +140,29 @@ impl VfsServer {
                 Ok((kind, size)) => Reply::Stat { kind, size },
                 Err(error) => Reply::Err(error),
             },
+            Request::ListDir { dir } => self.list_dir_reply(connection, owner, dir),
+            Request::Mount { drive, dir } => match self.fs.mount_drive(drive, dir) {
+                Ok(()) => {
+                    println!("[VFSD] mounted rxfs volume on drive {drive} at /{dir}");
+                    Reply::Ack
+                }
+                Err(error) => Reply::Err(error),
+            },
+            Request::Format { drive } => match self.fs.format_drive(drive) {
+                Ok(()) => {
+                    println!("[VFSD] formatted rxfs volume on drive {drive}");
+                    Reply::Ack
+                }
+                Err(error) => Reply::Err(error),
+            },
+            Request::MkDir { path } => match self.fs.mkdir(path) {
+                Ok(()) => Reply::Ack,
+                Err(error) => Reply::Err(error),
+            },
+            Request::RmDir { path } => match self.fs.rmdir(path) {
+                Ok(()) => Reply::Ack,
+                Err(error) => Reply::Err(error),
+            },
         }
     }
 
@@ -173,6 +196,24 @@ impl VfsServer {
         owner: u32,
     ) -> Reply {
         let blob = match self.fs.list() {
+            Err(error) => return Reply::Err(error),
+            Ok(blob) => blob,
+        };
+        if blob.is_empty() {
+            return Reply::Eof;
+        }
+        self.attach_payload(connection, owner, &blob, |token, total| {
+            Reply::Listed { token, total }
+        })
+    }
+
+    fn list_dir_reply(
+        &mut self,
+        connection: UserConnectionHandle,
+        owner: u32,
+        dir: &str,
+    ) -> Reply {
+        let blob = match self.fs.list_dir(dir) {
             Err(error) => return Reply::Err(error),
             Ok(blob) => blob,
         };
