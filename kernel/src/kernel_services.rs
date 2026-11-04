@@ -131,6 +131,7 @@ pub(crate) fn services() -> &'static KernelServices {
 
 #[cfg(test)]
 mod tests {
+    use crate::task_stack::StackKind;
     use super::*;
     use crate::task::Task;
 
@@ -139,7 +140,7 @@ mod tests {
         init();
         let s = services();
 
-        let task = Task::new("test", 0x1000, 0);
+        let task = Task::new("test", 0x1000, 0, StackKind::KernelFunction);
         let handle = s.task_manager.borrow_mut().add_task(task).unwrap();
         assert_eq!(s.task_manager.borrow().get_state(handle), crate::task::TaskState::Created);
 

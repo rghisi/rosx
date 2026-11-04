@@ -1,9 +1,10 @@
 use crate::collections::arena::GenerationalArena;
 use crate::task::TaskState::Terminated;
 use crate::task::{GroupId, SharedTask, Task, TaskHandle, TaskState, YieldReason};
-use crate::task_stack::{StackObservation, STACK_WORDS};
+use crate::task_stack::StackObservation;
 use core::ptr::null_mut;
 use crate::handle::FutureHandle;
+use system::stack::STACK_GUARD_MAGIC;
 
 pub(crate) struct TaskManager {
     tasks: GenerationalArena<SharedTask, 256>,
@@ -90,21 +91,36 @@ impl TaskManager {
         }
     }
 
+    pub(crate) fn check_stack_guard(&mut self, handle: TaskHandle) {
+        if let Ok(task) = self.tasks.borrow_mut(handle.into()) {
+            if !task.stack_guard_intact() {
+                panic!(
+                    "stack overflow: task '{}' ({}) guard word at 0x{:x} overwritten (found 0x{:x}, magic 0x{:x})",
+                    task.name(),
+                    task.stack_kind(),
+                    task.stack_guard_address(),
+                    task.stack_guard_word(),
+                    STACK_GUARD_MAGIC
+                );
+            }
+        }
+    }
+
     pub(crate) fn observe_task_stack(&mut self, handle: TaskHandle) {
         if let Ok(task) = self.tasks.borrow_mut(handle.into()) {
             match task.observe_stack() {
                 StackObservation::WithinBudget => {}
-                StackObservation::SpillIntoGuard => panic!(
-                    "stack overflow: task '{}' suspended inside its stack guard (sp 0x{:x}, stack base 0x{:x}, {} words)",
+                StackObservation::SpillIntoFloor => panic!(
+                    "stack overflow: task '{}' suspended inside the stack floor (sp 0x{:x}, stack base 0x{:x}, {} byte body)",
                     task.name(),
                     task.stack_pointer(),
                     task.stack_base(),
-                    STACK_WORDS
+                    task.stack_kind().body_bytes()
                 ),
                 StackObservation::Exhausted => panic!(
                     "stack overflow: task '{}' consumed all {} stack words (stack base 0x{:x})",
                     task.name(),
-                    STACK_WORDS,
+                    task.stack_kind().body_words(),
                     task.stack_base()
                 ),
             }
@@ -130,6 +146,7 @@ mod tests {
     use super::*;
     use crate::task::Task;
     use crate::task::new_entrypoint_task;
+    use crate::task_stack::StackKind;
     use crate::collections::arena::GenerationalArena;
 
     fn make_future_handle() -> FutureHandle {
@@ -140,7 +157,7 @@ mod tests {
     #[test]
     fn completion_future_is_none_by_default() {
         let mut manager = TaskManager::new();
-        let task = Task::new("test", 0, 0);
+        let task = Task::new("test", 0, 0, StackKind::KernelFunction);
         let handle = manager.add_task(task).unwrap();
         assert!(manager.get_completion_future(handle).is_none());
     }
@@ -148,7 +165,7 @@ mod tests {
     #[test]
     fn set_completion_future_persists() {
         let mut manager = TaskManager::new();
-        let task = Task::new("test", 0, 0);
+        let task = Task::new("test", 0, 0, StackKind::KernelFunction);
         let handle = manager.add_task(task).unwrap();
         let fh = make_future_handle();
         manager.set_completion_future(handle, fh);
@@ -158,15 +175,15 @@ mod tests {
     #[test]
     fn fresh_tasks_belong_to_distinct_groups() {
         let mut manager = TaskManager::new();
-        let first = manager.add_task(Task::new("first", 0, 0)).unwrap();
-        let second = manager.add_task(Task::new("second", 0, 0)).unwrap();
+        let first = manager.add_task(Task::new("first", 0, 0, StackKind::KernelFunction)).unwrap();
+        let second = manager.add_task(Task::new("second", 0, 0, StackKind::KernelFunction)).unwrap();
         assert_ne!(manager.get_group(first), manager.get_group(second));
     }
 
     #[test]
     fn spawned_task_inherits_caller_group() {
         let mut manager = TaskManager::new();
-        let caller = manager.add_task(Task::new("caller", 0, 0)).unwrap();
+        let caller = manager.add_task(Task::new("caller", 0, 0, StackKind::KernelFunction)).unwrap();
         let caller_group = manager.get_group(caller).unwrap();
         let spawned = manager.add_task(new_entrypoint_task(0, caller_group)).unwrap();
         assert_eq!(manager.get_group(spawned), Some(caller_group));
@@ -175,7 +192,7 @@ mod tests {
     #[test]
     fn group_stays_live_until_its_last_member_terminates() {
         let mut manager = TaskManager::new();
-        let caller = manager.add_task(Task::new("caller", 0, 0)).unwrap();
+        let caller = manager.add_task(Task::new("caller", 0, 0, StackKind::KernelFunction)).unwrap();
         let group = manager.get_group(caller).unwrap();
         let sibling = manager.add_task(new_entrypoint_task(0, group)).unwrap();
         assert!(manager.group_has_live_members(group));
@@ -188,8 +205,8 @@ mod tests {
     #[test]
     fn terminating_one_group_leaves_other_groups_live() {
         let mut manager = TaskManager::new();
-        let first = manager.add_task(Task::new("first", 0, 0)).unwrap();
-        let second = manager.add_task(Task::new("second", 0, 0)).unwrap();
+        let first = manager.add_task(Task::new("first", 0, 0, StackKind::KernelFunction)).unwrap();
+        let second = manager.add_task(Task::new("second", 0, 0, StackKind::KernelFunction)).unwrap();
         let first_group = manager.get_group(first).unwrap();
         let second_group = manager.get_group(second).unwrap();
         manager.set_state(first, Terminated);
@@ -200,7 +217,7 @@ mod tests {
     #[test]
     fn removed_task_has_no_group() {
         let mut manager = TaskManager::new();
-        let handle = manager.add_task(Task::new("gone", 0, 0)).unwrap();
+        let handle = manager.add_task(Task::new("gone", 0, 0, StackKind::KernelFunction)).unwrap();
         manager.remove_task(handle);
         assert_eq!(manager.get_group(handle), None);
     }
@@ -208,17 +225,33 @@ mod tests {
     #[test]
     fn observe_task_stack_accepts_shallow_task() {
         let mut manager = TaskManager::new();
-        let handle = manager.add_task(Task::new("shallow", 0, 0)).unwrap();
+        let handle = manager.add_task(Task::new("shallow", 0, 0, StackKind::KernelFunction)).unwrap();
         manager.observe_task_stack(handle);
     }
 
     #[test]
     #[should_panic(expected = "stack overflow")]
-    fn observe_task_stack_panics_when_saved_sp_sits_in_the_guard() {
+    fn observe_task_stack_panics_when_saved_sp_sits_in_the_floor() {
         let mut manager = TaskManager::new();
-        let handle = manager.add_task(Task::new("deep", 0, 0)).unwrap();
+        let handle = manager.add_task(Task::new("deep", 0, 0, StackKind::KernelFunction)).unwrap();
         let base = manager.borrow_task_mut(handle).unwrap().stack_base();
         manager.borrow_task_mut(handle).unwrap().set_stack_pointer(base + 8);
         manager.observe_task_stack(handle);
+    }
+
+    #[test]
+    fn check_stack_guard_accepts_a_fresh_stack() {
+        let mut manager = TaskManager::new();
+        let handle = manager.add_task(Task::new("fresh", 0, 0, StackKind::KernelFunction)).unwrap();
+        manager.check_stack_guard(handle);
+    }
+
+    #[test]
+    #[should_panic(expected = "guard word")]
+    fn check_stack_guard_panics_when_guard_word_is_overwritten() {
+        let mut manager = TaskManager::new();
+        let handle = manager.add_task(Task::new("boom", 0, 0, StackKind::ElfUser)).unwrap();
+        manager.borrow_task_mut(handle).unwrap().set_guard_word(0);
+        manager.check_stack_guard(handle);
     }
 }

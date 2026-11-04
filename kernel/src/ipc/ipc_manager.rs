@@ -225,6 +225,7 @@ impl IpcManager {
 
 #[cfg(test)]
 mod tests {
+    use crate::task_stack::StackKind;
     use super::*;
     use crate::kernel_services::init as init_services;
     use crate::kernel_services::services;
@@ -423,7 +424,7 @@ mod tests {
         crate::scheduler::wire_scheduler_for_tests();
         let binding = manager.bind_service("EVT-WAKE").unwrap();
 
-        let task = crate::task::Task::new("waiter", 0x1000, 0);
+        let task = crate::task::Task::new("waiter", 0x1000, 0, StackKind::KernelFunction);
         let task_handle = services().task_manager.borrow_mut().add_task(task).unwrap();
         services()
             .task_manager

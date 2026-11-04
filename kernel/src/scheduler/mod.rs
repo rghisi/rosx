@@ -64,6 +64,7 @@ pub(crate) fn wire_scheduler_for_tests() {
 
 #[cfg(test)]
 mod tests {
+    use crate::task_stack::StackKind;
     use super::*;
     use crate::kernel_services::{init, services};
     use crate::ports::driven::SwitchOutcome;
@@ -88,7 +89,7 @@ mod tests {
         let handler = services().timer_handler;
         let mut scheduler = *fifo_scheduler(&TEST_CTX, handler);
 
-        let task = Task::new("T", 0x1000, 0);
+        let task = Task::new("T", 0x1000, 0, StackKind::KernelFunction);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
         services().task_manager.borrow_mut().set_state(handle, TaskState::Blocked);
 
@@ -102,7 +103,7 @@ mod tests {
         let handler = services().timer_handler;
         let mut scheduler = *mfq_scheduler(&TEST_CTX, handler);
 
-        let task = Task::new("T", 0x1000, 0);
+        let task = Task::new("T", 0x1000, 0, StackKind::KernelFunction);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
         services().task_manager.borrow_mut().set_state(handle, TaskState::Blocked);
 
