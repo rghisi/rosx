@@ -1,6 +1,6 @@
 # RosX - Agent Context Document
 
-> **Last Updated:** 2026-11-02
+> **Last Updated:** 2026-11-04
 > **Purpose:** Compact, always-accurate context for AI coding agents working on RosX.
 
 ---
@@ -208,7 +208,7 @@ These principles are the regression guard: the very inversion this rework remove
 
 **Kernel Subsystems (current invariants):**
 - `future/` + `ipc/` — **notification-driven** futures (time, task-completion, depth-one waitset aggregates) and a mailbox IPC manager (bind/connect/send/receive); kernel-originated event delivery (`deliver_to_service`) wakes accepts on bound services; a waitset completes when any attached leaf future does, woken by a child-to-waitset cascade inside `FutureRegistry::notify`; no polling on the preemption cycle.
-- Interrupt discipline — kernel code runs with IF=0 except idle `hlt` and the user-return boundaries (`iretd`/`SFMASK`); the scheduler, future registry, and mailbox manager mutations are `IrqGuard` sections (`kernel/src/irq_guard.rs`) whose re-entry tripwire prints `[IRQGUARD]` and must stay silent.
+- Interrupt discipline — kernel code runs with IF=0 except idle `hlt` and the user-return boundaries (`iretd`/`SFMASK`); the scheduler, future registry, and mailbox manager mutations are `IrqGuard` sections (`kernel/src/irq_guard.rs`) whose re-entry tripwire prints `[IRQGUARD]` and must stay silent. Forced context switches have a single site: wakers raise `need_resched` and `Kernel::maybe_resched()`, consulted only at the timer-IRQ tail and the syscall-exit wrapper tail, is the sole decision point — intent survives non-preemptible windows uncleared (`plans/stack/deferred-reschedule-impl.md`).
 - `ipc/` data family — messages signal; data rides the connection out-of-band via write/read/release tokens; the kernel never interprets message payloads.
 - Input architecture — policy lives in the user-space `INPUTD` daemon (`inputd`), device semantics in driver daemons (`ps2d`); the kernel delivers opaque event frames only.
 - Disk architecture — ATA command semantics live in the user-space `ATAD` daemon (`atad`) over `ata-protocol`; the kernel contributes only the mediated port capability (`portio` grants). v1 polls; IRQ14 delivery is the v2 event path.

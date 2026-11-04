@@ -1,6 +1,7 @@
 # Plan 1 — Deferred Reschedule: One Forced-Switch Site
 
-> **Status:** DRAFT for review · **Date:** 2026-11-04 · **Code state:** `da8d54b`
+> **Status:** Implemented (`deferred-reschedule` branch — evidence log
+> `deferred-reschedule-impl.md`) · **Date:** 2026-11-04 · **Code state:** `da8d54b`
 > **Depends on:** nothing · **Blocks:** plan 3 (`dual-stack-entry-trampolines.md`)
 
 ## Problem being solved
