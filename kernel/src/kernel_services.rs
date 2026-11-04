@@ -26,6 +26,7 @@ struct SchedulerWakerUseCase {
 impl ForWakingTasks for SchedulerWakerUseCase {
     fn wake_tasks(&self, handles: Vec<crate::task::TaskHandle>) {
         self.scheduler.borrow_mut().wake_tasks(handles);
+        crate::kernel::Kernel::mark_resched();
     }
 }
 
