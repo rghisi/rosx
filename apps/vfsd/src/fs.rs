@@ -223,8 +223,7 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
         };
         match self.mounts.iter().position(|mount| mount.name == head) {
             Some(slot) => Ok(Target::Volume(slot, format!("/{rest}"))),
-            None if rest.is_empty() => Ok(Target::Root),
-            None => Err(VfsError::NotFound),
+            None => Ok(Target::Root),
         }
     }
 
@@ -1095,13 +1094,45 @@ mod tests {
     }
 
     #[test]
-    fn unknown_mount_prefix_is_not_found_for_every_operation() {
+    fn unknown_prefix_is_not_found_from_the_engine_not_the_router() {
         let mut fs = fresh_store();
         assert_eq!(fs.open(OWNER, 0, "floppy/x"), Err(VfsError::NotFound));
         assert_eq!(fs.delete("floppy/x"), Err(VfsError::NotFound));
         assert_eq!(fs.stat("floppy/x"), Err(VfsError::NotFound));
         assert_eq!(fs.list_dir("floppy/x"), Err(VfsError::NotFound));
         assert_eq!(fs.mkdir("floppy/x"), Err(VfsError::NotFound));
+        fs.mkdir("floppy").unwrap();
+        assert_eq!(fs.mkdir("floppy/x"), Ok(()));
+    }
+
+    #[test]
+    fn nested_paths_reach_the_root_engine() {
+        let mut fs = fresh_store();
+        fs.mkdir("games").unwrap();
+        fs.mkdir("games/deep").unwrap();
+        let handle = create(&mut fs, OWNER, "games/file");
+        fs.write(OWNER, handle, 0, b"nested").unwrap();
+        fs.close(OWNER, handle).unwrap();
+        assert_eq!(fs.list_dir("games").unwrap(), b"deep\nfile".to_vec());
+        let read = fs.open(OWNER, 0, "games/file").unwrap();
+        assert_eq!(contents(&mut fs, OWNER, read), b"nested".to_vec());
+        assert_eq!(fs.stat("games/file").unwrap(), (EntityKind::File, 6));
+        fs.delete("games/file").unwrap();
+        fs.rmdir("games/deep").unwrap();
+        assert_eq!(fs.stat("games/deep"), Err(VfsError::NotFound));
+        fs.rmdir("games").unwrap();
+        assert_eq!(fs.stat("games"), Err(VfsError::NotFound));
+    }
+
+    #[test]
+    fn mounted_name_shadows_its_root_directory() {
+        let mut fs = fresh_store();
+        mount_fake(&mut fs, "disk");
+        let handle = create(&mut fs, OWNER, "disk/inner");
+        fs.close(OWNER, handle).unwrap();
+        assert_eq!(fs.list_dir("disk").unwrap(), b"inner".to_vec());
+        let root_entries = fs.engine.readdir(b"/disk").unwrap();
+        assert!(root_entries.iter().all(|item| dot_entry(&item.name)));
     }
 
     #[test]
