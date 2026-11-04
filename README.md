@@ -233,7 +233,58 @@ See `AGENTS.md` for detailed development guidelines and coding standards.
 
 ## Releases
 
-Ready-to-use binary images are available in the [Releases](https://github.com/rghisi/rosx/releases) section of the GitHub repository. You can download these and run them directly in QEMU.
+Ready-to-use binary images are available in the [Releases](https://github.com/rghisi/rosx/releases) section of the GitHub repository. The CI `Build Artifacts` workflow (manual dispatch) also publishes them as run artifacts, downloadable with `gh run download <run-id> -n <artifact-name>` (artifacts are kept for one day). Boot any of them directly in QEMU:
+
+### x86_64 — BIOS disk image (`rosx-x86_64` artifact)
+
+```bash
+qemu-system-x86_64 \
+  -drive format=raw,file=rosx-x86_64.img \
+  -debugcon stdio \
+  -no-reboot -no-shutdown
+```
+
+### x86_32 — GRUB bootable ISO (`rosx-x86_32-iso` artifact)
+
+The image is an ISO despite the `.img` extension, so it boots as a CD-ROM:
+
+```bash
+qemu-system-i386 -cpu 486 \
+  -cdrom rosx-x86_32.img -boot order=d \
+  -debugcon stdio \
+  -no-reboot -no-shutdown
+```
+
+### x86_32 — bare Multiboot kernel ELF (`rosx-x86_32` artifact)
+
+Boots without a bootloader via QEMU's `-kernel`. No ROM flag is needed: the kernel embeds the ROM image at link time.
+
+```bash
+qemu-system-i386 -cpu 486 \
+  -kernel rosx-x86_32 \
+  -debugcon stdio \
+  -no-reboot -no-shutdown
+```
+
+### Optional: a second disk for the ATA / RxFS flow
+
+To exercise `ata list` → `format <id>` → `mkdir <dir>` → `mount <id> <dir>` → `ls <dir>`, attach a raw data disk as the secondary IDE drive:
+
+```bash
+truncate -s 50M hdd.img
+qemu-system-x86_64 \
+  -drive format=raw,file=rosx-x86_64.img \
+  -drive if=ide,index=1,media=disk,format=raw,file=hdd.img \
+  -debugcon stdio \
+  -no-reboot -no-shutdown
+```
+
+### Why these flags
+
+- **`-debugcon stdio`** — console output rides QEMU's debug console port (0xE9) into your terminal; type into the VGA window (the guest reads the PS/2 keyboard).
+- **`-cpu 486` on x86_32** — the port's maintained baseline; the `cargo xtask check-isa x86_32` audit guards against ever needing more.
+- **No `-m`** — memory is left at QEMU's 128 MiB default, which the kernel banner reports as about 112 MB usable.
+- **`-no-reboot -no-shutdown`** — a guest panic halts visibly instead of spinning the VM.
 
 ## Documentation
 
