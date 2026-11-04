@@ -6,4 +6,5 @@ edition.workspace = true
 
 [dependencies]
 system = { path = "../system" }
+vfs-protocol = { path = "../protocol/vfs" }
 x86-runner = { path = "../arch/x86-runner" }

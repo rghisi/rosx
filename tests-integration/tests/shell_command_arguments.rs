@@ -9,10 +9,10 @@ fn shell_forwards_command_arguments_to_elf_app() {
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);
     let mark = session.mark();
-    session.send_line("pi alpha beta");
+    session.send_line("bench/pi alpha beta");
     session.expect_output_since(
         mark,
-        "args(3): [\"pi\", \"alpha\", \"beta\"]",
+        "args(3): [\"bench/pi\", \"alpha\", \"beta\"]",
         ARGUMENTS_TIMEOUT,
     );
 }

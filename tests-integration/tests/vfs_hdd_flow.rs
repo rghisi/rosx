@@ -45,13 +45,13 @@ fn mkdir_mount_and_carve_directories_on_the_hard_disk_volume() {
             "ls /hdd on the fresh volume must succeed: {listing}"
         );
 
-        run(&mut session, "cp pi hdd/pi", "cp ok pi -> hdd/pi");
+        run(&mut session, "cp bench/pi hdd/pi", "cp ok bench/pi -> hdd/pi");
 
         let listing = run(&mut session, "ls /hdd", "rose>");
         assert!(listing.contains("pi"), "the copied file must list: {listing}");
 
         run(&mut session, "mkdir hdd/sub", "mkdir ok hdd/sub");
-        run(&mut session, "cp echo hdd/sub/echo", "cp ok echo -> hdd/sub/echo");
+        run(&mut session, "cp services/echo hdd/sub/echo", "cp ok services/echo -> hdd/sub/echo");
 
         let listing = run(&mut session, "ls hdd/sub", "rose>");
         assert!(listing.contains("echo"), "the nested copy must list: {listing}");

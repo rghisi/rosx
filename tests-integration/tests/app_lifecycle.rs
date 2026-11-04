@@ -18,7 +18,7 @@ fn tetris_survives_idle() {
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);
     let mark = session.mark();
-    session.send_line("tetris");
+    session.send_line("games/tetris");
     session.expect_output_since(mark, "TETRIS", BANNER_TIMEOUT);
 
     let repaint_deadline = Instant::now() + REPAINT_TIMEOUT;
@@ -59,7 +59,7 @@ fn snake_survives_idle() {
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);
     let mark = session.mark();
-    session.send_line("snake");
+    session.send_line("games/snake");
     session.expect_output_since(mark, "SNAKE", BANNER_TIMEOUT);
 
     let game_over_deadline = Instant::now() + BANNER_TIMEOUT;

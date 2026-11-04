@@ -47,7 +47,6 @@ impl<E: Engine> Clone for OpenLocation<E> {
 struct OpenEntry<E: Engine> {
     owner: u32,
     mode: u8,
-    name: String,
     location: OpenLocation<E>,
 }
 
@@ -348,7 +347,6 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
             OpenEntry {
                 owner,
                 mode,
-                name: String::from(name),
                 location,
             },
         );

@@ -9,6 +9,6 @@ fn elf_app_receives_arguments_from_kernel() {
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);
     let mark = session.mark();
-    session.send_line("pi");
-    session.expect_output_since(mark, "args(1): [\"pi\"]", ARGUMENTS_TIMEOUT);
+    session.send_line("bench/pi");
+    session.expect_output_since(mark, "args(1): [\"bench/pi\"]", ARGUMENTS_TIMEOUT);
 }

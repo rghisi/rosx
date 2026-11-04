@@ -30,9 +30,14 @@ fn shell_ls_and_unknown_command() {
     let after_prompt = session.mark();
     session.send_line("ls");
     session.expect_output_since(after_prompt, "clear", Duration::from_secs(10));
-    session.expect_output_since(after_prompt, "tetris", Duration::from_secs(10));
+    session.expect_output_since(after_prompt, "games", Duration::from_secs(10));
+    session.expect_output_since(after_prompt, "services", Duration::from_secs(10));
     session.expect_output_since(after_prompt, "rose>", Duration::from_secs(10));
     let after_ls = session.mark();
+    session.send_line("ls games");
+    session.expect_output_since(after_ls, "tetris", Duration::from_secs(10));
+    session.expect_output_since(after_ls, "rose>", Duration::from_secs(10));
+    let after_ls_games = session.mark();
     session.send_line("foo");
-    session.expect_output_since(after_ls, "Unknown command: foo", Duration::from_secs(10));
+    session.expect_output_since(after_ls_games, "Unknown command: foo", Duration::from_secs(10));
 }

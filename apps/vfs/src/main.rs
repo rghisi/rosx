@@ -34,11 +34,11 @@ fn run(vfs: &Vfs) -> bool {
     }
     println!("vfs ok: stat ghost denied");
 
-    match vfs.stat("randomd") {
-        Ok(entity) if entity.kind == EntityKind::File && entity.size > 0 => {}
-        _ => return failed("stat randomd rom intact"),
-    }
-    println!("vfs ok: stat randomd rom intact");
+    let rom_size = match vfs.stat("services/randomd") {
+        Ok(entity) if entity.kind == EntityKind::File && entity.size > 0 => entity.size,
+        _ => return failed("stat services/randomd rom intact"),
+    };
+    println!("vfs ok: stat services/randomd rom intact");
 
     let Ok(mut notes) = vfs.open("notes.txt", MODE_WRITE | MODE_CREATE) else {
         return failed("create notes.txt");
@@ -246,6 +246,71 @@ fn run(vfs: &Vfs) -> bool {
         _ => return failed("list empty"),
     }
     println!("vfs ok: list empty");
+
+    let marker: Vec<u8> = (0..64).map(|offset| vfs_byte(offset + 1024)).collect();
+    let Ok(mut rom) = vfs.open("services/randomd", MODE_WRITE) else {
+        return failed("append to services/randomd");
+    };
+    rom.seek(rom_size);
+    if rom.write(&marker).is_err() || rom.offset() != rom_size + marker.len() as u64 {
+        return failed("append to services/randomd");
+    }
+    if rom.close().is_err() {
+        return failed("append to services/randomd");
+    }
+    let Ok(mut rom) = vfs.open("services/randomd", 0) else {
+        return failed("append to services/randomd");
+    };
+    rom.seek(rom_size);
+    let mut appended = vec![0u8; marker.len()];
+    match rom.read(&mut appended) {
+        Ok(count) if count == marker.len() => {}
+        _ => return failed("append to services/randomd"),
+    }
+    if appended != marker {
+        return failed("append to services/randomd");
+    }
+    if rom.close().is_err() {
+        return failed("append to services/randomd");
+    }
+    match vfs.stat("services/randomd") {
+        Ok(entity) if entity.size == rom_size + marker.len() as u64 => {}
+        _ => return failed("append to services/randomd"),
+    }
+    println!("vfs ok: append to services/randomd read back");
+
+    let payload: Vec<u8> = (0..512).map(|offset| vfs_byte(offset + 4096)).collect();
+    let Ok(mut scratch) = vfs.open("tests/scratch.txt", MODE_WRITE | MODE_CREATE) else {
+        return failed("create write delete tests/scratch.txt");
+    };
+    if scratch.write(&payload).is_err() || scratch.offset() != payload.len() as u64 {
+        return failed("create write delete tests/scratch.txt");
+    }
+    if scratch.close().is_err() {
+        return failed("create write delete tests/scratch.txt");
+    }
+    let Ok(mut scratch) = vfs.open("tests/scratch.txt", 0) else {
+        return failed("create write delete tests/scratch.txt");
+    };
+    let mut readback = vec![0u8; payload.len()];
+    match scratch.read(&mut readback) {
+        Ok(count) if count == payload.len() => {}
+        _ => return failed("create write delete tests/scratch.txt"),
+    }
+    if readback != payload {
+        return failed("create write delete tests/scratch.txt");
+    }
+    if scratch.close().is_err() {
+        return failed("create write delete tests/scratch.txt");
+    }
+    if vfs.delete("tests/scratch.txt").is_err() {
+        return failed("create write delete tests/scratch.txt");
+    }
+    match vfs.stat("tests/scratch.txt") {
+        Err(ClientError::Vfs(VfsError::NotFound)) => {}
+        _ => return failed("create write delete tests/scratch.txt"),
+    }
+    println!("vfs ok: create write delete tests/scratch.txt");
 
     true
 }

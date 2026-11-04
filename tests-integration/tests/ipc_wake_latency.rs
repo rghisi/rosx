@@ -19,7 +19,7 @@ fn parked_services_run_before_the_waking_burst_completes() {
     session.expect_output("rose>", BOOT_BUDGET);
 
     let mark = session.mark();
-    session.send_line("ping burst");
+    session.send_line("services/ping burst");
     if session
         .wait_until_since(mark, |delta| delta.contains(SENT_MARKER), BURST_BUDGET)
         .is_err()

@@ -12,11 +12,11 @@ fn bench_alloc_reports_machine_readable_lines() {
     session.expect_output("rose>", BOOT_BUDGET);
 
     let before_list = session.mark();
-    session.send_line("bench list");
+    session.send_line("bench/bench list");
     session.expect_output_since(before_list, "Available benchmarks: alloc", Duration::from_secs(15));
 
     let mark = session.mark();
-    session.send_line("bench alloc");
+    session.send_line("bench/bench alloc");
     session.expect_output_since(mark, "bench.start", START_BUDGET);
     session.expect_output_since(mark, "bench.alloc.best size=64 ", FIRST_PHASE_BUDGET);
     session.expect_output_since(mark, "bench.alloc.best size=4194304 ", SWEEP_BUDGET);

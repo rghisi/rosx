@@ -6,15 +6,15 @@ const SWEEP_TIMEOUT: Duration = Duration::from_secs(180);
 const DIAGNOSTIC_TAIL_CHARS: usize = 2000;
 const BOOT_LINE: &str = "[IPC Server] VFS";
 const PROMPT: &str = "rose>";
-const COMMAND: &str = "vfs";
+const COMMAND: &str = "tests/vfs";
 const OK_PREFIX: &str = "vfs ok: ";
 const DONE_LINE: &str = "vfs done";
 const ERROR_PREFIX: &str = "vfs error:";
 const FORBIDDEN_STRINGS: [&str; 2] = ["fail", "Panic"];
 
-const EXPECTED_OK: [&str; 24] = [
+const EXPECTED_OK: [&str; 26] = [
     "vfs ok: stat ghost denied",
-    "vfs ok: stat randomd rom intact",
+    "vfs ok: stat services/randomd rom intact",
     "vfs ok: create notes.txt",
     "vfs ok: write 4096 at 0",
     "vfs ok: write 1024 at 8192",
@@ -37,6 +37,8 @@ const EXPECTED_OK: [&str; 24] = [
     "vfs ok: list got blob.bin",
     "vfs ok: delete blob.bin",
     "vfs ok: list empty",
+    "vfs ok: append to services/randomd read back",
+    "vfs ok: create write delete tests/scratch.txt",
 ];
 
 fn tail_chars(content: &str, n: usize) -> String {

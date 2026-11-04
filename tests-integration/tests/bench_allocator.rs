@@ -16,7 +16,7 @@ fn bench_allocator_suites_report_machine_readable_lines() {
     session.expect_output("rose>", BOOT_BUDGET);
 
     let before_list = session.mark();
-    session.send_line("bench list");
+    session.send_line("bench/bench list");
     session.expect_output_since(
         before_list,
         "alloc_cached, alloc_churn",
@@ -24,7 +24,7 @@ fn bench_allocator_suites_report_machine_readable_lines() {
     );
 
     let cached_mark = session.mark();
-    session.send_line("bench alloc_cached");
+    session.send_line("bench/bench alloc_cached");
     session.expect_output_since(cached_mark, "bench.start suite=alloc_cached", START_BUDGET);
     session.expect_output_since(
         cached_mark,
@@ -43,7 +43,7 @@ fn bench_allocator_suites_report_machine_readable_lines() {
     );
 
     let churn_mark = session.mark();
-    session.send_line("bench alloc_churn");
+    session.send_line("bench/bench alloc_churn");
     session.expect_output_since(
         churn_mark,
         "bench.start suite=alloc_churn",

@@ -64,7 +64,7 @@ fn shell_waitset_or_composition_roundtrip() {
     let mark = session.mark();
     session.expect_output("rose>", READY_TIMEOUT);
 
-    session.send_line("waitset");
+    session.send_line("tests/waitset");
 
     if let Err(output_tail) =
         session.wait_until_since(mark, |delta| delta.contains(LAST_LINE), SWEEP_TIMEOUT)

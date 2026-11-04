@@ -16,7 +16,7 @@ fn busy_mem_worker_is_preempted_for_ctx_worker() {
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);
     let mark = session.mark();
-    session.send_line("stress mixed");
+    session.send_line("tests/stress mixed");
     session.expect_output_since(mark, MIX_STARTED, MEM_STARTED_BUDGET);
     session.expect_output_since(mark, MEM_STARTED, MEM_STARTED_BUDGET);
 

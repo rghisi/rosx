@@ -71,7 +71,7 @@ fn shell_ping_capability_data_roundtrip() {
     session.expect_output("[IPC Server] Ping", READY_TIMEOUT);
     session.expect_output("rose>", READY_TIMEOUT);
 
-    session.send_line("ping");
+    session.send_line("services/ping");
 
     if let Err(output_tail) =
         session.wait_until_since(mark, |delta| delta.contains(LAST_SWEEP_LINE), SWEEP_TIMEOUT)

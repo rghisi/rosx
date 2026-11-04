@@ -14,7 +14,7 @@ fn bench_history_gate() {
     session.expect_output("rose>", BOOT_BUDGET);
 
     let mark = session.mark();
-    session.send_line("bench");
+    session.send_line("bench/bench");
     session.expect_output_since(mark, "bench.start suite=alloc", BOOT_BUDGET);
     session.expect_output_since(mark, "=== Bench Finished ===", SWEEP_BUDGET);
 

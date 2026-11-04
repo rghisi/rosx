@@ -10,6 +10,24 @@ use x86_runner::{BootMedium, LaunchMode};
 
 const USER_APPS: [&str; 26] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "bench", "atad", "ata", "format", "mount", "rm", "cp", "mkdir", "rmdir"];
 
+const ROM_GAMES: [&str; 3] = ["snake", "tetris", "conway"];
+const ROM_SERVICES: [&str; 8] = ["randomd", "echo", "bulk", "pong", "ping", "inputd", "ps2d", "atad"];
+const ROM_TESTS: [&str; 4] = ["threads", "waitset", "stress", "vfs"];
+const ROM_BENCH: [&str; 2] = ["bench", "pi"];
+const ROM_ROOT_TOOLS: [&str; 9] = ["vfsd", "ata", "format", "mount", "rm", "cp", "mkdir", "rmdir", "mem"];
+const ROM_CATEGORIES: [(&str, &[&str]); 5] = [
+    ("", &ROM_ROOT_TOOLS),
+    ("games", &ROM_GAMES),
+    ("services", &ROM_SERVICES),
+    ("tests", &ROM_TESTS),
+    ("bench", &ROM_BENCH),
+];
+const MAPPED_ROM_APPS: usize = ROM_GAMES.len()
+    + ROM_SERVICES.len()
+    + ROM_TESTS.len()
+    + ROM_BENCH.len()
+    + ROM_ROOT_TOOLS.len();
+
 const RUN_DISK_BYTES: usize = 1024 * 1024;
 const MBR_SIGNATURE_OFFSET: usize = 510;
 
@@ -90,20 +108,40 @@ fn launch(medium: &BootMedium, spec: &ArchSpec) {
 }
 
 fn pack_rom(spec: &ArchSpec) {
-    let mut files: Vec<(&str, Vec<u8>)> = Vec::new();
+    assert_eq!(
+        MAPPED_ROM_APPS,
+        USER_APPS.len(),
+        "every app in USER_APPS must carry exactly one ROM category assignment"
+    );
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     let release_dir = spec.user_release_dir();
-    for name in USER_APPS {
-        let path = release_dir.join(name);
-        let Ok(bytes) = std::fs::read(&path) else {
-            eprintln!("missing user ELF {}; run `cargo xtask apps {}` first", path.display(), spec.name);
-            process::exit(1);
-        };
-        files.push((name, bytes));
+    for (directory, names) in ROM_CATEGORIES {
+        for name in names {
+            let path = release_dir.join(name);
+            let Ok(bytes) = std::fs::read(&path) else {
+                eprintln!(
+                    "missing user ELF {}; run `cargo xtask apps {}` first",
+                    path.display(),
+                    spec.name
+                );
+                process::exit(1);
+            };
+            let entry = if directory.is_empty() {
+                String::from(*name)
+            } else {
+                format!("{directory}/{name}")
+            };
+            assert!(
+                vfs_protocol::wire::valid_path(&entry),
+                "ROM entry {entry} must pass wire::valid_path"
+            );
+            files.push((entry, bytes));
+        }
     }
-    files.sort_by_key(|(name, _)| *name);
+    files.sort_by_key(|(entry, _)| entry.clone());
     let pairs: Vec<(&str, &[u8])> = files
         .iter()
-        .map(|(name, bytes)| (*name, bytes.as_slice()))
+        .map(|(entry, bytes)| (entry.as_str(), bytes.as_slice()))
         .collect();
     let image = system::rom::encode(&pairs);
     let rom_path = spec.rom_path();
