@@ -1,6 +1,7 @@
 # Plan 2 — Stack Kinds, Sized Allocation, Poison Guards
 
-> **Status:** DRAFT for review · **Date:** 2026-11-04 · **Code state:** `da8d54b`
+> **Status:** IMPLEMENTED 2026-11-04 (lighter contract by review — see
+> `stack-kinds-and-poison-guards-impl.md`) · **Date:** 2026-11-04 · **Code state:** `da8d54b`
 > **Depends on:** nothing (independent of plan 1; may land in parallel)
 > **Blocks:** plan 3 (`dual-stack-entry-trampolines.md`)
 

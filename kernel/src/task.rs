@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use core::fmt::{Display, Formatter};
 use crate::elf::load_elf;
 use crate::handle::FutureHandle;
-use crate::task_stack::{StackObservation, TaskStack, STACK_GUARD_BYTES};
+use crate::task_stack::{StackKind, StackObservation, TaskStack, STACK_FLOOR_BYTES};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use system::args::{MAX_ARGUMENT_BYTES, MAX_ARGUMENT_COUNT};
 use system::error::ErrorCode;
@@ -81,8 +81,9 @@ impl Task {
         name: &'static str,
         entry_point: usize,
         entry_param: usize,
+        kind: StackKind,
     ) -> SharedTask {
-        let stack = TaskStack::new();
+        let stack = TaskStack::new(kind);
         let stack_pointer = stack.top();
         Box::new(Task {
             name,
@@ -117,11 +118,27 @@ impl Task {
         self.stack.observe_depth();
         if self.stack.is_exhausted() {
             StackObservation::Exhausted
-        } else if self.stack_pointer < self.stack.base() + STACK_GUARD_BYTES {
-            StackObservation::SpillIntoGuard
+        } else if self.stack_pointer < self.stack.base() + STACK_FLOOR_BYTES {
+            StackObservation::SpillIntoFloor
         } else {
             StackObservation::WithinBudget
         }
+    }
+
+    pub(crate) fn stack_kind(&self) -> StackKind {
+        self.stack.kind()
+    }
+
+    pub(crate) fn stack_guard_intact(&self) -> bool {
+        self.stack.guard_intact()
+    }
+
+    pub(crate) fn stack_guard_address(&self) -> usize {
+        self.stack.guard_address()
+    }
+
+    pub(crate) fn stack_guard_word(&self) -> usize {
+        self.stack.guard_word()
     }
     pub(crate) fn state(&self) -> TaskState {
         self.state
@@ -181,6 +198,11 @@ impl Task {
         self.set_stack_pointer(new_stack_pointer);
         self.set_ready();
     }
+
+    #[cfg(test)]
+    pub(crate) fn set_guard_word(&mut self, value: usize) {
+        self.stack.set_guard_word(value);
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -188,13 +210,13 @@ pub struct FunctionTask {}
 
 impl FunctionTask {
     pub fn new(name: &'static str, job: fn()) -> SharedTask {
-        Task::new(name, task_wrapper as usize, job as usize)
+        Task::new(name, task_wrapper as usize, job as usize, StackKind::KernelFunction)
     }
 }
 
 pub fn idle_task_factory(cpu: &'static dyn Cpu) -> Box<Task> {
     let cpu_ptr = Box::into_raw(Box::new(cpu)) as usize;
-    Task::new("[K] Idle", idle_entry as usize, cpu_ptr)
+    Task::new("[K] Idle", idle_entry as usize, cpu_ptr, StackKind::Idle)
 }
 
 extern "C" fn idle_entry(cpu_ptr: usize) {
@@ -207,7 +229,7 @@ extern "C" fn idle_entry(cpu_ptr: usize) {
 }
 
 pub fn new_entrypoint_task(entrypoint: usize, group: GroupId) -> SharedTask {
-    let mut task = Task::new("EPT", task_wrapper as usize, entrypoint);
+    let mut task = Task::new("EPT", task_wrapper as usize, entrypoint, StackKind::ElfUser);
     task.group = group;
     task
 }
@@ -279,12 +301,22 @@ pub fn validate_arguments_blob(blob: &[u8]) -> Result<(), ErrorCode> {
 
 pub fn new_elf_task(name: &'static str, elf: &[u8]) -> SharedTask {
     let context = ElfTaskContext::new(elf, &[name]);
-    Task::new(name, elf_task_wrapper as usize, Box::into_raw(context) as usize)
+    Task::new(
+        name,
+        elf_task_wrapper as usize,
+        Box::into_raw(context) as usize,
+        StackKind::ElfUser,
+    )
 }
 
 pub fn new_elf_task_with_arguments(name: &'static str, elf: &[u8], arguments_blob: Vec<u8>) -> SharedTask {
     let context = ElfTaskContext::with_blob(elf, arguments_blob);
-    Task::new(name, elf_task_wrapper as usize, Box::into_raw(context) as usize)
+    Task::new(
+        name,
+        elf_task_wrapper as usize,
+        Box::into_raw(context) as usize,
+        StackKind::ElfUser,
+    )
 }
 
 pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
@@ -310,7 +342,7 @@ mod tests {
 
     #[test]
     fn task_new_field_integrity() {
-        let task = Task::new("t", 0x1111, 0x2222);
+        let task = Task::new("t", 0x1111, 0x2222, StackKind::KernelFunction);
         assert_eq!(task.name(), "t");
         assert_eq!(task.entry_point(), 0x1111);
         assert_eq!(task.entry_param(), 0x2222);
@@ -323,14 +355,23 @@ mod tests {
     }
 
     #[test]
+    fn task_stack_guard_survives_until_corrupted() {
+        let mut task = Task::new("boom", 0, 0, StackKind::ElfUser);
+        assert_eq!(task.stack_kind(), StackKind::ElfUser);
+        assert!(task.stack_guard_intact());
+        task.set_guard_word(!STACK_WATERMARK);
+        assert!(!task.stack_guard_intact());
+    }
+
+    #[test]
     fn new_task_has_no_completion_future() {
-        let task = Task::new("test", 0, 0);
+        let task = Task::new("test", 0, 0, StackKind::KernelFunction);
         assert!(task.completion_future().is_none());
     }
 
     #[test]
     fn can_set_and_get_completion_future() {
-        let mut task = Task::new("test", 0, 0);
+        let mut task = Task::new("test", 0, 0, StackKind::KernelFunction);
         let fh = make_future_handle();
         task.set_completion_future(fh);
         assert_eq!(task.completion_future(), Some(fh));

@@ -39,6 +39,7 @@ members = [
     "apps/cp",
     "apps/mkdir",
     "apps/rmdir",
+    "apps/boom",
     "xtask",
     "tests-integration",
 ]

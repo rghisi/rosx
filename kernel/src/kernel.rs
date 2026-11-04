@@ -13,6 +13,7 @@ use crate::state::{ExecutionContext, ExecutionState};
 use crate::task::TaskState;
 use crate::task::TaskState::Terminated;
 use crate::task::{SharedTask, Task, TaskHandle, YieldReason};
+use crate::task_stack::StackKind;
 use crate::ports::driven::ForExpiringTimers;
 use crate::ports::driven::ForManagingTasks;
 use crate::ports::driven::ForReadingSystemTime;
@@ -36,6 +37,15 @@ static KERNEL_CONTEXT_SWITCHER: KernelContextSwitcher = KernelContextSwitcher;
 
 impl ForSwitchingTaskContext for KernelContextSwitcher {
     fn switch_to_task(&self, handle: TaskHandle) -> SwitchOutcome {
+        let scheduler_handle = kernel().execution_state.scheduler;
+        services()
+            .task_manager
+            .borrow_mut()
+            .check_stack_guard(scheduler_handle);
+        services()
+            .task_manager
+            .borrow_mut()
+            .check_stack_guard(handle);
         let returned = kernel().execution_state.switch_to_task(handle);
         services()
             .task_manager
@@ -104,7 +114,8 @@ impl Kernel {
         let port_io = kconfig.port_io;
         crate::kernel_services::init();
         crate::irq_guard::init_cpu(cpu);
-        let scheduler_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
+        let scheduler_task =
+            Task::new("[K] Main Thread", main_thread_run as usize, 0, StackKind::Scheduler);
         let scheduler_task_handler = services()
             .task_manager
             .borrow_mut()
@@ -157,6 +168,10 @@ impl Kernel {
 
     pub fn start(&mut self) {
         let main_thread_handle = self.execution_state.scheduler;
+        services()
+            .task_manager
+            .borrow_mut()
+            .check_stack_guard(main_thread_handle);
         let scheduler_thread_stack_pointer = services()
             .task_manager
             .borrow()
@@ -270,10 +285,6 @@ impl Kernel {
         }
     }
 
-    pub fn switch_to_task(&mut self, task_handle: TaskHandle) -> TaskHandle {
-        self.execution_state.switch_to_task(task_handle)
-    }
-
     pub(crate) fn terminate_and_yield(&mut self) -> ! {
         self.execution_state.preemption_enabled = false;
         if let Some(task_handle) = self.execution_state.current_task.take() {
@@ -365,7 +376,7 @@ mod tests {
     }
 
     fn add_created_task(name: &'static str) -> TaskHandle {
-        services().task_manager.borrow_mut().add_task(Task::new(name, 0x1000, 0)).unwrap()
+        services().task_manager.borrow_mut().add_task(Task::new(name, 0x1000, 0, StackKind::KernelFunction)).unwrap()
     }
 
     fn install_stub_kernel(scheduler: TaskHandle, current_task: Option<TaskHandle>, preemption_enabled: bool, need_resched: bool) {

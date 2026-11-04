@@ -7,12 +7,14 @@
 
 ## The problem family
 
-One `TaskStack` per task (2048 words: 16 KiB resident on x86_64, 8 KiB on
-x86_32, `kernel/src/task_stack.rs:4`) carries all four cost centers serialized
+One `TaskStack` per task (one size for all consumers; 2048 words: 16 KiB
+resident on x86_64, 8 KiB on x86_32 at plan time, `kernel/src/task_stack.rs:4`)
+carries all four cost centers serialized
 in a single buffer: app frames, syscall trampoline + dispatch chain, hardware
 interrupt frames, and context-switch frames. There is no user stack in the ELF
 loader; overflow is silent heap corruption (the failure class of
-`plans/game-triple-fault-fix.md`). All decisions here are deliberately
+`plans/game-triple-fault-fix.md`). (Superseded by plan 2 — see
+`stack-kinds-and-poison-guards-impl.md`.) All decisions here are deliberately
 **ring-0, no-MMU**: segregation via ownership discipline, enforcement via
 software detection, with the contract shaped so hardware teeth (IST, guard
 pages, MPU regions) bolt on per-arch later without touching `kernel/`.
@@ -22,7 +24,7 @@ pages, MPU regions) bolt on per-arch later without touching `kernel/`.
 | # | Plan | One-line outcome |
 |---|---|---|
 | 1 | `deferred-reschedule.md` | One single place where a forced switch happens: the exit check. Fixes IPC wake latency (≤10 ms → immediate) on the way. |
-| 2 | `stack-kinds-and-poison-guards.md` | Per-kind sized stacks with attached poison guards; overflow becomes a logged task kill instead of the triple-fault class. Answers the sizing question. |
+| 2 | `stack-kinds-and-poison-guards.md` | Delivered (`-impl.md`): per-kind sized stacks with a size-aligned body and a magic guard word checked before every switch-in; overflow trips a named panic within one scheduling quantum. |
 | 3 | `dual-stack-entry-trampolines.md` | Per-task user + kernel stacks; software-switched entry/exit trampolines; ABI-correct ELF initial stack. The structural core. |
 | 4 | `arch-stack-teeth.md` | Umbrella for the per-arch enforcement leaves: x86 guard-page arena, IST reserved stacks, ARMv8-M MPU regions, RISC-V PMP, m68k notes, stack probes. |
 

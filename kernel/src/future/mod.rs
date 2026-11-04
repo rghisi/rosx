@@ -360,6 +360,7 @@ impl FutureRegistry {
 
 #[cfg(test)]
 mod tests {
+    use crate::task_stack::StackKind;
     use super::*;
     use crate::kernel_services::{init as init_services, services};
     use crate::task::Task;
@@ -395,7 +396,7 @@ mod tests {
     fn notify_moves_waiters_to_ready() {
         setup();
 
-        let task = Task::new("T", 0x1000, 0);
+        let task = Task::new("T", 0x1000, 0, StackKind::KernelFunction);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
         services().task_manager.borrow_mut().set_state(handle, TaskState::Blocked);
 
@@ -411,7 +412,7 @@ mod tests {
     fn notify_does_not_double_wake() {
         setup();
 
-        let task = Task::new("T", 0x1000, 0);
+        let task = Task::new("T", 0x1000, 0, StackKind::KernelFunction);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
         services().task_manager.borrow_mut().set_state(handle, TaskState::Blocked);
 
@@ -630,7 +631,7 @@ mod tests {
         let child = registry.register(Box::new(DummyFuture)).unwrap();
         registry.attach(set, child, 9).unwrap();
 
-        let task = Task::new("T", 0x1000, 0);
+        let task = Task::new("T", 0x1000, 0, StackKind::KernelFunction);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
         services().task_manager.borrow_mut().set_state(handle, TaskState::Blocked);
         registry.register_waiter(set, handle);
@@ -771,7 +772,7 @@ mod tests {
         let child = registry.register(Box::new(DummyFuture)).unwrap();
         registry.attach(set, child, 1).unwrap();
 
-        let task = Task::new("T", 0x1000, 0);
+        let task = Task::new("T", 0x1000, 0, StackKind::KernelFunction);
         let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
         services().task_manager.borrow_mut().set_state(handle, TaskState::Blocked);
         registry.register_waiter(set, handle);
