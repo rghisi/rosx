@@ -323,6 +323,145 @@ impl Kernel {
 
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::portio::PortWidth;
+
+    struct StubCpu;
+
+    impl Cpu for StubCpu {
+        fn setup(&self) {}
+        fn enable_interrupts(&self) {}
+        fn disable_interrupts(&self) {}
+        fn are_interrupts_enabled(&self) -> bool {
+            false
+        }
+        fn initialize_stack(&self, stack_pointer: usize, _entry_point: usize, _param1: usize, _param2: usize) -> usize {
+            stack_pointer
+        }
+        fn swap_context(&self, _state: *mut usize, _stack_pointer_to_store: *mut usize, _stack_pointer_to_load: usize) {}
+        fn get_system_time(&self) -> u64 {
+            0
+        }
+        fn halt(&self) {}
+    }
+
+    struct StubElfArch;
+
+    impl ElfArch for StubElfArch {
+        fn apply_relocation(&self, _base: usize, _offset: usize, _info: u64, _addend: i64) {}
+    }
+
+    struct StubPortIo;
+
+    impl PortIo for StubPortIo {
+        fn read(&self, _port: u16, _width: PortWidth) -> u32 {
+            0
+        }
+        fn write(&self, _port: u16, _value: u32, _width: PortWidth) {}
+        fn read_words(&self, _port: u16, _destination: &mut [u16]) {}
+        fn write_words(&self, _port: u16, _source: &[u16]) {}
+    }
+
+    fn add_created_task(name: &'static str) -> TaskHandle {
+        services().task_manager.borrow_mut().add_task(Task::new(name, 0x1000, 0)).unwrap()
+    }
+
+    fn install_stub_kernel(scheduler: TaskHandle, current_task: Option<TaskHandle>, preemption_enabled: bool, need_resched: bool) {
+        let cpu = Box::leak(Box::new(StubCpu)) as &'static dyn Cpu;
+        let kernel: &'static mut Kernel = Box::leak(Box::new(Kernel {
+            cpu,
+            elf_arch: Box::leak(Box::new(StubElfArch)) as &'static dyn ElfArch,
+            port_io: Box::leak(Box::new(StubPortIo)) as &'static dyn PortIo,
+            execution_state: ExecutionState {
+                scheduler,
+                current_task,
+                preemption_enabled,
+                need_resched,
+                execution_context: ExecutionContext::UserTask,
+                cpu,
+            },
+        }));
+        *KERNEL_PTR.borrow_mut() = kernel as *mut Kernel;
+    }
+
+    fn yield_reason_of(handle: TaskHandle) -> Option<YieldReason> {
+        services().task_manager.borrow().get_yield_reason(handle)
+    }
+
+    #[test]
+    fn consult_without_intent_is_inert() {
+        crate::kernel_services::init();
+        let scheduler = add_created_task("[T] consult-scheduler");
+        let current = add_created_task("[T] consult-current");
+        install_stub_kernel(scheduler, Some(current), true, false);
+        kernel().maybe_resched();
+        assert!(!kernel().execution_state.need_resched);
+        assert_eq!(yield_reason_of(current), None);
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn consult_with_intent_and_enabled_preemption_clears_intent_and_stamps_preemption() {
+        crate::kernel_services::init();
+        let scheduler = add_created_task("[T] fire-scheduler");
+        let current = add_created_task("[T] fire-current");
+        install_stub_kernel(scheduler, Some(current), true, true);
+        kernel().maybe_resched();
+        assert!(!kernel().execution_state.need_resched);
+        assert_eq!(yield_reason_of(current), Some(YieldReason::Preempted));
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn intent_survives_disabled_window_until_next_consult() {
+        crate::kernel_services::init();
+        let scheduler = add_created_task("[T] defer-scheduler");
+        let current = add_created_task("[T] defer-current");
+        install_stub_kernel(scheduler, Some(current), false, true);
+        kernel().maybe_resched();
+        assert!(kernel().execution_state.need_resched);
+        assert_eq!(yield_reason_of(current), None);
+        kernel().execution_state.preemption_enabled = true;
+        kernel().maybe_resched();
+        assert!(!kernel().execution_state.need_resched);
+        assert_eq!(yield_reason_of(current), Some(YieldReason::Preempted));
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn mark_resched_sets_the_intent_flag() {
+        crate::kernel_services::init();
+        let scheduler = add_created_task("[T] mark-scheduler");
+        install_stub_kernel(scheduler, None, false, false);
+        Kernel::mark_resched();
+        assert!(kernel().execution_state.need_resched);
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn mark_resched_is_inert_before_the_kernel_exists() {
+        crate::kernel_services::init();
+        *KERNEL_PTR.borrow_mut() = null_mut();
+        Kernel::mark_resched();
+    }
+
+    #[test]
+    fn future_notify_wake_marks_resched_intent() {
+        crate::kernel_services::init();
+        let scheduler = add_created_task("[T] wake-scheduler");
+        let sleeper = add_created_task("[T] wake-sleeper");
+        install_stub_kernel(scheduler, Some(sleeper), true, false);
+        let future = Box::new(TaskCompletionFuture::new(sleeper));
+        let future_handle = services().future_registry.borrow_mut().register(future).expect("register");
+        services().future_registry.borrow_mut().register_waiter(future_handle, sleeper);
+        services().future_registry.borrow_mut().notify(future_handle);
+        assert!(kernel().execution_state.need_resched);
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+}
+
 #[cfg(not(test))]
 pub fn bootstrap(
     memory_blocks: &MemoryBlocks,
