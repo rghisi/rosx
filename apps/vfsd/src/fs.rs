@@ -1,5 +1,6 @@
 use crate::hdd::AtaDisk;
 use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -7,10 +8,11 @@ use ata_protocol::client::{Ata, ClientError};
 use ata_protocol::wire::AtaError;
 use fs_core::engine::{Engine, Kind, MetadataView};
 use fs_core::error::FsError;
+use rxfs::device::BlockDevice;
 use rxfs::device::MemoryDevice;
 use rxfs::spec::DEFAULT_BYTES_PER_INODE;
 use rxfs::superblock::UUID_BYTES;
-use rxfs::volume::{FileSystem, FormatParams};
+use rxfs::volume::{FileSystem, FormatParams, Handle as RxfsHandle};
 use system::rom::{RomError, RomImage};
 use vfs_protocol::wire::{self, EntityKind, VfsError};
 
@@ -19,20 +21,33 @@ const VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ram-vol-001";
 const VOLUME_NAME: &[u8] = b"rosx-ram";
 const HDD_VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ata-vol-001";
 const HDD_VOLUME_NAME: &[u8] = b"rosx-hdd";
-const MOUNT_DIR: &str = "hdd";
 
 pub type ActiveVolume = FileSystem<MemoryDevice>;
+pub type ActiveStore = VfsStore<ActiveVolume, AtaDisk>;
+
+struct MountedVolume<D: BlockDevice> {
+    name: String,
+    drive: u8,
+    fs: FileSystem<D>,
+}
+
+enum OpenLocation<E: Engine> {
+    Root(E::Handle),
+    Mount { slot: usize, handle: RxfsHandle },
+}
+
+impl<E: Engine> Copy for OpenLocation<E> {}
+impl<E: Engine> Clone for OpenLocation<E> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
 
 struct OpenEntry<E: Engine> {
     owner: u32,
     mode: u8,
     name: String,
-    engine_handle: E::Handle,
-}
-
-struct MountedVolume {
-    drive: u8,
-    fs: FileSystem<AtaDisk>,
+    location: OpenLocation<E>,
 }
 
 #[derive(Debug)]
@@ -44,9 +59,9 @@ pub enum RomMountError {
     Engine(FsError),
 }
 
-pub struct VfsStore<E: Engine> {
+pub struct VfsStore<E: Engine, D: BlockDevice> {
     engine: E,
-    hdd: Option<MountedVolume>,
+    mounts: Vec<MountedVolume<D>>,
     opens: BTreeMap<u32, OpenEntry<E>>,
     next_handle: u32,
     rom_names: BTreeSet<String>,
@@ -107,8 +122,31 @@ fn names_blob(names: &[&[u8]]) -> Result<Vec<u8>, VfsError> {
     Ok(blob)
 }
 
-impl VfsStore<ActiveVolume> {
-    pub fn new() -> VfsStore<ActiveVolume> {
+enum Target {
+    Root,
+    Volume(usize, String),
+}
+
+fn open_engine<E2: Engine>(
+    engine: &mut E2,
+    mode: u8,
+    path: &[u8],
+) -> Result<E2::Handle, VfsError> {
+    match engine.lookup(path) {
+        Ok(_) if mode & wire::MODE_CREATE != 0 => Err(VfsError::AlreadyExists),
+        Ok(_) => engine.open(path).map_err(map_fs_error),
+        Err(FsError::NotFound) if mode & wire::MODE_CREATE != 0 => {
+            let handle = engine.create(path).map_err(map_fs_error)?;
+            engine.sync().map_err(map_fs_error)?;
+            Ok(handle)
+        }
+        Err(FsError::NotFound) => Err(VfsError::NotFound),
+        Err(error) => Err(map_fs_error(error)),
+    }
+}
+
+impl VfsStore<ActiveVolume, AtaDisk> {
+    pub fn new() -> VfsStore<ActiveVolume, AtaDisk> {
         let params = FormatParams {
             bytes_per_inode: DEFAULT_BYTES_PER_INODE,
             uuid: VOLUME_UUID,
@@ -119,18 +157,95 @@ impl VfsStore<ActiveVolume> {
             .expect("fresh memory volume must format");
         VfsStore::from_engine(engine)
     }
+
+    pub fn format_drive(&mut self, drive: u8) -> Result<(), VfsError> {
+        if self.mounts.iter().any(|mount| mount.drive == drive) {
+            return Err(VfsError::Busy);
+        }
+        let ata = Ata::connect().map_err(map_ata_error)?;
+        let identity = ata.identify(drive).map_err(map_ata_error)?;
+        let params = FormatParams {
+            bytes_per_inode: DEFAULT_BYTES_PER_INODE,
+            uuid: HDD_VOLUME_UUID,
+            volume_name: HDD_VOLUME_NAME,
+            created_at: 0,
+        };
+        let fs = FileSystem::format(AtaDisk::new(ata, drive, identity.sectors), &params)
+            .map_err(map_fs_error)?;
+        fs.unmount()
+            .map(|disk| disk.into_ata().disconnect())
+            .map_err(map_fs_error)
+    }
+
+    pub fn mount_drive(&mut self, drive: u8, dir: &str) -> Result<(), VfsError> {
+        if !wire::valid_name(dir) {
+            return Err(VfsError::InvalidPath);
+        }
+        if self.mounts.iter().any(|mount| mount.drive == drive)
+            || self.mounts.iter().any(|mount| mount.name == dir)
+        {
+            return Err(VfsError::Busy);
+        }
+        let mount_point = self
+            .engine
+            .lookup(&volume_path(dir))
+            .map_err(map_fs_error)?;
+        if mount_point.kind() != Kind::Directory {
+            return Err(VfsError::NotDirectory);
+        }
+        let ata = Ata::connect().map_err(map_ata_error)?;
+        let identity = ata.identify(drive).map_err(map_ata_error)?;
+        let fs =
+            FileSystem::mount(AtaDisk::new(ata, drive, identity.sectors)).map_err(map_mount_error)?;
+        self.mounts.push(MountedVolume {
+            name: String::from(dir),
+            drive,
+            fs,
+        });
+        Ok(())
+    }
 }
 
-impl<E: Engine> VfsStore<E> {
-    fn from_engine(engine: E) -> VfsStore<E> {
+impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
+    fn from_engine(engine: E) -> VfsStore<E, D> {
         VfsStore {
             engine,
-            hdd: None,
+            mounts: Vec::new(),
             opens: BTreeMap::new(),
             next_handle: 1,
             rom_names: BTreeSet::new(),
             rom_attached: false,
         }
+    }
+
+    fn route(&self, path: &str) -> Result<Target, VfsError> {
+        let (head, rest) = match path.split_once('/') {
+            Some(split) => split,
+            None => (path, ""),
+        };
+        match self.mounts.iter().position(|mount| mount.name == head) {
+            Some(slot) => Ok(Target::Volume(slot, format!("/{rest}"))),
+            None if rest.is_empty() => Ok(Target::Root),
+            None => Err(VfsError::NotFound),
+        }
+    }
+
+    fn volume_mut(&mut self, slot: usize) -> Result<&mut FileSystem<D>, VfsError> {
+        self.mounts
+            .get_mut(slot)
+            .map(|mounted| &mut mounted.fs)
+            .ok_or(VfsError::BadHandle)
+    }
+
+    fn live_location(&self, owner: u32, handle: u32) -> Result<OpenLocation<E>, VfsError> {
+        match self.opens.get(&handle) {
+            Some(entry) if entry.owner == owner => Ok(entry.location),
+            _ => Err(VfsError::BadHandle),
+        }
+    }
+
+    fn is_mount_point(&self, name: &str) -> bool {
+        self.mounts.iter().any(|mount| mount.name == name)
     }
 
     pub fn attach_rom(&mut self, image: &[u8]) -> Result<(), RomMountError> {
@@ -166,79 +281,19 @@ impl<E: Engine> VfsStore<E> {
         Ok(())
     }
 
-    pub fn format_drive(&mut self, drive: u8) -> Result<(), VfsError> {
-        if self
-            .hdd
-            .as_ref()
-            .is_some_and(|mounted| mounted.drive == drive)
-        {
-            return Err(VfsError::Busy);
-        }
-        let ata = Ata::connect().map_err(map_ata_error)?;
-        let identity = ata.identify(drive).map_err(map_ata_error)?;
-        let params = FormatParams {
-            bytes_per_inode: DEFAULT_BYTES_PER_INODE,
-            uuid: HDD_VOLUME_UUID,
-            volume_name: HDD_VOLUME_NAME,
-            created_at: 0,
-        };
-        let fs = FileSystem::format(AtaDisk::new(ata, drive, identity.sectors), &params)
-            .map_err(map_fs_error)?;
-        fs.unmount()
-            .map(|disk| disk.into_ata().disconnect())
-            .map_err(map_fs_error)
-    }
-
-    pub fn mount_drive(&mut self, drive: u8, dir: &str) -> Result<(), VfsError> {
-        if dir != MOUNT_DIR {
-            return Err(VfsError::NotFound);
-        }
-        if self.hdd.is_some() {
-            return Err(VfsError::Busy);
-        }
-        let ata = Ata::connect().map_err(map_ata_error)?;
-        let identity = ata.identify(drive).map_err(map_ata_error)?;
-        let fs =
-            FileSystem::mount(AtaDisk::new(ata, drive, identity.sectors)).map_err(map_mount_error)?;
-        self.hdd = Some(MountedVolume { drive, fs });
-        Ok(())
-    }
-
-    pub fn list_dir(&mut self, dir: &str) -> Result<Vec<u8>, VfsError> {
-        if dir != MOUNT_DIR {
-            return Err(VfsError::NotFound);
-        }
-        let Some(mounted) = &mut self.hdd else {
-            return Ok(Vec::new());
-        };
-        let items = mounted.fs.readdir(b"/").map_err(map_fs_error)?;
-        let mut names: Vec<&[u8]> = items
-            .iter()
-            .map(|item| item.name.as_slice())
-            .filter(|name| !dot_entry(name))
-            .collect();
-        names.sort_unstable();
-        names_blob(&names)
-    }
-
     pub fn open(&mut self, owner: u32, mode: u8, name: &str) -> Result<u32, VfsError> {
-        if !wire::valid_name(name) {
+        if !wire::valid_path(name) {
             return Err(VfsError::InvalidPath);
         }
-        if name == MOUNT_DIR {
-            return Err(VfsError::NotPermitted);
-        }
-        let path = volume_path(name);
-        let engine_handle = match self.engine.lookup(&path) {
-            Ok(_) if mode & wire::MODE_CREATE != 0 => return Err(VfsError::AlreadyExists),
-            Ok(_) => self.engine.open(&path).map_err(map_fs_error)?,
-            Err(FsError::NotFound) if mode & wire::MODE_CREATE != 0 => {
-                let handle = self.engine.create(&path).map_err(map_fs_error)?;
-                self.engine.sync().map_err(map_fs_error)?;
-                handle
+        let location = match self.route(name)? {
+            Target::Root => {
+                let handle = open_engine(&mut self.engine, mode, &volume_path(name))?;
+                OpenLocation::Root(handle)
             }
-            Err(FsError::NotFound) => return Err(VfsError::NotFound),
-            Err(error) => return Err(map_fs_error(error)),
+            Target::Volume(slot, path) => {
+                let handle = open_engine(self.volume_mut(slot)?, mode, path.as_bytes())?;
+                OpenLocation::Mount { slot, handle }
+            }
         };
         let handle = self.next_handle;
         self.next_handle += 1;
@@ -248,7 +303,7 @@ impl<E: Engine> VfsStore<E> {
                 owner,
                 mode,
                 name: String::from(name),
-                engine_handle,
+                location,
             },
         );
         Ok(handle)
@@ -261,12 +316,15 @@ impl<E: Engine> VfsStore<E> {
         offset: u64,
         count: usize,
     ) -> Result<Vec<u8>, VfsError> {
-        let engine_handle = self.live_handle(owner, handle)?;
+        let location = self.live_location(owner, handle)?;
         let mut buf = vec![0u8; count];
-        let copied = self
-            .engine
-            .read(engine_handle, offset, &mut buf)
-            .map_err(map_fs_error)?;
+        let copied = match location {
+            OpenLocation::Root(engine_handle) => self.engine.read(engine_handle, offset, &mut buf),
+            OpenLocation::Mount { slot, handle } => {
+                self.volume_mut(slot)?.read(handle, offset, &mut buf)
+            }
+        }
+        .map_err(map_fs_error)?;
         buf.truncate(copied);
         Ok(buf)
     }
@@ -292,59 +350,122 @@ impl<E: Engine> VfsStore<E> {
         if entry.mode & wire::MODE_WRITE == 0 {
             return Err(VfsError::NotPermitted);
         }
-        let engine_handle = entry.engine_handle;
-        let written = self
-            .engine
-            .write(engine_handle, offset, payload)
-            .map_err(map_fs_error)?;
-        self.engine.sync().map_err(map_fs_error)?;
+        let location = entry.location;
+        let written = match location {
+            OpenLocation::Root(engine_handle) => {
+                let written = self
+                    .engine
+                    .write(engine_handle, offset, payload)
+                    .map_err(map_fs_error)?;
+                self.engine.sync().map_err(map_fs_error)?;
+                written
+            }
+            OpenLocation::Mount { slot, handle } => {
+                let volume = self.volume_mut(slot)?;
+                let written = volume.write(handle, offset, payload).map_err(map_fs_error)?;
+                volume.sync().map_err(map_fs_error)?;
+                written
+            }
+        };
         Ok(written)
     }
 
     pub fn close(&mut self, owner: u32, handle: u32) -> Result<(), VfsError> {
-        let engine_handle = self.live_handle(owner, handle)?;
-        self.engine.close(engine_handle).map_err(map_fs_error)?;
+        let location = self.live_location(owner, handle)?;
+        match location {
+            OpenLocation::Root(engine_handle) => {
+                self.engine.close(engine_handle).map_err(map_fs_error)?
+            }
+            OpenLocation::Mount { slot, handle } => {
+                self.volume_mut(slot)?.close(handle).map_err(map_fs_error)?
+            }
+        }
         self.opens.remove(&handle);
         Ok(())
     }
 
     pub fn delete(&mut self, name: &str) -> Result<(), VfsError> {
-        if !wire::valid_name(name) {
+        if !wire::valid_path(name) {
             return Err(VfsError::InvalidPath);
         }
-        if name == MOUNT_DIR {
+        if self.is_mount_point(name) {
             return Err(VfsError::NotPermitted);
         }
-        if self.rom_names.contains(name) {
-            return Err(VfsError::NotPermitted);
+        match self.route(name)? {
+            Target::Root => {
+                if self.rom_names.contains(name) {
+                    return Err(VfsError::NotPermitted);
+                }
+                self.engine.remove(&volume_path(name)).map_err(map_fs_error)?;
+                self.engine.sync().map_err(map_fs_error)
+            }
+            Target::Volume(slot, path) => {
+                let volume = self.volume_mut(slot)?;
+                volume.remove(path.as_bytes()).map_err(map_fs_error)?;
+                volume.sync().map_err(map_fs_error)
+            }
         }
-        self.engine.remove(&volume_path(name)).map_err(map_fs_error)?;
-        self.engine.sync().map_err(map_fs_error)
     }
 
     pub fn mkdir(&mut self, path: &str) -> Result<(), VfsError> {
-        self.engine.mkdir(&volume_path(path)).map_err(map_fs_error)?;
-        self.engine.sync().map_err(map_fs_error)
+        if !wire::valid_path(path) {
+            return Err(VfsError::InvalidPath);
+        }
+        match self.route(path)? {
+            Target::Root => {
+                self.engine.mkdir(&volume_path(path)).map_err(map_fs_error)?;
+                self.engine.sync().map_err(map_fs_error)
+            }
+            Target::Volume(slot, path) => {
+                let volume = self.volume_mut(slot)?;
+                volume.mkdir(path.as_bytes()).map_err(map_fs_error)?;
+                volume.sync().map_err(map_fs_error)
+            }
+        }
     }
 
     pub fn rmdir(&mut self, path: &str) -> Result<(), VfsError> {
-        self.engine.rmdir(&volume_path(path)).map_err(map_fs_error)?;
-        self.engine.sync().map_err(map_fs_error)
+        if !wire::valid_path(path) {
+            return Err(VfsError::InvalidPath);
+        }
+        if self.is_mount_point(path) {
+            return Err(VfsError::NotPermitted);
+        }
+        match self.route(path)? {
+            Target::Root => {
+                self.engine.rmdir(&volume_path(path)).map_err(map_fs_error)?;
+                self.engine.sync().map_err(map_fs_error)
+            }
+            Target::Volume(slot, path) => {
+                let volume = self.volume_mut(slot)?;
+                volume.rmdir(path.as_bytes()).map_err(map_fs_error)?;
+                volume.sync().map_err(map_fs_error)
+            }
+        }
     }
 
     pub fn stat(&mut self, name: &str) -> Result<(EntityKind, u64), VfsError> {
-        if !wire::valid_name(name) {
+        if !wire::valid_path(name) {
             return Err(VfsError::InvalidPath);
         }
-        if name == MOUNT_DIR {
-            return Ok((EntityKind::Directory, 0));
-        }
-        let stat = self.engine.lookup(&volume_path(name)).map_err(map_fs_error)?;
-        let kind = match stat.kind() {
+        let (kind, size) = match self.route(name)? {
+            Target::Root => {
+                let stat = self.engine.lookup(&volume_path(name)).map_err(map_fs_error)?;
+                (stat.kind(), stat.size())
+            }
+            Target::Volume(slot, path) => {
+                let stat = self
+                    .volume_mut(slot)?
+                    .lookup(path.as_bytes())
+                    .map_err(map_fs_error)?;
+                (stat.kind(), stat.size())
+            }
+        };
+        let kind = match kind {
             Kind::Regular => EntityKind::File,
             Kind::Directory => EntityKind::Directory,
         };
-        Ok((kind, stat.size()))
+        Ok((kind, size))
     }
 
     pub fn list(&mut self) -> Result<Vec<u8>, VfsError> {
@@ -354,35 +475,73 @@ impl<E: Engine> VfsStore<E> {
             .map(|item| item.name.as_slice())
             .filter(|name| !dot_entry(name))
             .collect();
-        if !names.contains(&MOUNT_DIR.as_bytes()) {
-            names.push(MOUNT_DIR.as_bytes());
-        }
         names.sort_unstable();
         names_blob(&names)
     }
 
-    fn live_handle(&self, owner: u32, handle: u32) -> Result<E::Handle, VfsError> {
-        match self.opens.get(&handle) {
-            Some(entry) if entry.owner == owner => Ok(entry.engine_handle),
-            _ => Err(VfsError::BadHandle),
+    pub fn list_dir(&mut self, dir: &str) -> Result<Vec<u8>, VfsError> {
+        if !wire::valid_path(dir) {
+            return Err(VfsError::InvalidPath);
         }
+        let items = match self.route(dir)? {
+            Target::Root => self.engine.readdir(&volume_path(dir)).map_err(map_fs_error)?,
+            Target::Volume(slot, path) => self
+                .volume_mut(slot)?
+                .readdir(path.as_bytes())
+                .map_err(map_fs_error)?,
+        };
+        let mut names: Vec<&[u8]> = items
+            .iter()
+            .map(|item| item.name.as_slice())
+            .filter(|name| !dot_entry(name))
+            .collect();
+        names.sort_unstable();
+        names_blob(&names)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::format;
 
     const OWNER: u32 = 0x0010_0001;
+
+    fn fresh_store() -> VfsStore<ActiveVolume, MemoryDevice> {
+        let params = FormatParams {
+            bytes_per_inode: DEFAULT_BYTES_PER_INODE,
+            uuid: VOLUME_UUID,
+            volume_name: VOLUME_NAME,
+            created_at: 0,
+        };
+        let engine = FileSystem::format(MemoryDevice::new(VOLUME_BLOCKS), &params)
+            .expect("fresh memory volume must format");
+        VfsStore::from_engine(engine)
+    }
+
+    fn mount_fake(fs: &mut VfsStore<ActiveVolume, MemoryDevice>, name: &str) {
+        fs.mkdir(name).unwrap();
+        let params = FormatParams {
+            bytes_per_inode: DEFAULT_BYTES_PER_INODE,
+            uuid: HDD_VOLUME_UUID,
+            volume_name: HDD_VOLUME_NAME,
+            created_at: 0,
+        };
+        let volume = FileSystem::format(MemoryDevice::new(64), &params).unwrap();
+        fs.mounts.push(MountedVolume {
+            name: String::from(name),
+            drive: 9,
+            fs: volume,
+        });
+    }
+
     const INTRUDER: u32 = 0x0020_0002;
 
-    fn create(fs: &mut VfsStore<ActiveVolume>, owner: u32, name: &str) -> u32 {
+    fn create<E: Engine, D: BlockDevice>(fs: &mut VfsStore<E, D>, owner: u32, name: &str) -> u32 {
         fs.open(owner, wire::MODE_CREATE | wire::MODE_WRITE, name)
             .expect("create must succeed")
     }
 
-    fn contents(fs: &mut VfsStore<ActiveVolume>, owner: u32, handle: u32) -> Vec<u8> {
+    fn contents<E: Engine, D: BlockDevice>(fs: &mut VfsStore<E, D>, owner: u32, handle: u32) -> Vec<u8> {
         fs.read(owner, handle, 0, wire::RPC_MAX_DATA_BYTES)
             .expect("read must succeed")
     }
@@ -401,7 +560,7 @@ mod tests {
 
     #[test]
     fn open_with_create_creates_empty_file_and_first_handle_is_one() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let handle = create(&mut fs, OWNER, "a.txt");
         assert_eq!(handle, 1);
         assert_eq!(contents(&mut fs, OWNER, handle), Vec::new());
@@ -409,7 +568,7 @@ mod tests {
 
     #[test]
     fn open_existing_without_create_reuses_existing_content() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let first = create(&mut fs, OWNER, "a.txt");
         fs.write(OWNER, first, 0, b"abc").unwrap();
         fs.close(OWNER, first).unwrap();
@@ -420,7 +579,7 @@ mod tests {
 
     #[test]
     fn open_existing_with_create_is_already_exists() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         create(&mut fs, OWNER, "a.txt");
         assert_eq!(
             fs.open(OWNER, wire::MODE_CREATE, "a.txt"),
@@ -430,13 +589,13 @@ mod tests {
 
     #[test]
     fn open_missing_without_create_is_not_found() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         assert_eq!(fs.open(OWNER, 0, "ghost.txt"), Err(VfsError::NotFound));
     }
 
     #[test]
     fn handles_increase_monotonically() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         assert_eq!(create(&mut fs, OWNER, "a"), 1);
         assert_eq!(create(&mut fs, OWNER, "b"), 2);
         assert_eq!(create(&mut fs, OWNER, "c"), 3);
@@ -444,7 +603,7 @@ mod tests {
 
     #[test]
     fn open_invalid_name_is_invalid_path() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         assert_eq!(
             fs.open(OWNER, wire::MODE_CREATE, ""),
             Err(VfsError::InvalidPath)
@@ -461,14 +620,14 @@ mod tests {
 
     #[test]
     fn delete_invalid_name_is_invalid_path() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         assert_eq!(fs.delete("bad\nname"), Err(VfsError::InvalidPath));
         assert_eq!(fs.delete(""), Err(VfsError::InvalidPath));
     }
 
     #[test]
     fn read_at_end_is_empty() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let handle = create(&mut fs, OWNER, "a.txt");
         fs.write(OWNER, handle, 0, b"abc").unwrap();
         assert_eq!(fs.read(OWNER, handle, 3, 10).unwrap(), Vec::new());
@@ -476,7 +635,7 @@ mod tests {
 
     #[test]
     fn read_past_end_is_empty() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let handle = create(&mut fs, OWNER, "a.txt");
         fs.write(OWNER, handle, 0, b"abc").unwrap();
         assert_eq!(fs.read(OWNER, handle, 999, 10).unwrap(), Vec::new());
@@ -484,7 +643,7 @@ mod tests {
 
     #[test]
     fn read_clamps_across_end() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let handle = create(&mut fs, OWNER, "a.txt");
         fs.write(OWNER, handle, 0, b"abcde").unwrap();
         assert_eq!(fs.read(OWNER, handle, 3, 100).unwrap(), b"de".to_vec());
@@ -492,7 +651,7 @@ mod tests {
 
     #[test]
     fn unknown_handle_is_bad_handle_for_every_operation() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         assert_eq!(fs.read(OWNER, 42, 0, 10), Err(VfsError::BadHandle));
         assert_eq!(fs.write(OWNER, 42, 0, b"x"), Err(VfsError::BadHandle));
         assert_eq!(fs.close(OWNER, 42), Err(VfsError::BadHandle));
@@ -500,7 +659,7 @@ mod tests {
 
     #[test]
     fn cross_owner_handle_use_is_bad_handle() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let handle = create(&mut fs, OWNER, "a.txt");
         fs.write(OWNER, handle, 0, b"secret").unwrap();
         assert_eq!(fs.read(INTRUDER, handle, 0, 10), Err(VfsError::BadHandle));
@@ -515,7 +674,7 @@ mod tests {
 
     #[test]
     fn write_without_write_mode_is_not_permitted() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let created = create(&mut fs, OWNER, "a.txt");
         fs.write(OWNER, created, 0, b"abc").unwrap();
         fs.close(OWNER, created).unwrap();
@@ -529,7 +688,7 @@ mod tests {
 
     #[test]
     fn read_is_permitted_on_mode_zero_handle() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let created = create(&mut fs, OWNER, "a.txt");
         fs.write(OWNER, created, 0, b"hello").unwrap();
         fs.close(OWNER, created).unwrap();
@@ -539,7 +698,7 @@ mod tests {
 
     #[test]
     fn write_at_zero_into_empty_file() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let handle = create(&mut fs, OWNER, "a.txt");
         assert_eq!(fs.write(OWNER, handle, 0, b"hi"), Ok(2));
         assert_eq!(contents(&mut fs, OWNER, handle), b"hi".to_vec());
@@ -547,7 +706,7 @@ mod tests {
 
     #[test]
     fn write_appending_at_len() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let handle = create(&mut fs, OWNER, "a.txt");
         fs.write(OWNER, handle, 0, b"ab").unwrap();
         assert_eq!(fs.write(OWNER, handle, 2, b"cd"), Ok(2));
@@ -556,7 +715,7 @@ mod tests {
 
     #[test]
     fn write_beyond_len_zero_fills_hole_byte_exactly() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let handle = create(&mut fs, OWNER, "a.txt");
         fs.write(OWNER, handle, 0, b"ab").unwrap();
         fs.write(OWNER, handle, 4, b"cd").unwrap();
@@ -568,7 +727,7 @@ mod tests {
 
     #[test]
     fn empty_write_is_noop_and_never_resizes() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let handle = create(&mut fs, OWNER, "a.txt");
         fs.write(OWNER, handle, 0, b"abc").unwrap();
         assert_eq!(fs.write(OWNER, handle, 100, &[]), Ok(0));
@@ -577,7 +736,7 @@ mod tests {
 
     #[test]
     fn close_frees_handle_and_second_close_is_bad_handle() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let handle = create(&mut fs, OWNER, "a.txt");
         assert_eq!(fs.close(OWNER, handle), Ok(()));
         assert_eq!(fs.close(OWNER, handle), Err(VfsError::BadHandle));
@@ -585,7 +744,7 @@ mod tests {
 
     #[test]
     fn delete_then_read_via_still_open_handle_is_bad_handle() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let handle = create(&mut fs, OWNER, "a.txt");
         fs.write(OWNER, handle, 0, b"abc").unwrap();
         assert_eq!(fs.delete("a.txt"), Ok(()));
@@ -598,7 +757,7 @@ mod tests {
 
     #[test]
     fn handle_to_deleted_file_still_closes_cleanly() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let handle = create(&mut fs, OWNER, "a.txt");
         fs.delete("a.txt").unwrap();
         assert_eq!(fs.close(OWNER, handle), Ok(()));
@@ -606,26 +765,26 @@ mod tests {
 
     #[test]
     fn delete_missing_is_not_found() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         assert_eq!(fs.delete("ghost.txt"), Err(VfsError::NotFound));
     }
 
     #[test]
     fn stat_missing_is_not_found() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         assert_eq!(fs.stat("ghost.txt"), Err(VfsError::NotFound));
     }
 
     #[test]
     fn stat_created_empty_file_is_zero_size() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         create(&mut fs, OWNER, "a.txt");
         assert_eq!(fs.stat("a.txt").unwrap(), (EntityKind::File, 0));
     }
 
     #[test]
     fn stat_tracks_writes_and_holes() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let handle = create(&mut fs, OWNER, "a.txt");
         fs.write(OWNER, handle, 0, b"ab").unwrap();
         fs.write(OWNER, handle, 4096, b"c").unwrap();
@@ -634,7 +793,7 @@ mod tests {
 
     #[test]
     fn stat_of_deleted_name_is_not_found() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         create(&mut fs, OWNER, "a.txt");
         fs.delete("a.txt").unwrap();
         assert_eq!(fs.stat("a.txt"), Err(VfsError::NotFound));
@@ -642,16 +801,17 @@ mod tests {
 
     #[test]
     fn stat_invalid_name_is_invalid_path() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         assert_eq!(fs.stat(""), Err(VfsError::InvalidPath));
-        assert_eq!(fs.stat("bad/name"), Err(VfsError::InvalidPath));
+        assert_eq!(fs.stat("bad//name"), Err(VfsError::InvalidPath));
+        assert_eq!(fs.stat("hdd/x"), Err(VfsError::NotFound));
         assert_eq!(fs.stat("."), Err(VfsError::InvalidPath));
         assert_eq!(fs.stat(".."), Err(VfsError::InvalidPath));
     }
 
     #[test]
     fn stat_succeeds_when_all_engine_slots_are_open() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         create(&mut fs, OWNER, "probe.txt");
         for index in 0..63u32 {
             create(&mut fs, OWNER, &format!("s{index}"));
@@ -665,29 +825,29 @@ mod tests {
 
     #[test]
     fn rom_file_stat_reports_exact_length() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         fs.attach_rom(&fabricated_rom()).unwrap();
         assert_eq!(fs.stat("alpha.bin").unwrap(), (EntityKind::File, 5));
         assert_eq!(fs.stat("beta.bin").unwrap(), (EntityKind::File, 12));
     }
 
     #[test]
-    fn list_returns_sorted_newline_joined_names_with_the_mount_point() {
-        let mut fs = VfsStore::new();
+    fn list_returns_sorted_newline_joined_names() {
+        let mut fs = fresh_store();
         create(&mut fs, OWNER, "notes.txt");
         create(&mut fs, OWNER, "blob.bin");
-        assert_eq!(fs.list().unwrap(), b"blob.bin\nhdd\nnotes.txt".to_vec());
+        assert_eq!(fs.list().unwrap(), b"blob.bin\nnotes.txt".to_vec());
     }
 
     #[test]
-    fn list_of_empty_volume_is_the_mount_point_entry() {
-        let mut fs = VfsStore::new();
-        assert_eq!(fs.list().unwrap(), b"hdd".to_vec());
+    fn list_of_empty_volume_is_empty() {
+        let mut fs = fresh_store();
+        assert_eq!(fs.list().unwrap(), Vec::new());
     }
 
     #[test]
     fn two_handles_on_one_file_see_shared_content() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let writer = create(&mut fs, OWNER, "a.txt");
         let reader = fs.open(OWNER, 0, "a.txt").unwrap();
         fs.write(OWNER, writer, 0, b"shared").unwrap();
@@ -699,7 +859,7 @@ mod tests {
 
     #[test]
     fn open_beyond_engine_slot_cap_is_server_resource() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let mut held = Vec::new();
         for index in 0..64u32 {
             held.push(create(&mut fs, OWNER, &format!("s{index}")));
@@ -717,7 +877,7 @@ mod tests {
 
     #[test]
     fn create_beyond_inode_capacity_is_server_resource() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let mut created = 0u32;
         loop {
             let name = format!("exhaust{created}");
@@ -748,18 +908,18 @@ mod tests {
 
     #[test]
     fn attach_rom_lists_rom_names_sorted_with_ram_names() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         fs.attach_rom(&fabricated_rom()).unwrap();
         create(&mut fs, OWNER, "mid.txt");
         assert_eq!(
             fs.list().unwrap(),
-            b"alpha.bin\nbeta.bin\nhdd\nmid.txt".to_vec()
+            b"alpha.bin\nbeta.bin\nmid.txt".to_vec()
         );
     }
 
     #[test]
     fn rom_file_reads_exact_bytes() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         fs.attach_rom(&fabricated_rom()).unwrap();
         let handle = fs.open(OWNER, 0, "alpha.bin").unwrap();
         assert_eq!(contents(&mut fs, OWNER, handle), b"alpha".to_vec());
@@ -768,7 +928,7 @@ mod tests {
 
     #[test]
     fn rom_read_clamps_across_window_end_and_eof() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         fs.attach_rom(&fabricated_rom()).unwrap();
         let handle = fs.open(OWNER, 0, "beta.bin").unwrap();
         assert_eq!(fs.read(OWNER, handle, 5, 100).unwrap(), b"payload".to_vec());
@@ -778,7 +938,7 @@ mod tests {
 
     #[test]
     fn open_rom_with_create_is_already_exists() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         fs.attach_rom(&fabricated_rom()).unwrap();
         assert_eq!(
             fs.open(OWNER, wire::MODE_CREATE, "alpha.bin"),
@@ -788,7 +948,7 @@ mod tests {
 
     #[test]
     fn write_to_rom_file_is_not_permitted_even_when_empty() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         fs.attach_rom(&fabricated_rom()).unwrap();
         let handle = fs.open(OWNER, wire::MODE_WRITE, "alpha.bin").unwrap();
         assert_eq!(
@@ -808,15 +968,15 @@ mod tests {
 
     #[test]
     fn delete_rom_file_is_not_permitted() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         fs.attach_rom(&fabricated_rom()).unwrap();
         assert_eq!(fs.delete("alpha.bin"), Err(VfsError::NotPermitted));
-        assert_eq!(fs.list().unwrap(), b"alpha.bin\nbeta.bin\nhdd".to_vec());
+        assert_eq!(fs.list().unwrap(), b"alpha.bin\nbeta.bin".to_vec());
     }
 
     #[test]
     fn second_attach_rom_is_already_attached() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         fs.attach_rom(&fabricated_rom()).unwrap();
         assert!(matches!(
             fs.attach_rom(&fabricated_rom()),
@@ -826,34 +986,34 @@ mod tests {
 
     #[test]
     fn attach_rom_rejects_format_invalid_image() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         assert!(matches!(
             fs.attach_rom(b"not a rom image at all"),
             Err(RomMountError::Format(RomError::BadMagic))
         ));
-        assert_eq!(fs.list().unwrap(), b"hdd".to_vec());
+        assert_eq!(fs.list().unwrap(), Vec::new());
     }
 
     #[test]
     fn attach_rom_rejects_name_invalid_for_vfs() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let image = system::rom::encode(&[("bad\nname", b"x".as_slice())]);
         assert!(matches!(
             fs.attach_rom(&image),
             Err(RomMountError::InvalidName(ref name)) if name == "bad\nname"
         ));
-        assert_eq!(fs.list().unwrap(), b"hdd".to_vec());
+        assert_eq!(fs.list().unwrap(), Vec::new());
     }
 
     #[test]
     fn attach_rom_rejects_collision_and_stores_nothing() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         let handle = create(&mut fs, OWNER, "alpha.bin");
         assert!(matches!(
             fs.attach_rom(&fabricated_rom()),
             Err(RomMountError::Duplicate(ref name)) if name == "alpha.bin"
         ));
-        assert_eq!(fs.list().unwrap(), b"alpha.bin\nhdd".to_vec());
+        assert_eq!(fs.list().unwrap(), b"alpha.bin".to_vec());
         fs.write(OWNER, handle, 0, b"still writable")
             .expect("collision rejection must not convert RAM to ROM");
         assert_eq!(contents(&mut fs, OWNER, handle), b"still writable".to_vec());
@@ -867,7 +1027,7 @@ mod tests {
 
     #[test]
     fn rom_ingest_is_byte_exact_across_blocks() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         fs.attach_rom(&fat_fabricated_rom()).unwrap();
         let alpha = fs.open(OWNER, 0, "alpha.bin").unwrap();
         let expected_alpha: Vec<u8> = (0..5000u32).map(|i| (i % 253) as u8).collect();
@@ -875,61 +1035,130 @@ mod tests {
         let beta = fs.open(OWNER, 0, "beta.bin").unwrap();
         let expected_beta: Vec<u8> = (0..4097u32).map(|i| (i % 197) as u8).collect();
         assert_eq!(contents(&mut fs, OWNER, beta), expected_beta);
-        assert_eq!(fs.list().unwrap(), b"alpha.bin\nbeta.bin\nhdd".to_vec());
+        assert_eq!(fs.list().unwrap(), b"alpha.bin\nbeta.bin".to_vec());
     }
 
     #[test]
-    fn stat_of_mount_dir_is_directory() {
-        let mut fs = VfsStore::new();
-        assert_eq!(fs.stat("hdd").unwrap(), (EntityKind::Directory, 0));
+    fn stat_of_created_directory_is_directory() {
+        let mut fs = fresh_store();
+        assert_eq!(fs.stat("hdd"), Err(VfsError::NotFound));
+        fs.mkdir("hdd").unwrap();
+        assert_eq!(fs.stat("hdd").unwrap(), (EntityKind::Directory, 4096));
     }
 
     #[test]
-    fn open_mount_dir_is_not_permitted() {
-        let mut fs = VfsStore::new();
-        assert_eq!(fs.open(OWNER, 0, "hdd"), Err(VfsError::NotPermitted));
-        assert_eq!(
-            fs.open(OWNER, wire::MODE_CREATE | wire::MODE_WRITE, "hdd"),
-            Err(VfsError::NotPermitted)
-        );
+    fn directory_handles_answer_is_a_directory() {
+        let mut fs = fresh_store();
+        fs.mkdir("disk").unwrap();
+        let handle = fs.open(OWNER, 0, "disk").expect("directories open like any entry");
+        assert_eq!(fs.read(OWNER, handle, 0, 10), Err(VfsError::IsADirectory));
     }
 
     #[test]
-    fn delete_mount_dir_is_not_permitted() {
-        let mut fs = VfsStore::new();
+    fn delete_and_rmdir_refuse_a_live_mount_point() {
+        let mut fs = fresh_store();
+        mount_fake(&mut fs, "hdd");
         assert_eq!(fs.delete("hdd"), Err(VfsError::NotPermitted));
+        assert_eq!(fs.rmdir("hdd"), Err(VfsError::NotPermitted));
+        fs.mounts.clear();
+        fs.rmdir("hdd").expect("an unmounted plain directory removes fine");
     }
 
     #[test]
-    fn list_dir_of_unmounted_volume_is_empty() {
-        let mut fs = VfsStore::new();
+    fn routed_files_live_only_on_their_volume() {
+        let mut fs = fresh_store();
+        mount_fake(&mut fs, "disk");
+        let handle = create(&mut fs, OWNER, "disk/notes.txt");
+        fs.write(OWNER, handle, 0, b"on disk").unwrap();
+        fs.close(OWNER, handle).unwrap();
+        let read = fs.open(OWNER, 0, "disk/notes.txt").unwrap();
+        assert_eq!(contents(&mut fs, OWNER, read), b"on disk");
+        assert_eq!(fs.stat("notes.txt"), Err(VfsError::NotFound));
+        assert_eq!(fs.stat("disk/notes.txt").unwrap(), (EntityKind::File, 7));
+    }
+
+    #[test]
+    fn routed_list_dir_reads_the_volume_and_root_lists_the_mount_name() {
+        let mut fs = fresh_store();
+        mount_fake(&mut fs, "disk");
+        create(&mut fs, OWNER, "disk/beta");
+        create(&mut fs, OWNER, "disk/alpha");
+        assert_eq!(fs.list_dir("disk").unwrap(), b"alpha\nbeta".to_vec());
+        assert_eq!(fs.list().unwrap(), b"disk".to_vec());
+    }
+
+    #[test]
+    fn unknown_mount_prefix_is_not_found_for_every_operation() {
+        let mut fs = fresh_store();
+        assert_eq!(fs.open(OWNER, 0, "floppy/x"), Err(VfsError::NotFound));
+        assert_eq!(fs.delete("floppy/x"), Err(VfsError::NotFound));
+        assert_eq!(fs.stat("floppy/x"), Err(VfsError::NotFound));
+        assert_eq!(fs.list_dir("floppy/x"), Err(VfsError::NotFound));
+        assert_eq!(fs.mkdir("floppy/x"), Err(VfsError::NotFound));
+    }
+
+    #[test]
+    fn routed_delete_removes_volume_files() {
+        let mut fs = fresh_store();
+        mount_fake(&mut fs, "disk");
+        let handle = create(&mut fs, OWNER, "disk/gone");
+        fs.close(OWNER, handle).unwrap();
+        fs.delete("disk/gone").unwrap();
+        assert_eq!(fs.stat("disk/gone"), Err(VfsError::NotFound));
+        assert_eq!(fs.list_dir("disk").unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn directories_nest_inside_a_mounted_volume() {
+        let mut fs = fresh_store();
+        mount_fake(&mut fs, "disk");
+        fs.mkdir("disk/sub").unwrap();
+        let handle = create(&mut fs, OWNER, "disk/sub/deep");
+        fs.close(OWNER, handle).unwrap();
+        assert_eq!(fs.list_dir("disk/sub").unwrap(), b"deep".to_vec());
+        assert_eq!(fs.rmdir("disk/sub"), Err(VfsError::DirectoryNotEmpty));
+        fs.delete("disk/sub/deep").unwrap();
+        fs.rmdir("disk/sub").unwrap();
+        assert_eq!(fs.stat("disk/sub"), Err(VfsError::NotFound));
+    }
+
+    #[test]
+    fn list_dir_of_unmounted_directory_is_its_own_empty_content() {
+        let mut fs = fresh_store();
+        fs.mkdir("hdd").unwrap();
         assert_eq!(fs.list_dir("hdd").unwrap(), Vec::new());
     }
 
     #[test]
+    fn list_dir_of_unknown_directory_is_not_found() {
+        let mut fs = fresh_store();
+        assert_eq!(fs.list_dir("floppy"), Err(VfsError::NotFound));
+    }
+
+    #[test]
     fn list_dir_of_unknown_dir_is_not_found() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         assert_eq!(fs.list_dir("floppy"), Err(VfsError::NotFound));
     }
 
     #[test]
     fn mount_drive_of_unknown_dir_is_not_found_before_touching_the_service() {
-        let mut fs = VfsStore::new();
+        let mut fs = ActiveStore::new();
         assert_eq!(fs.mount_drive(1, "floppy"), Err(VfsError::NotFound));
     }
 
     #[test]
     fn mkdir_creates_a_real_directory_in_the_root_volume() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         fs.mkdir("disk").unwrap();
         assert_eq!(fs.stat("disk").unwrap(), (EntityKind::Directory, 4096));
-        assert_eq!(fs.list().unwrap(), b"disk\nhdd".to_vec());
+        assert_eq!(fs.list().unwrap(), b"disk".to_vec());
         assert_eq!(fs.mkdir("disk"), Err(VfsError::AlreadyExists));
     }
 
     #[test]
     fn rmdir_removes_an_empty_directory() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         fs.mkdir("disk").unwrap();
         fs.rmdir("disk").unwrap();
         assert_eq!(fs.stat("disk"), Err(VfsError::NotFound));
@@ -937,21 +1166,21 @@ mod tests {
 
     #[test]
     fn mkdir_over_a_file_collides() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         create(&mut fs, OWNER, "a.txt");
         assert_eq!(fs.mkdir("a.txt"), Err(VfsError::AlreadyExists));
     }
 
     #[test]
     fn rmdir_on_a_file_is_not_a_directory() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         create(&mut fs, OWNER, "a.txt");
         assert_eq!(fs.rmdir("a.txt"), Err(VfsError::NotDirectory));
     }
 
     #[test]
     fn rmdir_refuses_a_directory_holding_files() {
-        let mut fs = VfsStore::new();
+        let mut fs = fresh_store();
         fs.mkdir("disk").unwrap();
         let handle = fs.engine.create(b"/disk/x").unwrap();
         fs.engine.close(handle).unwrap();
