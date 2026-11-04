@@ -54,7 +54,7 @@ struct OpenEntry<E: Engine> {
 #[derive(Debug)]
 pub enum RomMountError {
     Format(RomError),
-    InvalidName(String),
+    InvalidPath(String),
     Duplicate(String),
     AlreadyAttached,
     Engine(FsError),
@@ -77,6 +77,23 @@ fn volume_path(name: &str) -> Vec<u8> {
 
 fn dot_entry(name: &[u8]) -> bool {
     name == b".".as_slice() || name == b"..".as_slice()
+}
+
+fn is_strict_ancestor(ancestor: &str, path: &str) -> bool {
+    path.len() > ancestor.len()
+        && path.starts_with(ancestor)
+        && path.as_bytes()[ancestor.len()] == b'/'
+}
+
+fn ancestor_paths(path: &str) -> Vec<&str> {
+    let mut ancestors = Vec::new();
+    let mut head = path;
+    while let Some((parent, _)) = head.rsplit_once('/') {
+        ancestors.push(parent);
+        head = parent;
+    }
+    ancestors.reverse();
+    ancestors
 }
 
 fn map_fs_error(error: FsError) -> VfsError {
@@ -256,17 +273,44 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
             return Err(RomMountError::AlreadyAttached);
         }
         let parsed = RomImage::parse(image).map_err(RomMountError::Format)?;
+        let entries: Vec<_> = parsed.files().collect();
         let mut staged: Vec<(&str, usize, usize)> = Vec::new();
-        for entry in parsed.files() {
-            if !wire::valid_name(entry.name) {
-                return Err(RomMountError::InvalidName(String::from(entry.name)));
+        for entry in &entries {
+            if !wire::valid_path(entry.name) {
+                return Err(RomMountError::InvalidPath(String::from(entry.name)));
             }
             if self.engine.lookup(&volume_path(entry.name)).is_ok() {
                 return Err(RomMountError::Duplicate(String::from(entry.name)));
             }
+            if let Some(other) = entries.iter().find(|other| {
+                other.name != entry.name
+                    && (is_strict_ancestor(entry.name, other.name)
+                        || is_strict_ancestor(other.name, entry.name))
+            }) {
+                let shorter = if entry.name.len() <= other.name.len() {
+                    entry.name
+                } else {
+                    other.name
+                };
+                return Err(RomMountError::Duplicate(String::from(shorter)));
+            }
+            for ancestor in ancestor_paths(entry.name) {
+                match self.engine.lookup(&volume_path(ancestor)) {
+                    Ok(stat) if stat.kind() == Kind::Directory => {}
+                    Ok(_) => return Err(RomMountError::Duplicate(String::from(ancestor))),
+                    Err(FsError::NotFound) => {}
+                    Err(error) => return Err(RomMountError::Engine(error)),
+                }
+            }
             staged.push((entry.name, entry.offset, entry.len));
         }
         for (name, offset, len) in staged {
+            for ancestor in ancestor_paths(name) {
+                match self.engine.mkdir(&volume_path(ancestor)) {
+                    Ok(()) | Err(FsError::AlreadyExists) => {}
+                    Err(error) => return Err(RomMountError::Engine(error)),
+                }
+            }
             let handle = self
                 .engine
                 .create(&volume_path(name))
@@ -1007,12 +1051,12 @@ mod tests {
     }
 
     #[test]
-    fn attach_rom_rejects_name_invalid_for_vfs() {
+    fn attach_rom_rejects_path_invalid_for_vfs() {
         let mut fs = fresh_store();
         let image = system::rom::encode(&[("bad\nname", b"x".as_slice())]);
         assert!(matches!(
             fs.attach_rom(&image),
-            Err(RomMountError::InvalidName(ref name)) if name == "bad\nname"
+            Err(RomMountError::InvalidPath(ref name)) if name == "bad\nname"
         ));
         assert_eq!(fs.list().unwrap(), Vec::new());
     }
@@ -1029,6 +1073,75 @@ mod tests {
         fs.write(OWNER, handle, 0, b"still writable")
             .expect("collision rejection must not convert RAM to ROM");
         assert_eq!(contents(&mut fs, OWNER, handle), b"still writable".to_vec());
+    }
+
+    fn nested_fabricated_rom() -> Vec<u8> {
+        system::rom::encode(&[
+            ("games/snake", b"snake-image".as_slice()),
+            ("games/deep/tetris", b"tetris-image".as_slice()),
+            ("services/randomd", b"randomd-image".as_slice()),
+        ])
+    }
+
+    #[test]
+    fn attach_rom_lands_entries_at_nested_paths_with_implicit_parents() {
+        let mut fs = fresh_store();
+        fs.attach_rom(&nested_fabricated_rom()).unwrap();
+        assert_eq!(fs.stat("games/snake").unwrap(), (EntityKind::File, 11));
+        assert_eq!(fs.stat("games/deep/tetris").unwrap(), (EntityKind::File, 12));
+        assert_eq!(fs.stat("services/randomd").unwrap(), (EntityKind::File, 13));
+        assert_eq!(fs.stat("games").unwrap(), (EntityKind::Directory, 4096));
+        assert_eq!(fs.stat("games/deep").unwrap(), (EntityKind::Directory, 4096));
+        assert_eq!(fs.stat("services").unwrap(), (EntityKind::Directory, 4096));
+        assert_eq!(fs.list().unwrap(), b"games\nservices".to_vec());
+        assert_eq!(fs.list_dir("games").unwrap(), b"deep\nsnake".to_vec());
+        assert_eq!(fs.list_dir("games/deep").unwrap(), b"tetris".to_vec());
+    }
+
+    #[test]
+    fn attach_rom_reads_nested_entry_bytes_and_is_writable() {
+        let mut fs = fresh_store();
+        fs.attach_rom(&nested_fabricated_rom()).unwrap();
+        let handle = fs.open(OWNER, 0, "games/snake").unwrap();
+        assert_eq!(contents(&mut fs, OWNER, handle), b"snake-image".to_vec());
+        fs.close(OWNER, handle).unwrap();
+        let writable = fs.open(OWNER, wire::MODE_WRITE, "games/snake").unwrap();
+        assert_eq!(fs.write(OWNER, writable, 0, b"SNAKE"), Ok(5));
+        fs.close(OWNER, writable).unwrap();
+        let reopened = fs.open(OWNER, 0, "games/snake").unwrap();
+        assert_eq!(contents(&mut fs, OWNER, reopened), b"SNAKE-image".to_vec());
+    }
+
+    #[test]
+    fn attach_rom_rejects_entry_under_existing_file_and_stages_nothing() {
+        let mut fs = fresh_store();
+        let handle = create(&mut fs, OWNER, "games");
+        let image = system::rom::encode(&[
+            ("services/randomd", b"r".as_slice()),
+            ("games/snake", b"s".as_slice()),
+        ]);
+        assert!(matches!(
+            fs.attach_rom(&image),
+            Err(RomMountError::Duplicate(ref name)) if name == "games"
+        ));
+        assert_eq!(fs.stat("services"), Err(VfsError::NotFound));
+        assert_eq!(fs.stat("services/randomd"), Err(VfsError::NotFound));
+        fs.write(OWNER, handle, 0, b"still a file")
+            .expect("collision rejection must leave the colliding file intact");
+    }
+
+    #[test]
+    fn attach_rom_rejects_file_entry_conflicting_with_sibling_directory() {
+        let mut fs = fresh_store();
+        let image = system::rom::encode(&[
+            ("services/randomd", b"r".as_slice()),
+            ("services", b"s".as_slice()),
+        ]);
+        assert!(matches!(
+            fs.attach_rom(&image),
+            Err(RomMountError::Duplicate(ref name)) if name == "services"
+        ));
+        assert_eq!(fs.list().unwrap(), Vec::new());
     }
 
     fn fat_fabricated_rom() -> Vec<u8> {
