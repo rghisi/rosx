@@ -155,6 +155,14 @@ impl VfsServer {
                 }
                 Err(error) => Reply::Err(error),
             },
+            Request::MkDir { path } => match self.fs.mkdir(path) {
+                Ok(()) => Reply::Ack,
+                Err(error) => Reply::Err(error),
+            },
+            Request::RmDir { path } => match self.fs.rmdir(path) {
+                Ok(()) => Reply::Ack,
+                Err(error) => Reply::Err(error),
+            },
         }
     }
 

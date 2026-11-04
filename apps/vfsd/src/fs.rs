@@ -19,6 +19,7 @@ const VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ram-vol-001";
 const VOLUME_NAME: &[u8] = b"rosx-ram";
 const HDD_VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ata-vol-001";
 const HDD_VOLUME_NAME: &[u8] = b"rosx-hdd";
+const MOUNT_DIR: &str = "hdd";
 
 pub type ActiveVolume = FileSystem<MemoryDevice>;
 
@@ -71,6 +72,9 @@ fn map_fs_error(error: FsError) -> VfsError {
             VfsError::InvalidPath
         }
         FsError::BadHandle => VfsError::BadHandle,
+        FsError::NotADirectory => VfsError::NotDirectory,
+        FsError::IsADirectory => VfsError::IsADirectory,
+        FsError::DirectoryNotEmpty => VfsError::DirectoryNotEmpty,
         _ => VfsError::ServerResource,
     }
 }
@@ -186,7 +190,7 @@ impl<E: Engine> VfsStore<E> {
     }
 
     pub fn mount_drive(&mut self, drive: u8, dir: &str) -> Result<(), VfsError> {
-        if dir != wire::MOUNT_DIR {
+        if dir != MOUNT_DIR {
             return Err(VfsError::NotFound);
         }
         if self.hdd.is_some() {
@@ -201,7 +205,7 @@ impl<E: Engine> VfsStore<E> {
     }
 
     pub fn list_dir(&mut self, dir: &str) -> Result<Vec<u8>, VfsError> {
-        if dir != wire::MOUNT_DIR {
+        if dir != MOUNT_DIR {
             return Err(VfsError::NotFound);
         }
         let Some(mounted) = &mut self.hdd else {
@@ -221,7 +225,7 @@ impl<E: Engine> VfsStore<E> {
         if !wire::valid_name(name) {
             return Err(VfsError::InvalidPath);
         }
-        if name == wire::MOUNT_DIR {
+        if name == MOUNT_DIR {
             return Err(VfsError::NotPermitted);
         }
         let path = volume_path(name);
@@ -308,7 +312,7 @@ impl<E: Engine> VfsStore<E> {
         if !wire::valid_name(name) {
             return Err(VfsError::InvalidPath);
         }
-        if name == wire::MOUNT_DIR {
+        if name == MOUNT_DIR {
             return Err(VfsError::NotPermitted);
         }
         if self.rom_names.contains(name) {
@@ -318,11 +322,21 @@ impl<E: Engine> VfsStore<E> {
         self.engine.sync().map_err(map_fs_error)
     }
 
+    pub fn mkdir(&mut self, path: &str) -> Result<(), VfsError> {
+        self.engine.mkdir(&volume_path(path)).map_err(map_fs_error)?;
+        self.engine.sync().map_err(map_fs_error)
+    }
+
+    pub fn rmdir(&mut self, path: &str) -> Result<(), VfsError> {
+        self.engine.rmdir(&volume_path(path)).map_err(map_fs_error)?;
+        self.engine.sync().map_err(map_fs_error)
+    }
+
     pub fn stat(&mut self, name: &str) -> Result<(EntityKind, u64), VfsError> {
         if !wire::valid_name(name) {
             return Err(VfsError::InvalidPath);
         }
-        if name == wire::MOUNT_DIR {
+        if name == MOUNT_DIR {
             return Ok((EntityKind::Directory, 0));
         }
         let stat = self.engine.lookup(&volume_path(name)).map_err(map_fs_error)?;
@@ -340,8 +354,8 @@ impl<E: Engine> VfsStore<E> {
             .map(|item| item.name.as_slice())
             .filter(|name| !dot_entry(name))
             .collect();
-        if !names.contains(&wire::MOUNT_DIR.as_bytes()) {
-            names.push(wire::MOUNT_DIR.as_bytes());
+        if !names.contains(&MOUNT_DIR.as_bytes()) {
+            names.push(MOUNT_DIR.as_bytes());
         }
         names.sort_unstable();
         names_blob(&names)
@@ -902,5 +916,45 @@ mod tests {
     fn mount_drive_of_unknown_dir_is_not_found_before_touching_the_service() {
         let mut fs = VfsStore::new();
         assert_eq!(fs.mount_drive(1, "floppy"), Err(VfsError::NotFound));
+    }
+
+    #[test]
+    fn mkdir_creates_a_real_directory_in_the_root_volume() {
+        let mut fs = VfsStore::new();
+        fs.mkdir("disk").unwrap();
+        assert_eq!(fs.stat("disk").unwrap(), (EntityKind::Directory, 4096));
+        assert_eq!(fs.list().unwrap(), b"disk\nhdd".to_vec());
+        assert_eq!(fs.mkdir("disk"), Err(VfsError::AlreadyExists));
+    }
+
+    #[test]
+    fn rmdir_removes_an_empty_directory() {
+        let mut fs = VfsStore::new();
+        fs.mkdir("disk").unwrap();
+        fs.rmdir("disk").unwrap();
+        assert_eq!(fs.stat("disk"), Err(VfsError::NotFound));
+    }
+
+    #[test]
+    fn mkdir_over_a_file_collides() {
+        let mut fs = VfsStore::new();
+        create(&mut fs, OWNER, "a.txt");
+        assert_eq!(fs.mkdir("a.txt"), Err(VfsError::AlreadyExists));
+    }
+
+    #[test]
+    fn rmdir_on_a_file_is_not_a_directory() {
+        let mut fs = VfsStore::new();
+        create(&mut fs, OWNER, "a.txt");
+        assert_eq!(fs.rmdir("a.txt"), Err(VfsError::NotDirectory));
+    }
+
+    #[test]
+    fn rmdir_refuses_a_directory_holding_files() {
+        let mut fs = VfsStore::new();
+        fs.mkdir("disk").unwrap();
+        let handle = fs.engine.create(b"/disk/x").unwrap();
+        fs.engine.close(handle).unwrap();
+        assert_eq!(fs.rmdir("disk"), Err(VfsError::DirectoryNotEmpty));
     }
 }

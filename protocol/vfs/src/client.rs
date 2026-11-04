@@ -148,6 +148,24 @@ impl Vfs {
         }
     }
 
+    pub fn mkdir(&self, path: &str) -> Result<(), ClientError> {
+        let request = wire::Request::MkDir { path };
+        match transact(self.connection, request)? {
+            Reply::Ack => Ok(()),
+            Reply::Err(error) => Err(ClientError::Vfs(error)),
+            _ => Err(ClientError::Protocol),
+        }
+    }
+
+    pub fn rmdir(&self, path: &str) -> Result<(), ClientError> {
+        let request = wire::Request::RmDir { path };
+        match transact(self.connection, request)? {
+            Reply::Ack => Ok(()),
+            Reply::Err(error) => Err(ClientError::Vfs(error)),
+            _ => Err(ClientError::Protocol),
+        }
+    }
+
     pub fn disconnect(self) {
         Syscall::ipc_disconnect(self.connection);
     }
