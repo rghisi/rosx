@@ -1,6 +1,6 @@
 use core::arch::asm;
 use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
-use kernel::kernel::kernel;
+use kernel::kernel::{kernel, Kernel};
 use kernel::once::Once;
 
 pub static SYSTEM_TIME_MS: AtomicU32 = AtomicU32::new(0);
@@ -158,8 +158,8 @@ pub struct InterruptStackFrame {
 extern "x86-interrupt" fn timer_interrupt_handler(_frame: InterruptStackFrame) {
     SYSTEM_TIME_MS.fetch_add(MS_PER_TICK as u32, Relaxed);
     unsafe { outb(PIC_MASTER_CMD, PIC_EOI) };
-    kernel().preempt();
-    kernel().apply_pending_preemption();
+    Kernel::mark_resched();
+    kernel().maybe_resched();
 }
 
 extern "x86-interrupt" fn keyboard_interrupt_handler(_frame: InterruptStackFrame) {

@@ -12,6 +12,9 @@ use usrlib::syscall::Syscall;
 
 const MAX_DATA_BYTES: usize = 64 * 1024;
 const PING_SIZES: [usize; 3] = [64, 4096, MAX_DATA_BYTES];
+const BURST_SIZE: usize = 64;
+const BURST_ROUNDS: usize = 8;
+const BURST_DRAIN_MS: u64 = 400;
 
 fn checksum(payload: &[u8]) -> u32 {
     payload
@@ -34,6 +37,15 @@ fn verdict_word(ok: bool) -> &'static str {
 fn connect_to_pong() -> UserConnectionHandle {
     loop {
         if let Ok(connection) = Syscall::ipc_connect("PING") {
+            return connection;
+        }
+        Syscall::sleep(100);
+    }
+}
+
+fn connect_to_random() -> UserConnectionHandle {
+    loop {
+        if let Ok(connection) = Syscall::ipc_connect("RANDOM") {
             return connection;
         }
         Syscall::sleep(100);
@@ -97,10 +109,46 @@ fn ping_round(connection: UserConnectionHandle, size: usize) {
     let _ = ping_handle.release();
 }
 
+fn burst_dispatch(connection: UserConnectionHandle) -> Option<UserDataHandle> {
+    let payload: Vec<u8> = (0..BURST_SIZE).map(ping_byte).collect();
+    let Ok(ping_handle) = Syscall::ipc_data_write(connection, &payload) else {
+        println!("burst fail write");
+        return None;
+    };
+    let mut data = [0u8; MESSAGE_PAYLOAD_BYTES];
+    data[..4].copy_from_slice(&data_token(&ping_handle).to_ne_bytes());
+    let text = format!("PING:{BURST_SIZE}:{:08x}", checksum(&payload));
+    data[4..4 + text.len()].copy_from_slice(text.as_bytes());
+    if Syscall::ipc_send(connection, &data).is_err() {
+        println!("burst fail send");
+        return None;
+    }
+    Some(ping_handle)
+}
+
+fn ping_burst(ping_connection: UserConnectionHandle, random_connection: UserConnectionHandle) {
+    let mut held: Vec<UserDataHandle> = Vec::new();
+    println!("WAKE BURST BEGIN");
+    for _ in 0..BURST_ROUNDS {
+        let Some(pong_data) = burst_dispatch(ping_connection) else { return };
+        held.push(pong_data);
+        let Some(random_data) = burst_dispatch(random_connection) else { return };
+        held.push(random_data);
+    }
+    println!("WAKE BURST SENT");
+    Syscall::sleep(BURST_DRAIN_MS);
+}
+
 fn main() {
     let connection = connect_to_pong();
-    for size in PING_SIZES {
-        ping_round(connection, size);
+    if usrlib::args().iter().skip(1).any(|argument| *argument == "burst") {
+        let random_connection = connect_to_random();
+        ping_burst(connection, random_connection);
+        Syscall::ipc_disconnect(random_connection);
+    } else {
+        for size in PING_SIZES {
+            ping_round(connection, size);
+        }
     }
     Syscall::ipc_disconnect(connection);
 }
