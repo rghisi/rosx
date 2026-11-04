@@ -43,9 +43,9 @@ fn connect_to_pong() -> UserConnectionHandle {
     }
 }
 
-fn connect_to_echo() -> UserConnectionHandle {
+fn connect_to_random() -> UserConnectionHandle {
     loop {
-        if let Ok(connection) = Syscall::ipc_connect("BULKECHO") {
+        if let Ok(connection) = Syscall::ipc_connect("RANDOM") {
             return connection;
         }
         Syscall::sleep(100);
@@ -126,14 +126,14 @@ fn burst_dispatch(connection: UserConnectionHandle) -> Option<UserDataHandle> {
     Some(ping_handle)
 }
 
-fn ping_burst(ping_connection: UserConnectionHandle, echo_connection: UserConnectionHandle) {
+fn ping_burst(ping_connection: UserConnectionHandle, random_connection: UserConnectionHandle) {
     let mut held: Vec<UserDataHandle> = Vec::new();
     println!("WAKE BURST BEGIN");
     for _ in 0..BURST_ROUNDS {
-        let Some(echo_data) = burst_dispatch(echo_connection) else { return };
-        held.push(echo_data);
         let Some(pong_data) = burst_dispatch(ping_connection) else { return };
         held.push(pong_data);
+        let Some(random_data) = burst_dispatch(random_connection) else { return };
+        held.push(random_data);
     }
     println!("WAKE BURST SENT");
     Syscall::sleep(BURST_DRAIN_MS);
@@ -142,9 +142,9 @@ fn ping_burst(ping_connection: UserConnectionHandle, echo_connection: UserConnec
 fn main() {
     let connection = connect_to_pong();
     if usrlib::args().iter().skip(1).any(|argument| *argument == "burst") {
-        let echo_connection = connect_to_echo();
-        ping_burst(connection, echo_connection);
-        Syscall::ipc_disconnect(echo_connection);
+        let random_connection = connect_to_random();
+        ping_burst(connection, random_connection);
+        Syscall::ipc_disconnect(random_connection);
     } else {
         for size in PING_SIZES {
             ping_round(connection, size);
