@@ -25,4 +25,5 @@ pub enum FsError {
     FileTooLarge,
     BadHandle,
     TooManyOpen,
+    Unsupported,
 }
