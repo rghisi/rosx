@@ -1,5 +1,5 @@
 use crate::hdd::AtaDisk;
-use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
@@ -64,7 +64,6 @@ pub struct VfsStore<E: Engine, D: BlockDevice> {
     mounts: Vec<MountedVolume<D>>,
     opens: BTreeMap<u32, OpenEntry<E>>,
     next_handle: u32,
-    rom_names: BTreeSet<String>,
     rom_attached: bool,
 }
 
@@ -213,7 +212,6 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
             mounts: Vec::new(),
             opens: BTreeMap::new(),
             next_handle: 1,
-            rom_names: BTreeSet::new(),
             rom_attached: false,
         }
     }
@@ -274,7 +272,6 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
                     .map_err(RomMountError::Engine)?;
             }
             self.engine.close(handle).map_err(RomMountError::Engine)?;
-            self.rom_names.insert(String::from(name));
         }
         self.engine.sync().map_err(RomMountError::Engine)?;
         self.rom_attached = true;
@@ -341,9 +338,6 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
             .get(&handle)
             .filter(|entry| entry.owner == owner)
             .ok_or(VfsError::BadHandle)?;
-        if self.rom_names.contains(entry.name.as_str()) {
-            return Err(VfsError::NotPermitted);
-        }
         if payload.is_empty() {
             return Ok(0);
         }
@@ -393,9 +387,6 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
         }
         match self.route(name)? {
             Target::Root => {
-                if self.rom_names.contains(name) {
-                    return Err(VfsError::NotPermitted);
-                }
                 self.engine.remove(&volume_path(name)).map_err(map_fs_error)?;
                 self.engine.sync().map_err(map_fs_error)
             }
@@ -947,30 +938,46 @@ mod tests {
     }
 
     #[test]
-    fn write_to_rom_file_is_not_permitted_even_when_empty() {
+    fn write_to_rom_file_is_permitted_in_write_mode() {
         let mut fs = fresh_store();
         fs.attach_rom(&fabricated_rom()).unwrap();
         let handle = fs.open(OWNER, wire::MODE_WRITE, "alpha.bin").unwrap();
-        assert_eq!(
-            fs.write(OWNER, handle, 0, b"x"),
-            Err(VfsError::NotPermitted)
-        );
-        assert_eq!(
-            fs.write(OWNER, handle, 0, &[]),
-            Err(VfsError::NotPermitted)
-        );
-        assert_eq!(
-            fs.write(OWNER, handle, 99, &[]),
-            Err(VfsError::NotPermitted)
-        );
-        assert_eq!(contents(&mut fs, OWNER, handle), b"alpha".to_vec());
+        assert_eq!(fs.write(OWNER, handle, 0, b"x"), Ok(1));
+        assert_eq!(fs.write(OWNER, handle, 0, &[]), Ok(0));
+        assert_eq!(fs.write(OWNER, handle, 99, &[]), Ok(0));
+        assert_eq!(contents(&mut fs, OWNER, handle), b"xlpha".to_vec());
     }
 
     #[test]
-    fn delete_rom_file_is_not_permitted() {
+    fn rom_partial_overwrite_reads_back_after_reopen() {
         let mut fs = fresh_store();
         fs.attach_rom(&fabricated_rom()).unwrap();
-        assert_eq!(fs.delete("alpha.bin"), Err(VfsError::NotPermitted));
+        let handle = fs.open(OWNER, wire::MODE_WRITE, "beta.bin").unwrap();
+        assert_eq!(fs.write(OWNER, handle, 5, b"ROM"), Ok(3));
+        fs.close(OWNER, handle).unwrap();
+        let reopened = fs.open(OWNER, 0, "beta.bin").unwrap();
+        assert_eq!(contents(&mut fs, OWNER, reopened), b"beta-ROMload".to_vec());
+        assert_eq!(fs.stat("beta.bin").unwrap(), (EntityKind::File, 12));
+    }
+
+    #[test]
+    fn delete_rom_file_is_permitted() {
+        let mut fs = fresh_store();
+        fs.attach_rom(&fabricated_rom()).unwrap();
+        assert_eq!(fs.delete("alpha.bin"), Ok(()));
+        assert_eq!(fs.list().unwrap(), b"beta.bin".to_vec());
+    }
+
+    #[test]
+    fn rom_delete_then_recreate_under_same_name() {
+        let mut fs = fresh_store();
+        fs.attach_rom(&fabricated_rom()).unwrap();
+        fs.delete("alpha.bin").unwrap();
+        let handle = create(&mut fs, OWNER, "alpha.bin");
+        fs.write(OWNER, handle, 0, b"replaced").unwrap();
+        fs.close(OWNER, handle).unwrap();
+        let reopened = fs.open(OWNER, 0, "alpha.bin").unwrap();
+        assert_eq!(contents(&mut fs, OWNER, reopened), b"replaced".to_vec());
         assert_eq!(fs.list().unwrap(), b"alpha.bin\nbeta.bin".to_vec());
     }
 
