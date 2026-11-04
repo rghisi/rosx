@@ -21,6 +21,7 @@ const VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ram-vol-001";
 const VOLUME_NAME: &[u8] = b"rosx-ram";
 const HDD_VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ata-vol-001";
 const HDD_VOLUME_NAME: &[u8] = b"rosx-hdd";
+const SEEDED_DIRECTORIES: [&str; 4] = ["tests", "services", "games", "bench"];
 
 pub type ActiveVolume = FileSystem<MemoryDevice>;
 pub type ActiveStore = VfsStore<ActiveVolume, AtaDisk>;
@@ -152,8 +153,13 @@ impl VfsStore<ActiveVolume, AtaDisk> {
             volume_name: VOLUME_NAME,
             created_at: 0,
         };
-        let engine = FileSystem::format(MemoryDevice::new(VOLUME_BLOCKS), &params)
+        let mut engine = FileSystem::format(MemoryDevice::new(VOLUME_BLOCKS), &params)
             .expect("fresh memory volume must format");
+        for seed in SEEDED_DIRECTORIES {
+            engine
+                .mkdir(&volume_path(seed))
+                .expect("seed directory on a fresh volume must be creatable");
+        }
         VfsStore::from_engine(engine)
     }
 
@@ -1183,6 +1189,15 @@ mod tests {
     fn mount_drive_of_unknown_dir_is_not_found_before_touching_the_service() {
         let mut fs = ActiveStore::new();
         assert_eq!(fs.mount_drive(1, "floppy"), Err(VfsError::NotFound));
+    }
+
+    #[test]
+    fn fresh_volume_is_seeded_with_the_organization_directories() {
+        let mut fs = ActiveStore::new();
+        assert_eq!(fs.list().unwrap(), b"bench\ngames\nservices\ntests".to_vec());
+        for seed in SEEDED_DIRECTORIES {
+            assert_eq!(fs.stat(seed).unwrap(), (EntityKind::Directory, 4096));
+        }
     }
 
     #[test]
