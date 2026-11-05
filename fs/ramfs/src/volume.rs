@@ -153,6 +153,24 @@ impl FileSystem {
         Ok(())
     }
 
+    pub fn rmdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        let parts = path::parse(path_bytes)?;
+        if parts.is_root() {
+            return Err(FsError::InvalidPath);
+        }
+        self.resolve_parents(&parts)?;
+        let key = parts.key();
+        let entry = self.entries.get(&key).ok_or(FsError::NotFound)?;
+        if entry.kind != Kind::Directory {
+            return Err(FsError::NotADirectory);
+        }
+        if self.entries.keys().any(|child| child_name(child, &key).is_some()) {
+            return Err(FsError::DirectoryNotEmpty);
+        }
+        self.entries.remove(&key);
+        Ok(())
+    }
+
     pub fn read(&mut self, handle: Handle, offset: u64, buf: &mut [u8]) -> Result<usize, FsError> {
         let file = self.live_file(handle)?;
         let size = file.bytes.len() as u64;
@@ -199,10 +217,13 @@ impl FileSystem {
             return Err(FsError::InvalidPath);
         }
         self.resolve_parents(&parts)?;
-        self.entries
-            .remove(&parts.key())
-            .map(|_| ())
-            .ok_or(FsError::NotFound)
+        let key = parts.key();
+        let entry = self.entries.get(&key).ok_or(FsError::NotFound)?;
+        if entry.kind == Kind::Directory {
+            return Err(FsError::IsADirectory);
+        }
+        self.entries.remove(&key);
+        Ok(())
     }
 
     pub fn readdir(&mut self, path_bytes: &[u8]) -> Result<Vec<DirItem>, FsError> {
@@ -307,8 +328,8 @@ impl Engine for FileSystem {
         FileSystem::mkdir(self, path_bytes)
     }
 
-    fn rmdir(&mut self, _path_bytes: &[u8]) -> Result<(), FsError> {
-        Err(FsError::Unsupported)
+    fn rmdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        FileSystem::rmdir(self, path_bytes)
     }
 
     fn read(
@@ -610,6 +631,60 @@ mod tests {
         assert_eq!(fs.open(b"/filler"), Err(FsError::TooManyOpen));
         assert_eq!(fs.mkdir(b"/roomy"), Ok(()));
         assert_eq!(fs.lookup(b"/roomy").unwrap().kind, Kind::Directory);
+    }
+
+    #[test]
+    fn rmdir_at_root_is_invalid_path() {
+        let mut fs = FileSystem::new();
+        assert_eq!(fs.rmdir(b"/"), Err(FsError::InvalidPath));
+    }
+
+    #[test]
+    fn rmdir_missing_is_not_found() {
+        let mut fs = FileSystem::new();
+        assert_eq!(fs.rmdir(b"/ghost"), Err(FsError::NotFound));
+        fs.mkdir(b"/a").unwrap();
+        assert_eq!(fs.rmdir(b"/a/b"), Err(FsError::NotFound));
+    }
+
+    #[test]
+    fn rmdir_of_regular_file_is_not_a_directory() {
+        let mut fs = FileSystem::new();
+        create(&mut fs, "/a");
+        assert_eq!(fs.rmdir(b"/a"), Err(FsError::NotADirectory));
+    }
+
+    #[test]
+    fn rmdir_of_non_empty_directory_is_directory_not_empty() {
+        let mut fs = FileSystem::new();
+        fs.mkdir(b"/a").unwrap();
+        create(&mut fs, "/a/f");
+        assert_eq!(fs.rmdir(b"/a"), Err(FsError::DirectoryNotEmpty));
+        fs.mkdir(b"/b").unwrap();
+        fs.mkdir(b"/b/sub").unwrap();
+        assert_eq!(fs.rmdir(b"/b"), Err(FsError::DirectoryNotEmpty));
+        assert_eq!(fs.rmdir(b"/b/sub"), Ok(()));
+        assert_eq!(fs.rmdir(b"/b"), Ok(()));
+    }
+
+    #[test]
+    fn rmdir_removes_an_empty_directory_and_frees_the_name() {
+        let mut fs = FileSystem::new();
+        fs.mkdir(b"/dir").unwrap();
+        fs.mkdir(b"/sibling").unwrap();
+        assert_eq!(fs.rmdir(b"/dir"), Ok(()));
+        assert_eq!(fs.lookup(b"/dir"), Err(FsError::NotFound));
+        assert_eq!(fs.lookup(b"/sibling").unwrap().kind, Kind::Directory);
+        assert_eq!(fs.mkdir(b"/dir"), Ok(()));
+        assert_eq!(fs.lookup(b"/dir").unwrap().kind, Kind::Directory);
+    }
+
+    #[test]
+    fn remove_refuses_directories_as_is_a_directory() {
+        let mut fs = FileSystem::new();
+        fs.mkdir(b"/dir").unwrap();
+        assert_eq!(fs.remove(b"/dir"), Err(FsError::IsADirectory));
+        assert_eq!(fs.lookup(b"/dir").unwrap().kind, Kind::Directory);
     }
 
     #[test]
