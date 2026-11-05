@@ -131,6 +131,28 @@ impl FileSystem {
         Ok(handle)
     }
 
+    pub fn mkdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        let parts = path::parse(path_bytes)?;
+        if parts.is_root() {
+            return Err(FsError::AlreadyExists);
+        }
+        self.resolve_parents(&parts)?;
+        let key = parts.key();
+        if self.entries.contains_key(&key) {
+            return Err(FsError::AlreadyExists);
+        }
+        let generation = self.take_generation();
+        self.entries.insert(
+            key,
+            Entry {
+                kind: Kind::Directory,
+                bytes: Vec::new(),
+                generation,
+            },
+        );
+        Ok(())
+    }
+
     pub fn read(&mut self, handle: Handle, offset: u64, buf: &mut [u8]) -> Result<usize, FsError> {
         let file = self.live_file(handle)?;
         let size = file.bytes.len() as u64;
@@ -281,8 +303,8 @@ impl Engine for FileSystem {
         FileSystem::create(self, path_bytes)
     }
 
-    fn mkdir(&mut self, _path_bytes: &[u8]) -> Result<(), FsError> {
-        Err(FsError::Unsupported)
+    fn mkdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        FileSystem::mkdir(self, path_bytes)
     }
 
     fn rmdir(&mut self, _path_bytes: &[u8]) -> Result<(), FsError> {
@@ -467,6 +489,127 @@ mod tests {
             fs.lookup(past_limit.as_bytes()),
             Err(FsError::DepthExceeded)
         );
+    }
+
+    #[test]
+    fn mkdir_then_lookup_is_an_empty_directory() {
+        let mut fs = FileSystem::new();
+        assert_eq!(fs.mkdir(b"/dir"), Ok(()));
+        assert_eq!(
+            fs.lookup(b"/dir").unwrap(),
+            Stat {
+                kind: Kind::Directory,
+                size: 0
+            }
+        );
+    }
+
+    #[test]
+    fn mkdir_at_root_is_already_exists() {
+        let mut fs = FileSystem::new();
+        assert_eq!(fs.mkdir(b"/"), Err(FsError::AlreadyExists));
+    }
+
+    #[test]
+    fn mkdir_over_existing_name_is_already_exists() {
+        let mut fs = FileSystem::new();
+        create(&mut fs, "/a");
+        assert_eq!(fs.mkdir(b"/a"), Err(FsError::AlreadyExists));
+        fs.mkdir(b"/dir").unwrap();
+        assert_eq!(fs.mkdir(b"/dir"), Err(FsError::AlreadyExists));
+    }
+
+    #[test]
+    fn mkdir_requires_a_live_directory_parent() {
+        let mut fs = FileSystem::new();
+        assert_eq!(fs.mkdir(b"/a/b"), Err(FsError::NotFound));
+        create(&mut fs, "/a");
+        assert_eq!(fs.mkdir(b"/a/b"), Err(FsError::NotADirectory));
+    }
+
+    #[test]
+    fn nested_directories_host_files_with_full_path_identity() {
+        let mut fs = FileSystem::new();
+        fs.mkdir(b"/a").unwrap();
+        fs.mkdir(b"/a/b").unwrap();
+        let handle = fs.create(b"/a/b/file").unwrap();
+        fs.write(handle, 0, b"deep").unwrap();
+        assert_eq!(contents(&mut fs, handle), b"deep".to_vec());
+        assert_eq!(
+            fs.lookup(b"/a/b/file").unwrap(),
+            Stat {
+                kind: Kind::Regular,
+                size: 4
+            }
+        );
+    }
+
+    #[test]
+    fn readdir_lists_directories_with_kind() {
+        let mut fs = FileSystem::new();
+        fs.mkdir(b"/zeta").unwrap();
+        create(&mut fs, "/beta");
+        fs.mkdir(b"/alpha").unwrap();
+        let items = fs.readdir(b"/").unwrap();
+        let entries: Vec<(Kind, &[u8])> = items
+            .iter()
+            .map(|item| (item.kind, item.name.as_slice()))
+            .collect();
+        assert_eq!(
+            entries,
+            vec![
+                (Kind::Directory, b"alpha".as_slice()),
+                (Kind::Regular, b"beta"),
+                (Kind::Directory, b"zeta"),
+            ]
+        );
+    }
+
+    #[test]
+    fn readdir_shows_only_direct_children() {
+        let mut fs = FileSystem::new();
+        fs.mkdir(b"/a").unwrap();
+        fs.mkdir(b"/a/inner").unwrap();
+        create(&mut fs, "/top");
+        let root_items = fs.readdir(b"/").unwrap();
+        let root_names: Vec<&[u8]> = root_items
+            .iter()
+            .map(|item| item.name.as_slice())
+            .collect();
+        assert_eq!(root_names, vec![b"a".as_slice(), b"top"]);
+        let a_items = fs.readdir(b"/a").unwrap();
+        let a_names: Vec<&[u8]> = a_items
+            .iter()
+            .map(|item| item.name.as_slice())
+            .collect();
+        assert_eq!(a_names, vec![b"inner".as_slice()]);
+    }
+
+    #[test]
+    fn readdir_of_fresh_directory_is_empty() {
+        let mut fs = FileSystem::new();
+        fs.mkdir(b"/dir").unwrap();
+        assert_eq!(fs.readdir(b"/dir").unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn open_of_a_directory_is_a_directory() {
+        let mut fs = FileSystem::new();
+        fs.mkdir(b"/dir").unwrap();
+        assert_eq!(fs.open(b"/dir"), Err(FsError::IsADirectory));
+    }
+
+    #[test]
+    fn mkdir_consumes_no_open_slot() {
+        let mut fs = FileSystem::new();
+        let filler = create(&mut fs, "/filler");
+        fs.close(filler).unwrap();
+        for index in 0..MAX_OPEN_FILES {
+            create(&mut fs, &format!("/s{index}"));
+        }
+        assert_eq!(fs.open(b"/filler"), Err(FsError::TooManyOpen));
+        assert_eq!(fs.mkdir(b"/roomy"), Ok(()));
+        assert_eq!(fs.lookup(b"/roomy").unwrap().kind, Kind::Directory);
     }
 
     #[test]
