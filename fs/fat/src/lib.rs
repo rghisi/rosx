@@ -6,3 +6,4 @@ pub mod boot;
 pub mod device;
 pub mod dir;
 pub mod fat;
+pub mod file;
