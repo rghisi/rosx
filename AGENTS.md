@@ -40,7 +40,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 ├── fs/
 │    core/        # engine treaty (trait Engine + FsError/Kind/DirItem/MetadataView), no deps, shared by rxfs, ramfs and vfsd
 │    rxfs/        # no_std filesystem library (vfsd's engine): superblock/bitmaps/inodes/extents/dirs, leak-safe sync, check()
-│    ramfs/       # no_std in-memory filesystem engine, rxfs-shaped (lookup/open/create/read/write/close/remove/readdir/stat) over a flat byte-name store
+│    ramfs/       # no_std in-memory filesystem engine, rxfs-shaped (lookup/open/create/mkdir/rmdir/read/write/close/remove/readdir/stat) over a path-keyed store
 ├── arch/
 │    x86_64/        # entry, cpu, interrupts, framebuffer, terminal_fonts, *.S (global_asm)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot v1)
@@ -104,7 +104,7 @@ cargo test                     # default-members only
 cargo test -p kernel -- --test-threads=1   # scheduler, memory, elf, ipc, future
 cargo test -p rxfs             # filesystem library (add --features std for the FileDevice suites)
 cargo test -p fs-core          # engine treaty crate (types + traits, no tests of its own)
-cargo test -p ramfs            # in-memory filesystem engine (rxfs-shaped flat store)
+cargo test -p ramfs            # in-memory filesystem engine (rxfs-shaped path-keyed store)
 ```
 
 ### Integration tests (run on host against QEMU)
@@ -220,7 +220,7 @@ These principles are the regression guard: the very inversion this rework remove
 - `rom/` — boot-registered immutable ROM image exposed via the opaque `RomRead` syscall; the kernel stays VFS-agnostic, `vfsd` owns mount semantics. The ROM carries the app ELFs (not the shell); its roster names stay underscore-free — a historical constraint from the era when the kernel keyboard dropped shift state, with the rename tracked in `docs/todo.md`.
 - `fs/core` — the engine treaty of the `fs/` theme (`Engine` trait + shared `FsError`/`IoError`, `Kind`, `DirItem`, `MetadataView`), zero deps beyond core/alloc. It is the in-process contract between `vfsd` and any filesystem: `Engine` names the twelve operations (`lookup/open/create/mkdir/rmdir/read/write/stat/close/remove/readdir/sync`) with associated `Handle` and `Metadata` types so each engine keeps its own handle representation and stat shape; `FsError::Unsupported` is the honest answer for a capability an engine lacks. Constructors stay engine-specific (`format`/`mount` for rxfs, `new` for ramfs); `check()` and volume introspection stay on the concrete types. Both engines and `vfsd` depend on this crate and nothing else cross-cuts.
 - `fs/rxfs` — standalone `no_std` filesystem library (zero third-party deps; links only `fs/core`): 4 KiB blocks, u32 addressing, static inode table with inline extents + spill chains, 255-byte byte-transparent names, Fletcher-32 on superblock and inodes. No journal — leak-safe commit ordering (allocation bitmaps hit disk before references, reclamation is deferred until `sync` commits the unlink), primary + backup superblock, and `check()` fsck-lite that repairs leaks, dangling entries, and double references. Proven by a crash-injection harness (every device-write prefix) and differential property tests; `FileSystem<D>` implements the `fs/core` `Engine` treaty and is wired in as `vfsd`'s storage engine over `MemoryDevice` (see VFS architecture).
-- `fs/ramfs` — second engine of the `fs/` theme: a `no_std` in-memory store (zero third-party deps; links only `fs/core`) implementing the same `Engine` treaty as rxfs over a flat byte-name map, so `vfsd`'s generic `VfsStore` could run it unchanged. Generation-checked handles reject stale and deleted-file use as `BadHandle`; zero-fill past EOF; empty write is an `Ok(0)` no-op; root is the only directory, so `mkdir`/`rmdir` answer `FsError::Unsupported`. It carries no daemon policy (no owner/mode, ROM, or wire-name rules — those stay at the daemon edge); `vfsd` still selects rxfs as its active `Engine`.
+- `fs/ramfs` — second engine of the `fs/` theme: a `no_std` in-memory store (zero third-party deps; links only `fs/core`) implementing the full `Engine` treaty as rxfs does, over a `BTreeMap` keyed by full path, so `vfsd`'s generic `VfsStore` could run it unchanged. One path model (`path::parse`: absolute, no empty segments, 255-byte names, 4096-byte paths, depth ≤ 512) feeds every operation; parent chains resolve once — missing parent `NotFound`, file-as-parent `NotADirectory`. Entries carry their `Kind`: `lookup`/`readdir` tell files from directories, `open` and `remove` refuse directories as `IsADirectory`, `rmdir` refuses the non-empty as `DirectoryNotEmpty` and the root as `InvalidPath`. Generation-checked handles reject stale and deleted-file use as `BadHandle`; zero-fill past EOF; empty write is an `Ok(0)` no-op. It carries no daemon policy (no owner/mode, ROM, or wire-name rules — those stay at the daemon edge); `vfsd` still selects rxfs as its active `Engine`.
 
 **Documentation & Comments:**
 - **CRITICAL: No comments, ever** — the code is the source of truth; make it self-explanatory
