@@ -172,29 +172,10 @@ fn fold_extension(extension: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fat::fixtures::{fat16_boot, fat32_boot, TestDevice};
+    use crate::fat::fixtures::{
+        fat16_boot, fat32_boot, fill_deleted, put_slot, slot_bytes, TestDevice,
+    };
     use alloc::vec;
-
-    fn slot_bytes(name: &[u8; 8], extension: &[u8; 3], attrs: u8, cluster: u16, size: u32) -> [u8; ENTRY_BYTES] {
-        let mut slot = [b' '; ENTRY_BYTES];
-        slot[..8].copy_from_slice(name);
-        slot[8..11].copy_from_slice(extension);
-        slot[OFFSET_ATTRS] = attrs;
-        slot[OFFSET_CLUSTER_HI..OFFSET_CLUSTER_HI + 2].copy_from_slice(&0u16.to_le_bytes());
-        slot[OFFSET_CLUSTER_LO..OFFSET_CLUSTER_LO + 2].copy_from_slice(&cluster.to_le_bytes());
-        slot[OFFSET_SIZE..OFFSET_SIZE + 4].copy_from_slice(&size.to_le_bytes());
-        slot
-    }
-
-    fn put_slot(device: &mut TestDevice, sector: u64, slot_index: usize, slot: &[u8]) {
-        let at = sector as usize * 512 + slot_index * ENTRY_BYTES;
-        device.bytes[at..at + ENTRY_BYTES].copy_from_slice(slot);
-    }
-
-    fn fill_deleted(device: &mut TestDevice, sector: u64) {
-        let at = sector as usize * 512;
-        device.bytes[at..at + 512].fill(0xE5);
-    }
 
     fn file_entry(name: &[u8], is_directory: bool, first_cluster: u32, size: u64) -> DirEntry {
         DirEntry {

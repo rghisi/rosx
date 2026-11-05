@@ -163,6 +163,75 @@ pub(crate) mod fixtures {
         let entry_bytes = u64::from(cluster) * 4;
         (1 + entry_bytes / 512, (entry_bytes % 512) as usize)
     }
+
+    pub fn slot_bytes(
+        name: &[u8; 8],
+        extension: &[u8; 3],
+        attrs: u8,
+        cluster: u16,
+        size: u32,
+    ) -> [u8; 32] {
+        let mut slot = [b' '; 32];
+        slot[..8].copy_from_slice(name);
+        slot[8..11].copy_from_slice(extension);
+        slot[0x0B] = attrs;
+        slot[0x14..0x16].copy_from_slice(&0u16.to_le_bytes());
+        slot[0x1A..0x1C].copy_from_slice(&cluster.to_le_bytes());
+        slot[0x1C..0x20].copy_from_slice(&size.to_le_bytes());
+        slot
+    }
+
+    pub fn put_slot(device: &mut TestDevice, sector: u64, slot_index: usize, slot: &[u8]) {
+        let at = sector as usize * 512 + slot_index * crate::dir::ENTRY_BYTES;
+        device.bytes[at..at + slot.len()].copy_from_slice(slot);
+    }
+
+    pub fn fill_deleted(device: &mut TestDevice, sector: u64) {
+        let at = sector as usize * 512;
+        device.bytes[at..at + 512].fill(0xE5);
+    }
+
+    pub fn install_boot(device: &mut TestDevice, boot: &BootSector) {
+        let put16 = |bytes: &mut [u8], offset: usize, value: u16| {
+            bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes())
+        };
+        let put32 = |bytes: &mut [u8], offset: usize, value: u32| {
+            bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes())
+        };
+        put16(&mut device.bytes, 0x0B, boot.bytes_per_sector);
+        device.bytes[0x0D] = boot.sectors_per_cluster as u8;
+        put16(&mut device.bytes, 0x0E, boot.reserved_sectors as u16);
+        device.bytes[0x10] = boot.fat_count as u8;
+        let root_entries = match boot.root {
+            crate::boot::RootLocation::Sectors { entries, .. } => entries,
+            crate::boot::RootLocation::Cluster(_) => 0,
+        };
+        put16(&mut device.bytes, 0x11, root_entries as u16);
+        if boot.total_sectors <= u64::from(u16::MAX) {
+            put16(&mut device.bytes, 0x13, boot.total_sectors as u16);
+        }
+        put32(&mut device.bytes, 0x20, boot.total_sectors as u32);
+        match boot.fat_type {
+            FatType::Fat12 => {
+                put16(&mut device.bytes, 0x16, boot.fat_sectors as u16);
+                device.bytes[0x36..0x3E].copy_from_slice(b"FAT12   ");
+            }
+            FatType::Fat16 => {
+                put16(&mut device.bytes, 0x16, boot.fat_sectors as u16);
+                device.bytes[0x36..0x3E].copy_from_slice(b"FAT16   ");
+            }
+            FatType::Fat32 => {
+                let RootLocation::Cluster(root_cluster) = boot.root else {
+                    panic!("fat32 fixtures carry a cluster root");
+                };
+                put32(&mut device.bytes, 0x24, boot.fat_sectors as u32);
+                put32(&mut device.bytes, 0x2C, root_cluster);
+                device.bytes[0x5A..0x62].copy_from_slice(b"FAT32   ");
+            }
+        }
+        device.bytes[0x1FE] = 0x55;
+        device.bytes[0x1FF] = 0xAA;
+    }
 }
 
 #[cfg(test)]
