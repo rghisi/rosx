@@ -1,11 +1,11 @@
 use crate::error::FsError;
+use crate::path::{self, PathParts};
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 pub use fs_core::engine::{DirItem, Kind};
 use fs_core::engine::{Engine, MetadataView};
+pub use crate::path::{MAX_DEPTH, MAX_NAME_BYTES, MAX_PATH_BYTES};
 
-pub const MAX_NAME_BYTES: usize = 255;
-pub const MAX_PATH_BYTES: usize = 4096;
 pub const MAX_OPEN_FILES: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,59 +20,43 @@ pub struct Stat {
     pub size: u64,
 }
 
-struct FileEntry {
+struct Entry {
+    kind: Kind,
     bytes: Vec<u8>,
     generation: u32,
 }
 
 struct OpenSlot {
-    name: Vec<u8>,
+    key: Vec<u8>,
     file_generation: u32,
     open_generation: u32,
 }
 
 pub struct FileSystem {
-    files: BTreeMap<Vec<u8>, FileEntry>,
+    entries: BTreeMap<Vec<u8>, Entry>,
     opens: [Option<OpenSlot>; MAX_OPEN_FILES],
     next_generation: u32,
 }
 
-enum Target<'a> {
-    Root,
-    Name(&'a [u8]),
+fn stat_of(entry: &Entry) -> Stat {
+    Stat {
+        kind: entry.kind,
+        size: entry.bytes.len() as u64,
+    }
 }
 
-fn parse_path(path_bytes: &[u8]) -> Result<Target<'_>, FsError> {
-    if path_bytes.len() > MAX_PATH_BYTES {
-        return Err(FsError::PathTooLong);
+fn child_name<'a>(key: &'a [u8], dir_key: &[u8]) -> Option<&'a [u8]> {
+    match key.iter().rposition(|byte| *byte == b'/') {
+        Some(index) => (&key[..index] == dir_key).then_some(&key[index + 1..]),
+        None => dir_key.is_empty().then_some(key),
     }
-    if path_bytes.is_empty() || path_bytes[0] != b'/' {
-        return Err(FsError::InvalidPath);
-    }
-    let mut body = &path_bytes[1..];
-    if body.is_empty() {
-        return Ok(Target::Root);
-    }
-    if body[body.len() - 1] == b'/' {
-        body = &body[..body.len() - 1];
-    }
-    if body.is_empty() || body.contains(&b'/') {
-        return Err(FsError::InvalidPath);
-    }
-    if body.len() > MAX_NAME_BYTES {
-        return Err(FsError::NameTooLong);
-    }
-    if body.contains(&0) {
-        return Err(FsError::InvalidPath);
-    }
-    Ok(Target::Name(body))
 }
 
 impl FileSystem {
     #[allow(clippy::new_without_default)]
     pub fn new() -> FileSystem {
         FileSystem {
-            files: BTreeMap::new(),
+            entries: BTreeMap::new(),
             opens: core::array::from_fn(|_| None),
             next_generation: 1,
         }
@@ -82,44 +66,64 @@ impl FileSystem {
         Ok(())
     }
 
+    fn resolve_parents(&self, parts: &PathParts<'_>) -> Result<(), FsError> {
+        let mut parent = Vec::new();
+        for depth in 0..parts.len().saturating_sub(1) {
+            if depth > 0 {
+                parent.push(b'/');
+            }
+            parent.extend_from_slice(parts.get(depth).ok_or(FsError::InvalidPath)?);
+            match self.entries.get(&parent) {
+                Some(entry) if entry.kind == Kind::Directory => {}
+                Some(_) => return Err(FsError::NotADirectory),
+                None => return Err(FsError::NotFound),
+            }
+        }
+        Ok(())
+    }
+
     pub fn lookup(&mut self, path_bytes: &[u8]) -> Result<Stat, FsError> {
-        match parse_path(path_bytes)? {
-            Target::Root => Ok(Stat {
+        let parts = path::parse(path_bytes)?;
+        if parts.is_root() {
+            return Ok(Stat {
                 kind: Kind::Directory,
                 size: 0,
-            }),
-            Target::Name(name) => match self.files.get(name) {
-                Some(file) => Ok(Stat {
-                    kind: Kind::Regular,
-                    size: file.bytes.len() as u64,
-                }),
-                None => Err(FsError::NotFound),
-            },
+            });
         }
+        self.resolve_parents(&parts)?;
+        let entry = self.entries.get(&parts.key()).ok_or(FsError::NotFound)?;
+        Ok(stat_of(entry))
     }
 
     pub fn open(&mut self, path_bytes: &[u8]) -> Result<Handle, FsError> {
-        let name = match parse_path(path_bytes)? {
-            Target::Root => return Err(FsError::IsADirectory),
-            Target::Name(name) => name,
-        };
-        let generation = self.files.get(name).ok_or(FsError::NotFound)?.generation;
-        self.reserve_slot(name, generation)
+        let parts = path::parse(path_bytes)?;
+        if parts.is_root() {
+            return Err(FsError::IsADirectory);
+        }
+        self.resolve_parents(&parts)?;
+        let entry = self.entries.get(&parts.key()).ok_or(FsError::NotFound)?;
+        if entry.kind == Kind::Directory {
+            return Err(FsError::IsADirectory);
+        }
+        self.reserve_slot(parts.key(), entry.generation)
     }
 
     pub fn create(&mut self, path_bytes: &[u8]) -> Result<Handle, FsError> {
-        let name = match parse_path(path_bytes)? {
-            Target::Root => return Err(FsError::AlreadyExists),
-            Target::Name(name) => name,
-        };
-        if self.files.contains_key(name) {
+        let parts = path::parse(path_bytes)?;
+        if parts.is_root() {
+            return Err(FsError::AlreadyExists);
+        }
+        self.resolve_parents(&parts)?;
+        let key = parts.key();
+        if self.entries.contains_key(&key) {
             return Err(FsError::AlreadyExists);
         }
         let file_generation = self.take_generation();
-        let handle = self.reserve_slot(name, file_generation)?;
-        self.files.insert(
-            name.to_vec(),
-            FileEntry {
+        let handle = self.reserve_slot(key.clone(), file_generation)?;
+        self.entries.insert(
+            key,
+            Entry {
+                kind: Kind::Regular,
                 bytes: Vec::new(),
                 generation: file_generation,
             },
@@ -168,28 +172,40 @@ impl FileSystem {
     }
 
     pub fn remove(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
-        let name = match parse_path(path_bytes)? {
-            Target::Root => return Err(FsError::InvalidPath),
-            Target::Name(name) => name,
-        };
-        self.files.remove(name).map(|_| ()).ok_or(FsError::NotFound)
+        let parts = path::parse(path_bytes)?;
+        if parts.is_root() {
+            return Err(FsError::InvalidPath);
+        }
+        self.resolve_parents(&parts)?;
+        self.entries
+            .remove(&parts.key())
+            .map(|_| ())
+            .ok_or(FsError::NotFound)
     }
 
     pub fn readdir(&mut self, path_bytes: &[u8]) -> Result<Vec<DirItem>, FsError> {
-        match parse_path(path_bytes)? {
-            Target::Root => Ok(self
-                .files
-                .keys()
-                .map(|name| DirItem {
-                    kind: Kind::Regular,
-                    name: name.clone(),
+        let parts = path::parse(path_bytes)?;
+        let dir_key = if parts.is_root() {
+            Vec::new()
+        } else {
+            self.resolve_parents(&parts)?;
+            let entry = self.entries.get(&parts.key()).ok_or(FsError::NotFound)?;
+            if entry.kind != Kind::Directory {
+                return Err(FsError::NotADirectory);
+            }
+            parts.key()
+        };
+        Ok(self
+            .entries
+            .iter()
+            .filter_map(|(key, entry)| {
+                let name = child_name(key, &dir_key)?;
+                Some(DirItem {
+                    kind: entry.kind,
+                    name: name.to_vec(),
                 })
-                .collect()),
-            Target::Name(name) => match self.files.get(name) {
-                Some(_) => Err(FsError::NotADirectory),
-                None => Err(FsError::NotFound),
-            },
-        }
+            })
+            .collect())
     }
 
     fn take_generation(&mut self) -> u32 {
@@ -198,12 +214,12 @@ impl FileSystem {
         generation
     }
 
-    fn reserve_slot(&mut self, name: &[u8], file_generation: u32) -> Result<Handle, FsError> {
+    fn reserve_slot(&mut self, key: Vec<u8>, file_generation: u32) -> Result<Handle, FsError> {
         let open_generation = self.take_generation();
         for (index, entry) in self.opens.iter_mut().enumerate() {
             if entry.is_none() {
                 *entry = Some(OpenSlot {
-                    name: name.to_vec(),
+                    key,
                     file_generation,
                     open_generation,
                 });
@@ -224,18 +240,18 @@ impl FileSystem {
             .ok_or(FsError::BadHandle)
     }
 
-    fn live_file(&mut self, handle: Handle) -> Result<&mut FileEntry, FsError> {
+    fn live_file(&mut self, handle: Handle) -> Result<&mut Entry, FsError> {
         let Self {
-            files,
+            entries,
             opens,
             next_generation: _,
         } = self;
         let slot = Self::live_open(opens, handle)?;
-        let file = files.get_mut(&slot.name).ok_or(FsError::BadHandle)?;
-        if file.generation != slot.file_generation {
+        let entry = entries.get_mut(&slot.key).ok_or(FsError::BadHandle)?;
+        if entry.generation != slot.file_generation {
             return Err(FsError::BadHandle);
         }
-        Ok(file)
+        Ok(entry)
     }
 }
 
@@ -340,6 +356,7 @@ mod tests {
     fn limits_are_pinned() {
         assert_eq!(MAX_NAME_BYTES, 255);
         assert_eq!(MAX_PATH_BYTES, 4096);
+        assert_eq!(MAX_DEPTH, 512);
         assert_eq!(MAX_OPEN_FILES, 64);
     }
 
@@ -411,14 +428,45 @@ mod tests {
     }
 
     #[test]
-    fn paths_must_be_absolute_single_component() {
+    fn malformed_paths_are_invalid_regardless_of_depth() {
         let mut fs = FileSystem::new();
         assert_eq!(fs.open(b"a.txt"), Err(FsError::InvalidPath));
         assert_eq!(fs.open(b""), Err(FsError::InvalidPath));
-        assert_eq!(fs.open(b"/a/b"), Err(FsError::InvalidPath));
         assert_eq!(fs.open(b"//a"), Err(FsError::InvalidPath));
         assert_eq!(fs.open(b"/a//"), Err(FsError::InvalidPath));
         assert_eq!(fs.create(b"a.txt"), Err(FsError::InvalidPath));
+    }
+
+    #[test]
+    fn nested_paths_resolve_and_report_missing_parents_as_not_found() {
+        let mut fs = FileSystem::new();
+        assert_eq!(fs.lookup(b"/a/b"), Err(FsError::NotFound));
+        assert_eq!(fs.open(b"/a/b"), Err(FsError::NotFound));
+        assert_eq!(fs.create(b"/a/b"), Err(FsError::NotFound));
+        assert_eq!(fs.remove(b"/a/b"), Err(FsError::NotFound));
+        assert_eq!(fs.readdir(b"/a/b"), Err(FsError::NotFound));
+    }
+
+    #[test]
+    fn nested_path_under_regular_file_parent_is_not_a_directory() {
+        let mut fs = FileSystem::new();
+        create(&mut fs, "/a");
+        assert_eq!(fs.lookup(b"/a/b"), Err(FsError::NotADirectory));
+        assert_eq!(fs.open(b"/a/b"), Err(FsError::NotADirectory));
+        assert_eq!(fs.create(b"/a/b"), Err(FsError::NotADirectory));
+        assert_eq!(fs.readdir(b"/a/b"), Err(FsError::NotADirectory));
+    }
+
+    #[test]
+    fn deep_path_at_limit_is_well_formed_and_past_it_is_depth_exceeded() {
+        let mut fs = FileSystem::new();
+        let at_limit: String = (0..MAX_DEPTH).map(|_| "/k").collect();
+        assert_eq!(fs.lookup(at_limit.as_bytes()), Err(FsError::NotFound));
+        let past_limit: String = (0..MAX_DEPTH + 1).map(|_| "/k").collect();
+        assert_eq!(
+            fs.lookup(past_limit.as_bytes()),
+            Err(FsError::DepthExceeded)
+        );
     }
 
     #[test]
