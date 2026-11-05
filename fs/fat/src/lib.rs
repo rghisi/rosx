@@ -4,4 +4,5 @@ extern crate alloc;
 
 pub mod boot;
 pub mod device;
+pub mod dir;
 pub mod fat;
