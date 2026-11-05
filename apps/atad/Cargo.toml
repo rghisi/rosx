@@ -18,6 +18,7 @@ test = false
 system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }
 ata-protocol = { path = "../../protocol/ata" }
+block-protocol = { path = "../../protocol/block" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 usrlib = { path = "../../usrlib", features = ["runtime"] }

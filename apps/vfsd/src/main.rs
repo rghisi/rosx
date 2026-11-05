@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use alloc::format;
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::cmp::min;
 use usrlib::handle::{UserConnectionHandle, UserDataHandle};
@@ -47,12 +48,31 @@ fn read_rom_image() -> Vec<u8> {
     }
 }
 
+fn devices_blob(fs: &ActiveStore) -> Vec<u8> {
+    let mut blob = Vec::new();
+    for device in fs.devices() {
+        if !blob.is_empty() {
+            blob.push(b'\n');
+        }
+        let state = match fs.mounted_at(&device.id) {
+            Some(dir) => format!("mounted at /{dir}"),
+            None => String::from("free"),
+        };
+        blob.extend_from_slice(
+            format!(
+                "{} provider {} drive {} blocks={} size={} {}",
+                device.id, device.service, device.device, device.block_count, device.block_size, state
+            )
+            .as_bytes(),
+        );
+    }
+    blob
+}
+
 struct VfsServer {
     fs: ActiveStore,
     held: Vec<(u32, UserDataHandle)>,
-}
-
-impl VfsServer {
+}impl VfsServer {
     fn new() -> VfsServer {
         VfsServer {
             fs: ActiveStore::new(),
@@ -141,20 +161,28 @@ impl VfsServer {
                 Err(error) => Reply::Err(error),
             },
             Request::ListDir { dir } => self.list_dir_reply(connection, owner, dir),
-            Request::Mount { drive, dir } => match self.fs.mount_drive(drive, dir) {
+            Request::Mount { device, dir } => match self.fs.mount_device(device, dir) {
                 Ok(()) => {
-                    println!("[VFSD] mounted rxfs volume on drive {drive} at /{dir}");
+                    println!("[VFSD] mounted rxfs volume '{device}' at /{dir}");
                     Reply::Ack
                 }
                 Err(error) => Reply::Err(error),
             },
-            Request::Format { drive } => match self.fs.format_drive(drive) {
+            Request::Format { device } => match self.fs.format_device(device) {
                 Ok(()) => {
-                    println!("[VFSD] formatted rxfs volume on drive {drive}");
+                    println!("[VFSD] formatted rxfs volume on device '{device}'");
                     Reply::Ack
                 }
                 Err(error) => Reply::Err(error),
             },
+            Request::Attach { id, service, device } => match self.fs.attach_device(id, service, device) {
+                Ok(()) => {
+                    println!("[VFSD] attached device '{id}' -> service {service} drive {device}");
+                    Reply::Ack
+                }
+                Err(error) => Reply::Err(error),
+            },
+            Request::ListDevices => self.list_devices_reply(connection, owner),
             Request::MkDir { path } => match self.fs.mkdir(path) {
                 Ok(()) => Reply::Ack,
                 Err(error) => Reply::Err(error),
@@ -217,6 +245,16 @@ impl VfsServer {
             Err(error) => return Reply::Err(error),
             Ok(blob) => blob,
         };
+        if blob.is_empty() {
+            return Reply::Eof;
+        }
+        self.attach_payload(connection, owner, &blob, |token, total| {
+            Reply::Listed { token, total }
+        })
+    }
+
+    fn list_devices_reply(&mut self, connection: UserConnectionHandle, owner: u32) -> Reply {
+        let blob = devices_blob(&self.fs);
         if blob.is_empty() {
             return Reply::Eof;
         }

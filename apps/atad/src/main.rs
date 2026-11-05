@@ -3,10 +3,12 @@
 extern crate alloc;
 
 use alloc::format;
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use ata_protocol::wire::{self, AtaError, Reply, Request, SECTOR_BYTES};
+use ata_protocol::wire::{self, AtaError, Reply, Request, LBA28_MAX, SECTOR_BYTES};
 use atad::taskfile::{AtaDrive, Bus, DriveFault, Identity};
+use block_protocol::wire as block_wire;
 use usrlib::error::PortError;
 use usrlib::handle::{UserBindingHandle, UserConnectionHandle, UserDataHandle};
 use usrlib::println;
@@ -119,6 +121,10 @@ fn serve_one(
     };
     let owner = conn_token(connection);
     release_held_for(held, owner);
+    if block_wire::is_block_request(received.data()[0]) {
+        serve_block_family(drives, held, connection, owner, received.data());
+        return;
+    }
     let reply = match Request::decode(received.data()) {
         Ok(request) => dispatch(drives, held, connection, owner, request),
         Err(error) => error_reply(error, 0, 0),
@@ -126,6 +132,20 @@ fn serve_one(
     if let Ok(frame) = reply.encode() {
         let _ = Syscall::ipc_send(connection, &frame);
     }
+}
+
+fn serve_block_family(
+    drives: &mut [AtaDrive<SyscallBus>],
+    held: &mut Vec<(u32, UserDataHandle)>,
+    connection: UserConnectionHandle,
+    owner: u32,
+    frame: &[u8; ata_protocol::wire::FRAME_BYTES],
+) {
+    let reply = match block_wire::Request::decode(frame) {
+        Ok(request) => dispatch_block(drives, held, connection, owner, request),
+        Err(error) => encode_block_reply(&block_wire::Reply::Err(error)),
+    };
+    let _ = Syscall::ipc_send(connection, &reply);
 }
 
 fn release_held_for(held: &mut Vec<(u32, UserDataHandle)>, owner: u32) {
@@ -232,6 +252,155 @@ fn drive_of(
     drive: u8,
 ) -> Option<&mut AtaDrive<SyscallBus>> {
     drives.get_mut(drive as usize)
+}
+
+fn dispatch_block(
+    drives: &mut [AtaDrive<SyscallBus>],
+    held: &mut Vec<(u32, UserDataHandle)>,
+    connection: UserConnectionHandle,
+    owner: u32,
+    request: block_wire::Request,
+) -> [u8; block_wire::FRAME_BYTES] {
+    match request {
+        block_wire::Request::Probe { device } => {
+            let Some(drive) = block_drive_of(drives, device) else {
+                return encode_block_reply(&block_wire::Reply::Err(block_wire::BlockError::NotFound));
+            };
+            match drive.identity() {
+                Some(identity) => encode_block_reply(&block_wire::Reply::Probe {
+                    block_count: identity.sectors,
+                    block_size: SECTOR_BYTES as u32,
+                    description: &block_description(identity),
+                }),
+                None => encode_block_reply(&block_wire::Reply::Err(block_wire::BlockError::NotFound)),
+            }
+        }
+        block_wire::Request::Read { device, block, count } => {
+            match read_block_payload(drives, device, block, count) {
+                Err(fault) => encode_block_reply(&block_wire::Reply::Err(block_error(&fault))),
+                Ok(payload) => match attach_block_payload(held, connection, owner, &payload) {
+                    Ok(reply) => encode_block_reply(&reply),
+                    Err(error) => encode_block_reply(&block_wire::Reply::Err(error)),
+                },
+            }
+        }
+        block_wire::Request::Write {
+            device,
+            block,
+            count,
+            token,
+        } => match write_block_payload(drives, device, block, count, token) {
+            Ok(()) => encode_block_reply(&block_wire::Reply::Ack),
+            Err(error) => encode_block_reply(&block_wire::Reply::Err(error)),
+        },
+        block_wire::Request::Flush { device } => match block_drive_of(drives, device) {
+            None => encode_block_reply(&block_wire::Reply::Err(block_wire::BlockError::NotFound)),
+            Some(engine) => match engine.flush() {
+                Ok(()) => encode_block_reply(&block_wire::Reply::Ack),
+                Err(fault) => encode_block_reply(&block_wire::Reply::Err(block_error(&fault))),
+            },
+        },
+    }
+}
+
+fn block_drive_of(
+    drives: &mut [AtaDrive<SyscallBus>],
+    device: u32,
+) -> Option<&mut AtaDrive<SyscallBus>> {
+    u8::try_from(device)
+        .ok()
+        .and_then(|drive| drive_of(drives, drive))
+}
+
+fn block_description(identity: &Identity) -> String {
+    let description = format!("{} {}", identity.model, identity.firmware_rev);
+    let mut bounded = String::new();
+    for character in description.chars() {
+        if bounded.len() + character.len_utf8() > block_wire::DESCRIPTION_BYTES {
+            break;
+        }
+        bounded.push(character);
+    }
+    bounded
+}
+
+fn block_error(fault: &DriveFault) -> block_wire::BlockError {
+    match fault {
+        DriveFault::NotFound => block_wire::BlockError::NotFound,
+        DriveFault::BadAddress => block_wire::BlockError::BadAddress,
+        DriveFault::Busy => block_wire::BlockError::Busy,
+        DriveFault::Denied => block_wire::BlockError::Busy,
+        DriveFault::Device { .. } => block_wire::BlockError::Device,
+    }
+}
+
+fn block_lba(block: u64, count: u16) -> Result<u32, block_wire::BlockError> {
+    let last = block
+        .checked_add(count as u64)
+        .ok_or(block_wire::BlockError::BadAddress)?;
+    if last > LBA28_MAX as u64 + 1 {
+        return Err(block_wire::BlockError::BadAddress);
+    }
+    u32::try_from(block).map_err(|_| block_wire::BlockError::BadAddress)
+}
+
+fn read_block_payload(
+    drives: &mut [AtaDrive<SyscallBus>],
+    device: u32,
+    block: u64,
+    count: u16,
+) -> Result<Vec<u8>, DriveFault> {
+    let lba = block_lba(block, count).map_err(|_| DriveFault::BadAddress)?;
+    let engine = block_drive_of(drives, device).ok_or(DriveFault::NotFound)?;
+    let mut buffer = vec![0u8; count as usize * SECTOR_BYTES];
+    engine.read_sectors(lba, count as u8, &mut buffer)?;
+    Ok(buffer)
+}
+
+fn write_block_payload(
+    drives: &mut [AtaDrive<SyscallBus>],
+    device: u32,
+    block: u64,
+    count: u16,
+    token: u32,
+) -> Result<(), block_wire::BlockError> {
+    let lba = block_lba(block, count)?;
+    let payload = drain_incoming(token).ok_or(block_wire::BlockError::Protocol)?;
+    if payload.len() != count as usize * SECTOR_BYTES {
+        return Err(block_wire::BlockError::Protocol);
+    }
+    let engine = block_drive_of(drives, device).ok_or(block_wire::BlockError::NotFound)?;
+    engine
+        .write_sectors(lba, &payload)
+        .map_err(|fault| block_error(&fault))
+}
+
+fn attach_block_payload(
+    held: &mut Vec<(u32, UserDataHandle)>,
+    connection: UserConnectionHandle,
+    owner: u32,
+    payload: &[u8],
+) -> Result<block_wire::Reply<'static>, block_wire::BlockError> {
+    match Syscall::ipc_data_write(connection, payload) {
+        Err(_) => Err(block_wire::BlockError::Busy),
+        Ok(object) => {
+            let token = data_token(&object);
+            held.push((owner, object));
+            Ok(block_wire::Reply::Data { token })
+        }
+    }
+}
+
+fn encode_block_reply(reply: &block_wire::Reply<'_>) -> [u8; block_wire::FRAME_BYTES] {
+    reply
+        .encode()
+        .unwrap_or_else(|_| encode_block_protocol_error())
+}
+
+fn encode_block_protocol_error() -> [u8; block_wire::FRAME_BYTES] {
+    block_wire::Reply::Err(block_wire::BlockError::Protocol)
+        .encode()
+        .expect("protocol error reply always encodes")
 }
 
 fn error_reply(error: AtaError, error_register: u8, status: u8) -> Reply<'static> {

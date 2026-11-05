@@ -1,11 +1,11 @@
-use crate::hdd::AtaDisk;
+use crate::blk::RemoteBlock;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use ata_protocol::client::{Ata, ClientError};
-use ata_protocol::wire::AtaError;
+use block_protocol::client::{Block, ClientError};
+use block_protocol::wire::BlockError;
 use fs_core::engine::{Engine, Kind, MetadataView};
 use fs_core::error::FsError;
 use rxfs::device::BlockDevice;
@@ -19,15 +19,24 @@ use vfs_protocol::wire::{self, EntityKind, VfsError};
 const VOLUME_BLOCKS: u64 = 2048;
 const VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ram-vol-001";
 const VOLUME_NAME: &[u8] = b"rosx-ram";
-const HDD_VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ata-vol-001";
-const HDD_VOLUME_NAME: &[u8] = b"rosx-hdd";
+const DEVICE_VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ata-vol-001";
+const DEVICE_VOLUME_NAME: &[u8] = b"rosx-hdd";
 
 pub type ActiveVolume = FileSystem<MemoryDevice>;
-pub type ActiveStore = VfsStore<ActiveVolume, AtaDisk>;
+pub type ActiveStore = VfsStore<ActiveVolume, RemoteBlock>;
+
+pub struct AttachedDevice {
+    pub id: String,
+    pub service: String,
+    pub device: u32,
+    pub block_count: u64,
+    pub block_size: u32,
+    pub description: String,
+}
 
 struct MountedVolume<D: BlockDevice> {
     name: String,
-    drive: u8,
+    device: String,
     fs: FileSystem<D>,
 }
 
@@ -61,6 +70,7 @@ pub enum RomMountError {
 
 pub struct VfsStore<E: Engine, D: BlockDevice> {
     engine: E,
+    devices: Vec<AttachedDevice>,
     mounts: Vec<MountedVolume<D>>,
     opens: BTreeMap<u32, OpenEntry<E>>,
     next_handle: u32,
@@ -94,9 +104,11 @@ fn map_fs_error(error: FsError) -> VfsError {
     }
 }
 
-fn map_ata_error(error: ClientError) -> VfsError {
+fn map_block_error(error: ClientError) -> VfsError {
     match error {
-        ClientError::Ata(AtaError::NotFound) => VfsError::NotFound,
+        ClientError::Block(BlockError::NotFound) => VfsError::NotFound,
+        ClientError::Block(BlockError::Unsupported) => VfsError::Unsupported,
+        ClientError::NoConnection => VfsError::NotFound,
         _ => VfsError::ServerResource,
     }
 }
@@ -145,8 +157,8 @@ fn open_engine<E2: Engine>(
     }
 }
 
-impl VfsStore<ActiveVolume, AtaDisk> {
-    pub fn new() -> VfsStore<ActiveVolume, AtaDisk> {
+impl VfsStore<ActiveVolume, RemoteBlock> {
+    pub fn new() -> VfsStore<ActiveVolume, RemoteBlock> {
         let params = FormatParams {
             bytes_per_inode: DEFAULT_BYTES_PER_INODE,
             uuid: VOLUME_UUID,
@@ -158,30 +170,75 @@ impl VfsStore<ActiveVolume, AtaDisk> {
         VfsStore::from_engine(engine)
     }
 
-    pub fn format_drive(&mut self, drive: u8) -> Result<(), VfsError> {
-        if self.mounts.iter().any(|mount| mount.drive == drive) {
+    pub fn attach_device(
+        &mut self,
+        id: &str,
+        service: &str,
+        device: u32,
+    ) -> Result<(), VfsError> {
+        if !wire::valid_name(id) {
+            return Err(VfsError::InvalidPath);
+        }
+        if self.devices.iter().any(|attached| attached.id == id) {
             return Err(VfsError::Busy);
         }
-        let ata = Ata::connect().map_err(map_ata_error)?;
-        let identity = ata.identify(drive).map_err(map_ata_error)?;
+        if self
+            .devices
+            .iter()
+            .any(|attached| attached.service == service && attached.device == device)
+        {
+            return Err(VfsError::Busy);
+        }
+        let client = Block::connect(service).map_err(map_block_error)?;
+        let geometry = client.probe(device).map_err(map_block_error)?;
+        client.disconnect();
+        if crate::blk::device_blocks_per_block(geometry.block_size).is_none() {
+            return Err(VfsError::Unsupported);
+        }
+        self.devices.push(AttachedDevice {
+            id: String::from(id),
+            service: String::from(service),
+            device,
+            block_count: geometry.block_count,
+            block_size: geometry.block_size,
+            description: geometry.description,
+        });
+        Ok(())
+    }
+
+    fn attached(&self, id: &str) -> Result<&AttachedDevice, VfsError> {
+        self.devices
+            .iter()
+            .find(|attached| attached.id == id)
+            .ok_or(VfsError::NotFound)
+    }
+
+    pub fn format_device(&mut self, id: &str) -> Result<(), VfsError> {
+        let attached = self.attached(id)?;
+        if self.device_busy(id) {
+            return Err(VfsError::Busy);
+        }
+        let (service, device) = (attached.service.clone(), attached.device);
+        let client = Block::connect(&service).map_err(map_block_error)?;
+        let geometry = client.probe(device).map_err(map_block_error)?;
+        let disk = RemoteBlock::new(client, device, &geometry).ok_or(VfsError::Unsupported)?;
         let params = FormatParams {
             bytes_per_inode: DEFAULT_BYTES_PER_INODE,
-            uuid: HDD_VOLUME_UUID,
-            volume_name: HDD_VOLUME_NAME,
+            uuid: DEVICE_VOLUME_UUID,
+            volume_name: DEVICE_VOLUME_NAME,
             created_at: 0,
         };
-        let fs = FileSystem::format(AtaDisk::new(ata, drive, identity.sectors), &params)
-            .map_err(map_fs_error)?;
+        let fs = FileSystem::format(disk, &params).map_err(map_fs_error)?;
         fs.unmount()
-            .map(|disk| disk.into_ata().disconnect())
+            .map(|disk| disk.into_client().disconnect())
             .map_err(map_fs_error)
     }
 
-    pub fn mount_drive(&mut self, drive: u8, dir: &str) -> Result<(), VfsError> {
+    pub fn mount_device(&mut self, id: &str, dir: &str) -> Result<(), VfsError> {
         if !wire::valid_name(dir) {
             return Err(VfsError::InvalidPath);
         }
-        if self.mounts.iter().any(|mount| mount.drive == drive)
+        if self.mounts.iter().any(|mount| mount.device == id)
             || self.mounts.iter().any(|mount| mount.name == dir)
         {
             return Err(VfsError::Busy);
@@ -193,13 +250,15 @@ impl VfsStore<ActiveVolume, AtaDisk> {
         if mount_point.kind() != Kind::Directory {
             return Err(VfsError::NotDirectory);
         }
-        let ata = Ata::connect().map_err(map_ata_error)?;
-        let identity = ata.identify(drive).map_err(map_ata_error)?;
-        let fs =
-            FileSystem::mount(AtaDisk::new(ata, drive, identity.sectors)).map_err(map_mount_error)?;
+        let attached = self.attached(id)?;
+        let (service, device) = (attached.service.clone(), attached.device);
+        let client = Block::connect(&service).map_err(map_block_error)?;
+        let geometry = client.probe(device).map_err(map_block_error)?;
+        let disk = RemoteBlock::new(client, device, &geometry).ok_or(VfsError::Unsupported)?;
+        let fs = FileSystem::mount(disk).map_err(map_mount_error)?;
         self.mounts.push(MountedVolume {
             name: String::from(dir),
-            drive,
+            device: String::from(id),
             fs,
         });
         Ok(())
@@ -210,6 +269,7 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
     fn from_engine(engine: E) -> VfsStore<E, D> {
         VfsStore {
             engine,
+            devices: Vec::new(),
             mounts: Vec::new(),
             opens: BTreeMap::new(),
             next_handle: 1,
@@ -246,6 +306,21 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
 
     fn is_mount_point(&self, name: &str) -> bool {
         self.mounts.iter().any(|mount| mount.name == name)
+    }
+
+    pub fn devices(&self) -> &[AttachedDevice] {
+        &self.devices
+    }
+
+    pub fn mounted_at(&self, id: &str) -> Option<&str> {
+        self.mounts
+            .iter()
+            .find(|mount| mount.device == id)
+            .map(|mount| mount.name.as_str())
+    }
+
+    pub fn device_busy(&self, id: &str) -> bool {
+        self.mounts.iter().any(|mount| mount.device == id)
     }
 
     pub fn attach_rom(&mut self, image: &[u8]) -> Result<(), RomMountError> {
@@ -522,14 +597,14 @@ mod tests {
         fs.mkdir(name).unwrap();
         let params = FormatParams {
             bytes_per_inode: DEFAULT_BYTES_PER_INODE,
-            uuid: HDD_VOLUME_UUID,
-            volume_name: HDD_VOLUME_NAME,
+            uuid: DEVICE_VOLUME_UUID,
+            volume_name: DEVICE_VOLUME_NAME,
             created_at: 0,
         };
         let volume = FileSystem::format(MemoryDevice::new(64), &params).unwrap();
         fs.mounts.push(MountedVolume {
             name: String::from(name),
-            drive: 9,
+            device: String::from(name),
             fs: volume,
         });
     }
@@ -1142,9 +1217,51 @@ mod tests {
     }
 
     #[test]
-    fn mount_drive_of_unknown_dir_is_not_found_before_touching_the_service() {
+    fn mount_device_of_unknown_dir_is_not_found_before_touching_the_service() {
         let mut fs = ActiveStore::new();
-        assert_eq!(fs.mount_drive(1, "floppy"), Err(VfsError::NotFound));
+        assert_eq!(fs.mount_device("ata0", "floppy"), Err(VfsError::NotFound));
+    }
+
+    fn fake_attached(fs: &mut VfsStore<ActiveVolume, MemoryDevice>, id: &str, service: &str, device: u32) {
+        fs.devices.push(AttachedDevice {
+            id: String::from(id),
+            service: String::from(service),
+            device,
+            block_count: 102400,
+            block_size: 512,
+            description: String::from("QEMU HARDDISK"),
+        });
+    }
+
+    #[test]
+    fn attached_devices_and_mount_points_are_visible() {
+        let mut fs = fresh_store();
+        assert!(fs.devices().is_empty());
+        assert_eq!(fs.mounted_at("ata0"), None);
+        fake_attached(&mut fs, "ata0", "ATA", 1);
+        assert_eq!(fs.devices().len(), 1);
+        assert_eq!(fs.devices()[0].service, "ATA");
+        mount_fake(&mut fs, "ata0");
+        assert_eq!(fs.mounted_at("ata0"), Some("ata0"));
+        assert_eq!(fs.mounted_at("sata1"), None);
+    }
+
+    #[test]
+    fn mount_and_format_of_unknown_device_id_are_not_found_before_touching_the_service() {
+        let mut fs = ActiveStore::new();
+        fs.mkdir("hdd").unwrap();
+        assert_eq!(fs.mount_device("ghost", "hdd"), Err(VfsError::NotFound));
+        assert_eq!(fs.format_device("ghost"), Err(VfsError::NotFound));
+    }
+
+    #[test]
+    fn a_live_volume_marks_its_device_busy() {
+        let mut fs = fresh_store();
+        fake_attached(&mut fs, "ata0", "ATA", 0);
+        assert!(!fs.device_busy("ata0"));
+        mount_fake(&mut fs, "ata0");
+        assert!(fs.device_busy("ata0"));
+        assert!(!fs.device_busy("sata1"));
     }
 
     #[test]

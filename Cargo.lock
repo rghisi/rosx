@@ -30,8 +30,17 @@ name = "atad"
 version = "0.1.0"
 dependencies = [
  "ata-protocol",
+ "block-protocol",
  "system",
  "usrlib",
+]
+
+[[package]]
+name = "attach"
+version = "0.1.0"
+dependencies = [
+ "usrlib",
+ "vfs-protocol",
 ]
 
 [[package]]
@@ -85,6 +94,13 @@ dependencies = [
  "radium",
  "tap",
  "wyz",
+]
+
+[[package]]
+name = "block-protocol"
+version = "0.1.0"
+dependencies = [
+ "usrlib",
 ]
 
 [[package]]
@@ -809,7 +825,7 @@ dependencies = [
 name = "vfsd"
 version = "0.1.0"
 dependencies = [
- "ata-protocol",
+ "block-protocol",
  "fs-core",
  "rxfs",
  "system",

@@ -15,7 +15,7 @@ bench = false
 test = false
 
 [dependencies]
-ata-protocol = { path = "../../protocol/ata" }
+block-protocol = { path = "../../protocol/block" }
 fs-core = { path = "../../fs/core" }
 rxfs = { path = "../../fs/rxfs" }
 system = { path = "../../system" }
