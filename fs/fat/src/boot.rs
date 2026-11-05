@@ -41,6 +41,7 @@ pub struct BootSector {
     pub bytes_per_sector: u16,
     pub sectors_per_cluster: u32,
     pub fat_count: u32,
+    pub reserved_sectors: u64,
     pub fat_sectors: u64,
     pub total_sectors: u64,
     pub first_data_sector: u64,
@@ -143,6 +144,7 @@ impl BootSector {
             bytes_per_sector,
             sectors_per_cluster,
             fat_count,
+            reserved_sectors,
             fat_sectors,
             total_sectors,
             first_data_sector,
@@ -259,6 +261,7 @@ mod tests {
         assert_eq!(boot.bytes_per_sector, 512);
         assert_eq!(boot.sectors_per_cluster, 4);
         assert_eq!(boot.fat_count, 2);
+        assert_eq!(boot.reserved_sectors, 1);
         assert_eq!(boot.fat_sectors, 64);
         assert_eq!(boot.total_sectors, 65_536);
         assert_eq!(boot.first_data_sector, 161);
@@ -276,6 +279,7 @@ mod tests {
     #[test]
     fn parses_fat32_geometry_with_root_cluster_and_5a_signature() {
         let boot = BootSector::parse(&fat32_bytes(FAT32_TOTAL_SECTORS), 1_048_576).expect("valid fat32");
+        assert_eq!(boot.reserved_sectors, 32);
         assert_eq!(boot.fat_sectors, 256);
         assert_eq!(boot.first_data_sector, 32 + 512);
         assert_eq!(boot.cluster_count, 65_525);
