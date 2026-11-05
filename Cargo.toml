@@ -35,6 +35,7 @@ members = [
     "apps/ata",
     "apps/format",
     "apps/mount",
+    "apps/attach",
     "apps/rm",
     "apps/cp",
     "apps/mkdir",

@@ -36,6 +36,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "attach"
+version = "0.1.0"
+dependencies = [
+ "usrlib",
+ "vfs-protocol",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -817,7 +825,7 @@ dependencies = [
 name = "vfsd"
 version = "0.1.0"
 dependencies = [
- "ata-protocol",
+ "block-protocol",
  "fs-core",
  "rxfs",
  "system",

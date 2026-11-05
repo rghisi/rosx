@@ -12,12 +12,8 @@ fn main() {
     } else {
         &arguments[1..]
     };
-    let [id, directory] = requested else {
-        println!("usage: mount <disk-id> <dir>");
-        return;
-    };
-    let Ok(drive) = id.parse::<u8>() else {
-        println!("mount wants a numeric disk id");
+    let [device, directory] = requested else {
+        println!("usage: mount <device-id> <dir>");
         return;
     };
     let name = directory.strip_prefix('/').unwrap_or(directory);
@@ -25,8 +21,8 @@ fn main() {
         println!("mount no filesystem service");
         return;
     };
-    match vfs.mount(drive, name) {
-        Ok(()) => println!("mount ok drive={drive} dir={directory}"),
+    match vfs.mount(device, name) {
+        Ok(()) => println!("mount ok device={device} dir=/{}", name),
         Err(error) => println!("mount failed: {error:?}"),
     }
     vfs.disconnect();

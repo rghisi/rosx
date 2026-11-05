@@ -12,20 +12,16 @@ fn main() {
     } else {
         &arguments[1..]
     };
-    let Some(id) = requested.first().copied() else {
-        println!("usage: format <disk-id>");
-        return;
-    };
-    let Ok(drive) = id.parse::<u8>() else {
-        println!("format wants a numeric disk id");
+    let Some(device) = requested.first().copied() else {
+        println!("usage: format <device-id>");
         return;
     };
     let Ok(vfs) = Vfs::connect() else {
         println!("format no filesystem service");
         return;
     };
-    match vfs.format(drive) {
-        Ok(()) => println!("format ok drive={drive}"),
+    match vfs.format(device) {
+        Ok(()) => println!("format ok device={device}"),
         Err(error) => println!("format failed: {error:?}"),
     }
     vfs.disconnect();
