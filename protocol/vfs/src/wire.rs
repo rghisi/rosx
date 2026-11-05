@@ -3,6 +3,9 @@ pub const RPC_MAX_DATA_BYTES: usize = 64 * 1024;
 pub const MAX_NAME_BYTES: usize = 57;
 pub const SERVICE_NAME: &str = "VFS";
 
+pub const MOUNT_STRING_BUDGET: usize = FRAME_BYTES - 3;
+pub const ATTACH_STRING_BUDGET: usize = FRAME_BYTES - 7;
+
 pub const MODE_WRITE: u8 = 1;
 pub const MODE_CREATE: u8 = 2;
 
@@ -18,6 +21,8 @@ pub const MOUNT: u8 = 9;
 pub const FORMAT: u8 = 10;
 pub const MKDIR: u8 = 11;
 pub const RMDIR: u8 = 12;
+pub const ATTACH: u8 = 13;
+pub const LIST_DEVICES: u8 = 14;
 
 pub const REPLY_ACK: u8 = 0x10;
 pub const REPLY_ERROR: u8 = 0x11;
@@ -64,6 +69,7 @@ pub enum VfsError {
     NotDirectory = 10,
     IsADirectory = 11,
     DirectoryNotEmpty = 12,
+    Unsupported = 13,
     Protocol = 255,
 }
 
@@ -86,6 +92,7 @@ impl VfsError {
             10 => VfsError::NotDirectory,
             11 => VfsError::IsADirectory,
             12 => VfsError::DirectoryNotEmpty,
+            13 => VfsError::Unsupported,
             _ => VfsError::Protocol,
         }
     }
@@ -103,8 +110,10 @@ pub enum Request<'a> {
     ListDir { dir: &'a str },
     MkDir { path: &'a str },
     RmDir { path: &'a str },
-    Mount { drive: u8, dir: &'a str },
-    Format { drive: u8 },
+    Mount { device: &'a str, dir: &'a str },
+    Format { device: &'a str },
+    Attach { id: &'a str, service: &'a str, device: u32 },
+    ListDevices,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -142,6 +151,17 @@ fn encode_path_frame(opcode: u8, path: &str) -> Result<[u8; FRAME_BYTES], VfsErr
     frame[0] = opcode;
     frame[1] = path.len() as u8;
     frame[2..2 + path.len()].copy_from_slice(path.as_bytes());
+    Ok(frame)
+}
+
+fn encode_name_frame(opcode: u8, name: &str) -> Result<[u8; FRAME_BYTES], VfsError> {
+    if !valid_name(name) {
+        return Err(VfsError::InvalidPath);
+    }
+    let mut frame = [0u8; FRAME_BYTES];
+    frame[0] = opcode;
+    frame[1] = name.len() as u8;
+    frame[2..2 + name.len()].copy_from_slice(name.as_bytes());
     Ok(frame)
 }
 
@@ -191,21 +211,44 @@ impl Request<'_> {
             Request::ListDir { dir } => encode_path_frame(LIST_DIR, dir),
             Request::MkDir { path } => encode_path_frame(MKDIR, path),
             Request::RmDir { path } => encode_path_frame(RMDIR, path),
-            Request::Mount { drive, dir } => {
-                if !valid_name(dir) {
+            Request::Mount { device, dir } => {
+                if !valid_name(device)
+                    || !valid_name(dir)
+                    || device.len() + dir.len() > MOUNT_STRING_BUDGET
+                {
                     return Err(VfsError::InvalidPath);
                 }
                 let mut frame = [0u8; FRAME_BYTES];
                 frame[0] = MOUNT;
-                frame[1] = *drive;
-                frame[2] = dir.len() as u8;
-                frame[3..3 + dir.len()].copy_from_slice(dir.as_bytes());
+                frame[1] = device.len() as u8;
+                frame[2..2 + device.len()].copy_from_slice(device.as_bytes());
+                let dir_at = 2 + device.len();
+                frame[dir_at] = dir.len() as u8;
+                frame[dir_at + 1..dir_at + 1 + dir.len()].copy_from_slice(dir.as_bytes());
                 Ok(frame)
             }
-            Request::Format { drive } => {
+            Request::Format { device } => encode_name_frame(FORMAT, device),
+            Request::Attach { id, service, device } => {
+                if !valid_name(id)
+                    || !valid_name(service)
+                    || id.len() + service.len() > ATTACH_STRING_BUDGET
+                {
+                    return Err(VfsError::InvalidPath);
+                }
                 let mut frame = [0u8; FRAME_BYTES];
-                frame[0] = FORMAT;
-                frame[1] = *drive;
+                frame[0] = ATTACH;
+                frame[1] = id.len() as u8;
+                frame[2] = service.len() as u8;
+                frame[3..7].copy_from_slice(&device.to_le_bytes());
+                let id_at = 7;
+                frame[id_at..id_at + id.len()].copy_from_slice(id.as_bytes());
+                let service_at = id_at + id.len();
+                frame[service_at..service_at + service.len()].copy_from_slice(service.as_bytes());
+                Ok(frame)
+            }
+            Request::ListDevices => {
+                let mut frame = [0u8; FRAME_BYTES];
+                frame[0] = LIST_DEVICES;
                 Ok(frame)
             }
         }
@@ -253,11 +296,30 @@ impl Request<'_> {
                 Ok(Request::RmDir { path })
             }
             MOUNT => {
-                let drive = frame[1];
-                let dir = decode_name(frame, 3, frame[2] as usize)?;
-                Ok(Request::Mount { drive, dir })
+                let device_len = frame[1] as usize;
+                let device = decode_name(frame, 2, device_len)?;
+                let dir_at = 2 + device_len;
+                if dir_at >= FRAME_BYTES {
+                    return Err(VfsError::InvalidPath);
+                }
+                let dir = decode_name(frame, dir_at + 1, frame[dir_at] as usize)?;
+                Ok(Request::Mount { device, dir })
             }
-            FORMAT => Ok(Request::Format { drive: frame[1] }),
+            FORMAT => {
+                let device = decode_name(frame, 2, frame[1] as usize)?;
+                Ok(Request::Format { device })
+            }
+            ATTACH => {
+                let id_len = frame[1] as usize;
+                let id = decode_name(frame, 7, id_len)?;
+                let service = decode_name(frame, 7 + id_len, frame[2] as usize)?;
+                Ok(Request::Attach {
+                    id,
+                    service,
+                    device: read_u32(frame, 3),
+                })
+            }
+            LIST_DEVICES => Ok(Request::ListDevices),
             _ => Err(VfsError::Protocol),
         }
     }
@@ -629,52 +691,139 @@ mod tests {
     }
 
     #[test]
-    fn mount_frame_pins_drive_and_dir_offsets() {
-        let frame = Request::Mount { drive: 1, dir: "hdd" }.encode().unwrap();
+    fn mount_frame_pins_device_and_dir_offsets() {
+        let frame = Request::Mount { device: "ata0", dir: "hdd" }.encode().unwrap();
         assert_eq!(frame[0], MOUNT);
-        assert_eq!(frame[1], 1);
-        assert_eq!(frame[2], 3);
-        assert_eq!(&frame[3..6], b"hdd");
-        assert!(frame[6..].iter().all(|byte| *byte == 0));
+        assert_eq!(frame[1], 4);
+        assert_eq!(&frame[2..6], b"ata0");
+        assert_eq!(frame[6], 3);
+        assert_eq!(&frame[7..10], b"hdd");
+        assert!(frame[10..].iter().all(|byte| *byte == 0));
     }
 
     #[test]
     fn mount_request_roundtrips() {
-        let frame = Request::Mount { drive: 0, dir: "hdd" }.encode().unwrap();
+        let frame = Request::Mount { device: "ata0", dir: "hdd" }.encode().unwrap();
         assert_eq!(
             Request::decode(&frame),
-            Ok(Request::Mount { drive: 0, dir: "hdd" })
+            Ok(Request::Mount { device: "ata0", dir: "hdd" })
         );
     }
 
     #[test]
-    fn mount_rejects_invalid_dir_names() {
+    fn mount_rejects_invalid_device_or_dir_names() {
         assert_eq!(
-            Request::Mount { drive: 1, dir: "" }.encode(),
+            Request::Mount { device: "", dir: "hdd" }.encode(),
             Err(VfsError::InvalidPath)
         );
         assert_eq!(
-            Request::Mount { drive: 1, dir: "bad\nname" }.encode(),
+            Request::Mount { device: "ata0", dir: "" }.encode(),
             Err(VfsError::InvalidPath)
         );
         assert_eq!(
-            Request::Mount { drive: 1, dir: "a/b" }.encode(),
+            Request::Mount { device: "ata0", dir: "bad\nname" }.encode(),
+            Err(VfsError::InvalidPath)
+        );
+        assert_eq!(
+            Request::Mount { device: "a/b", dir: "hdd" }.encode(),
             Err(VfsError::InvalidPath)
         );
     }
 
     #[test]
-    fn format_frame_pins_drive_offset() {
-        let frame = Request::Format { drive: 1 }.encode().unwrap();
+    fn mount_rejects_strings_beyond_the_combined_budget() {
+        let fits = name_of_len(MOUNT_STRING_BUDGET - 1);
+        assert!(Request::Mount { device: &fits, dir: "d" }.encode().is_ok());
+        let over = name_of_len(MOUNT_STRING_BUDGET);
+        assert_eq!(
+            Request::Mount { device: &over, dir: "d" }.encode(),
+            Err(VfsError::InvalidPath)
+        );
+    }
+
+    #[test]
+    fn format_frame_pins_device_offset() {
+        let frame = Request::Format { device: "ata0" }.encode().unwrap();
         assert_eq!(frame[0], FORMAT);
-        assert_eq!(frame[1], 1);
-        assert!(frame[2..].iter().all(|byte| *byte == 0));
+        assert_eq!(frame[1], 4);
+        assert_eq!(&frame[2..6], b"ata0");
+        assert!(frame[6..].iter().all(|byte| *byte == 0));
     }
 
     #[test]
     fn format_request_roundtrips() {
-        let frame = Request::Format { drive: 0 }.encode().unwrap();
-        assert_eq!(Request::decode(&frame), Ok(Request::Format { drive: 0 }));
+        let frame = Request::Format { device: "ata1" }.encode().unwrap();
+        assert_eq!(Request::decode(&frame), Ok(Request::Format { device: "ata1" }));
+    }
+
+    #[test]
+    fn format_rejects_invalid_device_names() {
+        assert_eq!(Request::Format { device: "" }.encode(), Err(VfsError::InvalidPath));
+        assert_eq!(
+            Request::Format { device: "ata/0" }.encode(),
+            Err(VfsError::InvalidPath)
+        );
+    }
+
+    #[test]
+    fn attach_frame_pins_offsets() {
+        let frame = Request::Attach { id: "ata0", service: "ATA", device: 1 }
+            .encode()
+            .unwrap();
+        assert_eq!(frame[0], ATTACH);
+        assert_eq!(frame[1], 4);
+        assert_eq!(frame[2], 3);
+        assert_eq!(&frame[3..7], &[0x01, 0x00, 0x00, 0x00]);
+        assert_eq!(&frame[7..11], b"ata0");
+        assert_eq!(&frame[11..14], b"ATA");
+        assert!(frame[14..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn attach_request_roundtrips() {
+        let requests = [
+            Request::Attach { id: "ata0", service: "ATA", device: 0 },
+            Request::Attach { id: "d", service: "S", device: u32::MAX },
+            Request::Attach {
+                id: "disk-7",
+                service: "BLKDEV",
+                device: 4096,
+            },
+        ];
+        for request in requests {
+            assert_eq!(Request::decode(&request.encode().unwrap()), Ok(request));
+        }
+    }
+
+    #[test]
+    fn attach_rejects_invalid_names_and_budget_overflow() {
+        assert_eq!(
+            Request::Attach { id: "", service: "ATA", device: 0 }.encode(),
+            Err(VfsError::InvalidPath)
+        );
+        assert_eq!(
+            Request::Attach { id: "ata0", service: "", device: 0 }.encode(),
+            Err(VfsError::InvalidPath)
+        );
+        assert_eq!(
+            Request::Attach { id: "a/b", service: "ATA", device: 0 }.encode(),
+            Err(VfsError::InvalidPath)
+        );
+        let id = name_of_len(ATTACH_STRING_BUDGET - 1);
+        assert!(Request::Attach { id: &id, service: "s", device: 1 }.encode().is_ok());
+        let over = name_of_len(ATTACH_STRING_BUDGET);
+        assert_eq!(
+            Request::Attach { id: &over, service: "s", device: 1 }.encode(),
+            Err(VfsError::InvalidPath)
+        );
+    }
+
+    #[test]
+    fn list_devices_frame_uses_op_byte_only() {
+        let frame = Request::ListDevices.encode().unwrap();
+        assert_eq!(frame[0], LIST_DEVICES);
+        assert!(frame[1..].iter().all(|byte| *byte == 0));
+        assert_eq!(Request::decode(&frame), Ok(Request::ListDevices));
     }
 
     #[test]
@@ -694,7 +843,7 @@ mod tests {
 
     #[test]
     fn decode_request_rejects_unknown_op_bytes() {
-        for op in [0u8, 13, 255] {
+        for op in [0u8, 15, 255] {
             let mut frame = Request::List.encode().unwrap();
             frame[0] = op;
             assert_eq!(
@@ -951,6 +1100,7 @@ mod tests {
             VfsError::ServerResource,
             VfsError::Busy,
             VfsError::NotFormatted,
+            VfsError::Unsupported,
         ];
         for code in codes {
             assert_eq!(VfsError::from_byte(code.to_byte()), code);
@@ -962,12 +1112,13 @@ mod tests {
         assert_eq!(VfsError::NotDirectory.to_byte(), 10);
         assert_eq!(VfsError::IsADirectory.to_byte(), 11);
         assert_eq!(VfsError::DirectoryNotEmpty.to_byte(), 12);
+        assert_eq!(VfsError::Unsupported.to_byte(), 13);
         assert_eq!(VfsError::Protocol.to_byte(), 255);
     }
 
     #[test]
     fn unknown_wire_error_bytes_map_to_protocol() {
-        for byte in [0u8, 13, 200, 254] {
+        for byte in [0u8, 14, 200, 254] {
             assert_eq!(VfsError::from_byte(byte), VfsError::Protocol);
         }
     }
@@ -994,10 +1145,26 @@ mod tests {
         assert_eq!(FORMAT, 10);
         assert_eq!(MKDIR, 11);
         assert_eq!(RMDIR, 12);
+        assert_eq!(ATTACH, 13);
+        assert_eq!(LIST_DEVICES, 14);
         assert_eq!(EntityKind::File.to_byte(), 0);
         assert_eq!(EntityKind::Directory.to_byte(), 1);
-        let opcodes =
-            [OPEN, READ, WRITE, CLOSE, DELETE, LIST, STAT, LIST_DIR, MOUNT, FORMAT, MKDIR, RMDIR];
+        let opcodes = [
+            OPEN,
+            READ,
+            WRITE,
+            CLOSE,
+            DELETE,
+            LIST,
+            STAT,
+            LIST_DIR,
+            MOUNT,
+            FORMAT,
+            MKDIR,
+            RMDIR,
+            ATTACH,
+            LIST_DEVICES,
+        ];
         let tags = [
             REPLY_ACK,
             REPLY_ERROR,
@@ -1234,5 +1401,42 @@ mod tests {
         frame[0] = REPLY_ERROR;
         frame[1] = 255;
         assert_eq!(Reply::decode(&frame), Ok(Reply::Err(VfsError::Protocol)));
+    }
+
+    fn seed_frames() -> Vec<[u8; FRAME_BYTES]> {
+        let requests: Vec<Request> = vec![
+            Request::Open { mode: 0, name: "notes.txt" },
+            Request::Mount { device: "ata0", dir: "hdd" },
+            Request::Format { device: "ata0" },
+            Request::Attach { id: "ata0", service: "ATA", device: 1 },
+            Request::ListDevices,
+        ];
+        let replies = [
+            Reply::Ack,
+            Reply::Err(VfsError::Unsupported),
+            Reply::Listed { token: 5, total: 9 },
+        ];
+        let mut frames = Vec::new();
+        for request in requests {
+            frames.push(request.encode().expect("seed request encodes"));
+        }
+        for reply in replies {
+            frames.push(reply.encode());
+        }
+        frames
+    }
+
+    #[test]
+    fn decoding_flips_never_panics() {
+        for seed in seed_frames() {
+            for byte in 0..FRAME_BYTES {
+                for bit in 0..8 {
+                    let mut mutated = seed;
+                    mutated[byte] ^= 1 << bit;
+                    let _ = Request::decode(&mutated);
+                    let _ = Reply::decode(&mutated);
+                }
+            }
+        }
     }
 }

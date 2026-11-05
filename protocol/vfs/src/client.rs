@@ -130,8 +130,8 @@ impl Vfs {
         listed_names(transact(self.connection, request)?)
     }
 
-    pub fn format(&self, drive: u8) -> Result<(), ClientError> {
-        let request = wire::Request::Format { drive };
+    pub fn format(&self, device: &str) -> Result<(), ClientError> {
+        let request = wire::Request::Format { device };
         match transact(self.connection, request)? {
             Reply::Ack => Ok(()),
             Reply::Err(error) => Err(ClientError::Vfs(error)),
@@ -139,13 +139,26 @@ impl Vfs {
         }
     }
 
-    pub fn mount(&self, drive: u8, dir: &str) -> Result<(), ClientError> {
-        let request = wire::Request::Mount { drive, dir };
+    pub fn mount(&self, device: &str, dir: &str) -> Result<(), ClientError> {
+        let request = wire::Request::Mount { device, dir };
         match transact(self.connection, request)? {
             Reply::Ack => Ok(()),
             Reply::Err(error) => Err(ClientError::Vfs(error)),
             _ => Err(ClientError::Protocol),
         }
+    }
+
+    pub fn attach(&self, id: &str, service: &str, device: u32) -> Result<(), ClientError> {
+        let request = wire::Request::Attach { id, service, device };
+        match transact(self.connection, request)? {
+            Reply::Ack => Ok(()),
+            Reply::Err(error) => Err(ClientError::Vfs(error)),
+            _ => Err(ClientError::Protocol),
+        }
+    }
+
+    pub fn list_devices(&self) -> Result<Vec<String>, ClientError> {
+        listed_names(transact(self.connection, wire::Request::ListDevices)?)
     }
 
     pub fn mkdir(&self, path: &str) -> Result<(), ClientError> {
