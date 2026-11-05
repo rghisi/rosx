@@ -268,7 +268,7 @@ qemu-system-i386 -cpu 486 \
 
 ### Optional: a second disk for the ATA / RxFS flow
 
-To exercise `ata list` → `format <id>` → `mkdir <dir>` → `mount <id> <dir>` → `ls <dir>`, attach a raw data disk as the secondary IDE drive:
+To exercise `ata list` → `attach <dev-id> ATA 1` → `format <dev-id>` → `mkdir <dir>` → `mount <dev-id> <dir>` → `ls <dir>`, attach a raw data disk as the secondary IDE drive:
 
 ```bash
 truncate -s 50M hdd.img
