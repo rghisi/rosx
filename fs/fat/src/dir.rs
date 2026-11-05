@@ -101,6 +101,10 @@ fn directory_sectors<D: BlockDevice>(
 }
 
 fn decode_entry(boot: &BootSector, slot: &[u8]) -> Result<Option<DirEntry>, FsError> {
+    let name = folded_name(slot);
+    if name.is_empty() || name == b".".as_slice() || name == b"..".as_slice() {
+        return Ok(None);
+    }
     let is_directory = slot[OFFSET_ATTRS] & ATTR_DIRECTORY != 0;
     let cluster_hi = u16::from_le_bytes([slot[OFFSET_CLUSTER_HI], slot[OFFSET_CLUSTER_HI + 1]]);
     let cluster_lo = u16::from_le_bytes([slot[OFFSET_CLUSTER_LO], slot[OFFSET_CLUSTER_LO + 1]]);
@@ -122,10 +126,6 @@ fn decode_entry(boot: &BootSector, slot: &[u8]) -> Result<Option<DirEntry>, FsEr
     }
     if first_cluster >= 2 && boot.first_sector_of_cluster(first_cluster).is_none() {
         return Err(FsError::Corrupt);
-    }
-    let name = folded_name(slot);
-    if name.is_empty() {
-        return Ok(None);
     }
     Ok(Some(DirEntry {
         name,
@@ -217,6 +217,14 @@ mod tests {
         slot[0] = 0x05;
         let entry = decoded(&slot).expect("decodes").expect("entry");
         assert_eq!(entry.name, vec![0xE5, b'i', b'l', b'e', b'.', b't', b'x', b't']);
+    }
+
+    #[test]
+    fn skips_dot_and_dotdot_slots() {
+        let dot = slot_bytes(b".       ", b"   ", ATTR_DIRECTORY, 2, 0);
+        assert_eq!(decoded(&dot).expect("decodes"), None);
+        let dotdot = slot_bytes(b"..      ", b"   ", ATTR_DIRECTORY, 0, 0);
+        assert_eq!(decoded(&dotdot).expect("decodes"), None);
     }
 
     #[test]

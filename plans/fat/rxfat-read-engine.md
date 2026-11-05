@@ -57,8 +57,11 @@ reconstruction (records skipped); writes; volume carving from whole-disk images
    -> Result<BootSector, FsError>` with derived fields: sector size, sectors per
   cluster, fat count, fat sectors, root location, total sectors, first data sector,
   cluster count, FAT type. Validation rules:
-  - `0x55AA` missing **or** no `"FAT"`-prefixed type string at 0x36 **and** 0x5A →
-    `Unsupported` ("not a FAT volume" — mount auto-detection rides this answer).
+  - `0x55AA` missing → `Unsupported` ("not a FAT volume"). The file-system-type
+    string at 0x36/0x5A is **informational only** — evidence (2026-11-05): a real
+    `mformat -F` FAT32 image carries no type string at either offset, so requiring
+    it would reject volumes that every mainstream driver accepts. FAT detection is
+    `0x55AA` + a structurally valid BPB + type/geometry consistency.
   - `bytes_per_sector`: power of two in 256..=4096, else `Corrupt`; exactly 512 or
     `Unsupported` (D3 device contract).
   - `sectors_per_cluster`: power of two 1..=128, else `Unsupported`.
@@ -96,8 +99,11 @@ reconstruction (records skipped); writes; volume carving from whole-disk images
   0xE5), attrs → `is_dir`, `first_cluster` (lo | hi<<16), `size`.
 - Region walker: root-as-sectors (FAT16) and root/directory-as-chain (FAT32 and all
   subdirectories) share one iterator over the device; stops at first byte 0x00;
-  skips deleted (0xE5), volume labels (0x08), and LFN records (0x0F) — LFN is an
-  alias per D3, the short entry carries the same file.
+  skips deleted (0xE5), volume labels (0x08), LFN records (0x0F) — LFN is an
+  alias per D3, the short entry carries the same file — and the `.`/`..` slots
+  (evidence 2026-11-05: mtools `mmd` writes DOS-style `.`/`..` entries into every
+  subdirectory, and a FAT16 subdirectory's `..` legitimately carries cluster 0
+  because the FAT16 root is not a cluster; hiding them matches Linux readdir).
 - `name_matches(stored, requested)`: ASCII case-insensitive equality (FAT stores
   upper-case; callers pass lower-case names).
 - A directory entry claiming `is_dir` with size ≠ 0, or a file's cluster ≥
@@ -138,12 +144,17 @@ reconstruction (records skipped); writes; volume carving from whole-disk images
 ### M6 — Differential tests vs real mtools images
 
 - Host-gated test (`Command`-probe, skips with a printed note when mtools is
-  absent): `mformat` a superfloppy FAT16 and a FAT32 image (sizes chosen so mtools
-  picks each type), `mcopy` in nested files from tempdir fixtures, `mdir`/host bytes
-  as ground truth → engine `readdir` names/kinds and full file bytes match,
-  including an 8.3-safe multi-cluster file and an empty file.
-- Corrupt-image edge battery over a real image: flip boot sector bytes → the M1
-  rejection answers, proving mount auto-detect honesty on real media.
+  absent): `mformat` a superfloppy FAT16 and a FAT32 image, `mcopy` in nested
+  files from tempdir fixtures, engine readdir/lookup/stat/read against fixture
+  ground truth, including an empty file (`C~1.EMP` short-name aliasing), a
+  long-name file (`LONGNA~1`-style SFN observed, LFN records skipped), and a
+  multi-cluster `mmd` subdirectory. Verified recipes on mtools 4.0.49:
+  FAT16 = `mformat -i img -h 16 -s 63 -T 10080 -r 224 -c 1`; FAT32 =
+  `mformat -i img -h 16 -s 63 -T 1100000 -F` (`-F` forces FAT32, needs ≥ 65525
+  clusters; the auto-picked cluster sizes are exercised as written).
+- Corrupt-image edge battery over a real image: missing boot signature and
+  foreign/zero media → `Unsupported`; inflated geometry → `DeviceTooSmall`;
+  poisoned FAT area → `Corrupt` on read with readdir still serving the root.
 
 ## Step order and commits
 

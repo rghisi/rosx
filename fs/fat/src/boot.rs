@@ -19,8 +19,6 @@ const OFFSET_FAT_SIZE_16: usize = 0x16;
 const OFFSET_TOTAL_SECTORS_32: usize = 0x20;
 const OFFSET_FAT_SIZE_32: usize = 0x24;
 const OFFSET_ROOT_CLUSTER: usize = 0x2C;
-const OFFSET_TYPE_STRING_LEGACY: usize = 0x36;
-const OFFSET_TYPE_STRING_32: usize = 0x5A;
 const OFFSET_BOOT_SIGNATURE: usize = 0x1FE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,9 +158,7 @@ impl BootSector {
         }
         let has_boot_signature = volume[OFFSET_BOOT_SIGNATURE] == 0x55
             && volume[OFFSET_BOOT_SIGNATURE + 1] == 0xAA;
-        let has_fat_type_string = is_fat_string(volume, OFFSET_TYPE_STRING_LEGACY)
-            || is_fat_string(volume, OFFSET_TYPE_STRING_32);
-        if has_boot_signature && has_fat_type_string {
+        if has_boot_signature {
             Ok(&volume[..BOOT_SECTOR_BYTES])
         } else {
             Err(FsError::Unsupported)
@@ -179,10 +175,6 @@ impl BootSector {
         }
         Some(self.first_data_sector + index * u64::from(self.sectors_per_cluster))
     }
-}
-
-fn is_fat_string(volume: &[u8], offset: usize) -> bool {
-    volume.get(offset..offset + 3) == Some(b"FAT")
 }
 
 fn classify(cluster_count: u32) -> FatType {
@@ -211,6 +203,9 @@ fn read32(volume: &[u8], offset: usize) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const OFFSET_TYPE_STRING_LEGACY: usize = 0x36;
+    const OFFSET_TYPE_STRING_32: usize = 0x5A;
 
     fn put16(bytes: &mut [u8], offset: usize, value: u16) {
         bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
@@ -337,13 +332,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_volume_without_fat_type_string_as_unsupported() {
+    fn parses_volume_without_fat_type_string() {
         let mut bytes = fat16_bytes();
         bytes[OFFSET_TYPE_STRING_LEGACY..OFFSET_TYPE_STRING_LEGACY + 8].fill(0);
-        assert_eq!(
-            BootSector::parse(&bytes, 65_536),
-            Err(FsError::Unsupported)
-        );
+        assert!(BootSector::parse(&bytes, 65_536).is_ok());
     }
 
     #[test]

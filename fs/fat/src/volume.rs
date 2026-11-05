@@ -206,6 +206,69 @@ impl<D: BlockDevice> FileSystem<D> {
     }
 }
 
+impl<D: BlockDevice> Engine for FileSystem<D> {
+    type Handle = FatHandle;
+    type Metadata = FatMetadata;
+
+    fn lookup(&mut self, path_bytes: &[u8]) -> Result<Self::Metadata, FsError> {
+        FileSystem::lookup(self, path_bytes)
+    }
+
+    fn open(&mut self, path_bytes: &[u8]) -> Result<Self::Handle, FsError> {
+        FileSystem::open(self, path_bytes)
+    }
+
+    fn create(&mut self, _path_bytes: &[u8]) -> Result<Self::Handle, FsError> {
+        Err(FsError::Unsupported)
+    }
+
+    fn mkdir(&mut self, _path_bytes: &[u8]) -> Result<(), FsError> {
+        Err(FsError::Unsupported)
+    }
+
+    fn rmdir(&mut self, _path_bytes: &[u8]) -> Result<(), FsError> {
+        Err(FsError::Unsupported)
+    }
+
+    fn read(
+        &mut self,
+        handle: Self::Handle,
+        offset: u64,
+        buf: &mut [u8],
+    ) -> Result<usize, FsError> {
+        FileSystem::read(self, handle, offset, buf)
+    }
+
+    fn write(
+        &mut self,
+        _handle: Self::Handle,
+        _offset: u64,
+        _data: &[u8],
+    ) -> Result<usize, FsError> {
+        Err(FsError::Unsupported)
+    }
+
+    fn stat(&mut self, handle: Self::Handle) -> Result<Self::Metadata, FsError> {
+        FileSystem::stat(self, handle)
+    }
+
+    fn close(&mut self, handle: Self::Handle) -> Result<(), FsError> {
+        FileSystem::close(self, handle)
+    }
+
+    fn remove(&mut self, _path_bytes: &[u8]) -> Result<(), FsError> {
+        Err(FsError::Unsupported)
+    }
+
+    fn readdir(&mut self, path_bytes: &[u8]) -> Result<Vec<DirItem>, FsError> {
+        FileSystem::readdir(self, path_bytes)
+    }
+
+    fn sync(&mut self) -> Result<(), FsError> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,68 +525,5 @@ mod tests {
         let mut device = TestDevice::new(100);
         install_boot(&mut device, &boot);
         assert!(matches!(FileSystem::new(device), Err(FsError::DeviceTooSmall)));
-    }
-}
-
-impl<D: BlockDevice> Engine for FileSystem<D> {
-    type Handle = FatHandle;
-    type Metadata = FatMetadata;
-
-    fn lookup(&mut self, path_bytes: &[u8]) -> Result<Self::Metadata, FsError> {
-        FileSystem::lookup(self, path_bytes)
-    }
-
-    fn open(&mut self, path_bytes: &[u8]) -> Result<Self::Handle, FsError> {
-        FileSystem::open(self, path_bytes)
-    }
-
-    fn create(&mut self, _path_bytes: &[u8]) -> Result<Self::Handle, FsError> {
-        Err(FsError::Unsupported)
-    }
-
-    fn mkdir(&mut self, _path_bytes: &[u8]) -> Result<(), FsError> {
-        Err(FsError::Unsupported)
-    }
-
-    fn rmdir(&mut self, _path_bytes: &[u8]) -> Result<(), FsError> {
-        Err(FsError::Unsupported)
-    }
-
-    fn read(
-        &mut self,
-        handle: Self::Handle,
-        offset: u64,
-        buf: &mut [u8],
-    ) -> Result<usize, FsError> {
-        FileSystem::read(self, handle, offset, buf)
-    }
-
-    fn write(
-        &mut self,
-        _handle: Self::Handle,
-        _offset: u64,
-        _data: &[u8],
-    ) -> Result<usize, FsError> {
-        Err(FsError::Unsupported)
-    }
-
-    fn stat(&mut self, handle: Self::Handle) -> Result<Self::Metadata, FsError> {
-        FileSystem::stat(self, handle)
-    }
-
-    fn close(&mut self, handle: Self::Handle) -> Result<(), FsError> {
-        FileSystem::close(self, handle)
-    }
-
-    fn remove(&mut self, _path_bytes: &[u8]) -> Result<(), FsError> {
-        Err(FsError::Unsupported)
-    }
-
-    fn readdir(&mut self, path_bytes: &[u8]) -> Result<Vec<DirItem>, FsError> {
-        FileSystem::readdir(self, path_bytes)
-    }
-
-    fn sync(&mut self) -> Result<(), FsError> {
-        Ok(())
     }
 }
