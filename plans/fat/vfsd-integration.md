@@ -27,10 +27,11 @@ behind the mount.
 - `RemoteBlock` (`apps/vfsd/src/blk.rs`) is **4 KiB-block-addressed** — it maps
   rxfs's `BLOCK_BYTES` onto device sectors. FAT is 512-byte-sector addressed, so it
   cannot reuse this adapter; a second device type is the honest shape.
-- rxfs validates its superblock by magic `FS_MAGIC` (8 bytes at offset 0 of
-  `rxfs::spec::BLOCK_BYTES`; `fs/rxfs/src/superblock.rs:125`) — the magic is at
-  device byte 0, so a probe of the first device block answers "is rxfs" without
-  consuming the disk. FAT detection is `rxfat::boot::BootSector::parse` (pure).
+- rxfs validates its superblock by magic `FS_MAGIC` (8 bytes at offset 0 **of the
+  superblock block**, `SUPERBLOCK_BLOCK = 1` → volume byte 4096;
+  `fs/rxfs/src/superblock.rs:125`) — so the probe window must reach byte 4104,
+  not just the first device sector; reading the first few device blocks answers
+  "is rxfs" and "is FAT" (BPB at byte 0) without consuming the disk.
 - `map_mount_error` (fs.rs:116) already maps `Corrupt`/`DeviceTooSmall` →
   `NotFormatted`; `VfsError::Unsupported` exists for geometry answers.
 
@@ -55,9 +56,10 @@ behind the mount.
   answers `Unsupported`); a sector read hits one device block and slices when the
   device block is larger than 512.
 - **Auto-detect (decision 1), rxfs first.** At `mount_device`: connect, probe,
-  read the first device block; `FS_MAGIC` → rxfs engine (today's path, unchanged);
-  else `BootSector::parse` valid with `FatType::Fat16 | Fat32` → FAT engine;
-  else `NotFormatted`. FAT12-valid geometry answers `Unsupported` (the engine's
+  read the probe window (`probe_head_blocks` device blocks — enough to cover the
+  FAT BPB at byte 0 and the rxfs magic at byte 4096); `FS_MAGIC` at 4096 → rxfs
+  engine (today's path, unchanged); else `BootSector::parse` valid with
+  `FatType::Fat16 | Fat32` → FAT engine; else `NotFormatted`. FAT12-valid geometry answers `Unsupported` (the engine's
   honest capability answer, same as rxfs geometry rejects). Each engine is
   constructed exactly once — the probe never consumes the disk.
 - **`format` stays rxfs-only (decision 3).** FAT volumes arrive pre-formatted
@@ -97,6 +99,12 @@ behind the mount.
 - Synthetic-FAT lesson (now encoded in `fat16_image` in the test module): a
   space-filled 32-byte slot must zero `0x14..0x16` — rxfat reads the cluster-high
   word there (FAT32 layout), so an un-zeroed slot decodes as `Corrupt`.
+- Probe-offset bug caught by the QEMU suite (`attach_format_and_carve_directories_on_the_hard_disk_volume`
+  mounted a just-formatted rxfs volume as `NotFormatted`): the first design read
+  one device sector and checked `FS_MAGIC` at byte 0, but the magic lives at the
+  superblock block (byte 4096). Fixed by the `probe_head_blocks` window; a
+  regression test (`probe_ignores_rxfs_magic_misplaced_at_byte_zero`) pins the
+  lesson. Host unit tests could not catch it because fake mounts bypass `mount_device`.
 
 ## Out of scope (next steps, recorded)
 
