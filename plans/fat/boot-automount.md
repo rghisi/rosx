@@ -1,9 +1,9 @@
 # Boot Auto-Mount: the Disk Is There When the Prompt Appears
 
-> **Status:** ACTIVE (arc 2 of 3). Branch `boot-automount`, stacked on
-> `fat-write` (PR #125). Arc 1 made FAT two-way; this arc removes the
-> per-boot manual ritual the persistence story still demands. Arc 3 is the
-> parked `boot-packaging.md` (P1).
+> **Status:** Done (PR #126, 2026-11-06) (arc 2 of 3). Branch
+> `boot-automount`, stacked on `fat-write` (PR #125). Arc 1 made FAT
+> two-way; this arc removed the per-boot manual ritual the persistence
+> story still demanded. Arc 3 is the parked `boot-packaging.md` (P1).
 
 ## Goal
 
