@@ -483,6 +483,7 @@ pub(crate) mod fixtures {
                 };
                 put32(&mut device.bytes, 0x24, boot.fat_sectors as u32);
                 put32(&mut device.bytes, 0x2C, root_cluster);
+                put16(&mut device.bytes, 0x30, boot.fsinfo_sector as u16);
                 device.bytes[0x5A..0x62].copy_from_slice(b"FAT32   ");
             }
         }

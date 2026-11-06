@@ -150,12 +150,21 @@ pub fn find_slot_spot<D: BlockDevice>(
     Ok(deleted.map(|(s, o)| SlotSpot::Reuse(s, o)))
 }
 
-pub fn read_slot<D: BlockDevice>(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlotRef {
+    pub sector: u64,
+    pub offset: usize,
+    pub entry: DirEntry,
+    pub slot_name: [u8; 11],
+    pub attrs: u8,
+}
+
+pub fn locate_slot<D: BlockDevice>(
     device: &mut D,
     boot: &BootSector,
     location: DirLocation,
     name: &[u8],
-) -> Result<(u64, usize, DirEntry), FsError> {
+) -> Result<SlotRef, FsError> {
     let sectors = entry_sectors(device, boot, location)?;
     let limit = match location {
         DirLocation::Sectors { entry_count, .. } => u64::from(entry_count),
@@ -183,11 +192,42 @@ pub fn read_slot<D: BlockDevice>(
             if let Some(entry) = decode_entry(boot, &block[offset..offset + ENTRY_BYTES])?
                 && name_matches(&entry.name, name)
             {
-                return Ok((sector, offset, entry));
+                let mut slot_name = [0u8; 11];
+                slot_name.copy_from_slice(&block[offset..offset + 11]);
+                return Ok(SlotRef {
+                    sector,
+                    offset,
+                    entry,
+                    slot_name,
+                    attrs: block[offset + OFFSET_ATTRS],
+                });
             }
         }
     }
     Err(FsError::NotFound)
+}
+
+pub fn slot_still_holds<D: BlockDevice>(
+    device: &mut D,
+    sector: u64,
+    offset: usize,
+    slot_name: &[u8; 11],
+    first_cluster: u32,
+) -> Result<bool, FsError> {
+    let mut block = [0u8; 512];
+    device.read_block(sector, &mut block).map_err(FsError::Io)?;
+    if block[offset] == 0xE5 || block[offset..offset + 11] != *slot_name {
+        return Ok(false);
+    }
+    let cluster_lo = u16::from_le_bytes([
+        block[offset + OFFSET_CLUSTER_LO],
+        block[offset + OFFSET_CLUSTER_LO + 1],
+    ]);
+    let cluster_hi = u16::from_le_bytes([
+        block[offset + OFFSET_CLUSTER_HI],
+        block[offset + OFFSET_CLUSTER_HI + 1],
+    ]);
+    Ok(u32::from(cluster_lo) | (u32::from(cluster_hi) << 16) == first_cluster)
 }
 
 pub fn write_slot_bytes<D: BlockDevice>(
@@ -622,26 +662,45 @@ mod tests {
         let mut device = TestDevice::new(boot.total_sectors);
         let slot = make_slot_bytes(fold_to_slot(b"new").expect("fold"), 0x20, 7, 42);
         write_slot_bytes(&mut device, 17, 0, &slot).expect("install");
-        let (sector, offset, entry) =
-            read_slot(&mut device, &boot, DirLocation::Sectors { first: 17, entry_count: 512 }, b"new")
-                .expect("found");
-        assert_eq!((sector, offset), (17, 0));
-        assert_eq!((entry.first_cluster, entry.size), (7, 42));
+        let located = locate_slot(
+            &mut device,
+            &boot,
+            DirLocation::Sectors {
+                first: 17,
+                entry_count: 512,
+            },
+            b"new",
+        )
+        .expect("found");
+        assert_eq!((located.sector, located.offset), (17, 0));
+        assert_eq!((located.entry.first_cluster, located.entry.size), (7, 42));
+        assert!(slot_still_holds(&mut device, 17, 0, &located.slot_name, 7).expect("holds"));
+        assert!(!slot_still_holds(&mut device, 17, 0, &located.slot_name, 9).expect("wrong cluster"));
 
-        erase_slot(&mut device, sector, offset).expect("erase");
+        erase_slot(&mut device, located.sector, located.offset).expect("erase");
         assert_eq!(
-            read_slot(
+            locate_slot(
                 &mut device,
                 &boot,
-                DirLocation::Sectors { first: 17, entry_count: 512 },
+                DirLocation::Sectors {
+                    first: 17,
+                    entry_count: 512,
+                },
                 b"new"
-            ),
-            Err(FsError::NotFound)
+            )
+            .err(),
+            Some(FsError::NotFound)
+        );
+        assert!(
+            !slot_still_holds(&mut device, 17, 0, &located.slot_name, 7).expect("erased")
         );
         let entries = read_directory(
             &mut device,
             &boot,
-            DirLocation::Sectors { first: 17, entry_count: 512 },
+            DirLocation::Sectors {
+                first: 17,
+                entry_count: 512,
+            },
         )
         .expect("listing");
         assert!(entries.is_empty());
