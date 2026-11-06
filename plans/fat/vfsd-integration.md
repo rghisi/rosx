@@ -108,9 +108,8 @@ behind the mount.
 
 ## Out of scope (next steps, recorded)
 
-- QEMU integration test executing an ELF off a FAT medium: needs harness
-  IDE-topology extension or xtask-built FAT media + CI mtools verification
-  (`unverified`).
+- QEMU integration test executing an ELF off a FAT medium: planned as
+  `fat-exec-test.md` (Rust `fat-image` builder, superfloppy, no external tools).
 - FAT write path and `mkfs.fat` (needs the rxfat write arc).
 - Partition carving (D4 in `README.md`): volumes are presented whole to the block
   service.
