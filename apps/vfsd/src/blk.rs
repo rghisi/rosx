@@ -2,7 +2,7 @@ use block_protocol::client::{Block, Geometry};
 use rxfat::boot::SECTOR_BYTES;
 use rxfs::device::BlockDevice;
 use rxfs::error::IoError;
-use rxfs::spec::BLOCK_BYTES;
+use rxfs::spec::{BLOCK_BYTES, FS_MAGIC, SUPERBLOCK_BLOCK};
 
 pub struct RemoteBlock {
     client: Block,
@@ -42,6 +42,17 @@ pub fn sector_window(sector: u64, device_block_size: u64) -> Option<(u64, usize)
     }
     let byte = sector.checked_mul(u64::from(SECTOR_BYTES))?;
     Some((byte / device_block_size, (byte % device_block_size) as usize))
+}
+
+pub fn probe_head_blocks(device_block_size: u32) -> usize {
+    let Some(block_size) = usize::try_from(device_block_size)
+        .ok()
+        .filter(|size| *size > 0)
+    else {
+        return 1;
+    };
+    let window = SUPERBLOCK_BLOCK as usize * BLOCK_BYTES + FS_MAGIC.len();
+    window.div_ceil(block_size).max(1)
 }
 
 impl FatSectors {
@@ -181,5 +192,15 @@ mod tests {
     fn sector_window_rejects_blocks_smaller_than_a_sector() {
         assert_eq!(sector_window(0, 256), None);
         assert_eq!(sector_window(0, 0), None);
+    }
+
+    #[test]
+    fn probe_head_always_covers_fat_bpb_and_rxfs_superblock_magic() {
+        assert_eq!(probe_head_blocks(512), 9);
+        assert_eq!(probe_head_blocks(1024), 5);
+        assert_eq!(probe_head_blocks(4096), 2);
+        assert_eq!(probe_head_blocks(8192), 1);
+        assert_eq!(probe_head_blocks(256), 17);
+        assert_eq!(probe_head_blocks(0), 1);
     }
 }

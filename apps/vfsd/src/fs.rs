@@ -14,7 +14,7 @@ use rxfat::FileSystem as FatFileSystem;
 use rxfs::device::BlockDevice;
 use rxfs::device::MemoryDevice;
 use rxfs::spec::DEFAULT_BYTES_PER_INODE;
-use rxfs::spec::FS_MAGIC;
+use rxfs::spec::{BLOCK_BYTES, FS_MAGIC, SUPERBLOCK_BLOCK};
 use rxfs::superblock::UUID_BYTES;
 use rxfs::volume::{FileSystem, FormatParams, Handle as RxfsHandle, Stat as RxfsStat};
 use system::rom::{RomError, RomImage};
@@ -277,8 +277,10 @@ enum VolumeFormat {
     Foreign,
 }
 
+const RXFS_MAGIC_OFFSET: usize = SUPERBLOCK_BLOCK as usize * BLOCK_BYTES;
+
 fn probe_format(head: &[u8], device_sectors: Option<u64>) -> VolumeFormat {
-    if head.starts_with(FS_MAGIC) {
+    if head.get(RXFS_MAGIC_OFFSET..RXFS_MAGIC_OFFSET + FS_MAGIC.len()) == Some(FS_MAGIC) {
         return VolumeFormat::Rxfs;
     }
     let Some(sectors) = device_sectors else {
@@ -425,7 +427,12 @@ impl VfsStore<ActiveVolume, RemoteBlock, FatSectors> {
         let (service, device) = (attached.service.clone(), attached.device);
         let client = Block::connect(&service).map_err(map_block_error)?;
         let geometry = client.probe(device).map_err(map_block_error)?;
-        let head = client.read_blocks(device, 0, 1).map_err(map_block_error)?;
+        let head_blocks = crate::blk::probe_head_blocks(geometry.block_size)
+            .min(geometry.block_count as usize)
+            .max(1);
+        let head = client
+            .read_blocks(device, 0, head_blocks)
+            .map_err(map_block_error)?;
         let device_sectors =
             crate::blk::fat_sector_count(geometry.block_count, geometry.block_size);
         let engine = match probe_format(&head, device_sectors) {
@@ -1566,10 +1573,17 @@ mod tests {
     }
 
     #[test]
-    fn probe_recognises_rxfs_magic_before_any_fat_reading() {
-        let mut head = vec![0u8; FAT_SECTOR_BYTES];
-        head[..FS_MAGIC.len()].copy_from_slice(FS_MAGIC);
+    fn probe_recognises_rxfs_magic_at_the_superblock_block() {
+        let mut head = vec![0u8; RXFS_MAGIC_OFFSET + FS_MAGIC.len()];
+        head[RXFS_MAGIC_OFFSET..RXFS_MAGIC_OFFSET + FS_MAGIC.len()].copy_from_slice(FS_MAGIC);
         assert_eq!(probe_format(&head, None), VolumeFormat::Rxfs);
+    }
+
+    #[test]
+    fn probe_ignores_rxfs_magic_misplaced_at_byte_zero() {
+        let mut head = vec![0u8; RXFS_MAGIC_OFFSET + FS_MAGIC.len()];
+        head[..FS_MAGIC.len()].copy_from_slice(FS_MAGIC);
+        assert_eq!(probe_format(&head, Some(65_536)), VolumeFormat::Foreign);
     }
 
     #[test]
