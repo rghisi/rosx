@@ -162,6 +162,41 @@ installer arc — see Follow-ups).
    `check-isa x86_32` (now 29 ELFs); clippy on touched crates; push, PR stacked
    on `boot-packaging`.
 
+## Evidence (2026-11-06)
+
+- Steps 1-2: `cargo test -p init` 19 grammar tests green; `cargo xtask rom`
+  reports **31 records**; `cargo xtask build` green on both arches.
+- Steps 3 + 4: both cutovers green on `boot_and_shell` (4/4), the disk flows,
+  and the IPC gates. Boot windows show `[INIT] init.lst: 7 services`, the
+  daemon banners, `[INIT] fallback shell`, then `rose>` — the pinned I9 order.
+- **ipc_ping race found and closed (pre-existing).** The branch initially
+  failed `ipc_ping` ~1/12: the last-round `PONG 65536 matched ok` could land
+  *after* the shell repainted `rose> ` (the prompt has no newline), gluing the
+  lines so the test's `starts_with` count missed it (`rose> PONG 65536 ...`).
+  The kernel has never serialized concurrent prints — `ipc_bulk` already
+  counts with `contains` for exactly this shape; IRQ-masking `print` does not
+  help (it is an ordering race, measured 4/24 failing with it). Fix (owner
+  choice): **pong logs the round before answering** — the `PONG` print
+  completes strictly before any client can wake, so no later prompt can precede
+  it. Measured 0/36 green after the fix (base had been winning the same coin
+  flip 0/36 by timing luck, not by guarantee).
+- Step 5: `init_handoff` green on both arches: diskless boot answers
+  `[INIT] fallback shell` and never `handoff`; after `format`+`mount`+
+  `cp shell hdd/shell`, the rebooted machine answers `[INIT] handoff hdd/shell`
+  with no fallback line, and `ls /hdd` shows `shell`.
+- Step 6 era rehearsal: HDD rebuilt from the new ROM, one QEMU
+  `-cpu 486 -m 8` boot reaches `rose>` with `[INIT] init.lst: 7 services` and
+  `[INIT] fallback shell` — the manifest rides the Multiboot module untouched.
+- **Era OOM found (pre-existing, F3 territory).** On the `-m 8` control
+  (~5 MiB usable) the boot panics with an allocation failure inside `vfsd`'s
+  whole-ROM `mount_rom` copy — and it does so **on base too** (measured on
+  `fdada19`): a ~1 MiB ROM does not fit a 5 MiB era box. `rose>` still appears
+  (`await_filesystem` gives up quietly), which is why earlier era rehearsals
+  that only checked the prompt missed it. The honest fix is F3 (shrink the
+  distribution out of the ROM), not this arc; init's own ROM copy follows the
+  plan's `vfsd::auto_mount` precedent and can stream record-by-record when F3
+  lands (RomRead is offset-addressable).
+
 ## Follow-ups (documented, NOT this arc)
 
 - **F1 — Port delegation frees `atad` (and names children).** Sketch, ready to
