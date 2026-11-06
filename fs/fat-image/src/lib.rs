@@ -14,6 +14,10 @@ const DIR_ENTRIES_PER_SECTOR: u64 = SECTOR_BYTES / (DIR_ENTRY_BYTES as u64);
 const SLOT_STEM: usize = 0;
 const SLOT_EXTENSION: usize = 8;
 const SLOT_ATTRIBUTES: usize = 0x0B;
+const SLOT_CREATE_DATE: usize = 0x10;
+const SLOT_ACCESS_DATE: usize = 0x12;
+const SLOT_MODIFY_DATE: usize = 0x18;
+const DOS_EPOCH_DATE: u16 = (1 << 5) | 1;
 const SLOT_CLUSTER_HIGH: usize = 0x14;
 const SLOT_CLUSTER_LOW: usize = 0x1A;
 const SLOT_SIZE: usize = 0x1C;
@@ -337,6 +341,9 @@ impl FatDisk {
         );
         put16(entry, SLOT_CLUSTER_LOW, first_cluster as u16);
         put32(entry, SLOT_SIZE, size);
+        put16(entry, SLOT_CREATE_DATE, DOS_EPOCH_DATE);
+        put16(entry, SLOT_ACCESS_DATE, DOS_EPOCH_DATE);
+        put16(entry, SLOT_MODIFY_DATE, DOS_EPOCH_DATE);
         self.root_slots_used += 1;
     }
 
@@ -540,6 +547,13 @@ mod tests {
 
         let empty_handle = volume.open(b"/empty").unwrap();
         assert_eq!(volume.read(empty_handle, 0, &mut straddling).unwrap(), 0);
+
+        let geometry = disk.geometry();
+        let root_start =
+            (geometry.reserved_sectors + 2 * geometry.fat_sectors) as usize * SECTOR_BYTES as usize;
+        let slot = &disk.as_bytes()[root_start..root_start + DIR_ENTRY_BYTES];
+        assert_eq!(&slot[SLOT_CREATE_DATE..SLOT_CREATE_DATE + 2], &DOS_EPOCH_DATE.to_le_bytes());
+        assert_eq!(&slot[SLOT_MODIFY_DATE..SLOT_MODIFY_DATE + 2], &DOS_EPOCH_DATE.to_le_bytes());
     }
 
     #[test]
