@@ -2,9 +2,11 @@ use fs_core::engine::{Engine, Kind, MetadataView};
 use fs_core::error::{FsError, IoError};
 use rxfat::device::BlockDevice;
 use rxfat::FileSystem;
+use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::rc::Rc;
 
 struct ImageDevice {
     bytes: Vec<u8>,
@@ -87,6 +89,61 @@ fn run(program: &str, args: &[&str]) {
         .status()
         .unwrap_or_else(|error| panic!("{program} unavailable: {error}"));
     assert!(status.success(), "{program} {args:?} failed");
+}
+
+fn run_capture(program: &str, args: &[&str]) -> String {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .unwrap_or_else(|error| panic!("{program} unavailable: {error}"));
+    assert!(output.status.success(), "{program} {args:?} failed");
+    String::from_utf8(output.stdout).expect("utf8 output")
+}
+
+#[derive(Clone)]
+struct SharedImage {
+    bytes: Rc<RefCell<Vec<u8>>>,
+}
+
+impl BlockDevice for SharedImage {
+    fn block_count(&self) -> u64 {
+        self.bytes.borrow().len() as u64 / 512
+    }
+
+    fn read_block(&mut self, block: u64, buf: &mut [u8]) -> Result<(), IoError> {
+        let bytes = self.bytes.borrow();
+        let at = block as usize * 512;
+        let Some(region) = bytes.get(at..at + 512) else {
+            return Err(IoError::Device);
+        };
+        if buf.len() != 512 {
+            return Err(IoError::Device);
+        }
+        buf.copy_from_slice(region);
+        Ok(())
+    }
+
+    fn write_block(&mut self, block: u64, buf: &[u8]) -> Result<(), IoError> {
+        let mut bytes = self.bytes.borrow_mut();
+        let at = block as usize * 512;
+        if buf.len() != 512 {
+            return Err(IoError::Device);
+        }
+        let Some(region) = bytes.get_mut(at..at + 512) else {
+            return Err(IoError::Device);
+        };
+        region.copy_from_slice(buf);
+        Ok(())
+    }
+}
+
+fn shared_engine(image: &Path) -> (FileSystem<SharedImage>, Rc<RefCell<Vec<u8>>>) {
+    let bytes = Rc::new(RefCell::new(fs::read(image).expect("read image")));
+    let engine = FileSystem::new(SharedImage {
+        bytes: Rc::clone(&bytes),
+    })
+    .expect("mtools image opens for writing");
+    (engine, bytes)
 }
 
 fn pattern(seed: u8, length: usize) -> Vec<u8> {
@@ -271,4 +328,117 @@ fn corrupting_real_image_bytes_changes_the_verdict() {
         Engine::read(&mut engine, handle, 0, &mut vec![0u8; 3_000]),
         Err(FsError::Corrupt)
     );
+}
+
+fn mdir(image: &Path, target: &str) -> String {
+    let img = image.to_str().expect("utf8 image path");
+    run_capture("mdir", &["-i", img, target])
+}
+
+fn mcopy_out(image: &Path, from: &str, to: &Path) {
+    let img = image.to_str().expect("utf8 image path");
+    run(
+        "mcopy",
+        &["-i", img, from, to.to_str().expect("utf8 host path")],
+    );
+}
+
+fn mutate_volume(image: &Path) {
+    let (mut fs, bytes) = shared_engine(image);
+    let payload = pattern(23, 2_000);
+    let written = Engine::create(&mut fs, b"/written.dat").expect("create");
+    assert_eq!(
+        Engine::write(&mut fs, written, 0, &payload).expect("write"),
+        2_000
+    );
+    Engine::close(&mut fs, written).expect("close");
+    Engine::mkdir(&mut fs, b"/guest").expect("mkdir");
+    let inner = Engine::create(&mut fs, b"/guest/inner.txt").expect("nested create");
+    Engine::write(&mut fs, inner, 0, b"nested").expect("nested write");
+    Engine::close(&mut fs, inner).expect("close");
+    assert_eq!(Engine::remove(&mut fs, b"/alpha.txt"), Ok(()));
+    let beta = Engine::open(&mut fs, b"/beta.bin").expect("open beta");
+    Engine::write(&mut fs, beta, 0, b"PATCH").expect("patch beta");
+    Engine::close(&mut fs, beta).expect("close");
+    fs::write(image, bytes.borrow().as_slice()).expect("flush mutated image");
+}
+
+fn mdir_lists(listing: &str, name: &str) -> bool {
+    listing
+        .lines()
+        .any(|line| line.trim_start().starts_with(name))
+}
+
+fn assert_mutations_visible_to_mtools(workspace: &Workspace, image: &Path) {
+    let listing = mdir(image, "::");
+    assert!(mdir_lists(&listing, "WRITTEN"), "listing: {listing}");
+    assert!(mdir_lists(&listing, "GUEST"), "listing: {listing}");
+    assert!(!mdir_lists(&listing, "ALPHA"), "deleted file leaked: {listing}");
+    let guest = mdir(image, "::GUEST");
+    assert!(mdir_lists(&guest, "INNER"), "guest dir: {guest}");
+
+    let written = workspace.path("out-written.dat");
+    mcopy_out(image, "::WRITTEN.DAT", &written);
+    assert_eq!(fs::read(&written).expect("mcopy written"), pattern(23, 2_000));
+    let inner = workspace.path("out-inner.txt");
+    mcopy_out(image, "::GUEST/INNER.TXT", &inner);
+    assert_eq!(fs::read(&inner).expect("mcopy inner"), b"nested");
+    let beta = workspace.path("out-beta.bin");
+    mcopy_out(image, "::BETA.BIN", &beta);
+    let beta = fs::read(&beta).expect("mcopy beta");
+    assert_eq!(&beta[..5], b"PATCH");
+    assert_eq!(beta.len(), 3_000);
+    assert_eq!(&beta[5..], &pattern(17, 3_000)[5..]);
+}
+
+#[test]
+fn files_written_by_rxfat_read_back_through_mtools_fat16() {
+    if mtools_missing() {
+        eprintln!("note: mtools not installed, skipping FAT16 write differential");
+        return;
+    }
+    let workspace = Workspace::new("write16");
+    write_fixtures(&workspace);
+    let image = workspace.blank_image("fat16.img", 10_080);
+    let img = image.to_str().expect("utf8");
+    run(
+        "mformat",
+        &["-i", img, "-h", "16", "-s", "63", "-T", "10080", "-r", "224", "-c", "1", "-v", "RXFAT16"],
+    );
+    populate(&workspace, &image);
+    mutate_volume(&image);
+    assert_mutations_visible_to_mtools(&workspace, &image);
+
+    let mut remounted = engine_over(&image);
+    assert_eq!(
+        Engine::lookup(&mut remounted, b"/alpha.txt").err(),
+        Some(FsError::NotFound)
+    );
+    assert_eq!(
+        Engine::lookup(&mut remounted, b"/written.dat").expect("written").size(),
+        2_000
+    );
+    assert_eq!(
+        Engine::lookup(&mut remounted, b"/guest/inner.txt").expect("inner").size(),
+        6
+    );
+}
+
+#[test]
+fn files_written_by_rxfat_read_back_through_mtools_fat32() {
+    if mtools_missing() {
+        eprintln!("note: mtools not installed, skipping FAT32 write differential");
+        return;
+    }
+    let workspace = Workspace::new("write32");
+    write_fixtures(&workspace);
+    let image = workspace.blank_image("fat32.img", 1_100_000);
+    let img = image.to_str().expect("utf8");
+    run(
+        "mformat",
+        &["-i", img, "-h", "16", "-s", "63", "-T", "1100000", "-F", "-v", "RXFAT32"],
+    );
+    populate(&workspace, &image);
+    mutate_volume(&image);
+    assert_mutations_visible_to_mtools(&workspace, &image);
 }
