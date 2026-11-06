@@ -51,6 +51,7 @@ x86_64 bootloader (FAT-only stage 2) and is fragile with GRUB Legacy's 1997-era
 | `fat-write.md` | FAT write engine in `rxfat` (create/write/mkdir/remove), vfsd write adapter, guest-writes-read-by-mtools round trip; arc 1 of 3 toward a fully usable OS (arc 2: boot auto-mount, arc 3: P1 boot packaging) | **Done** (PR #125) |
 | `boot-automount.md` | ROM fstab + vfsd boot pass: attach+mount the convention drive before the shell exists, so the persistent disk is there at the prompt; arc 2 of 3 | **Done** (PR #126) |
 | `boot-packaging.md` | Kernel + `rom.img` on FAT media delivered via ramdisk/Multiboot module, retiring `include_bytes!`; arc 3 of 3 | **Done** (PR #127) |
+| `init-decoupling.md` | Manifest-driven boot: the kernel schedules only kstatsd + atad + init, the ROM `init.lst` names every service, and init hands off to the disk shell with a ROM fallback; arc 4 | **Done** (PR #128) |
 
 ## Locked decisions
 

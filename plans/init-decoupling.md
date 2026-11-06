@@ -1,7 +1,8 @@
 # Init Decoupling: a Manifest-Driven `/init` Retires the Kernel Boot Roster
 
-> **Status:** Active — owner decision 2026-11-06: manifest lives in the ROM as
-> `init.lst`; handoff is the minimal-change variant (prefer disk, fall back to ROM).
+> **Status:** **Done** (PR #128) — shipped 2026-11-06 per the owner decision:
+> manifest lives in the ROM as `init.lst`; handoff is the minimal-change
+> variant (prefer disk, fall back to ROM). Evidence: the Evidence section below.
 > Written 2026-11-06 against `boot-packaging` (PR #127, arc 3 of the FAT program).
 > **Repo law applies** (AGENTS.md): no comments in Rust, no commit-subject prefix,
 > one commit per step, unit tests per module, kernel = mechanism / policy userspace.
