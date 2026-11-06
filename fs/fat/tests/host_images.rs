@@ -26,6 +26,18 @@ impl BlockDevice for ImageDevice {
         buf.copy_from_slice(region);
         Ok(())
     }
+
+    fn write_block(&mut self, block: u64, buf: &[u8]) -> Result<(), IoError> {
+        let at = block as usize * 512;
+        if buf.len() != 512 {
+            return Err(IoError::Device);
+        }
+        let Some(region) = self.bytes.get_mut(at..at + 512) else {
+            return Err(IoError::Device);
+        };
+        region.copy_from_slice(buf);
+        Ok(())
+    }
 }
 
 struct Workspace(PathBuf);

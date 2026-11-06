@@ -208,6 +208,11 @@ mod tests {
             let _ = (block, buf);
             Err(IoError::Device)
         }
+
+        fn write_block(&mut self, block: u64, buf: &[u8]) -> Result<(), IoError> {
+            let _ = (block, buf);
+            Err(IoError::Device)
+        }
     }
 
     #[test]

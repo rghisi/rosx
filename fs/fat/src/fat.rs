@@ -81,6 +81,119 @@ fn classify_entry(fat_type: FatType, value: u32) -> Result<ClusterNext, FsError>
     Ok(ClusterNext::Next(value))
 }
 
+pub const FSINFO_FREE_COUNT_OFFSET: usize = 0x1E8;
+const FSINFO_BACKUP_DISTANCE: u64 = 13;
+
+pub fn write_fat_entry<D: BlockDevice>(
+    device: &mut D,
+    boot: &BootSector,
+    cluster: u32,
+    value: u32,
+) -> Result<(), FsError> {
+    if cluster < 2 || cluster > boot.cluster_count + 1 {
+        return Err(FsError::Corrupt);
+    }
+    let width = match boot.fat_type {
+        FatType::Fat12 => return Err(FsError::Unsupported),
+        FatType::Fat16 => 2usize,
+        FatType::Fat32 => 4usize,
+    };
+    let entry_bytes = u64::from(cluster) * width as u64;
+    let fat_sector = entry_bytes / u64::from(SECTOR_BYTES);
+    let offset = (entry_bytes % u64::from(SECTOR_BYTES)) as usize;
+    for copy in 0..boot.fat_count {
+        let sector =
+            boot.reserved_sectors + u64::from(copy) * boot.fat_sectors + fat_sector;
+        let mut block = [0u8; SECTOR_BYTES as usize];
+        device.read_block(sector, &mut block).map_err(FsError::Io)?;
+        match boot.fat_type {
+            FatType::Fat12 => return Err(FsError::Unsupported),
+            FatType::Fat16 => {
+                block[offset..offset + 2].copy_from_slice(&(value as u16).to_le_bytes());
+            }
+            FatType::Fat32 => {
+                let existing = u32::from_le_bytes([
+                    block[offset],
+                    block[offset + 1],
+                    block[offset + 2],
+                    block[offset + 3],
+                ]);
+                let merged = (existing & !FAT32_VALUE_MASK) | (value & FAT32_VALUE_MASK);
+                block[offset..offset + 4].copy_from_slice(&merged.to_le_bytes());
+            }
+        }
+        device.write_block(sector, &block).map_err(FsError::Io)?;
+    }
+    Ok(())
+}
+
+pub fn count_free_clusters<D: BlockDevice>(
+    device: &mut D,
+    boot: &BootSector,
+) -> Result<u32, FsError> {
+    let width = match boot.fat_type {
+        FatType::Fat12 => return Err(FsError::Unsupported),
+        FatType::Fat16 => 2usize,
+        FatType::Fat32 => 4usize,
+    };
+    let mut free = 0u32;
+    let mut block = [0u8; SECTOR_BYTES as usize];
+    for fat_sector in 0..boot.fat_sectors {
+        let sector = boot.reserved_sectors + fat_sector;
+        device.read_block(sector, &mut block).map_err(FsError::Io)?;
+        let base_cluster =
+            (fat_sector * u64::from(SECTOR_BYTES) / width as u64) as u32;
+        for index in 0..(SECTOR_BYTES as usize / width) as u32 {
+            let cluster = base_cluster + index;
+            if cluster < 2 || cluster > boot.cluster_count + 1 {
+                continue;
+            }
+            let offset = index as usize * width;
+            let value = match boot.fat_type {
+                FatType::Fat12 => return Err(FsError::Unsupported),
+                FatType::Fat16 => u32::from(u16::from_le_bytes([
+                    block[offset],
+                    block[offset + 1],
+                ])),
+                FatType::Fat32 => u32::from_le_bytes([
+                    block[offset],
+                    block[offset + 1],
+                    block[offset + 2],
+                    block[offset + 3],
+                ]) & FAT32_VALUE_MASK,
+            };
+            if value == 0 {
+                free += 1;
+            }
+        }
+    }
+    Ok(free)
+}
+
+pub fn write_free_cluster_count<D: BlockDevice>(
+    device: &mut D,
+    boot: &BootSector,
+    free_clusters: u32,
+) -> Result<(), FsError> {
+    if boot.fat_type != FatType::Fat32 || boot.fsinfo_sector == 0 {
+        return Ok(());
+    }
+    for sector in [
+        u64::from(boot.fsinfo_sector),
+        u64::from(boot.fsinfo_sector) + FSINFO_BACKUP_DISTANCE,
+    ] {
+        if sector == 0 || sector >= boot.reserved_sectors {
+            continue;
+        }
+        let mut block = [0u8; SECTOR_BYTES as usize];
+        device.read_block(sector, &mut block).map_err(FsError::Io)?;
+        block[FSINFO_FREE_COUNT_OFFSET..FSINFO_FREE_COUNT_OFFSET + 4]
+            .copy_from_slice(&free_clusters.to_le_bytes());
+        device.write_block(sector, &block).map_err(FsError::Io)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) mod fixtures {
     use super::*;
@@ -126,6 +239,18 @@ pub(crate) mod fixtures {
             buf.copy_from_slice(region);
             Ok(())
         }
+
+        fn write_block(&mut self, block: u64, buf: &[u8]) -> Result<(), IoError> {
+            let at = block as usize * SECTOR_BYTES as usize;
+            if buf.len() != SECTOR_BYTES as usize {
+                return Err(IoError::Device);
+            }
+            let Some(region) = self.bytes.get_mut(at..at + SECTOR_BYTES as usize) else {
+                return Err(IoError::Device);
+            };
+            region.copy_from_slice(buf);
+            Ok(())
+        }
     }
 
     pub fn fat16_boot() -> BootSector {
@@ -143,6 +268,7 @@ pub(crate) mod fixtures {
                 first: 17,
                 entries: 512,
             },
+            fsinfo_sector: 0,
         }
     }
 
@@ -150,6 +276,7 @@ pub(crate) mod fixtures {
         BootSector {
             fat_type: FatType::Fat32,
             cluster_count: 100,
+            fsinfo_sector: 1,
             ..fat16_boot()
         }
     }
@@ -375,5 +502,97 @@ mod tests {
             next_cluster(&mut device, &boot, 2),
             Err(FsError::Io(IoError::Device))
         );
+    }
+
+    #[test]
+    fn write_fat_entry_updates_both_copies() {
+        let boot = fat16_boot();
+        let mut device = TestDevice::new(boot.total_sectors);
+        write_fat_entry(&mut device, &boot, 5, 7).expect("write");
+        let (sector, offset) = fat16_entry_at(5);
+        assert_eq!(
+            u16::from_le_bytes([device.bytes[sector as usize * 512 + offset], device.bytes[sector as usize * 512 + offset + 1]]),
+            7
+        );
+        let copy_one = sector as usize * 512 + offset + boot.fat_sectors as usize * 512;
+        assert_eq!(
+            u16::from_le_bytes([device.bytes[copy_one], device.bytes[copy_one + 1]]),
+            7
+        );
+    }
+
+    #[test]
+    fn write_fat_entry_preserves_fat32_reserved_bits() {
+        let boot = BootSector {
+            reserved_sectors: 32,
+            fat_type: FatType::Fat32,
+            ..fat16_boot()
+        };
+        let mut device = TestDevice::new(boot.total_sectors);
+        let entry_byte = 3u64 * 4;
+        let sector = (boot.reserved_sectors + entry_byte / 512) as usize;
+        device.bytes[sector * 512 + 12..sector * 512 + 16]
+            .copy_from_slice(&0xFFFF_FFF8u32.to_le_bytes());
+        write_fat_entry(&mut device, &boot, 3, 9).expect("write");
+        let stored = u32::from_le_bytes([
+            device.bytes[sector * 512 + 12],
+            device.bytes[sector * 512 + 13],
+            device.bytes[sector * 512 + 14],
+            device.bytes[sector * 512 + 15],
+        ]);
+        assert_eq!(stored, 0xF000_0009);
+    }
+
+    #[test]
+    fn write_fat_entry_refuses_clusters_outside_the_data_area() {
+        let boot = fat16_boot();
+        let mut device = TestDevice::new(boot.total_sectors);
+        assert_eq!(write_fat_entry(&mut device, &boot, 0, 3), Err(FsError::Corrupt));
+        assert_eq!(write_fat_entry(&mut device, &boot, 1, 3), Err(FsError::Corrupt));
+        assert_eq!(
+            write_fat_entry(&mut device, &boot, boot.cluster_count + 2, 3),
+            Err(FsError::Corrupt)
+        );
+    }
+
+    #[test]
+    fn count_free_clusters_matches_the_allocations() {
+        let boot = fat16_boot();
+        let mut device = TestDevice::new(boot.total_sectors);
+        assert_eq!(count_free_clusters(&mut device, &boot).expect("count"), 2_046);
+        write_fat_entry(&mut device, &boot, 2, 3).expect("link");
+        write_fat_entry(&mut device, &boot, 3, 0xFFF8).expect("end");
+        write_fat_entry(&mut device, &boot, 2_047, 0xFFF8).expect("top");
+        assert_eq!(count_free_clusters(&mut device, &boot).expect("recount"), 2_043);
+    }
+
+    #[test]
+    fn free_count_upkeep_reaches_fsinfo_and_backup_only_on_fat32() {
+        let fat16 = fat16_boot();
+        let mut device = TestDevice::new(fat16.total_sectors);
+        write_free_cluster_count(&mut device, &fat16, 1234).expect("no-op");
+        assert!(device.bytes.iter().all(|byte| *byte == 0));
+
+        let fat32 = BootSector {
+            reserved_sectors: 32,
+            fat_type: FatType::Fat32,
+            fsinfo_sector: 1,
+            ..fat16_boot()
+        };
+        let mut device = TestDevice::new(fat32.total_sectors);
+        write_free_cluster_count(&mut device, &fat32, 4321).expect("update");
+        for sector in [1u64, 14] {
+            let at = sector as usize * 512 + 0x1E8;
+            assert_eq!(
+                u32::from_le_bytes([
+                    device.bytes[at],
+                    device.bytes[at + 1],
+                    device.bytes[at + 2],
+                    device.bytes[at + 3]
+                ]),
+                4321,
+                "sector {sector}"
+            );
+        }
     }
 }

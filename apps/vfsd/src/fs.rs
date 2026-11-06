@@ -804,6 +804,18 @@ mod tests {
             buf.copy_from_slice(region);
             Ok(())
         }
+
+        fn write_block(&mut self, block: u64, buf: &[u8]) -> Result<(), IoError> {
+            let at = block as usize * FAT_SECTOR_BYTES;
+            if buf.len() != FAT_SECTOR_BYTES {
+                return Err(IoError::Device);
+            }
+            let Some(region) = self.bytes.get_mut(at..at + FAT_SECTOR_BYTES) else {
+                return Err(IoError::Device);
+            };
+            region.copy_from_slice(buf);
+            Ok(())
+        }
     }
 
     const FAT16_TOTAL_SECTORS: u64 = 49 + 4_086;
