@@ -157,3 +157,11 @@ for developers, 86Box, and hardware.
   `DuplicateName` inside `add_file`, so the roster check can never silently
   overwrite. Slot dates written as DOS epoch 1980-01-01 so `mdir` (and any
   inspection tool) shows a decodable date instead of `1980-00-00`.
+- 2026-11-06, milestone 4 (CI): no workflow change needed, verified by reading
+  and by running CI's exact commands. `cargo xtask test --skip-integration`
+  (the Unit Tests job) covers `fat-image` through the workspace member list -
+  a full local run is green end to end. The Integration Tests (x86_32) job's
+  `cargo test -p tests-integration` auto-discovers `fat_exec.rs`, and its
+  preceding `cargo xtask build x86_32` guarantees the `user_elf` helper finds
+  the mem ELF. The only host dependency anywhere in the new path is QEMU,
+  already installed by that job; mtools stays advisory (skip-with-note).
