@@ -1,6 +1,6 @@
 # FAT Write: Make RosX a Good Citizen of Standard Filesystems
 
-> **Status:** ACTIVE (arc 1 of 3). Branch `fat-write`, stacked on
+> **Status:** Done (PR #125, 2026-11-06). Branch `fat-write`, stacked on
 > `fat-exec-test` (PR #124). Baseline: engine read path #122, mount #123,
 > exec-from-FAT #124 all in the stack.
 >
