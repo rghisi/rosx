@@ -35,7 +35,7 @@ impl Arch {
 #[derive(Debug)]
 pub enum BootMedium {
     DiskImage(PathBuf),
-    MultibootKernel(PathBuf),
+    MultibootKernel { kernel: PathBuf, rom_image: PathBuf },
     CdImage(PathBuf),
 }
 
@@ -59,19 +59,57 @@ impl fmt::Display for ImageError {
 
 impl std::error::Error for ImageError {}
 
-pub fn run_medium(kernel_elf: &Path, arch: Arch) -> BootMedium {
-    match arch {
-        Arch::X86_64 => BootMedium::DiskImage(bios_disk_image_path(kernel_elf)),
-        Arch::X86_32 => BootMedium::MultibootKernel(kernel_elf.to_path_buf()),
+pub fn rom_image_for(kernel_elf: &Path, arch: Arch) -> Result<PathBuf, ImageError> {
+    resolve_rom_image(std::env::var_os("ROSX_ROM_IMAGE"), kernel_elf, arch)
+}
+
+fn resolve_rom_image(
+    override_env: Option<std::ffi::OsString>,
+    kernel_elf: &Path,
+    arch: Arch,
+) -> Result<PathBuf, ImageError> {
+    if let Some(from_env) = override_env {
+        let path = PathBuf::from(&from_env);
+        if path.is_file() {
+            return Ok(path);
+        }
+        return Err(ImageError(anyhow::anyhow!(
+            "ROSX_ROM_IMAGE '{}' is not a file",
+            path.display()
+        )));
     }
+    let user_dir = match arch {
+        Arch::X86_64 => "rosx-user",
+        Arch::X86_32 => "rosx-i486-user",
+    };
+    let derived = kernel_elf
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .unwrap_or_else(|| panic!("kernel path {} is too shallow to locate the ROM beside it", kernel_elf.display()))
+        .join(user_dir)
+        .join("rom.img");
+    if derived.is_file() {
+        return Ok(derived);
+    }
+    Err(ImageError(anyhow::anyhow!(
+        "missing ROM image {}; run `cargo xtask rom {}` first",
+        derived.display(),
+        arch.name()
+    )))
 }
 
 pub fn prepare_run_medium(kernel_elf: &Path, arch: Arch) -> Result<BootMedium, ImageError> {
-    let medium = run_medium(kernel_elf, arch);
-    if let BootMedium::DiskImage(_) = medium {
-        create_bios_disk_image(kernel_elf)?;
+    match arch {
+        Arch::X86_64 => {
+            create_bios_disk_image(kernel_elf)?;
+            Ok(BootMedium::DiskImage(bios_disk_image_path(kernel_elf)))
+        }
+        Arch::X86_32 => Ok(BootMedium::MultibootKernel {
+            kernel: kernel_elf.to_path_buf(),
+            rom_image: rom_image_for(kernel_elf, arch)?,
+        }),
     }
-    Ok(medium)
 }
 
 #[derive(Debug)]
@@ -90,7 +128,7 @@ impl fmt::Display for GrubTooling {
 
 impl std::error::Error for GrubTooling {}
 
-pub fn create_grub_image(kernel_elf: &Path, out: &Path) -> Result<(), GrubTooling> {
+pub fn create_grub_image(kernel_elf: &Path, rom_image: &Path, out: &Path) -> Result<(), GrubTooling> {
     let probe = |name: &str| on_path(name).is_some();
     let mkrescue = resolve_grub_mkrescue(&probe).ok_or_else(|| missing_tooling(&probe))?;
     if !probe("xorriso") || !probe("mformat") {
@@ -101,6 +139,8 @@ pub fn create_grub_image(kernel_elf: &Path, out: &Path) -> Result<(), GrubToolin
     std::fs::create_dir_all(work.path().join("boot/grub")).expect("failed to stage boot/grub");
     std::fs::copy(kernel_elf, work.path().join("boot/kernel"))
         .expect("failed to stage kernel into the grub image");
+    std::fs::copy(rom_image, work.path().join("boot/rom"))
+        .expect("failed to stage the ROM image into the grub image");
     std::fs::write(work.path().join("boot/grub/grub.cfg"), grub_cfg_contents())
         .expect("failed to write grub.cfg");
 
@@ -152,7 +192,7 @@ fn install_hint(probe: &impl Fn(&str) -> bool) -> &'static str {
 }
 
 fn grub_cfg_contents() -> String {
-    "set timeout=0\nset default=0\n\nmenuentry \"rosx\" {\n    multiboot /boot/kernel\n    boot\n}\n".to_string()
+    "set timeout=0\nset default=0\n\nmenuentry \"rosx\" {\n    multiboot /boot/kernel\n    module /boot/rom\n    boot\n}\n".to_string()
 }
 
 fn on_path(name: &str) -> Option<PathBuf> {
@@ -164,9 +204,10 @@ fn on_path(name: &str) -> Option<PathBuf> {
 
 pub fn create_bios_disk_image(kernel_elf: &Path) -> Result<PathBuf, ImageError> {
     let image = bios_disk_image_path(kernel_elf);
-    bootloader::BiosBoot::new(kernel_elf)
-        .create_disk_image(&image)
-        .map_err(ImageError)?;
+    let rom_image = rom_image_for(kernel_elf, Arch::X86_64)?;
+    let mut boot = bootloader::BiosBoot::new(kernel_elf);
+    boot.set_ramdisk(&rom_image);
+    boot.create_disk_image(&image).map_err(ImageError)?;
     Ok(image)
 }
 
@@ -179,8 +220,9 @@ pub fn qemu_command(arch: Arch, medium: &BootMedium, mode: LaunchMode) -> Comman
         BootMedium::DiskImage(image) => {
             command.arg("-drive").arg(format!("format=raw,file={}", image.display()));
         }
-        BootMedium::MultibootKernel(kernel) => {
+        BootMedium::MultibootKernel { kernel, rom_image } => {
             command.arg("-kernel").arg(kernel);
+            command.arg("-initrd").arg(rom_image);
         }
         BootMedium::CdImage(iso) => {
             command.arg("-cdrom").arg(iso);
@@ -283,20 +325,51 @@ mod tests {
     #[test]
     fn x86_64_runs_from_a_bios_disk_image_beside_the_kernel() {
         let kernel = Path::new("/build/target/rosx/release/rosx");
-        match run_medium(kernel, Arch::X86_64) {
-            BootMedium::DiskImage(image) => {
-                assert_eq!(image, Path::new("/build/target/rosx/release/rosx-x86_64.img"));
-            }
-            other => panic!("expected a disk image, got {other:?}"),
-        }
+        assert_eq!(
+            bios_disk_image_path(kernel),
+            Path::new("/build/target/rosx/release/rosx-x86_64.img")
+        );
     }
 
     #[test]
-    fn x86_32_runs_from_the_multiboot_kernel_itself() {
-        let kernel = Path::new("/build/target/rosx-i486/release/rosx-x86_32");
-        match run_medium(kernel, Arch::X86_32) {
-            BootMedium::MultibootKernel(runs) => assert_eq!(runs, kernel),
-            other => panic!("expected the multiboot kernel, got {other:?}"),
+    fn the_rom_is_found_beside_the_kernel_build_tree() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let kernel = workspace.path().join("target/rosx-i486/release/rosx-x86_32");
+        std::fs::create_dir_all(kernel.parent().unwrap()).expect("kernel dir");
+        let rom = workspace.path().join("target/rosx-i486-user/rom.img");
+        std::fs::create_dir_all(rom.parent().unwrap()).expect("rom dir");
+        std::fs::write(&rom, b"rom").expect("rom file");
+
+        let found = resolve_rom_image(None, &kernel, Arch::X86_32).expect("sibling rom must be derived");
+        assert_eq!(found, rom);
+    }
+
+    #[test]
+    fn a_missing_sibling_rom_names_the_path_it_looked_for() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let kernel = workspace.path().join("target/rosx-i486/release/rosx-x86_32");
+        let error = resolve_rom_image(None, &kernel, Arch::X86_32)
+            .err()
+            .expect("a missing rom must be an error");
+        assert!(
+            error.to_string().contains("rosx-i486-user/rom.img"),
+            "the error must name the candidate path: {error}"
+        );
+    }
+
+    #[test]
+    fn the_x86_32_rom_carves_from_the_i486_user_tree() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let kernel = workspace.path().join("target/rosx-i486/release/rosx-x86_32");
+        let rom = workspace.path().join("target/rosx-i486-user/rom.img");
+        std::fs::create_dir_all(rom.parent().unwrap()).expect("rom dir");
+        std::fs::write(&rom, b"rom").expect("rom file");
+        match prepare_run_medium(&kernel, Arch::X86_32).expect("the x86_32 medium needs only the rom") {
+            BootMedium::MultibootKernel { kernel: k, rom_image } => {
+                assert_eq!(k, kernel);
+                assert_eq!(rom_image, rom);
+            }
+            other => panic!("expected the multiboot medium, got {other:?}"),
         }
     }
 
@@ -315,11 +388,15 @@ mod tests {
 
     #[test]
     fn interactive_x86_32_uses_the_window_without_reset_diagnostics() {
-        let medium = BootMedium::MultibootKernel(PathBuf::from("/tmp/rosx-x86_32"));
+        let medium = BootMedium::MultibootKernel {
+            kernel: PathBuf::from("/tmp/rosx-x86_32"),
+            rom_image: PathBuf::from("/tmp/rom.img"),
+        };
         let command = qemu_command(Arch::X86_32, &medium, LaunchMode::Interactive);
         assert_eq!(command.get_program(), "qemu-system-i386");
         let args = args_of(&command);
         assert!(contains(&args, "-kernel"));
+        assert!(contains_pair(&args, "-initrd", "/tmp/rom.img"));
         assert!(contains(&args, "-no-shutdown"));
         assert!(contains_pair(&args, "-cpu", "486"));
         assert!(!contains(&args, "cpu_reset"));
@@ -352,10 +429,10 @@ mod tests {
     }
 
     #[test]
-    fn grub_config_multiboots_the_staged_kernel() {
+    fn grub_config_multiboots_the_staged_kernel_with_the_rom_module() {
         assert_eq!(
             grub_cfg_contents(),
-            "set timeout=0\nset default=0\n\nmenuentry \"rosx\" {\n    multiboot /boot/kernel\n    boot\n}\n"
+            "set timeout=0\nset default=0\n\nmenuentry \"rosx\" {\n    multiboot /boot/kernel\n    module /boot/rom\n    boot\n}\n"
         );
     }
 
@@ -396,7 +473,10 @@ mod tests {
             (Arch::X86_64, BootMedium::DiskImage(PathBuf::from("/tmp/a.img"))),
             (
                 Arch::X86_32,
-                BootMedium::MultibootKernel(PathBuf::from("/tmp/b")),
+                BootMedium::MultibootKernel {
+                    kernel: PathBuf::from("/tmp/b"),
+                    rom_image: PathBuf::from("/tmp/b-rom.img"),
+                },
             ),
         ] {
             let args = args_of(&qemu_command(arch, &medium, LaunchMode::Headless));

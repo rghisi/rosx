@@ -73,8 +73,8 @@ fn prepare_medium(debug: bool, spec: &ArchSpec) -> BootMedium {
         .expect("failed to prepare boot medium");
     match &medium {
         BootMedium::DiskImage(_) => println!("==> created {} disk image", spec.name),
-        BootMedium::MultibootKernel(elf) => {
-            println!("==> bootable multiboot artifact: {}", elf.display())
+        BootMedium::MultibootKernel { kernel, .. } => {
+            println!("==> bootable multiboot artifact: {}", kernel.display())
         }
         BootMedium::CdImage(_) => {
             unreachable!("prepare_run_medium only yields a disk image or the multiboot kernel")
@@ -85,7 +85,7 @@ fn prepare_medium(debug: bool, spec: &ArchSpec) -> BootMedium {
 
 fn launch(medium: &BootMedium, spec: &ArchSpec) {
     let mut cmd = x86_runner::qemu_command(spec.boot, medium, LaunchMode::Interactive);
-    if let BootMedium::MultibootKernel(_) = medium {
+    if let BootMedium::MultibootKernel { .. } = medium {
         let disk = create_run_disk(spec);
         cmd.arg("-drive")
             .arg(format!("if=ide,index=0,media=disk,format=raw,file={}", disk.display()));
@@ -314,7 +314,7 @@ fn create_flashable_image(debug: bool, spec: &ArchSpec) {
         }
         x86_runner::Arch::X86_32 => {
             let image = kernel.with_extension("img");
-            x86_runner::create_grub_image(&kernel, &image).unwrap_or_else(|err| {
+            x86_runner::create_grub_image(&kernel, &spec.rom_path(), &image).unwrap_or_else(|err| {
                 eprintln!("error: {err}");
                 process::exit(1);
             });
