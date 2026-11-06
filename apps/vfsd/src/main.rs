@@ -111,8 +111,7 @@ impl VfsServer {
                 println!("[VFSD] automount {}: attach failed: {error:?}", entry.alias);
                 continue;
             }
-            let mount_dir = format!("/{}", entry.dir);
-            if let Err(error) = self.fs.mkdir(&mount_dir) {
+            if let Err(error) = self.fs.mkdir(&entry.dir) {
                 if !matches!(error, VfsError::AlreadyExists) {
                     println!("[VFSD] automount {}: mkdir failed: {error:?}", entry.alias);
                     continue;
