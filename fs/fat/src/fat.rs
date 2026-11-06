@@ -333,12 +333,14 @@ pub(crate) mod fixtures {
 
     pub struct TestDevice {
         pub bytes: Vec<u8>,
+        pub flushes: usize,
     }
 
     impl TestDevice {
         pub fn new(sectors: u64) -> TestDevice {
             TestDevice {
                 bytes: vec![0u8; sectors as usize * SECTOR_BYTES as usize],
+                flushes: 0,
             }
         }
 
@@ -379,6 +381,11 @@ pub(crate) mod fixtures {
                 return Err(IoError::Device);
             };
             region.copy_from_slice(buf);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<(), IoError> {
+            self.flushes += 1;
             Ok(())
         }
     }

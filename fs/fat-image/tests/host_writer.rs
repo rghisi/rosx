@@ -38,6 +38,10 @@ impl BlockDevice for SectorDevice<'_> {
         region.copy_from_slice(buf);
         Ok(())
     }
+
+    fn flush(&mut self) -> Result<(), IoError> {
+        Ok(())
+    }
 }
 
 struct Workspace(PathBuf);

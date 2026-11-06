@@ -512,6 +512,10 @@ mod tests {
             let _ = (block, buf);
             Err(fs_core::error::IoError::Device)
         }
+
+        fn flush(&mut self) -> Result<(), fs_core::error::IoError> {
+            Ok(())
+        }
     }
 
     fn open_reader(disk: &FatDisk) -> rxfat::FileSystem<ByteDevice<'_>> {

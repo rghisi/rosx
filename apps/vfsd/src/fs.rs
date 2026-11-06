@@ -816,6 +816,10 @@ mod tests {
             region.copy_from_slice(buf);
             Ok(())
         }
+
+        fn flush(&mut self) -> Result<(), IoError> {
+            Ok(())
+        }
     }
 
     const FAT16_TOTAL_SECTORS: u64 = 49 + 4_086;

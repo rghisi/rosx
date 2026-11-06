@@ -100,6 +100,10 @@ impl rxfat::device::BlockDevice for FatSectors {
             .write_blocks(self.device, sector, 1, buf)
             .map_err(|_| IoError::Device)
     }
+
+    fn flush(&mut self) -> Result<(), IoError> {
+        self.client.flush(self.device).map_err(|_| IoError::Flush)
+    }
 }
 
 impl RemoteBlock {

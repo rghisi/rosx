@@ -40,6 +40,10 @@ impl BlockDevice for ImageDevice {
         region.copy_from_slice(buf);
         Ok(())
     }
+
+    fn flush(&mut self) -> Result<(), IoError> {
+        Ok(())
+    }
 }
 
 struct Workspace(PathBuf);
@@ -133,6 +137,10 @@ impl BlockDevice for SharedImage {
             return Err(IoError::Device);
         };
         region.copy_from_slice(buf);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), IoError> {
         Ok(())
     }
 }

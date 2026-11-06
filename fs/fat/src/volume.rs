@@ -549,7 +549,7 @@ impl<D: BlockDevice> Engine for FileSystem<D> {
     }
 
     fn sync(&mut self) -> Result<(), FsError> {
-        Ok(())
+        self.device.flush().map_err(FsError::Io)
     }
 }
 
@@ -941,6 +941,14 @@ mod tests {
         let mut fs = engine();
         Engine::sync(&mut fs).expect("first sync");
         Engine::sync(&mut fs).expect("second sync");
+    }
+
+    #[test]
+    fn sync_flushes_the_device() {
+        let mut fs = engine();
+        Engine::sync(&mut fs).expect("sync");
+        Engine::sync(&mut fs).expect("sync again");
+        assert_eq!(fs.device.flushes, 2);
     }
 
     #[test]
