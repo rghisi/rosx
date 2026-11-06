@@ -47,7 +47,7 @@ x86_64 bootloader (FAT-only stage 2) and is fragile with GRUB Legacy's 1997-era
 |---|---|---|
 | `rxfat-read-engine.md` | New `fs/fat` crate (`rxfat`): hand-rolled read-only FAT16/FAT32 `Engine` over a block device, rxfs-grade tests | **Done** (PR #122) |
 | `vfsd-integration.md` | Mount auto-detect (FAT vs rxfs by boot sector), FAT volumes in the mount table, shell exec-by-name from a FAT volume | **Done** (PR #123) |
-| `fat-exec-test.md` | Rust FAT image builder (`fat-image`, no external tools), QEMU test executing an ELF off a superfloppy FAT disk, `xtask fat-disk` roster packing | Proposed |
+| `fat-exec-test.md` | Rust FAT image builder (`fat-image`, no external tools), QEMU test executing an ELF off a superfloppy FAT disk, `xtask fat-disk` roster packing | **Done** (PR #124) |
 | `boot-packaging.md` | Kernel + `rom.img` on FAT media delivered via ramdisk/Multiboot module, retiring `include_bytes!` | **Parked** by owner decision |
 
 ## Locked decisions
