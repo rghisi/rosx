@@ -5,5 +5,6 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+fat-image = { path = "../fs/fat-image" }
 system = { path = "../system" }
 x86-runner = { path = "../arch/x86-runner" }

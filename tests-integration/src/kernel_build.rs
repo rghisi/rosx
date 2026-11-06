@@ -5,6 +5,24 @@ use std::sync::OnceLock;
 
 use crate::arch::Arch;
 
+pub fn user_elf(app: &str) -> PathBuf {
+    let arch = Arch::current();
+    let artifact = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("target")
+        .join(arch.user_dir_name())
+        .join("release")
+        .join(app);
+    if !artifact.is_file() {
+        panic!(
+            "user ELF '{app}' not found at '{}'; run `cargo xtask apps {}` first",
+            artifact.display(),
+            arch.name()
+        );
+    }
+    artifact
+}
+
 pub fn kernel_elf() -> PathBuf {
     if let Some(from_env) = env::var_os("ROSX_KERNEL_ELF") {
         if !from_env.is_empty() {

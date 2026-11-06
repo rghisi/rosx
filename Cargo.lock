@@ -230,6 +230,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
+name = "fat-image"
+version = "0.1.0"
+dependencies = [
+ "fs-core",
+ "rxfat",
+]
+
+[[package]]
 name = "fatfs"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -746,6 +754,7 @@ dependencies = [
 name = "tests-integration"
 version = "0.1.0"
 dependencies = [
+ "fat-image",
  "tempfile",
  "x86-runner",
 ]
@@ -965,6 +974,7 @@ dependencies = [
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "fat-image",
  "system",
  "x86-runner",
 ]

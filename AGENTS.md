@@ -43,6 +43,7 @@ rosx/                        # Cargo workspace (edition 2024, nightly)
 │    rxfs/        # no_std filesystem library (vfsd's engine): superblock/bitmaps/inodes/extents/dirs, leak-safe sync, check()
 │    ramfs/       # no_std in-memory filesystem engine, rxfs-shaped (lookup/open/create/mkdir/rmdir/read/write/close/remove/readdir/stat) over a path-keyed store
 │    fat/         # package rxfat: hand-rolled no_std FAT16/FAT32 read-only Engine (boot/FAT/dir/file modules, 8.3 names with LFN-as-alias skip; mutators Unsupported; mtools-gated differential tests)
+│    fat-image/   # std host writer of the `fs/` theme: FAT16/FAT32 superfloppy builder (geometry planner, boot sector, mirrored FAT copies, FSINFO+backups, 8.3 add_file with cluster chains and a growing FAT32 root); primary gate is a round trip through rxfat, mtools optional third opinion
 ├── arch/
 │    x86_64/        # entry, cpu, interrupts, framebuffer, terminal_fonts, *.S (global_asm)
 │    x86_32/        # entry, cpu, interrupts, boot.S (Multiboot v1)
@@ -124,6 +125,7 @@ cargo xtask rom [arch]              # Pack the ROM image from the built user ELF
 cargo xtask run [arch] [--debug]    # Build and launch QEMU to the shell prompt
 cargo xtask image [arch] [--debug]  # flashable artifact: x86_64 BiosBoot disk image, x86_32 GRUB ISO (needs grub-mkrescue, xorriso, mtools)
 cargo xtask era-image x86_32        # era boot media for 86Box/hardware: GRUB Legacy 0.97-67 El Torito ISO + FAT16 HDD (needs mtools, sfdisk, xorriso, docker for the grub shell; see arch/x86-86box/README.md)
+cargo xtask fat-disk [arch] [--fat32] [--size MiB] [--out path]  # tool-free FAT superfloppy packed with the user roster (default 16 MiB FAT16 -> target/<kernel-dir>-fat-disk.img; built purely by the fat-image crate, no mtools)
 cargo xtask check-isa x86_32        # objdump audit: kernel + every user ELF must contain only 486-era mnemonics
 cargo xtask check-isa --stages [dir] # audit the pinned GRUB Legacy stage binaries (default target/grub-legacy/stages; fetch via arch/x86-86box/scripts/fetch-grub-legacy.sh)
 cargo xtask test [--skip-integration] # Run unit tests; --skip-integration excludes the QEMU tests-integration suite
