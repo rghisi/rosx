@@ -66,34 +66,23 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let phys_offset = boot_info.physical_memory_offset.into_option().unwrap();
     unsafe { cpu::clear_nx_bits(phys_offset); }
     apic::set_phys_offset(phys_offset);
+    let ramdisk = ramdisk_slice(boot_info);
     let memory_blocks = build_memory_blocks(boot_info, phys_offset);
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kprintln!("[KERNEL] Initializing");
     let mut kernel = Kernel::new(&KCONFIG);
     kernel.setup();
-    static ROM_IMAGE: &[u8] = include_bytes!("../../../target/rosx-user/rom.img");
-    kernel::rom::init(ROM_IMAGE);
+    kernel::rom::init(ramdisk);
+    let rom = kernel::rom::image();
     let _ = kernel.schedule(FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main));
-    // kernel.schedule(FunctionTask::new("1", dummy::app::main));
-    // kernel.schedule(FunctionTask::new("2", dummy::app::main2));
-    // kernel.schedule(FunctionTask::new("3", dummy::app::main3));
-    // kernel.schedule(FunctionTask::new("4", dummy::app::main4));
-    static RANDOMD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/randomd");
-    let _ = kernel.schedule(new_elf_task("randomd", RANDOMD_ELF));
-    static ECHO_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/echo");
-    let _ = kernel.schedule(new_elf_task("echo", ECHO_ELF));
-    static BULK_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/bulk");
-    let _ = kernel.schedule(new_elf_task("bulk", BULK_ELF));
-    static PONG_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/pong");
-    let _ = kernel.schedule(new_elf_task("pong", PONG_ELF));
-    static VFSD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/vfsd");
-    let _ = kernel.schedule(new_elf_task("vfsd", VFSD_ELF));
-    static INPUTD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/inputd");
-    let _ = kernel.schedule(new_elf_task("inputd", INPUTD_ELF));
-    static PS2D_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/ps2d");
-    let _ = kernel.schedule(new_elf_task("ps2d", PS2D_ELF));
-    static ATAD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/atad");
-    match kernel.schedule_with_task_handle(new_elf_task("atad", ATAD_ELF)) {
+    let _ = kernel.schedule(new_elf_task("randomd", roster_elf(rom, "randomd")));
+    let _ = kernel.schedule(new_elf_task("echo", roster_elf(rom, "echo")));
+    let _ = kernel.schedule(new_elf_task("bulk", roster_elf(rom, "bulk")));
+    let _ = kernel.schedule(new_elf_task("pong", roster_elf(rom, "pong")));
+    let _ = kernel.schedule(new_elf_task("vfsd", roster_elf(rom, "vfsd")));
+    let _ = kernel.schedule(new_elf_task("inputd", roster_elf(rom, "inputd")));
+    let _ = kernel.schedule(new_elf_task("ps2d", roster_elf(rom, "ps2d")));
+    match kernel.schedule_with_task_handle(new_elf_task("atad", roster_elf(rom, "atad"))) {
         Ok((atad_handle, _)) => {
             if !kernel::platform::portio::grant(atad_handle, 0x1F0, 0x1F7) {
                 kprintln!("[KERNEL] atad primary taskfile grant failed");
@@ -104,13 +93,25 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         }
         Err(()) => kprintln!("[KERNEL] atad schedule failed"),
     }
-    static SHELL_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/shell");
-    let _ = kernel.schedule(new_elf_task("shell", SHELL_ELF));
-    // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
+    let _ = kernel.schedule(new_elf_task("shell", roster_elf(rom, "shell")));
 
     kprintln!("[KERNEL] Starting");
     kernel.start();
     panic!("[KERNEL] Crashed spectacularly, should never reached here.");
+}
+
+fn ramdisk_slice(boot_info: &BootInfo) -> &'static [u8] {
+    let ramdisk_addr = boot_info
+        .ramdisk_addr
+        .into_option()
+        .expect("[KERNEL] no ramdisk: build the boot medium with the ROM image");
+    let ramdisk_len = usize::try_from(boot_info.ramdisk_len).expect("[KERNEL] ramdisk too large");
+    assert!(ramdisk_len > 0, "[KERNEL] ramdisk is empty");
+    unsafe { core::slice::from_raw_parts(ramdisk_addr as *const u8, ramdisk_len) }
+}
+
+fn roster_elf<'a>(rom: &'a [u8], name: &str) -> &'a [u8] {
+    kernel::rom::file_in(rom, name).unwrap_or_else(|| panic!("[KERNEL] ROM image has no {name}"))
 }
 
 fn build_memory_blocks(boot_info: &BootInfo, phys_offset: u64) -> MemoryBlocks {

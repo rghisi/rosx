@@ -27,6 +27,14 @@ All names stay 8.3-safe (`rosx`, `rom`) — GRUB Legacy reads no LFN.
   `ramdisk_len: u64` (`src/info.rs:56-58`); `BiosBoot::set_ramdisk` exists
   (`bootloader-0.11.17/src/bios/mod.rs`); stage 2 loads the `ramdisk` file right
   after the kernel (`bootloader-x86_64-bios-stage-2-0.11.17/src/main.rs:105-108`).
+  **(Corrected 2026-11-06 by QEMU measurement: the shipped stages hand
+  `ramdisk_addr` as a VIRTUAL address already mapped into the kernel page
+  tables — a dedicated window at 2^41 whose first word is the `ROSX` magic —
+  so the kernel uses it verbatim and must NOT add `phys_offset`. The physical
+  home lands inside the loader's reserved `[kernel .. last_used_addr]` gap,
+  which the `Usable`-filter in `build_memory_blocks` excludes structurally —
+  no x86_64 carve is needed, unlike x86_32 where the module address is
+  physical and sits inside a usable mmap region.)**
 - x86_64 `kernel_main(boot_info)` already reads `BootInfo`
   (`arch/x86_64/src/main.rs:62`); memory blocks come from
   `build_memory_blocks` filtering `Usable` regions (line 116).
@@ -71,8 +79,9 @@ each loader's memory map already excludes the region.
    delete the ten `include_bytes!`; runner passes `-initrd`. Verify:
    `cargo xtask run x86_32` → `rose>`, `ls` shows the ROM files.
 4. **x86_64 cutover.** Runner gains a rom-image argument, calls `set_ramdisk`;
-   `kernel_main` reads `ramdisk_addr/len` + carves it in `build_memory_blocks`;
-   same name-lookup boot; includes deleted. Verify: `cargo xtask run`.
+   `kernel_main` reads `ramdisk_addr/len` as a ready virtual slice (see the
+   corrected fact above — no carve needed); same name-lookup boot; includes
+   deleted. Verify: `cargo xtask run`.
 5. **Media scripts.** `grub_cfg_contents()` (`arch/x86-runner/src/lib.rs:154`) and
    both `build-legacy-*.sh` recipes stage the ROM + `module` line. Verify all media
    in QEMU (`-cpu 486` on x86_32).
