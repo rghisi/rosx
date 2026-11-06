@@ -314,6 +314,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "init"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+ "vfs-protocol",
+]
+
+[[package]]
 name = "input-protocol"
 version = "0.1.0"
 dependencies = [

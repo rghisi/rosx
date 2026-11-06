@@ -13,6 +13,7 @@ members = [
     "arch/x86_32",
     "arch/x86-generic",
     "arch/x86-runner",
+    "apps/init",
     "apps/shell",
     "apps/dummy",
     "apps/pi",
