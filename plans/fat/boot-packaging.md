@@ -32,8 +32,10 @@ All names stay 8.3-safe (`rosx`, `rom`) — GRUB Legacy reads no LFN.
   `build_memory_blocks` filtering `Usable` regions (line 116).
 - x86_32 `kernel_main(multiboot_magic, multiboot_info)` (`arch/x86_32/src/main.rs:42`)
   decodes memory via `x86_generic::multiboot::usable_memory`; Multiboot v1 module
-  list = `flags` bit 3, `mods_count` u32 @16, `mods_addr` u32 @20 — each module is
-  `{module_start, module_end, string, reserved}`.
+  list = `flags` bit 3, `mods_count` u32 @20, `mods_addr` u32 @24 — each module is
+  `{module_start, module_end, string, reserved}`. **(Corrected 2026-11-06: this
+  line originally said @16/@20 — those are `cmdline` and `mods_count`; the first
+  QEMU boot caught the slip and `multiboot.rs` pins the spec offsets in a test.)**
 - Boot rosters are `include_bytes!` statics (`arch/x86_64/src/main.rs:74-107`,
   `arch/x86_32/src/main.rs:55-84`): ROM image + 8 daemon ELFs + shell.
 - `system::rom` exposes `RomImage::parse` + `files()` (and `encode`)

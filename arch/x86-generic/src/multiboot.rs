@@ -45,8 +45,8 @@ const FLAG_MEMORY_MAP: u32 = 1 << 6;
 const FLAGS_OFFSET: usize = 0;
 const MEM_LOWER_OFFSET: usize = 4;
 const MEM_UPPER_OFFSET: usize = 8;
-const MODS_COUNT_OFFSET: usize = 16;
-const MODS_ADDRESS_OFFSET: usize = 20;
+const MODS_COUNT_OFFSET: usize = 20;
+const MODS_ADDRESS_OFFSET: usize = 24;
 const MMAP_LENGTH_OFFSET: usize = 44;
 const MMAP_ADDRESS_OFFSET: usize = 48;
 
@@ -305,6 +305,17 @@ mod tests {
             .iter()
             .map(|m| (m.start, m.size))
             .collect::<Vec<_>>()
+    }
+
+    #[test]
+    fn module_field_offsets_match_the_multiboot_spec() {
+        assert_eq!(FLAGS_OFFSET, 0);
+        assert_eq!(MEM_LOWER_OFFSET, 4);
+        assert_eq!(MEM_UPPER_OFFSET, 8);
+        assert_eq!(MODS_COUNT_OFFSET, 20);
+        assert_eq!(MODS_ADDRESS_OFFSET, 24);
+        assert_eq!(MMAP_LENGTH_OFFSET, 44);
+        assert_eq!(MMAP_ADDRESS_OFFSET, 48);
     }
 
     #[test]
