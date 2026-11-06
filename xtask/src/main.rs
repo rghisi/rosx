@@ -105,6 +105,16 @@ fn pack_rom(spec: &ArchSpec) {
         };
         files.push((name, bytes));
     }
+    let shell_path = release_dir.join("shell");
+    let Ok(shell) = std::fs::read(&shell_path) else {
+        eprintln!(
+            "missing user ELF {}; run `cargo xtask apps {}` first",
+            shell_path.display(),
+            spec.name
+        );
+        process::exit(1);
+    };
+    files.push(("shell", shell));
     files.push(("fstab", DEFAULT_FSTAB.as_bytes().to_vec()));
     files.sort_by_key(|(name, _)| *name);
     let pairs: Vec<(&str, &[u8])> = files
