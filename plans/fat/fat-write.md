@@ -144,3 +144,49 @@ system" means; today FAT is inbound-only (every `rxfat` mutator answers
   engines via `MountedEngine`; the integration suite runs identical shell
   scripts against rxfs (existing `vfs_hdd_flow`) and FAT (new `fat_write`),
   so divergence shows up as a red test, not a surprise.
+
+## Evidence (2026-11-06)
+
+- `rxfat` unit tests: 120 green (from 93 at arc start) — mirrored entry
+  addressing, free-cluster scan, FSINFO upkeep, the allocator family
+  (allocate/append/free with zero-on-alloc and `NoSpace` without partial
+  writes), slot mechanics (8.3 fold accept/reject matrix, E5-over-append
+  preference, positioned lookup, erase), and eleven engine scenarios:
+  round trip, collision/bad-name/missing-parent matrix, cluster-straddling
+  growth with zero-filled gap, `FileTooLarge` before any touch, remount
+  persistence, cluster reclamation on remove, W6 slot guard (`BadHandle`
+  after remove), mkdir with children, rmdir rules, full-FAT16-root
+  `NoSpace`, and FAT32 root chain extension keeping FSINFO truthful.
+- mtools write differentials (skip-with-note when absent):
+  `files_written_by_rxfat_read_back_through_mtools_{fat16,fat32}` — creates,
+  a nested mkdir+child, a delete and an in-place patch all visible to
+  `mdir`, extracted content byte-equal via `mcopy` (mdir prints padded
+  8+3 columns, so assertions match the name column, not dotted names).
+  `mtools_reads_a_{fat16,fat32}_volume_grown_by_rxfat` (fat-image crate):
+  volumes built by `fat-image`, mutated by `rxfat`, still pass the mtools
+  trio; the deleted roster file answers `mdir` with exit 1.
+- `vfsd`: 81 daemon tests green; `fat_mount_refuses_every_mutation_as_
+  unsupported` inverted into `fat_mount_mutations_flow_through_daemon_
+  routing` — create, write, mkdir, overwrite-existing, remove, readdir and
+  reopen all flow through the mount table with zero daemon policy change.
+- QEMU integration `fat_write` (both arches): guest `cp mem fat/mem2`,
+  `mkdir fat/sub`, `cp echo fat/sub/e`, `rm fat/mem`; reboot; the second
+  boot sees every effect; then `rm fat/sub/e` + `rmdir fat/sub`; host-side
+  `mcopy` extracts MEM2 byte-identical to the source ELF and `mdir` reports
+  MEM and SUB gone. 45s on x86_64, 15s on x86_32 (`-cpu 486`).
+- Harness gotcha: the integration harness reuses prebuilt user ELFs —
+  the first run exercised a stale ROM (`Vfs(Unsupported)`); a
+  `cargo xtask build [arch]` before `cargo test -p tests-integration` is
+  mandatory after touching any app or engine crate.
+- `cargo xtask check-isa x86_32`: kernel + 28 user ELFs 486-clean.
+- Durability closure found mid-review: rxfs's `BlockDevice` trait carries
+  `flush` (the contract behind its `sync_makes_writes_survive_power_loss`
+  test), so the FAT path gained it too: `FileSystem::sync` →
+  `FatSectors::flush` → block-protocol `Flush` → atad FLUSH CACHE, reached
+  per-request by vfsd's existing sync-after-mutation discipline.
+  `sync_flushes_the_device` pins the hop.
+- Full-suite runs after the flush commit: x86_64 integration 26 suites,
+  exit 0, zero failures (`fat_write` 44s); x86_32 (`-cpu 486`) integration
+  26 suites, exit 0, zero failures (`fat_write` 15s); workspace unit suites
+  all ok. `check-isa x86_32` re-run on the rebuilt ELFs: kernel + 28 user
+  ELFs 486-clean.
