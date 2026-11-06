@@ -118,3 +118,11 @@ FAT disks built by different tools.
   packaging — reproduced identically on boot-automount media rebuilt side by
   side; the 8 MB era gate still reaches `rose>` on both. The m=12 window is a
   marginal-heap lottery on both builds. Small-RAM budget work is its own story.
+- **Full battery:** `cargo xtask test` exit 0 (1274 unit tests); x86_64 and
+  x86_32 integration suites both exit 0 (64 passed / 0 failed each side).
+  `check-isa x86_32`: kernel and 28 user ELFs 486-clean — after one guard
+  fix: the boot's first `rep stos` (the module decoder's array zeroing)
+  exposed that the audit table listed only suffixed `stos*` spellings while
+  objdump prints `stos` bare for `f3 ab`; STOS is 8086-era, so the audit now
+  allow-lists the string-family bases (`stos/movs/cmps/scas/lods`, suffixed
+  forms covered by the existing suffix rule).
