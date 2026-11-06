@@ -46,31 +46,31 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
 
     x86_generic::vga_buffer::init(0);
     let raw_blocks = unsafe { x86_generic::multiboot::usable_memory(multiboot_info as *const u8) };
-    let memory_blocks = trim_to_safe_memory(raw_blocks);
+    let modules = unsafe { x86_generic::multiboot::boot_modules(multiboot_info as *const u8) };
+    let rom_module = modules
+        .list()
+        .first()
+        .expect("[KERNEL] no ROM module: boot with the ROM image attached");
+    let rom_image =
+        unsafe { core::slice::from_raw_parts(rom_module.start as *const u8, rom_module.size) };
+    let mut memory_blocks = trim_to_safe_memory(raw_blocks);
+    memory_blocks.carve(rom_module.start, rom_module.start + rom_module.size);
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kernel::kprintln!("[KERNEL] Initializing");
 
     let mut kernel = kernel::kernel::Kernel::new(&KCONFIG);
     kernel.setup();
-    static ROM_IMAGE: &[u8] = include_bytes!("../../../target/rosx-i486-user/rom.img");
-    kernel::rom::init(ROM_IMAGE);
+    kernel::rom::init(rom_image);
+    let rom = kernel::rom::image();
     let _ = kernel.schedule(kernel::task::FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main));
-    static RANDOMD_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/randomd");
-    let _ = kernel.schedule(kernel::task::new_elf_task("randomd", RANDOMD_ELF));
-    static ECHO_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/echo");
-    let _ = kernel.schedule(kernel::task::new_elf_task("echo", ECHO_ELF));
-    static BULK_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/bulk");
-    let _ = kernel.schedule(kernel::task::new_elf_task("bulk", BULK_ELF));
-    static PONG_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/pong");
-    let _ = kernel.schedule(kernel::task::new_elf_task("pong", PONG_ELF));
-    static VFSD_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/vfsd");
-    let _ = kernel.schedule(kernel::task::new_elf_task("vfsd", VFSD_ELF));
-    static INPUTD_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/inputd");
-    let _ = kernel.schedule(kernel::task::new_elf_task("inputd", INPUTD_ELF));
-    static PS2D_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/ps2d");
-    let _ = kernel.schedule(kernel::task::new_elf_task("ps2d", PS2D_ELF));
-    static ATAD_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/atad");
-    match kernel.schedule_with_task_handle(kernel::task::new_elf_task("atad", ATAD_ELF)) {
+    let _ = kernel.schedule(kernel::task::new_elf_task("randomd", roster_elf(rom, "randomd")));
+    let _ = kernel.schedule(kernel::task::new_elf_task("echo", roster_elf(rom, "echo")));
+    let _ = kernel.schedule(kernel::task::new_elf_task("bulk", roster_elf(rom, "bulk")));
+    let _ = kernel.schedule(kernel::task::new_elf_task("pong", roster_elf(rom, "pong")));
+    let _ = kernel.schedule(kernel::task::new_elf_task("vfsd", roster_elf(rom, "vfsd")));
+    let _ = kernel.schedule(kernel::task::new_elf_task("inputd", roster_elf(rom, "inputd")));
+    let _ = kernel.schedule(kernel::task::new_elf_task("ps2d", roster_elf(rom, "ps2d")));
+    match kernel.schedule_with_task_handle(kernel::task::new_elf_task("atad", roster_elf(rom, "atad"))) {
         Ok((atad_handle, _)) => {
             if !kernel::platform::portio::grant(atad_handle, 0x1F0, 0x1F7) {
                 kernel::kprintln!("[KERNEL] atad primary taskfile grant failed");
@@ -81,11 +81,14 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
         }
         Err(()) => kernel::kprintln!("[KERNEL] atad schedule failed"),
     }
-    static SHELL_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/shell");
-    let _ = kernel.schedule(kernel::task::new_elf_task("shell", SHELL_ELF));
+    let _ = kernel.schedule(kernel::task::new_elf_task("shell", roster_elf(rom, "shell")));
     kernel::kprintln!("[KERNEL] Starting");
     kernel.start();
     panic!("[KERNEL] Crashed spectacularly, should never reached here.");
+}
+
+fn roster_elf<'a>(rom: &'a [u8], name: &str) -> &'a [u8] {
+    kernel::rom::file_in(rom, name).unwrap_or_else(|| panic!("[KERNEL] ROM image has no {name}"))
 }
 
 unsafe extern "C" {

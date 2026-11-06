@@ -14,6 +14,12 @@ pub fn read(offset: u64, dst: &mut [u8]) -> usize {
     read_at(image(), offset, dst)
 }
 
+pub fn file_in<'a>(image: &'a [u8], name: &str) -> Option<&'a [u8]> {
+    let rom = system::rom::RomImage::parse(image).ok()?;
+    let record = rom.files().find(|record| record.name == name)?;
+    rom.bytes().get(record.offset..record.offset + record.len)
+}
+
 pub fn read_at(image: &[u8], offset: u64, dst: &mut [u8]) -> usize {
     if offset >= image.len() as u64 {
         return 0;
@@ -90,5 +96,33 @@ mod tests {
         assert_eq!(read(11, &mut tail), 5);
         assert_eq!(&tail[..5], b"image");
         assert_eq!(read(16, &mut tail), 0);
+    }
+
+    #[test]
+    fn file_in_returns_the_recorded_bytes() {
+        let image = system::rom::encode(&[
+            ("vfsd", b"elf-vfsd".as_slice()),
+            ("shell", b"elf-shell".as_slice()),
+        ]);
+        assert_eq!(file_in(&image, "vfsd"), Some(b"elf-vfsd".as_slice()));
+        assert_eq!(file_in(&image, "shell"), Some(b"elf-shell".as_slice()));
+    }
+
+    #[test]
+    fn file_in_answers_none_for_unknown_names() {
+        let image = system::rom::encode(&[("vfsd", b"elf".as_slice())]);
+        assert_eq!(file_in(&image, "shell"), None);
+    }
+
+    #[test]
+    fn file_in_answers_none_for_malformed_images() {
+        assert_eq!(file_in(b"", "vfsd"), None);
+        assert_eq!(file_in(b"not a rom image at all", "vfsd"), None);
+    }
+
+    #[test]
+    fn file_in_exposes_zero_length_records_as_empty_slices() {
+        let image = system::rom::encode(&[("notes", b"".as_slice())]);
+        assert_eq!(file_in(&image, "notes"), Some(b"".as_slice()));
     }
 }

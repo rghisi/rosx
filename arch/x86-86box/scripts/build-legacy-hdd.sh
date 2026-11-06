@@ -9,7 +9,7 @@
 # i386/debian:bullseye container — no loop devices, no --privileged:
 # GRUB's `device (hd0) <file>` maps a BIOS disk onto a plain file.
 #
-# usage: build-legacy-hdd.sh <kernel-elf> <stages-dir> <output-img>
+# usage: build-legacy-hdd.sh <kernel-elf> <rom-image> <stages-dir> <output-img>
 #        [--deb <grub-legacy deb>] [--setup-image <docker image>]
 # Disk geometry is the verified 993/16/63 (488 MB, inside both BIOS
 # translation limits of the era board); the partition and FAT are sized
@@ -21,9 +21,10 @@ repo=$(cd "$here/../../.." && pwd)
 manifest=$here/../assets/grub-legacy.toml
 
 kernel=$1
-stages=$2
-img=$3
-shift 3
+rom=$2
+stages=$3
+img=$4
+shift 4
 deb=
 setup_image=$(sed -n 's/^grub_shell *= *"\(.*\)".*/\1/p' "$manifest" | head -1)
 while [ $# -gt 0 ]; do
@@ -44,6 +45,7 @@ for tool in sfdisk mformat mmd mcopy; do
     command -v "$tool" >/dev/null 2>&1 || { echo "missing tool: $tool (util-linux, mtools)" >&2; exit 1; }
 done
 [ -f "$kernel" ] || { echo "no kernel ELF at $kernel (run: cargo xtask build x86_32)" >&2; exit 1; }
+[ -f "$rom" ] || { echo "no ROM image at $rom (run: cargo xtask rom x86_32)" >&2; exit 1; }
 for stage in stage1 stage2 fat_stage1_5; do
     [ -f "$stages/$stage" ] || { echo "no $stage in $stages (run fetch-grub-legacy.sh)" >&2; exit 1; }
 done
@@ -70,7 +72,8 @@ for stage in stage1 stage2 fat_stage1_5; do
     mcopy -m -o -i "$img@@$PART_OFFSET" "$stages/$stage" ::/boot/grub/
 done
 mcopy -m -o -i "$img@@$PART_OFFSET" "$kernel" ::/boot/rosx
-printf 'timeout 5\ntitle RosX x86_32 on emulated 486SX-25 (GRUB Legacy %s on HDD)\nkernel /boot/rosx\n' \
+mcopy -m -o -i "$img@@$PART_OFFSET" "$rom" ::/boot/rom
+printf 'timeout 5\ntitle RosX x86_32 on emulated 486SX-25 (GRUB Legacy %s on HDD)\nkernel /boot/rosx\nmodule /boot/rom\n' \
     "$(sed -n 's/^version *= *"\([^\"]*\)\".*/\1/p' "$manifest" | head -1)" > "$here/.menu-lst.tmp"
 mcopy -m -o -i "$img@@$PART_OFFSET" "$here/.menu-lst.tmp" ::/boot/grub/menu.lst
 rm -f "$here/.menu-lst.tmp"

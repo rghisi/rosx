@@ -18,12 +18,35 @@ impl BootMemory {
     }
 }
 
+pub const MAX_BOOT_MODULES: usize = 8;
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct BootModule {
+    pub start: usize,
+    pub size: usize,
+}
+
+#[derive(Copy, Clone)]
+pub struct BootModules {
+    modules: [BootModule; MAX_BOOT_MODULES],
+    count: usize,
+}
+
+impl BootModules {
+    pub fn list(&self) -> &[BootModule] {
+        &self.modules[..self.count]
+    }
+}
+
 const FLAG_MEMORY_SIZES: u32 = 1 << 0;
+const FLAG_MODULES: u32 = 1 << 3;
 const FLAG_MEMORY_MAP: u32 = 1 << 6;
 
 const FLAGS_OFFSET: usize = 0;
 const MEM_LOWER_OFFSET: usize = 4;
 const MEM_UPPER_OFFSET: usize = 8;
+const MODS_COUNT_OFFSET: usize = 20;
+const MODS_ADDRESS_OFFSET: usize = 24;
 const MMAP_LENGTH_OFFSET: usize = 44;
 const MMAP_ADDRESS_OFFSET: usize = 48;
 
@@ -34,6 +57,10 @@ const ENTRY_TYPE_OFFSET: usize = 20;
 const ENTRY_MIN_BYTES: usize = 24;
 const ENTRY_STRIDE_EXTRA: usize = 4;
 const ENTRY_AVAILABLE: u32 = 1;
+
+const MODULE_STRIDE_BYTES: usize = 16;
+const MODULE_START_OFFSET: usize = 0;
+const MODULE_END_OFFSET: usize = 4;
 
 const BYTES_PER_KIB: u64 = 1024;
 const ONE_MIB: u64 = 1024 * 1024;
@@ -61,6 +88,41 @@ fn decode(flags: u32, mem_lower_kib: u32, mem_upper_kib: u32, mmap_entries: &[u8
         return sized_memory(mem_lower_kib, mem_upper_kib);
     }
     empty_memory()
+}
+
+pub unsafe fn boot_modules(info_ptr: *const u8) -> BootModules {
+    let flags = unsafe { read_info_u32(info_ptr, FLAGS_OFFSET) };
+    let mods_count = unsafe { read_info_u32(info_ptr, MODS_COUNT_OFFSET) };
+    let records = if flags & FLAG_MODULES != 0 {
+        let address = unsafe { read_info_u32(info_ptr, MODS_ADDRESS_OFFSET) } as usize;
+        let bounded = core::cmp::min(mods_count, MAX_BOOT_MODULES as u32) as usize;
+        unsafe { core::slice::from_raw_parts(address as *const u8, bounded * MODULE_STRIDE_BYTES) }
+    } else {
+        &[]
+    };
+    decode_modules(flags, mods_count, records)
+}
+
+fn decode_modules(flags: u32, mods_count: u32, records: &[u8]) -> BootModules {
+    let mut modules = BootModules {
+        modules: core::array::from_fn(|_| BootModule { start: 0, size: 0 }),
+        count: 0,
+    };
+    if flags & FLAG_MODULES == 0 {
+        return modules;
+    }
+    let declared = core::cmp::min(mods_count as usize, MAX_BOOT_MODULES);
+    let present = records.len() / MODULE_STRIDE_BYTES;
+    for index in 0..core::cmp::min(declared, present) {
+        let record = index * MODULE_STRIDE_BYTES;
+        let start = read_u32(records, record + MODULE_START_OFFSET) as usize;
+        let end = read_u32(records, record + MODULE_END_OFFSET) as usize;
+        if start < end {
+            modules.modules[modules.count] = BootModule { start, size: end - start };
+            modules.count += 1;
+        }
+    }
+    modules
 }
 
 fn mmap_memory(entries: &[u8]) -> BootMemory {
@@ -226,5 +288,82 @@ mod tests {
         entries.extend(standard_entry(8192, 4096, 1));
         let memory = decode(FLAG_MEMORY_MAP, 0, 0, &entries);
         assert_eq!(region_pairs(&memory), vec![(8192, 4096)]);
+    }
+
+    fn module_record(start: u32, end: u32) -> Vec<u8> {
+        let mut record = Vec::new();
+        push_u32(&mut record, start);
+        push_u32(&mut record, end);
+        push_u32(&mut record, 0);
+        push_u32(&mut record, 0);
+        record
+    }
+
+    fn module_pairs(modules: &BootModules) -> Vec<(usize, usize)> {
+        modules
+            .list()
+            .iter()
+            .map(|m| (m.start, m.size))
+            .collect::<Vec<_>>()
+    }
+
+    #[test]
+    fn module_field_offsets_match_the_multiboot_spec() {
+        assert_eq!(FLAGS_OFFSET, 0);
+        assert_eq!(MEM_LOWER_OFFSET, 4);
+        assert_eq!(MEM_UPPER_OFFSET, 8);
+        assert_eq!(MODS_COUNT_OFFSET, 20);
+        assert_eq!(MODS_ADDRESS_OFFSET, 24);
+        assert_eq!(MMAP_LENGTH_OFFSET, 44);
+        assert_eq!(MMAP_ADDRESS_OFFSET, 48);
+    }
+
+    #[test]
+    fn modules_flag_keeps_declared_ranges_in_order() {
+        let records = [module_record(0x100000, 0x101000), module_record(0x200000, 0x202000)]
+            .concat();
+        let modules = decode_modules(FLAG_MODULES, 2, &records);
+        assert_eq!(module_pairs(&modules), vec![(0x100000, 0x1000), (0x200000, 0x2000)]);
+    }
+
+    #[test]
+    fn absent_modules_flag_yields_no_modules() {
+        let records = module_record(0x100000, 0x101000);
+        assert_eq!(decode_modules(0, 1, &records).list().len(), 0);
+    }
+
+    #[test]
+    fn zero_module_count_yields_no_modules() {
+        let records = module_record(0x100000, 0x101000);
+        assert_eq!(decode_modules(FLAG_MODULES, 0, &records).list().len(), 0);
+    }
+
+    #[test]
+    fn declared_count_beyond_present_bytes_keeps_complete_records() {
+        let records = module_record(0x100000, 0x101000);
+        let modules = decode_modules(FLAG_MODULES, 4, &records);
+        assert_eq!(module_pairs(&modules), vec![(0x100000, 0x1000)]);
+    }
+
+    #[test]
+    fn degenerate_module_ranges_are_skipped() {
+        let records = [
+            module_record(0x100000, 0x100000),
+            module_record(0x201000, 0x200000),
+            module_record(0x300000, 0x300010),
+        ]
+        .concat();
+        let modules = decode_modules(FLAG_MODULES, 3, &records);
+        assert_eq!(module_pairs(&modules), vec![(0x300000, 0x10)]);
+    }
+
+    #[test]
+    fn module_count_is_capped_at_the_static_bound() {
+        let records: Vec<u8> = (0..(MAX_BOOT_MODULES + 2) as u32)
+            .flat_map(|index| module_record(0x100000 + index * 0x1000, 0x100100 + index * 0x1000))
+            .collect();
+        let modules = decode_modules(FLAG_MODULES, (MAX_BOOT_MODULES + 2) as u32, &records);
+        assert_eq!(modules.list().len(), MAX_BOOT_MODULES);
+        assert_eq!(modules.list()[0], BootModule { start: 0x100000, size: 0x100 });
     }
 }

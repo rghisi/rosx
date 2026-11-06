@@ -271,7 +271,7 @@ fn attach_multiboot_master_disk(
     medium: &x86_runner::BootMedium,
     temp_dir: &Path,
 ) {
-    if let x86_runner::BootMedium::MultibootKernel(_) = medium {
+    if let x86_runner::BootMedium::MultibootKernel { .. } = medium {
         let master = temp_dir.join("primary-master-disk.img");
         let mut image = vec![0u8; MASTER_DISK_BYTES];
         image[MBR_SIGNATURE_OFFSET] = 0x55;

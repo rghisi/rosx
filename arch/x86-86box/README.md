@@ -80,15 +80,18 @@ Or drive the scripts directly:
 ```sh
 stages=$(arch/x86-86box/scripts/fetch-grub-legacy.sh | tail -1)
 arch/x86-86box/scripts/build-legacy-iso.sh \
-    target/rosx-i486/release/rosx-x86_32 "$stages" rosx-grub-legacy.iso
+    target/rosx-i486/release/rosx-x86_32 target/rosx-i486-user/rom.img "$stages" rosx-grub-legacy.iso
 arch/x86-86box/scripts/build-legacy-hdd.sh \
-    target/rosx-i486/release/rosx-x86_32 "$stages" rosx-hdd.img
+    target/rosx-i486/release/rosx-x86_32 target/rosx-i486-user/rom.img "$stages" rosx-hdd.img
 ```
 
 - The **ISO** (El Torito, `stage2_eltorito`) passes a sizes-only MBI and is
   the `mem_upper`-fallback exercise. The 1996 Award BIOS on `486sp3c` has
   no El Torito — boot it with the QEMU control:
   `qemu-system-i386 -cpu 486 -m 8 -cdrom <iso> -boot order=d -debugcon stdio -no-reboot -display none`.
+- Both recipes stage the ROM as `/boot/rom` and carry a `module /boot/rom`
+  line — the kernel boots its roster from Multiboot module 0 and panics
+  loudly without it. Both media reach `rose>` in the QEMU control above.
 - The **HDD** (FAT16 + MBR stage1 + embedded `fat_stage1_5`) is the AGENTS.md
   hardware recipe executed literally — the era-authentic medium for this
   board class. Its grub `setup` runs in the pinned `i386/debian:bullseye`

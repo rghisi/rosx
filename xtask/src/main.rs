@@ -73,8 +73,8 @@ fn prepare_medium(debug: bool, spec: &ArchSpec) -> BootMedium {
         .expect("failed to prepare boot medium");
     match &medium {
         BootMedium::DiskImage(_) => println!("==> created {} disk image", spec.name),
-        BootMedium::MultibootKernel(elf) => {
-            println!("==> bootable multiboot artifact: {}", elf.display())
+        BootMedium::MultibootKernel { kernel, .. } => {
+            println!("==> bootable multiboot artifact: {}", kernel.display())
         }
         BootMedium::CdImage(_) => {
             unreachable!("prepare_run_medium only yields a disk image or the multiboot kernel")
@@ -85,7 +85,7 @@ fn prepare_medium(debug: bool, spec: &ArchSpec) -> BootMedium {
 
 fn launch(medium: &BootMedium, spec: &ArchSpec) {
     let mut cmd = x86_runner::qemu_command(spec.boot, medium, LaunchMode::Interactive);
-    if let BootMedium::MultibootKernel(_) = medium {
+    if let BootMedium::MultibootKernel { .. } = medium {
         let disk = create_run_disk(spec);
         cmd.arg("-drive")
             .arg(format!("if=ide,index=0,media=disk,format=raw,file={}", disk.display()));
@@ -105,6 +105,16 @@ fn pack_rom(spec: &ArchSpec) {
         };
         files.push((name, bytes));
     }
+    let shell_path = release_dir.join("shell");
+    let Ok(shell) = std::fs::read(&shell_path) else {
+        eprintln!(
+            "missing user ELF {}; run `cargo xtask apps {}` first",
+            shell_path.display(),
+            spec.name
+        );
+        process::exit(1);
+    };
+    files.push(("shell", shell));
     files.push(("fstab", DEFAULT_FSTAB.as_bytes().to_vec()));
     files.sort_by_key(|(name, _)| *name);
     let pairs: Vec<(&str, &[u8])> = files
@@ -277,6 +287,7 @@ fn create_era_images(debug: bool, spec: &ArchSpec) {
     iso_cmd
         .arg(era_script("build-legacy-iso.sh"))
         .arg(&kernel)
+        .arg(spec.rom_path())
         .arg(&stages)
         .arg(&iso);
     run(&mut iso_cmd, "build the GRUB Legacy El Torito era ISO");
@@ -285,6 +296,7 @@ fn create_era_images(debug: bool, spec: &ArchSpec) {
     hdd_cmd
         .arg(era_script("build-legacy-hdd.sh"))
         .arg(&kernel)
+        .arg(spec.rom_path())
         .arg(&stages)
         .arg(&hdd);
     run(&mut hdd_cmd, "build the GRUB Legacy FAT16 era HDD image");
@@ -304,7 +316,7 @@ fn create_flashable_image(debug: bool, spec: &ArchSpec) {
         }
         x86_runner::Arch::X86_32 => {
             let image = kernel.with_extension("img");
-            x86_runner::create_grub_image(&kernel, &image).unwrap_or_else(|err| {
+            x86_runner::create_grub_image(&kernel, &spec.rom_path(), &image).unwrap_or_else(|err| {
                 eprintln!("error: {err}");
                 process::exit(1);
             });

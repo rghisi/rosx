@@ -7,17 +7,19 @@
 #   qemu-system-i386 -cpu 486 -m 8 -cdrom <iso> -boot order=d \
 #       -debugcon stdio -no-reboot -display none
 #
-# usage: build-legacy-iso.sh <kernel-elf> <stages-dir> <output-iso>
+# usage: build-legacy-iso.sh <kernel-elf> <rom-image> <stages-dir> <output-iso>
 set -eu
 
 kernel=$1
-stages=$2
-out=$3
+rom=$2
+stages=$3
+out=$4
 
 for tool in xorriso mktemp; do
     command -v "$tool" >/dev/null 2>&1 || { echo "missing tool: $tool" >&2; exit 1; }
 done
 [ -f "$kernel" ] || { echo "no kernel ELF at $kernel (run: cargo xtask build x86_32)" >&2; exit 1; }
+[ -f "$rom" ] || { echo "no ROM image at $rom (run: cargo xtask rom x86_32)" >&2; exit 1; }
 [ -f "$stages/stage2_eltorito" ] || { echo "no stage2_eltorito in $stages (run fetch-grub-legacy.sh)" >&2; exit 1; }
 
 work=$(mktemp -d)
@@ -25,7 +27,8 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/boot/grub"
 cp "$stages/stage2_eltorito" "$work/boot/grub/"
 cp "$kernel" "$work/boot/rosx"
-printf 'timeout 0\ntitle RosX x86_32 on 486SX via GRUB Legacy\nkernel /boot/rosx\n' \
+cp "$rom" "$work/boot/rom"
+printf 'timeout 0\ntitle RosX x86_32 on 486SX via GRUB Legacy\nkernel /boot/rosx\nmodule /boot/rom\n' \
     > "$work/boot/grub/menu.lst"
 
 xorriso -as mkisofs -r -V ROSX_LEGACY \

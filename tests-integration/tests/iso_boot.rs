@@ -15,7 +15,10 @@ fn grub_iso_boots_to_shell_prompt() {
 
     let staging = tempfile::TempDir::new().expect("failed to create iso staging directory");
     let iso = staging.path().join("rosx-grub.iso");
-    if let Err(tools) = x86_runner::create_grub_image(&kernel_build::kernel_elf(), &iso) {
+    let kernel = kernel_build::kernel_elf();
+    let rom = x86_runner::rom_image_for(&kernel, Arch::current().boot())
+        .expect("the GRUB ISO needs the packed ROM image; run `cargo xtask rom` first");
+    if let Err(tools) = x86_runner::create_grub_image(&kernel, &rom, &iso) {
         eprintln!("skipped: cannot build the GRUB ISO:\n{tools}");
         return;
     }
