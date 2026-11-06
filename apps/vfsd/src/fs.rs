@@ -804,6 +804,22 @@ mod tests {
             buf.copy_from_slice(region);
             Ok(())
         }
+
+        fn write_block(&mut self, block: u64, buf: &[u8]) -> Result<(), IoError> {
+            let at = block as usize * FAT_SECTOR_BYTES;
+            if buf.len() != FAT_SECTOR_BYTES {
+                return Err(IoError::Device);
+            }
+            let Some(region) = self.bytes.get_mut(at..at + FAT_SECTOR_BYTES) else {
+                return Err(IoError::Device);
+            };
+            region.copy_from_slice(buf);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<(), IoError> {
+            Ok(())
+        }
     }
 
     const FAT16_TOTAL_SECTORS: u64 = 49 + 4_086;
@@ -1642,18 +1658,25 @@ mod tests {
     }
 
     #[test]
-    fn fat_mount_refuses_every_mutation_as_unsupported() {
+    fn fat_mount_mutations_flow_through_daemon_routing() {
         let mut fs = fresh_store();
         mount_fat_fake(&mut fs, "fat");
-        assert_eq!(
-            fs.open(OWNER, wire::MODE_CREATE | wire::MODE_WRITE, "fat/new.txt"),
-            Err(VfsError::Unsupported)
-        );
-        assert_eq!(fs.mkdir("fat/sub"), Err(VfsError::Unsupported));
-        assert_eq!(fs.delete("fat/hello.txt"), Err(VfsError::Unsupported));
-        let handle = fs.open(OWNER, wire::MODE_WRITE, "fat/hello.txt").unwrap();
-        assert_eq!(fs.write(OWNER, handle, 0, b"x"), Err(VfsError::Unsupported));
+        let handle = fs
+            .open(OWNER, wire::MODE_CREATE | wire::MODE_WRITE, "fat/new.txt")
+            .expect("create on a FAT volume");
+        fs.write(OWNER, handle, 0, b"written").expect("write flows through");
         fs.close(OWNER, handle).unwrap();
+        assert_eq!(fs.stat("fat/new.txt").unwrap(), (EntityKind::File, 7));
+        fs.mkdir("fat/sub").expect("mkdir on a FAT volume");
+        let existing = fs.open(OWNER, wire::MODE_WRITE, "fat/hello.txt").unwrap();
+        assert_eq!(fs.write(OWNER, existing, 0, b"j"), Ok(1));
+        fs.close(OWNER, existing).unwrap();
+        assert_eq!(fs.delete("fat/hello.txt"), Ok(()));
+        assert_eq!(fs.stat("fat/hello.txt"), Err(VfsError::NotFound));
+        assert_eq!(fs.list_dir("fat").unwrap(), b"new.txt\nsub");
+        let reopened = fs.open(OWNER, 0, "fat/new.txt").expect("reopen");
+        assert_eq!(contents(&mut fs, OWNER, reopened), b"written".to_vec());
+        fs.close(OWNER, reopened).unwrap();
     }
 
     #[test]

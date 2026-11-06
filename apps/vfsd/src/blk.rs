@@ -88,6 +88,22 @@ impl rxfat::device::BlockDevice for FatSectors {
         buf.copy_from_slice(&data[offset..offset + usize::from(SECTOR_BYTES)]);
         Ok(())
     }
+
+    fn write_block(&mut self, sector: u64, buf: &[u8]) -> Result<(), IoError> {
+        if buf.len() != usize::from(SECTOR_BYTES) || sector >= self.sectors {
+            return Err(IoError::Device);
+        }
+        if self.device_block_size != u64::from(SECTOR_BYTES) {
+            return Err(IoError::Device);
+        }
+        self.client
+            .write_blocks(self.device, sector, 1, buf)
+            .map_err(|_| IoError::Device)
+    }
+
+    fn flush(&mut self) -> Result<(), IoError> {
+        self.client.flush(self.device).map_err(|_| IoError::Flush)
+    }
 }
 
 impl RemoteBlock {

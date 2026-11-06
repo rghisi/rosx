@@ -41,6 +41,8 @@ const OFFSET_FAT_SIZE_16: usize = 0x16;
 const OFFSET_TOTAL_SECTORS_32: usize = 0x20;
 const OFFSET_FAT_SIZE_32: usize = 0x24;
 const OFFSET_ROOT_CLUSTER: usize = 0x2C;
+const OFFSET_FSINFO_SECTOR: usize = 0x30;
+const OFFSET_BACKUP_BOOT_SECTOR: usize = 0x32;
 const OFFSET_TYPE_STRING_LEGACY: usize = 0x36;
 const OFFSET_TYPE_STRING_32: usize = 0x5A;
 const OFFSET_BOOT_SIGNATURE: usize = 0x1FE;
@@ -201,6 +203,8 @@ impl FatDisk {
                 put32(boot, OFFSET_TOTAL_SECTORS_32, geometry.total_sectors as u32);
                 put32(boot, OFFSET_FAT_SIZE_32, geometry.fat_sectors as u32);
                 put32(boot, OFFSET_ROOT_CLUSTER, 2);
+                put16(boot, OFFSET_FSINFO_SECTOR, FSINFO_SECTOR as u16);
+                put16(boot, OFFSET_BACKUP_BOOT_SECTOR, BACKUP_BOOT_SECTOR as u16);
                 boot[OFFSET_TYPE_STRING_32..OFFSET_TYPE_STRING_32 + 8]
                     .copy_from_slice(b"FAT32   ");
             }
@@ -437,6 +441,7 @@ mod tests {
         let fsinfo = &disk.as_bytes()
             [SECTOR_BYTES as usize + 0x1E4..SECTOR_BYTES as usize + 0x1E8];
         assert_eq!(fsinfo, &FSINFO_LEAD_SIGNATURE.to_le_bytes()[..]);
+        assert_eq!(boot.fsinfo_sector, 1);
         let backup =
             &disk.as_bytes()[6 * SECTOR_BYTES as usize..7 * SECTOR_BYTES as usize];
         assert_eq!(backup, &disk.as_bytes()[..SECTOR_BYTES as usize]);
@@ -500,6 +505,15 @@ mod tests {
                 return Err(fs_core::error::IoError::Device);
             }
             buf.copy_from_slice(region);
+            Ok(())
+        }
+
+        fn write_block(&mut self, block: u64, buf: &[u8]) -> Result<(), fs_core::error::IoError> {
+            let _ = (block, buf);
+            Err(fs_core::error::IoError::Device)
+        }
+
+        fn flush(&mut self) -> Result<(), fs_core::error::IoError> {
             Ok(())
         }
     }

@@ -19,6 +19,7 @@ const OFFSET_FAT_SIZE_16: usize = 0x16;
 const OFFSET_TOTAL_SECTORS_32: usize = 0x20;
 const OFFSET_FAT_SIZE_32: usize = 0x24;
 const OFFSET_ROOT_CLUSTER: usize = 0x2C;
+const OFFSET_FSINFO_SECTOR: usize = 0x30;
 const OFFSET_BOOT_SIGNATURE: usize = 0x1FE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +47,7 @@ pub struct BootSector {
     pub cluster_count: u32,
     pub fat_type: FatType,
     pub root: RootLocation,
+    pub fsinfo_sector: u32,
 }
 
 impl BootSector {
@@ -138,6 +140,16 @@ impl BootSector {
                 entries: root_entry_count,
             }
         };
+        let fsinfo_sector = if fat_type == FatType::Fat32 {
+            let sector = read16(volume, OFFSET_FSINFO_SECTOR);
+            if sector > 0 && u64::from(sector) < reserved_sectors {
+                u32::from(sector)
+            } else {
+                0
+            }
+        } else {
+            0
+        };
         Ok(BootSector {
             bytes_per_sector,
             sectors_per_cluster,
@@ -149,6 +161,7 @@ impl BootSector {
             cluster_count,
             fat_type,
             root,
+            fsinfo_sector,
         })
     }
 

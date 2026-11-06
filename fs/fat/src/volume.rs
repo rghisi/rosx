@@ -1,6 +1,7 @@
 use crate::boot::{BootSector, FatType};
 use crate::device::BlockDevice;
 use crate::dir::{self, DirEntry, DirLocation};
+use crate::fat;
 use crate::file;
 use crate::path::{self, PathParts};
 use alloc::vec::Vec;
@@ -34,7 +35,16 @@ struct OpenEntry {
     generation: u32,
     first_cluster: u32,
     size: u64,
+    chain: Vec<u32>,
+    parent: DirLocation,
+    slot_sector: u64,
+    slot_offset: usize,
+    slot_name: [u8; 11],
+    attrs: u8,
 }
+
+const ATTR_ARCHIVE: u8 = 0x20;
+const ATTR_DIRECTORY: u8 = 0x10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Resolved {
@@ -49,6 +59,7 @@ pub struct FileSystem<D: BlockDevice> {
     device: D,
     opens: Vec<Option<OpenEntry>>,
     next_generation: u32,
+    free_clusters: Option<u32>,
 }
 
 impl<D: BlockDevice> FileSystem<D> {
@@ -65,6 +76,7 @@ impl<D: BlockDevice> FileSystem<D> {
             device,
             opens: Vec::new(),
             next_generation: 1,
+            free_clusters: None,
         })
     }
 
@@ -83,25 +95,30 @@ impl<D: BlockDevice> FileSystem<D> {
 
     pub fn open(&mut self, path_bytes: &[u8]) -> Result<FatHandle, FsError> {
         let parts = path::parse(path_bytes)?;
-        let resolved = self.resolve(&parts)?;
-        if resolved.is_directory {
+        if parts.is_root() {
             return Err(FsError::IsADirectory);
         }
+        let parent = self.parent_location(&parts)?;
+        let name = parts.last_segment().ok_or(FsError::InvalidPath)?;
+        let located = dir::locate_slot(&mut self.device, &self.boot, parent, name)?;
+        if located.entry.is_directory {
+            return Err(FsError::IsADirectory);
+        }
+        let chain = self.data_chain(located.entry.first_cluster)?;
         let generation = self.next_generation;
         self.next_generation = self.next_generation.wrapping_add(1);
-        let entry = OpenEntry {
+        let slot = self.reserve_open_slot();
+        self.opens[slot] = Some(OpenEntry {
             generation,
-            first_cluster: resolved.first_cluster,
-            size: resolved.size,
-        };
-        let slot = match self.opens.iter().position(|slot| slot.is_none()) {
-            Some(slot) => slot,
-            None => {
-                self.opens.push(None);
-                self.opens.len() - 1
-            }
-        };
-        self.opens[slot] = Some(entry);
+            first_cluster: located.entry.first_cluster,
+            size: located.entry.size,
+            chain,
+            parent,
+            slot_sector: located.sector,
+            slot_offset: located.offset,
+            slot_name: located.slot_name,
+            attrs: located.attrs,
+        });
         Ok(FatHandle {
             slot: slot as u32,
             generation,
@@ -204,6 +221,273 @@ impl<D: BlockDevice> FileSystem<D> {
             .find(|entry| dir::name_matches(&entry.name, name))
             .ok_or(FsError::NotFound)
     }
+
+    fn parent_location(&mut self, parts: &PathParts) -> Result<DirLocation, FsError> {
+        let mut location = DirLocation::from_root(self.boot.root);
+        for index in 0..parts.len() - 1 {
+            let name = parts.get(index).ok_or(FsError::InvalidPath)?;
+            let entry = self.find_entry(location, name)?;
+            if !entry.is_directory {
+                return Err(FsError::NotADirectory);
+            }
+            location = DirLocation::Chain(entry.first_cluster);
+        }
+        Ok(location)
+    }
+
+    fn reserve_open_slot(&mut self) -> usize {
+        match self.opens.iter().position(|slot| slot.is_none()) {
+            Some(slot) => slot,
+            None => {
+                self.opens.push(None);
+                self.opens.len() - 1
+            }
+        }
+    }
+
+    fn data_chain(&mut self, first_cluster: u32) -> Result<Vec<u32>, FsError> {
+        if first_cluster < 2 {
+            return Ok(Vec::new());
+        }
+        fat::cluster_chain(&mut self.device, &self.boot, first_cluster)
+    }
+
+    fn cluster_bytes(&self) -> u64 {
+        u64::from(self.boot.sectors_per_cluster) * u64::from(self.boot.bytes_per_sector)
+    }
+
+    fn allocate_slot(&mut self, location: DirLocation) -> Result<(u64, usize), FsError> {
+        loop {
+            let sectors = dir::entry_sectors(&mut self.device, &self.boot, location)?;
+            let limit = match location {
+                DirLocation::Sectors { entry_count, .. } => Some(entry_count),
+                DirLocation::Chain(_) => None,
+            };
+            if let Some(spot) = dir::find_slot_spot(&mut self.device, &sectors, limit)? {
+                return Ok(match spot {
+                    dir::SlotSpot::Reuse(sector, offset) => (sector, offset),
+                    dir::SlotSpot::Append(sector, offset) => (sector, offset),
+                });
+            }
+            match location {
+                DirLocation::Sectors { .. } => return Err(FsError::NoSpace),
+                DirLocation::Chain(head) => {
+                    let chain = fat::cluster_chain(&mut self.device, &self.boot, head)?;
+                    let tail = *chain.last().ok_or(FsError::Corrupt)?;
+                    self.reserve_clusters(1)?;
+                    fat::append_chain(&mut self.device, &self.boot, tail, 1)?;
+                }
+            }
+        }
+    }
+
+    fn tracks_free_clusters(&self) -> bool {
+        self.boot.fat_type == FatType::Fat32 && self.boot.fsinfo_sector != 0
+    }
+
+    fn reserve_clusters(&mut self, count: u32) -> Result<(), FsError> {
+        if !self.tracks_free_clusters() {
+            return Ok(());
+        }
+        let base = match self.free_clusters {
+            Some(free) => free,
+            None => fat::count_free_clusters(&mut self.device, &self.boot)?,
+        };
+        let remaining = base.checked_sub(count).ok_or(FsError::NoSpace)?;
+        self.free_clusters = Some(remaining);
+        fat::write_free_cluster_count(&mut self.device, &self.boot, remaining)
+    }
+
+    fn release_clusters(&mut self, count: u32) -> Result<(), FsError> {
+        if count == 0 || !self.tracks_free_clusters() {
+            return Ok(());
+        }
+        let base = match self.free_clusters {
+            Some(free) => free,
+            None => fat::count_free_clusters(&mut self.device, &self.boot)?,
+        };
+        let remaining = base.saturating_add(count);
+        self.free_clusters = Some(remaining);
+        fat::write_free_cluster_count(&mut self.device, &self.boot, remaining)
+    }
+
+    pub fn create(&mut self, path_bytes: &[u8]) -> Result<FatHandle, FsError> {
+        let parts = path::parse(path_bytes)?;
+        if parts.is_root() {
+            return Err(FsError::IsADirectory);
+        }
+        let name = parts.last_segment().ok_or(FsError::InvalidPath)?;
+        let folded = dir::fold_to_slot(name)?;
+        let parent = self.parent_location(&parts)?;
+        if dir::locate_slot(&mut self.device, &self.boot, parent, name).is_ok() {
+            return Err(FsError::AlreadyExists);
+        }
+        let (sector, offset) = self.allocate_slot(parent)?;
+        let slot = dir::make_slot_bytes(folded, ATTR_ARCHIVE, 0, 0);
+        dir::write_slot_bytes(&mut self.device, sector, offset, &slot)?;
+        let mut slot_name = [0u8; 11];
+        slot_name.copy_from_slice(&slot[..11]);
+        let generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1);
+        let slot_index = self.reserve_open_slot();
+        self.opens[slot_index] = Some(OpenEntry {
+            generation,
+            first_cluster: 0,
+            size: 0,
+            chain: Vec::new(),
+            parent,
+            slot_sector: sector,
+            slot_offset: offset,
+            slot_name,
+            attrs: ATTR_ARCHIVE,
+        });
+        Ok(FatHandle {
+            slot: slot_index as u32,
+            generation,
+        })
+    }
+
+    pub fn write(
+        &mut self,
+        handle: FatHandle,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<usize, FsError> {
+        self.live_entry(handle)?;
+        if data.is_empty() {
+            return Ok(0);
+        }
+        let end = offset
+            .checked_add(data.len() as u64)
+            .ok_or(FsError::FileTooLarge)?;
+        if end > u64::from(u32::MAX) {
+            return Err(FsError::FileTooLarge);
+        }
+        let snapshot = self.opens[handle.slot as usize]
+            .clone()
+            .ok_or(FsError::BadHandle)?;
+        if !dir::slot_still_holds(
+            &mut self.device,
+            snapshot.slot_sector,
+            snapshot.slot_offset,
+            &snapshot.slot_name,
+            snapshot.first_cluster,
+        )? {
+            return Err(FsError::BadHandle);
+        }
+        let cluster_bytes = self.cluster_bytes();
+        let needed = end.div_ceil(cluster_bytes) as usize;
+        let mut chain = snapshot.chain.clone();
+        let mut first_cluster = snapshot.first_cluster;
+        if needed > chain.len() {
+            let extra = (needed - chain.len()) as u32;
+            self.reserve_clusters(extra)?;
+            match chain.last() {
+                Some(tail) => {
+                    fat::append_chain(&mut self.device, &self.boot, *tail, extra)?;
+                }
+                None => {
+                    first_cluster = fat::allocate_chain(&mut self.device, &self.boot, extra)?;
+                }
+            }
+            chain = fat::cluster_chain(&mut self.device, &self.boot, first_cluster)?;
+        }
+        let mut written = 0usize;
+        let mut block = [0u8; 512];
+        while written < data.len() {
+            let byte = offset + written as u64;
+            let cluster = chain[(byte / cluster_bytes) as usize];
+            let in_cluster = (byte % cluster_bytes) as usize;
+            let first_sector = self
+                .boot
+                .first_sector_of_cluster(cluster)
+                .ok_or(FsError::Corrupt)?;
+            let sector = first_sector + (in_cluster / 512) as u64;
+            let sector_offset = in_cluster % 512;
+            let chunk = (512 - sector_offset).min(data.len() - written);
+            if sector_offset != 0 || chunk != 512 {
+                self.device
+                    .read_block(sector, &mut block)
+                    .map_err(FsError::Io)?;
+            }
+            block[sector_offset..sector_offset + chunk]
+                .copy_from_slice(&data[written..written + chunk]);
+            self.device
+                .write_block(sector, &block)
+                .map_err(FsError::Io)?;
+            written += chunk;
+        }
+        let size = snapshot.size.max(end);
+        let mut name_parts = ([0u8; 8], [0u8; 3]);
+        name_parts.0.copy_from_slice(&snapshot.slot_name[..8]);
+        name_parts.1.copy_from_slice(&snapshot.slot_name[8..11]);
+        let slot = dir::make_slot_bytes(name_parts, snapshot.attrs, first_cluster, size as u32);
+        dir::write_slot_bytes(&mut self.device, snapshot.slot_sector, snapshot.slot_offset, &slot)?;
+        if let Some(entry) = self.opens[handle.slot as usize].as_mut() {
+            entry.first_cluster = first_cluster;
+            entry.size = size;
+            entry.chain = chain;
+        }
+        Ok(data.len())
+    }
+
+    pub fn remove(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        let parts = path::parse(path_bytes)?;
+        if parts.is_root() {
+            return Err(FsError::IsADirectory);
+        }
+        let name = parts.last_segment().ok_or(FsError::InvalidPath)?;
+        let parent = self.parent_location(&parts)?;
+        let located = dir::locate_slot(&mut self.device, &self.boot, parent, name)?;
+        if located.entry.is_directory {
+            return Err(FsError::IsADirectory);
+        }
+        let freed = self.data_chain(located.entry.first_cluster)?.len() as u32;
+        dir::erase_slot(&mut self.device, located.sector, located.offset)?;
+        fat::free_chain(&mut self.device, &self.boot, located.entry.first_cluster)?;
+        self.release_clusters(freed)
+    }
+
+    pub fn mkdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        let parts = path::parse(path_bytes)?;
+        if parts.is_root() {
+            return Err(FsError::AlreadyExists);
+        }
+        let name = parts.last_segment().ok_or(FsError::InvalidPath)?;
+        let folded = dir::fold_to_slot(name)?;
+        let parent = self.parent_location(&parts)?;
+        if dir::locate_slot(&mut self.device, &self.boot, parent, name).is_ok() {
+            return Err(FsError::AlreadyExists);
+        }
+        let (sector, offset) = self.allocate_slot(parent)?;
+        self.reserve_clusters(1)?;
+        let cluster = fat::allocate_chain(&mut self.device, &self.boot, 1)?;
+        let slot = dir::make_slot_bytes(folded, ATTR_DIRECTORY, cluster, 0);
+        dir::write_slot_bytes(&mut self.device, sector, offset, &slot)?;
+        Ok(())
+    }
+
+    pub fn rmdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        let parts = path::parse(path_bytes)?;
+        if parts.is_root() {
+            return Err(FsError::InvalidPath);
+        }
+        let name = parts.last_segment().ok_or(FsError::InvalidPath)?;
+        let parent = self.parent_location(&parts)?;
+        let located = dir::locate_slot(&mut self.device, &self.boot, parent, name)?;
+        if !located.entry.is_directory {
+            return Err(FsError::NotADirectory);
+        }
+        let chain = self.data_chain(located.entry.first_cluster)?;
+        let entries =
+            dir::read_directory(&mut self.device, &self.boot, DirLocation::Chain(located.entry.first_cluster))?;
+        if !entries.is_empty() {
+            return Err(FsError::DirectoryNotEmpty);
+        }
+        dir::erase_slot(&mut self.device, located.sector, located.offset)?;
+        fat::free_chain(&mut self.device, &self.boot, located.entry.first_cluster)?;
+        self.release_clusters(chain.len() as u32)
+    }
 }
 
 impl<D: BlockDevice> Engine for FileSystem<D> {
@@ -218,16 +502,16 @@ impl<D: BlockDevice> Engine for FileSystem<D> {
         FileSystem::open(self, path_bytes)
     }
 
-    fn create(&mut self, _path_bytes: &[u8]) -> Result<Self::Handle, FsError> {
-        Err(FsError::Unsupported)
+    fn create(&mut self, path_bytes: &[u8]) -> Result<Self::Handle, FsError> {
+        FileSystem::create(self, path_bytes)
     }
 
-    fn mkdir(&mut self, _path_bytes: &[u8]) -> Result<(), FsError> {
-        Err(FsError::Unsupported)
+    fn mkdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        FileSystem::mkdir(self, path_bytes)
     }
 
-    fn rmdir(&mut self, _path_bytes: &[u8]) -> Result<(), FsError> {
-        Err(FsError::Unsupported)
+    fn rmdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        FileSystem::rmdir(self, path_bytes)
     }
 
     fn read(
@@ -241,11 +525,11 @@ impl<D: BlockDevice> Engine for FileSystem<D> {
 
     fn write(
         &mut self,
-        _handle: Self::Handle,
-        _offset: u64,
-        _data: &[u8],
+        handle: Self::Handle,
+        offset: u64,
+        data: &[u8],
     ) -> Result<usize, FsError> {
-        Err(FsError::Unsupported)
+        FileSystem::write(self, handle, offset, data)
     }
 
     fn stat(&mut self, handle: Self::Handle) -> Result<Self::Metadata, FsError> {
@@ -256,8 +540,8 @@ impl<D: BlockDevice> Engine for FileSystem<D> {
         FileSystem::close(self, handle)
     }
 
-    fn remove(&mut self, _path_bytes: &[u8]) -> Result<(), FsError> {
-        Err(FsError::Unsupported)
+    fn remove(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        FileSystem::remove(self, path_bytes)
     }
 
     fn readdir(&mut self, path_bytes: &[u8]) -> Result<Vec<DirItem>, FsError> {
@@ -265,7 +549,7 @@ impl<D: BlockDevice> Engine for FileSystem<D> {
     }
 
     fn sync(&mut self) -> Result<(), FsError> {
-        Ok(())
+        self.device.flush().map_err(FsError::Io)
     }
 }
 
@@ -275,6 +559,7 @@ mod tests {
     use crate::fat::fixtures::{
         fat16_boot, fat16_entry_at, install_boot, put_slot, slot_bytes, TestDevice,
     };
+    use alloc::format;
     use alloc::vec;
 
     fn volume_device() -> TestDevice {
@@ -466,16 +751,188 @@ mod tests {
     }
 
     #[test]
-    fn mutators_answer_unsupported() {
+    fn create_write_read_round_trip() {
         let mut fs = engine();
-        assert_eq!(Engine::create(&mut fs, b"/new.txt"), Err(FsError::Unsupported));
-        assert_eq!(Engine::mkdir(&mut fs, b"/newdir"), Err(FsError::Unsupported));
-        assert_eq!(Engine::rmdir(&mut fs, b"/games"), Err(FsError::Unsupported));
-        assert_eq!(Engine::remove(&mut fs, b"/notes.txt"), Err(FsError::Unsupported));
-        let handle = Engine::open(&mut fs, b"/notes.txt").expect("open");
+        let handle = Engine::create(&mut fs, b"/fresh.txt").expect("create");
+        assert_eq!(Engine::write(&mut fs, handle, 0, b"hello fat").expect("write"), 9);
+        Engine::close(&mut fs, handle).expect("close");
+        let meta = Engine::lookup(&mut fs, b"/fresh.txt").expect("lookup");
+        assert_eq!((meta.kind(), meta.size()), (Kind::Regular, 9));
+        let reopened = Engine::open(&mut fs, b"/fresh.txt").expect("reopen");
+        let mut buf = [0u8; 16];
+        assert_eq!(Engine::read(&mut fs, reopened, 0, &mut buf).expect("read"), 9);
+        assert_eq!(&buf[..9], b"hello fat");
+    }
+
+    #[test]
+    fn create_refuses_collisions_bad_names_and_missing_parents() {
+        let mut fs = engine();
+        assert_eq!(Engine::create(&mut fs, b"/notes.txt"), Err(FsError::AlreadyExists));
+        assert_eq!(Engine::create(&mut fs, b"/games"), Err(FsError::AlreadyExists));
+        assert_eq!(Engine::create(&mut fs, b"/a.b.txt"), Err(FsError::InvalidName));
+        assert_eq!(Engine::create(&mut fs, b"/toolongstem"), Err(FsError::InvalidName));
+        let reused = Engine::create(&mut fs, b"/gone.txt").expect("deleted name is reusable");
+        Engine::close(&mut fs, reused).expect("close");
+        assert_eq!(Engine::create(&mut fs, b"/gone.txt"), Err(FsError::AlreadyExists));
+        assert_eq!(Engine::create(&mut fs, b"/missing/parent"), Err(FsError::NotFound));
+        assert_eq!(Engine::create(&mut fs, b"/notes.txt/below"), Err(FsError::NotADirectory));
+        assert_eq!(Engine::create(&mut fs, b"/"), Err(FsError::IsADirectory));
+    }
+
+    #[test]
+    fn write_grows_across_clusters_and_zero_fills_gaps() {
+        let mut fs = engine();
+        let handle = Engine::create(&mut fs, b"/big").expect("create");
+        Engine::write(&mut fs, handle, 0, b"head").expect("write head");
+        let payload = [0x5Au8; 600];
+        Engine::write(&mut fs, handle, 600, &payload).expect("write far");
+        assert_eq!(Engine::stat(&mut fs, handle).expect("stat").size(), 1_200);
+        let mut gap = [0xFFu8; 4];
+        assert_eq!(Engine::read(&mut fs, handle, 500, &mut gap).expect("gap"), 4);
+        assert_eq!(gap, [0u8; 4]);
+        let mut tail = [0u8; 600];
+        assert_eq!(Engine::read(&mut fs, handle, 600, &mut tail).expect("tail"), 600);
+        assert!(tail.iter().all(|byte| *byte == 0x5A));
+    }
+
+    #[test]
+    fn oversized_writes_are_refused_before_any_touch() {
+        let mut fs = engine();
+        let handle = Engine::create(&mut fs, b"/huge").expect("create");
         assert_eq!(
-            Engine::write(&mut fs, handle, 0, b"data"),
-            Err(FsError::Unsupported)
+            Engine::write(&mut fs, handle, u64::from(u32::MAX) - 2, b"abcd"),
+            Err(FsError::FileTooLarge)
+        );
+        let mut buf = [0u8; 8];
+        assert_eq!(Engine::read(&mut fs, handle, 0, &mut buf).expect("still empty"), 0);
+    }
+
+    #[test]
+    fn written_files_survive_a_remount() {
+        let device = {
+            let mut fs = engine();
+            let handle = Engine::create(&mut fs, b"/persist.dat").expect("create");
+            Engine::write(&mut fs, handle, 0, b"keep me").expect("write");
+            Engine::close(&mut fs, handle).expect("close");
+            fs.device
+        };
+        let mut fs = FileSystem::new(device).expect("remount");
+        let handle = Engine::open(&mut fs, b"/persist.dat").expect("open after remount");
+        let mut buf = [0u8; 7];
+        assert_eq!(Engine::read(&mut fs, handle, 0, &mut buf).expect("read"), 7);
+        assert_eq!(&buf, b"keep me");
+    }
+
+    #[test]
+    fn remove_erases_and_reclaims_clusters() {
+        let mut fs = engine();
+        let free_before = fat::count_free_clusters(&mut fs.device, &fs.boot).expect("count");
+        let handle = Engine::create(&mut fs, b"/temp.bin").expect("create");
+        Engine::write(&mut fs, handle, 0, b"1234567890").expect("write");
+        Engine::close(&mut fs, handle).expect("close");
+        assert_eq!(Engine::remove(&mut fs, b"/temp.bin").expect("remove"), ());
+        assert_eq!(Engine::lookup(&mut fs, b"/temp.bin"), Err(FsError::NotFound));
+        assert_eq!(
+            fat::count_free_clusters(&mut fs.device, &fs.boot).expect("recount"),
+            free_before
+        );
+        assert_eq!(Engine::readdir(&mut fs, b"/").expect("listing").len(), 3);
+        assert_eq!(Engine::remove(&mut fs, b"/games"), Err(FsError::IsADirectory));
+        assert_eq!(Engine::remove(&mut fs, b"/missing"), Err(FsError::NotFound));
+        assert_eq!(Engine::remove(&mut fs, b"/"), Err(FsError::IsADirectory));
+    }
+
+    #[test]
+    fn a_removed_slot_fails_writes_through_open_handles() {
+        let mut fs = engine();
+        let handle = Engine::open(&mut fs, b"/notes.txt").expect("open");
+        Engine::remove(&mut fs, b"/notes.txt").expect("remove underneath");
+        assert_eq!(Engine::write(&mut fs, handle, 0, b"x"), Err(FsError::BadHandle));
+    }
+
+    #[test]
+    fn mkdir_lists_and_accepts_children() {
+        let mut fs = engine();
+        Engine::mkdir(&mut fs, b"/reports").expect("mkdir");
+        assert_eq!(Engine::readdir(&mut fs, b"/reports").expect("empty dir"), vec![]);
+        let child = Engine::create(&mut fs, b"/reports/q1.txt").expect("child create");
+        Engine::write(&mut fs, child, 0, b"quarter").expect("write child");
+        Engine::close(&mut fs, child).expect("close child");
+        assert_eq!(
+            Engine::readdir(&mut fs, b"/reports").expect("listing"),
+            vec![dir_item(Kind::Regular, b"q1.txt")]
+        );
+        assert_eq!(Engine::lookup(&mut fs, b"/reports/q1.txt").expect("lookup").size(), 7);
+        assert_eq!(Engine::mkdir(&mut fs, b"/reports"), Err(FsError::AlreadyExists));
+        assert_eq!(Engine::mkdir(&mut fs, b"/notes.txt/x"), Err(FsError::NotADirectory));
+        assert_eq!(Engine::mkdir(&mut fs, b"/bad name"), Err(FsError::InvalidName));
+    }
+
+    #[test]
+    fn rmdir_rules() {
+        let mut fs = engine();
+        assert_eq!(Engine::rmdir(&mut fs, b"/games"), Err(FsError::DirectoryNotEmpty));
+        assert_eq!(Engine::rmdir(&mut fs, b"/notes.txt"), Err(FsError::NotADirectory));
+        assert_eq!(Engine::rmdir(&mut fs, b"/missing"), Err(FsError::NotFound));
+        assert_eq!(Engine::rmdir(&mut fs, b"/"), Err(FsError::InvalidPath));
+        Engine::mkdir(&mut fs, b"/brief").expect("mkdir");
+        assert_eq!(Engine::rmdir(&mut fs, b"/brief").expect("rmdir"), ());
+        assert_eq!(Engine::lookup(&mut fs, b"/brief"), Err(FsError::NotFound));
+    }
+
+    #[test]
+    fn a_full_root_region_answers_no_space() {
+        let mut fs = engine();
+        for index in 0..508u32 {
+            let name = format!("/F{index:03}");
+            Engine::create(&mut fs, name.as_bytes()).expect("room for 508: one deleted slot plus 507 empty");
+        }
+        assert_eq!(Engine::create(&mut fs, b"/overflow"), Err(FsError::NoSpace));
+        assert_eq!(Engine::readdir(&mut fs, b"/").expect("listing").len(), 511);
+    }
+
+    #[test]
+    fn fat32_root_grows_by_chain_extension_and_keeps_fsinfo() {
+        use crate::boot::RootLocation;
+        let boot = BootSector {
+            bytes_per_sector: 512,
+            sectors_per_cluster: 1,
+            fat_count: 2,
+            reserved_sectors: 32,
+            fat_sectors: 512,
+            total_sectors: 66_589,
+            first_data_sector: 1_064,
+            cluster_count: 65_525,
+            fat_type: FatType::Fat32,
+            root: RootLocation::Cluster(2),
+            fsinfo_sector: 1,
+        };
+        let mut device = TestDevice::new(boot.total_sectors);
+        install_boot(&mut device, &boot);
+        let mark_root = |device: &mut TestDevice, cluster: u32, value: u32| {
+            for copy in 0..2usize {
+                let at = 32 * 512 + copy * 512 * 512 + (cluster as usize) * 4;
+                device.bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
+            }
+        };
+        mark_root(&mut device, 2, 0x0FFF_FFF8);
+        let mut fs = FileSystem::new(device).expect("fat32 opens");
+        for index in 0..20u32 {
+            let name = format!("/R{index:02}");
+            Engine::create(&mut fs, name.as_bytes()).expect("create");
+        }
+        assert_eq!(Engine::readdir(&mut fs, b"/").expect("listing").len(), 20);
+        let counted = fat::count_free_clusters(&mut fs.device, &fs.boot).expect("count");
+        assert_eq!(fs.free_clusters, Some(counted));
+        let at = 512 + 0x1E8;
+        assert_eq!(
+            u32::from_le_bytes([
+                fs.device.bytes[at],
+                fs.device.bytes[at + 1],
+                fs.device.bytes[at + 2],
+                fs.device.bytes[at + 3]
+            ]),
+            counted
         );
     }
 
@@ -484,6 +941,14 @@ mod tests {
         let mut fs = engine();
         Engine::sync(&mut fs).expect("first sync");
         Engine::sync(&mut fs).expect("second sync");
+    }
+
+    #[test]
+    fn sync_flushes_the_device() {
+        let mut fs = engine();
+        Engine::sync(&mut fs).expect("sync");
+        Engine::sync(&mut fs).expect("sync again");
+        assert_eq!(fs.device.flushes, 2);
     }
 
     #[test]

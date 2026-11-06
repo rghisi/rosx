@@ -26,6 +26,10 @@ impl<'a> PathParts<'a> {
     pub fn get(&self, index: usize) -> Option<&'a [u8]> {
         self.components.get(index).copied()
     }
+
+    pub fn last_segment(&self) -> Option<&'a [u8]> {
+        self.components.last().copied()
+    }
 }
 
 pub fn parse(path: &[u8]) -> Result<PathParts<'_>, FsError> {
