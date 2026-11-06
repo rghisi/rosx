@@ -75,13 +75,6 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     kernel::rom::init(ramdisk);
     let rom = kernel::rom::image();
     let _ = kernel.schedule(FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main));
-    let _ = kernel.schedule(new_elf_task("randomd", roster_elf(rom, "randomd")));
-    let _ = kernel.schedule(new_elf_task("echo", roster_elf(rom, "echo")));
-    let _ = kernel.schedule(new_elf_task("bulk", roster_elf(rom, "bulk")));
-    let _ = kernel.schedule(new_elf_task("pong", roster_elf(rom, "pong")));
-    let _ = kernel.schedule(new_elf_task("vfsd", roster_elf(rom, "vfsd")));
-    let _ = kernel.schedule(new_elf_task("inputd", roster_elf(rom, "inputd")));
-    let _ = kernel.schedule(new_elf_task("ps2d", roster_elf(rom, "ps2d")));
     match kernel.schedule_with_task_handle(new_elf_task("atad", roster_elf(rom, "atad"))) {
         Ok((atad_handle, _)) => {
             if !kernel::platform::portio::grant(atad_handle, 0x1F0, 0x1F7) {
@@ -93,7 +86,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         }
         Err(()) => kprintln!("[KERNEL] atad schedule failed"),
     }
-    let _ = kernel.schedule(new_elf_task("shell", roster_elf(rom, "shell")));
+    let _ = kernel.schedule(new_elf_task("init", roster_elf(rom, "init")));
 
     kprintln!("[KERNEL] Starting");
     kernel.start();
