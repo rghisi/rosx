@@ -78,9 +78,10 @@ fn is_486_safe(bytes: &str, mnemonic: &str) -> bool {
 }
 
 const SIZED_BASES: &[&str] = &[
-    "adc", "add", "and", "btc", "btr", "bts", "bt", "call", "cmp", "dec", "div", "idiv", "imul",
-    "inc", "in", "ins", "mul", "neg", "not", "or", "out", "pop", "push", "rcl", "rcr", "rol",
-    "ror", "sar", "sbb", "shl", "shr", "shld", "shrd", "sub", "test", "xchg", "xor",
+    "adc", "add", "and", "btc", "btr", "bts", "bt", "call", "cmp", "cmps", "dec", "div", "idiv",
+    "imul", "inc", "in", "ins", "lods", "movs", "mul", "neg", "not", "or", "out", "pop", "push",
+    "rcl", "rcr", "rol", "ror", "sar", "scas", "sbb", "shl", "shr", "shld", "shrd", "stos", "sub",
+    "test", "xchg", "xor",
 ];
 
 const EXACT_486_MNEMONICS: &[&str] = &[
@@ -88,13 +89,13 @@ const EXACT_486_MNEMONICS: &[&str] = &[
     "clc", "cld", "cli", "cmc", "cmpxchg", "cwde", "cwtl", "daa", "das", "enter", "hlt",
     "int", "int1", "int3", "into", "iret", "iretd", "lcall", "leave", "lfs", "lgdt", "lgdtl",
     "lgs", "lidt", "lidtl", "ljmp", "lldt", "lmsw", "lret", "lss", "ltr", "lea", "mov", "movb",
-    "movl", "movw", "movsb", "movsd", "movsl", "movsw", "movsbl", "movsbw", "movswl", "movzbl",
+    "movl", "movw", "movsbl", "movsbw", "movswl", "movzbl",
     "movzwl", "nop", "pause",
     "popa", "popad", "popf", "popfl", "pusha", "pushad", "pushf", "pushfl", "ret", "sahf",
-    "scasb", "scasd", "scasl", "scasw", "sgdt", "sgdtl", "sidt", "sidtl", "sldt", "smsw",
-    "stosb", "stosd", "stosl", "stosw", "stc", "std", "sti", "str", "verw", "wait", "xadd",
+    "sgdt", "sgdtl", "sidt", "sidtl", "sldt", "smsw",
+    "stc", "std", "sti", "str", "verw", "wait", "xadd",
     "xlat", "xlatb", "clts", "invd", "wbinvd", "loop", "loope", "loopz", "loopne", "loopnz",
-    "jecxz", "jrcxz", "lodsb", "lodsw", "lodsl", "lodsd", "cmpsb", "cmpsw", "cmpsl", "cmpsd",
+    "jecxz", "jrcxz",
 ];
 
 pub fn run_check_isa(spec: &ArchSpec, user_elfs: &[&str]) -> Result<Vec<String>, String> {
@@ -271,6 +272,11 @@ mod tests {
             ("0f b6 c0", "movzbl %al,%eax"),
             ("0f a4 d0 05", "shld   $0x5,%edx,%eax"),
             ("f3 a5", "rep movsl %ds:(%esi),%es:(%edi)"),
+            ("f3 ab", "rep stos %eax,%es:(%edi)"),
+            ("ab", "stos %eax,%es:(%edi)"),
+            ("f3 a6", "repe cmpsb %ds:(%esi),%es:(%edi)"),
+            ("ae", "scas %es:(%edi),%al"),
+            ("f3 a4", "rep movsb %ds:(%esi),%es:(%edi)"),
             ("0f b1 08", "cmpxchg %ecx,(%eax)"),
             ("cd 80", "int    $0x80"),
             ("cf", "iret"),
