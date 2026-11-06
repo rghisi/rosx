@@ -87,6 +87,17 @@ behind the mount.
 6. Docs: AGENTS.md VFS architecture paragraph gains the FAT mount sentence; the
    `fs/fat` entry's "vfsd does not mount it yet" retires.
 
+## Evidence (implemented 2026-11-06)
+
+- `MountedEngine`'s `Rxfs` variant is boxed (`clippy::large_enum_variant`:
+  rxfs `FileSystem` ≥1402 bytes vs rxfat's 92); one Box allocation per mount.
+- The probe function is `probe_format(head, Option<device_sectors>) -> VolumeFormat`
+  (names: `Rxfs`/`Fat`/`Unsupported`/`Foreign`); `head` is the first device block
+  read once via the block client before either engine is constructed.
+- Synthetic-FAT lesson (now encoded in `fat16_image` in the test module): a
+  space-filled 32-byte slot must zero `0x14..0x16` — rxfat reads the cluster-high
+  word there (FAT32 layout), so an un-zeroed slot decodes as `Corrupt`.
+
 ## Out of scope (next steps, recorded)
 
 - QEMU integration test executing an ELF off a FAT medium: needs harness
