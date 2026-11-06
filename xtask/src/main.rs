@@ -18,6 +18,8 @@ const FAT_DISK_DEFAULT_MIB: u64 = 16;
 
 const DEFAULT_FSTAB: &str = "# boot mount table: alias service drive dir\nhdd0 ATA 1 /hdd\n";
 
+const INIT_LST: &str = "# boot manifest: service <rom-name>, one per line\nservice randomd\nservice echo\nservice bulk\nservice pong\nservice vfsd\nservice inputd\nservice ps2d\nhandoff hdd/shell\nfallback shell\n";
+
 const UNSTABLE: [&str; 3] = [
     "-Zbuild-std=core,alloc,compiler_builtins",
     "-Zbuild-std-features=compiler-builtins-mem",
@@ -50,6 +52,7 @@ fn build_apps(spec: &ArchSpec) {
         cmd.arg("-p").arg(app);
     }
     cmd.arg("-p").arg("shell");
+    cmd.arg("-p").arg("init");
     cmd.arg("--target").arg(spec.user_target_spec);
     cmd.args(UNSTABLE);
     run(&mut cmd, &format!("build user-space ELF apps for {}", spec.name));
@@ -115,7 +118,18 @@ fn pack_rom(spec: &ArchSpec) {
         process::exit(1);
     };
     files.push(("shell", shell));
+    let init_path = release_dir.join("init");
+    let Ok(init) = std::fs::read(&init_path) else {
+        eprintln!(
+            "missing user ELF {}; run `cargo xtask apps {}` first",
+            init_path.display(),
+            spec.name
+        );
+        process::exit(1);
+    };
+    files.push(("init", init));
     files.push(("fstab", DEFAULT_FSTAB.as_bytes().to_vec()));
+    files.push(("init.lst", INIT_LST.as_bytes().to_vec()));
     files.sort_by_key(|(name, _)| *name);
     let pairs: Vec<(&str, &[u8])> = files
         .iter()
@@ -124,7 +138,11 @@ fn pack_rom(spec: &ArchSpec) {
     let image = system::rom::encode(&pairs);
     let rom_path = spec.rom_path();
     std::fs::write(&rom_path, image).expect("failed to write ROM image");
-    println!("==> packed ROM image {}", rom_path.display());
+    println!(
+        "==> packed ROM image {} with {} records",
+        rom_path.display(),
+        files.len()
+    );
 }
 
 struct FatDiskOptions {
@@ -347,6 +365,7 @@ fn check_isa_command(spec: &ArchSpec) {
     }
     let mut elfs: Vec<&str> = USER_APPS.to_vec();
     elfs.push("shell");
+    elfs.push("init");
     match check_isa::run_check_isa(spec, &elfs) {
         Err(message) => {
             eprintln!("error: {message}");

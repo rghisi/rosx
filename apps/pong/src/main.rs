@@ -78,8 +78,8 @@ impl PingServer {
                     checksum(&pong_payload)
                 );
                 data[4..4 + text.len()].copy_from_slice(text.as_bytes());
-                let _ = Syscall::ipc_send(connection, &data);
                 println!("PONG {} matched {}", pong_payload.len(), verdict_word);
+                let _ = Syscall::ipc_send(connection, &data);
                 self.previous_pong = Some(pong_handle);
             }
         }
