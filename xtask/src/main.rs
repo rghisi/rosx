@@ -287,6 +287,7 @@ fn create_era_images(debug: bool, spec: &ArchSpec) {
     iso_cmd
         .arg(era_script("build-legacy-iso.sh"))
         .arg(&kernel)
+        .arg(spec.rom_path())
         .arg(&stages)
         .arg(&iso);
     run(&mut iso_cmd, "build the GRUB Legacy El Torito era ISO");
@@ -295,6 +296,7 @@ fn create_era_images(debug: bool, spec: &ArchSpec) {
     hdd_cmd
         .arg(era_script("build-legacy-hdd.sh"))
         .arg(&kernel)
+        .arg(spec.rom_path())
         .arg(&stages)
         .arg(&hdd);
     run(&mut hdd_cmd, "build the GRUB Legacy FAT16 era HDD image");

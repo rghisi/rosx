@@ -1,4 +1,4 @@
-# Boot Packaging: Kernel + ROM as Files on FAT Media — Parked Plan
+# Boot Packaging: Kernel + ROM as Files on FAT Media
 
 > **Status:** **PARKED** by owner decision 2026-11-05 (the rxfat engine ships first;
 > this arc may resume afterwards or be superseded). Fully specified so it resumes
@@ -96,3 +96,25 @@ Unify both ports on a single FAT16 HDD image by moving x86_64 to GRUB 2 +
 Multiboot2 (retiring `bootloader_api` BootInfo for MB2 info tags; the x86_32 port's
 v1 parsing is the shape reference). Until then FAT is the only claim: both media are
 FAT disks built by different tools.
+
+## Evidence log (2026-11-06)
+
+- **Decode + carve + lookup:** `x86_generic::multiboot::boot_modules` (spec offsets
+  pinned by test — the first QEMU boot caught the @16/@20 slip, see the correction
+  above); `MemoryBlocks::carve` — 8 units; `kernel::rom::file_in` — 4 units;
+  x86-generic 32 units.
+- **ROM roster:** pack_rom now carries 28 ELFs + fstab (29 entries); kernel
+  binaries shrank 3.5 MB → 196 KB (x86_32) and 1.8 MB → 205 KB (x86_64).
+- **x86_32:** boots its whole roster from Multiboot module 0 (QEMU `-initrd`):
+  boot_and_shell 4/4. GRUB 2 ISO (module line) boots to `rose>` (iso_boot, 10.5 s).
+  Era media (GRUB Legacy 0.97-67, `module /boot/rom`): FAT16 HDD and El Torito ISO
+  both boot to `rose>` in QEMU `-cpu 486 -m 8`.
+- **x86_64:** `set_ramdisk` → `BootInfo.ramdisk_addr` read VERBATIM as virtual
+  (measured: dedicated window at 0x20000000000, first word `ROSX`; physical home
+  inside the loader's reserved gap — no carve needed, `Usable` filter covers it).
+  boot_and_shell 4/4, ipc_ping / ipc_bulk / vfs_hdd_flow green.
+- **Known era quirk (pre-existing, NOT from this arc):** one
+  `alloc.rs handle_alloc_error` panic per era boot at -m 8..16 regardless of
+  packaging — reproduced identically on boot-automount media rebuilt side by
+  side; the 8 MB era gate still reaches `rose>` on both. The m=12 window is a
+  marginal-heap lottery on both builds. Small-RAM budget work is its own story.
