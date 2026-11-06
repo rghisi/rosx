@@ -108,19 +108,28 @@ impl VfsServer {
         }
         for entry in entries {
             if let Err(error) = self.fs.attach_device(&entry.alias, &entry.service, entry.drive) {
-                println!("[VFSD] automount {}: attach failed: {error:?}", entry.alias);
+                println!(
+                    "[VFSD] automount {}: attach skipped: {error:?}",
+                    entry.alias
+                );
                 continue;
             }
             if let Err(error) = self.fs.mkdir(&entry.dir) {
                 if !matches!(error, VfsError::AlreadyExists) {
-                    println!("[VFSD] automount {}: mkdir failed: {error:?}", entry.alias);
+                    println!(
+                        "[VFSD] automount {}: mkdir skipped: {error:?}",
+                        entry.alias
+                    );
                     continue;
                 }
             }
             match self.fs.mount_device(&entry.alias, &entry.dir) {
                 Ok(()) => println!("[VFSD] automounted {} at /{}", entry.alias, entry.dir),
                 Err(error) => {
-                    println!("[VFSD] automount {}: mount failed: {error:?}", entry.alias)
+                    println!(
+                        "[VFSD] automount {}: mount skipped: {error:?}",
+                        entry.alias
+                    )
                 }
             }
         }

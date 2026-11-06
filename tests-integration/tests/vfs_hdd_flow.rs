@@ -25,7 +25,7 @@ fn attach_format_and_carve_directories_on_the_hard_disk_volume() {
     {
         let mut session = QemuSession::spawn_with_hdd_disk(&disk);
         session.expect_output("[ATAD] ata0 drive1 ready:", BOOT_BUDGET);
-        session.expect_output("[VFSD] automount hdd0: mount failed: NotFormatted", BOOT_BUDGET);
+        session.expect_output("[VFSD] automount hdd0: mount skipped: NotFormatted", BOOT_BUDGET);
         session.expect_output("rose>", BOOT_BUDGET);
 
         let listing = run(&mut session, "ata list", "ata disk 1 sectors=102400");

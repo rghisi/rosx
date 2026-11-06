@@ -57,11 +57,13 @@ and service bind, and attaches + mounts each listed drive by itself.
   asking for VFS during the pass simply retry-connect (5s budget), which
   every client already does; in return, no client can ever observe a
   half-populated registry or race the auto-attach.
-- **B4 — boot never fails because of a disk.** Every step's failure is a
-  `[VFSD] automount ...` console line and the next entry. A missing drive,
-  an absent service, an unformatted volume, or a corrupt fstab all yield
-  logs, not panics — contrast ROM ingest, which does panic (no root
-  without the ROM; a disk is optional).
+- **B4 — boot never fails because of a disk.** The pass verb is **skip**:
+  an entry that cannot attach, mkdir, or mount yields
+  `[VFSD] automount <alias>: <step> skipped: <error>` and the next entry
+  — never a panic, and never the word "failed" for a drive the machine
+  simply does not have (the healthy-window tests forbid that string, and
+  an absent optional disk is a healthy state). Contrast ROM ingest, which
+  does panic (no root without the ROM; a disk is optional).
 - **B5 — mount-point creation is the pass's job**: after a successful
   attach it creates the directory (tolerating `AlreadyExists`), then
   mounts. An attached-but-unformatted volume leaves the directory in
@@ -118,6 +120,32 @@ and service bind, and attaches + mounts each listed drive by itself.
   ROM entry; changing the table means rebuilding the ROM — honest for a
   boot-time policy), **unmount at shutdown** (there is no shutdown).
 - **P1 boot packaging** (arc 3).
+
+## Evidence (2026-11-06)
+
+- **Units:** `vfsd` 98 (81 registry/engine + 17 new `fstab` grammar);
+  full `cargo xtask test` battery exits 0 — 70 suites, zero failures.
+- **x86_64 integration:** the rewritten trio green — `vfs_hdd_flow` 49s
+  (session 1: `mount skipped: NotFormatted` at boot, `attach ata1 ATA 1`
+  → `Busy`, `mkdir /hdd` → `AlreadyExists`, then `format hdd0` →
+  `mount hdd0 /hdd`; session 2: boots formatted media, sees
+  `[VFSD] automounted hdd0 at /hdd`, and `ls /hdd` works with **zero
+  mount commands**), `fat_exec` ~19s (no dance, execs `hdd/mem`),
+  `fat_write` ~40s (writes + reboot persistence + mtools byte proof).
+  `boot_and_shell` 4/4 — the keystroke echo passes because the prompt
+  gate (B9) keeps the console clean.
+- **x86_32 integration:** 26 suites, zero failures (`-cpu 486`),
+  `check-isa x86_32` clean. The run caught a latent harness race:
+  `ipc_ping` snapshotted its window at the last *client* line while the
+  PONG server's print can legally land after its reply (visible ordering
+  flip in the 64-byte round); the window now waits for both terminal
+  lines — boot-timing shifts must never masquerade as ping bugs.
+- **Clippy:** zero warnings pointing at `apps/vfsd` or `apps/shell`.
+- **Boot-log phrasing earned its shape on real failures:** the daemon's
+  `mkdir` wire convention is no-leading-slash (the pass learned via
+  `mkdir skipped: InvalidPath`), and the healthy-window tripwires
+  (forbidden string `fail`) forced B4's *skip* verb — an absent optional
+  disk is a healthy boot, and the logs now say so.
 
 ## Residual risks and mitigations
 
