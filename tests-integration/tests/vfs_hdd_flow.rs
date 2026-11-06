@@ -25,27 +25,45 @@ fn attach_format_and_carve_directories_on_the_hard_disk_volume() {
     {
         let mut session = QemuSession::spawn_with_hdd_disk(&disk);
         session.expect_output("[ATAD] ata0 drive1 ready:", BOOT_BUDGET);
+        session.expect_output("[VFSD] automount hdd0: mount skipped: NotFormatted", BOOT_BUDGET);
         session.expect_output("rose>", BOOT_BUDGET);
 
         let listing = run(&mut session, "ata list", "ata disk 1 sectors=102400");
         assert!(listing.contains("ata disk 0"), "both drives must list: {listing}");
 
+        run(
+            &mut session,
+            "attach list",
+            "hdd0 provider ATA drive 1 blocks=102400 size=512 free",
+        );
+
         let reply = run(&mut session, "mount ata0 /hdd", "mount failed: Vfs(NotFound)");
-        assert!(reply.contains("NotFound"), "no mount point yet: {reply}");
+        assert!(
+            reply.contains("NotFound"),
+            "only the fstab alias exists at boot: {reply}"
+        );
 
-        run(&mut session, "mkdir /hdd", "mkdir ok /hdd");
+        let reply = run(&mut session, "mkdir /hdd", "mkdir failed: Vfs(AlreadyExists)");
+        assert!(
+            reply.contains("AlreadyExists"),
+            "the automount pass already created the mount point: {reply}"
+        );
 
-        let reply = run(&mut session, "mount ata0 /hdd", "mount failed: Vfs(NotFound)");
-        assert!(reply.contains("NotFound"), "no device attached yet: {reply}");
+        let reply = run(&mut session, "attach ata1 ATA 1", "attach failed: Vfs(Busy)");
+        assert!(
+            reply.contains("Busy"),
+            "the fstab already claimed the convention drive: {reply}"
+        );
 
-        run(&mut session, "attach ata0 ATA 1", "attach ok id=ata0 service=ATA device=1");
-        run(&mut session, "attach list", "ata0 provider ATA drive 1 blocks=102400 size=512 free");
+        run(&mut session, "mount hdd0 /hdd", "mount failed: Vfs(NotFormatted)");
+        run(&mut session, "format hdd0", "format ok device=hdd0");
+        run(&mut session, "mount hdd0 /hdd", "mount ok device=hdd0 dir=/hdd");
 
-        run(&mut session, "mount ata0 /hdd", "mount failed: Vfs(NotFormatted)");
-        run(&mut session, "format ata0", "format ok device=ata0");
-        run(&mut session, "mount ata0 /hdd", "mount ok device=ata0 dir=/hdd");
-
-        run(&mut session, "attach list", "ata0 provider ATA drive 1 blocks=102400 size=512 mounted at /hdd");
+        run(
+            &mut session,
+            "attach list",
+            "hdd0 provider ATA drive 1 blocks=102400 size=512 mounted at /hdd",
+        );
 
         let listing = run(&mut session, "ls /hdd", "rose>");
         assert!(
@@ -66,23 +84,18 @@ fn attach_format_and_carve_directories_on_the_hard_disk_volume() {
 
         run(&mut session, "rm /hdd", "rm failed: Vfs(NotPermitted)");
 
-        let reply = run(&mut session, "attach ata1 ATA 1", "attach failed: Vfs(Busy)");
-        assert!(reply.contains("Busy"), "one drive never attaches twice: {reply}");
-        let reply = run(&mut session, "format ata0", "format failed: Vfs(Busy)");
+        let reply = run(&mut session, "format hdd0", "format failed: Vfs(Busy)");
         assert!(reply.contains("Busy"), "a mounted drive never reformats: {reply}");
     }
 
     let mut session = QemuSession::spawn_with_hdd_disk(&disk);
+    session.expect_output("[VFSD] automounted hdd0 at /hdd", BOOT_BUDGET);
     session.expect_output("rose>", BOOT_BUDGET);
-
-    run(&mut session, "mkdir /hdd", "mkdir ok /hdd");
-    run(&mut session, "attach ata0 ATA 1", "attach ok id=ata0 service=ATA device=1");
-    run(&mut session, "mount ata0 /hdd", "mount ok device=ata0 dir=/hdd");
 
     let listing = run(&mut session, "ls /hdd", "rose>");
     assert!(
         listing.contains("pi") && listing.contains("sub"),
-        "the disk must survive the reboot: {listing}"
+        "the disk must survive the reboot with no mount ritual at all: {listing}"
     );
 
     let listing = run(&mut session, "ls hdd/sub", "rose>");

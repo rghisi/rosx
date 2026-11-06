@@ -9,6 +9,7 @@ const CLIENT_PREFIX: &str = "ping sent: ";
 const SERVER_PREFIX: &str = "PONG ";
 const SERVER_MATCHED: &str = " matched ";
 const LAST_SWEEP_LINE: &str = "ping sent: 65536 ok received: 65536 ok";
+const LAST_PONG_LINE: &str = "PONG 65536 matched ok";
 const FORBIDDEN_STRINGS: [&str; 2] = ["fail", "Panic"];
 
 fn count_prefixes(content: &str, prefix: &str) -> usize {
@@ -73,11 +74,13 @@ fn shell_ping_capability_data_roundtrip() {
 
     session.send_line("ping");
 
-    if let Err(output_tail) =
-        session.wait_until_since(mark, |delta| delta.contains(LAST_SWEEP_LINE), SWEEP_TIMEOUT)
-    {
+    if let Err(output_tail) = session.wait_until_since(
+        mark,
+        |delta| delta.contains(LAST_SWEEP_LINE) && delta.contains(LAST_PONG_LINE),
+        SWEEP_TIMEOUT,
+    ) {
         panic!(
-            "timed out after {SWEEP_TIMEOUT:?} waiting for {LAST_SWEEP_LINE:?}; output tail:\n{output_tail}"
+            "timed out after {SWEEP_TIMEOUT:?} waiting for {LAST_SWEEP_LINE:?} and {LAST_PONG_LINE:?}; output tail:\n{output_tail}"
         );
     }
 

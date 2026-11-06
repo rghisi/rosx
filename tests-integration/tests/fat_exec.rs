@@ -28,25 +28,22 @@ fn executes_a_program_loose_on_a_fat_volume() {
     image.write_to(&disk).expect("write the fat image");
 
     let mut session = QemuSession::spawn_with_hdd_disk(&disk);
-    session.expect_output("[ATAD] ata0 drive1 ready:", BOOT_BUDGET);
+    session.expect_output("[VFSD] automounted hdd0 at /hdd", BOOT_BUDGET);
     session.expect_output("rose>", BOOT_BUDGET);
 
     run(&mut session, "ata list", "ata disk 1 sectors=102400");
-    run(&mut session, "mkdir /fat", "mkdir ok /fat");
-    run(&mut session, "attach fat0 ATA 1", "attach ok id=fat0 service=ATA device=1");
-    run(&mut session, "mount fat0 /fat", "mount ok device=fat0 dir=/fat");
 
-    let listing = run(&mut session, "ls /fat", "rose>");
+    let listing = run(&mut session, "ls /hdd", "rose>");
     assert!(
         listing.contains("mem"),
-        "the packed program must list on the mounted volume: {listing}"
+        "the packed program must list on the auto-detected fat volume: {listing}"
     );
 
-    let reply = run(&mut session, "format fat0", "format failed: Vfs(Busy)");
+    let reply = run(&mut session, "format hdd0", "format failed: Vfs(Busy)");
     assert!(reply.contains("Busy"), "a mounted volume never reformats: {reply}");
 
     let mark = session.mark();
-    session.send_line("fat/mem");
+    session.send_line("hdd/mem");
     session.expect_output_since(mark, "KSTATSD memory snapshot", OP_BUDGET);
     session.expect_output_since(mark, "rose>", OP_BUDGET);
 

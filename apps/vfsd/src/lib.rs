@@ -4,3 +4,4 @@ extern crate alloc;
 
 pub mod blk;
 pub mod fs;
+pub mod fstab;

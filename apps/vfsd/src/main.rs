@@ -10,6 +10,7 @@ use usrlib::handle::{UserConnectionHandle, UserDataHandle};
 use usrlib::println;
 use usrlib::syscall::Syscall;
 use vfs_protocol::wire::{self, Reply, Request, VfsError};
+use vfsd::fstab;
 use vfsd::fs::ActiveStore;
 
 const INCOMING_READ_CHUNK_BYTES: usize = 4096;
@@ -72,7 +73,9 @@ fn devices_blob(fs: &ActiveStore) -> Vec<u8> {
 struct VfsServer {
     fs: ActiveStore,
     held: Vec<(u32, UserDataHandle)>,
-}impl VfsServer {
+}
+
+impl VfsServer {
     fn new() -> VfsServer {
         VfsServer {
             fs: ActiveStore::new(),
@@ -80,13 +83,55 @@ struct VfsServer {
         }
     }
 
-    fn mount_rom(&mut self) {
+    fn mount_rom(&mut self) -> Vec<u8> {
         let image = read_rom_image();
         if image.is_empty() {
-            return;
+            return image;
         }
         if let Err(err) = self.fs.attach_rom(&image) {
             panic!("VFS rom mount error: {err:?}");
+        }
+        image
+    }
+
+    fn auto_mount(&mut self, image: &[u8]) {
+        let Ok(rom) = system::rom::RomImage::parse(image) else {
+            return;
+        };
+        let Some(record) = rom.files().find(|file| file.name == fstab::ROM_FILE_NAME) else {
+            return;
+        };
+        let bytes = &rom.bytes()[record.offset..record.offset + record.len];
+        let (entries, skipped) = fstab::parse(bytes);
+        if skipped > 0 {
+            println!("[VFSD] fstab: {skipped} skipped");
+        }
+        for entry in entries {
+            if let Err(error) = self.fs.attach_device(&entry.alias, &entry.service, entry.drive) {
+                println!(
+                    "[VFSD] automount {}: attach skipped: {error:?}",
+                    entry.alias
+                );
+                continue;
+            }
+            if let Err(error) = self.fs.mkdir(&entry.dir) {
+                if !matches!(error, VfsError::AlreadyExists) {
+                    println!(
+                        "[VFSD] automount {}: mkdir skipped: {error:?}",
+                        entry.alias
+                    );
+                    continue;
+                }
+            }
+            match self.fs.mount_device(&entry.alias, &entry.dir) {
+                Ok(()) => println!("[VFSD] automounted {} at /{}", entry.alias, entry.dir),
+                Err(error) => {
+                    println!(
+                        "[VFSD] automount {}: mount skipped: {error:?}",
+                        entry.alias
+                    )
+                }
+            }
         }
     }
 
@@ -302,6 +347,7 @@ struct VfsServer {
 fn main() {
     println!("[IPC Server] VFS");
     let mut server = VfsServer::new();
-    server.mount_rom();
+    let image = server.mount_rom();
+    server.auto_mount(&image);
     server.run();
 }

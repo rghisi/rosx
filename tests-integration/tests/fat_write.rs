@@ -21,11 +21,8 @@ fn run(session: &mut QemuSession, command: &str, needle: &str) -> String {
 
 fn boot_with_fat(disk: &std::path::Path) -> QemuSession {
     let mut session = QemuSession::spawn_with_hdd_disk(disk);
-    session.expect_output("[ATAD] ata0 drive1 ready:", BOOT_BUDGET);
+    session.expect_output("[VFSD] automounted hdd0 at /hdd", BOOT_BUDGET);
     session.expect_output("rose>", BOOT_BUDGET);
-    run(&mut session, "mkdir /fat", "mkdir ok /fat");
-    run(&mut session, "attach fat0 ATA 1", "attach ok id=fat0 service=ATA device=1");
-    run(&mut session, "mount fat0 /fat", "mount ok device=fat0 dir=/fat");
     session
 }
 
@@ -74,27 +71,27 @@ fn files_written_by_the_guest_read_back_on_a_standard_system() {
 
     {
         let mut session = boot_with_fat(&disk);
-        let listing = run(&mut session, "ls /fat", "rose>");
+        let listing = run(&mut session, "ls /hdd", "rose>");
         assert!(listing.contains("mem"), "the packed file must list: {listing}");
 
-        run(&mut session, "cp mem fat/mem2", "cp ok mem -> fat/mem2");
-        run(&mut session, "mkdir fat/sub", "mkdir ok fat/sub");
-        run(&mut session, "cp echo fat/sub/e", "cp ok echo -> fat/sub/e");
-        run(&mut session, "rm fat/mem", "rm ok fat/mem");
+        run(&mut session, "cp mem hdd/mem2", "cp ok mem -> hdd/mem2");
+        run(&mut session, "mkdir hdd/sub", "mkdir ok hdd/sub");
+        run(&mut session, "cp echo hdd/sub/e", "cp ok echo -> hdd/sub/e");
+        run(&mut session, "rm hdd/mem", "rm ok hdd/mem");
 
-        let listing = run(&mut session, "ls /fat", "rose>");
+        let listing = run(&mut session, "ls /hdd", "rose>");
         assert!(listing.contains("mem2"), "the written file must list: {listing}");
         assert!(
             !listing.contains("mem\t") && !listing.contains("mem\n"),
             "the removed file must vanish: {listing}"
         );
-        let listing = run(&mut session, "ls fat/sub", "rose>");
+        let listing = run(&mut session, "ls hdd/sub", "rose>");
         assert!(listing.contains("e"), "the nested copy must list: {listing}");
     }
 
     {
         let mut session = boot_with_fat(&disk);
-        let listing = run(&mut session, "ls /fat", "rose>");
+        let listing = run(&mut session, "ls /hdd", "rose>");
         assert!(
             listing.contains("mem2") && listing.contains("sub"),
             "guest-written files must survive the reboot: {listing}"
@@ -103,11 +100,11 @@ fn files_written_by_the_guest_read_back_on_a_standard_system() {
             !listing.contains("mem\t") && !listing.contains("mem\n"),
             "the removal must survive the reboot: {listing}"
         );
-        let listing = run(&mut session, "ls fat/sub", "rose>");
+        let listing = run(&mut session, "ls hdd/sub", "rose>");
         assert!(listing.contains("e"), "nested content must survive: {listing}");
 
-        run(&mut session, "rm fat/sub/e", "rm ok fat/sub/e");
-        run(&mut session, "rmdir fat/sub", "rmdir ok fat/sub");
+        run(&mut session, "rm hdd/sub/e", "rm ok hdd/sub/e");
+        run(&mut session, "rmdir hdd/sub", "rmdir ok hdd/sub");
     }
 
     if mtools_missing() {

@@ -32,6 +32,7 @@ pub fn main() {
         name: String::new(),
         args: Vec::new(),
     });
+    await_filesystem();
     prompt();
     
     let mut buffer = String::new();
@@ -65,6 +66,12 @@ pub fn main() {
 
 fn prompt() {
     print!("{}", PROMPT);
+}
+
+fn await_filesystem() {
+    if let Ok(vfs) = Vfs::connect() {
+        vfs.disconnect();
+    }
 }
 
 fn rose(_cmd: &Command) {
