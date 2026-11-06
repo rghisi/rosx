@@ -1,6 +1,6 @@
 # Single-Disk Boot: drive0 Carries the Kernel, the Bootstrap ROM, and the Root Volume
 
-> **Status:** Active — plan-first; owner sign-off pending on decisions D1-D5 below.
+> **Status:** Active — owner decisions D1-D5 ratified 2026-11-06; implementation started.
 > Written 2026-11-06 against `init-decoupling` (PR #128, arc 4).
 > **Repo law applies** (AGENTS.md): no comments in Rust, no commit-subject prefix,
 > one commit per step, unit tests per module, kernel = mechanism / policy userspace.
@@ -106,23 +106,20 @@ cannot enter 64-bit.
 - **I8 — the era gate**: the `-cpu 486 -m 8` rehearsal must reach `rose>` **with no
   allocation-failure panic** — this arc closes the arc 4 era-OOM evidence entry.
 
-## Owner decisions (pending)
+## Owner decisions (ratified 2026-11-06)
 
-- **D1 — root format = FAT** (recommended: GRUB-readable, rxfat read+write, `mtools`
-  third opinion, roster fits 8.3) vs an rxfs partition (nicer names + Fletcher-32,
-  but needs a partition-offset block adapter and a host-side rxfs formatter — F5).
-- **D2 — keep drive1 `/hdd`** as the optional writable data convention (recommended:
-  yes; the hdd suites stay untouched).
-- **D3 — keep the `shell` ROM fallback** for this arc (recommended: yes; retiring it
-  is F4, once disk-root boot is trusted).
+- **D1 — root format = FAT.** Ratified. The rxfs-partition alternative stays F5.
+- **D2 — keep drive1 `/hdd`** as the optional writable data convention. Ratified,
+  with the owner's explicit intent to remove it later — captured as **F7**; the hdd
+  suites stay untouched this arc.
+- **D3 — keep the `shell` ROM fallback** for this arc. Ratified; retiring it stays F4.
 - **D4 — image builder = the era recipe first** (sfdisk/mformat/mmd/mcopy/dd + the
-  pinned grub-shell container, all already trusted in `era-image`) with a pure-Rust
-  `fat-image` builder as F3; the alternative grows `fat-image` (directories +
-  partition table) now — bigger, well-testable, and no fewer external tools because
-  stage `setup` needs the container either way.
+  pinned grub-shell container, all already trusted in `era-image`); a pure-Rust
+  `fat-image` builder stays F3 — stage `setup` needs the container either way.
+  Ratified.
 - **D5 — the integration harness keeps booting `-kernel`/`-initrd`** (fast, stable);
   only `cargo xtask run x86_32` switches to the image, so development exercises the
-  shipped medium.
+  shipped medium. Ratified.
 
 ## Steps
 
@@ -175,5 +172,8 @@ cannot enter 64-bit.
 - **F5 — the rxfs-root option**: partition-offset `BlockDevice` adapter + host rxfs
   formatter, if the FAT 8.3 name ceiling ever bites.
 - **F6 — supervision** (inherited arc-4 F2, independent).
+- **F7 — retire the drive1 `/hdd` convention** (owner intent behind D2): once the root
+  volume is writable (F2), a second data drive loses its reason to exist — the default
+  fstab entry, the harness's two-drive topology and the persisting-hdd suites go away.
 
 ## Evidence (to be filled during execution)
