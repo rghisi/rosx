@@ -126,3 +126,16 @@ for developers, 86Box, and hardware.
 - **8.3 name folding**: app names longer than 8 chars truncate in the short
   name; the roster check in `fat-disk` must refuse or warn on names that collide
   after folding (`snake.elf` vs `snakelong.elf` → both `snake`-ish prefixes).
+
+## Evidence log
+
+- 2026-11-06, milestone 1 (`fat-image`): 13 unit tests + 2 mtools differential
+  tests green, clippy clean. The differential round exposed three facts the
+  rxfat reader never demanded, now encoded in the writer and its tests:
+  (1) both FAT copies must carry identical bytes - mtools reads the second one;
+  (2) FAT entry 0 must encode the BPB media descriptor (mformat: `0xFFF8` for
+  media `0xF8`), a mismatch answers "Bad media types";
+  (3) on FAT16 the fourth FAT byte (high byte of entry 1) must be `0xFF` -
+  `0x0FFF` is a chain value there, not an end marker (mtools: "Error reading
+  FAT"). Media `0xF8` also keeps mtools from inferring floppy geometry and
+  refusing the volume.
