@@ -17,6 +17,7 @@ test = false
 [dependencies]
 block-protocol = { path = "../../protocol/block" }
 fs-core = { path = "../../fs/core" }
+rxfat = { path = "../../fs/fat" }
 rxfs = { path = "../../fs/rxfs" }
 system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }
