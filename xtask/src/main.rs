@@ -16,6 +16,8 @@ const MBR_SIGNATURE_OFFSET: usize = 510;
 const MIB: u64 = 1024 * 1024;
 const FAT_DISK_DEFAULT_MIB: u64 = 16;
 
+const DEFAULT_FSTAB: &str = "# boot mount table: alias service drive dir\nhdd0 ATA 1 /hdd\n";
+
 const UNSTABLE: [&str; 3] = [
     "-Zbuild-std=core,alloc,compiler_builtins",
     "-Zbuild-std-features=compiler-builtins-mem",
@@ -103,6 +105,7 @@ fn pack_rom(spec: &ArchSpec) {
         };
         files.push((name, bytes));
     }
+    files.push(("fstab", DEFAULT_FSTAB.as_bytes().to_vec()));
     files.sort_by_key(|(name, _)| *name);
     let pairs: Vec<(&str, &[u8])> = files
         .iter()

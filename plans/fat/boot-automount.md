@@ -77,6 +77,16 @@ and service bind, and attaches + mounts each listed drive by itself.
   `fat_write` rename `/fat` → `/hdd` and drop the dance; the old manual
   `attach` lines become the *negative* assertion (a claimed drive answers
   `Busy`).
+- **B9 — the prompt means the filesystem is ready.** The shell dials VFS
+  once (`connect` + `disconnect`) before printing its first prompt. The
+  boot-time automount log line otherwise lands on the console whenever
+  the scheduler pleases — an early run proved it slicing
+  `rose> hel[VFSD] automount ...` straight through the keystroke-echo
+  test. With B3 (bind after the automount pass) plus B9, the ordering is
+  guaranteed: `[VFSD] automount...` always precedes `rose>`, the console
+  after the prompt is clean, and `ls /hdd` at the first prompt is
+  meaningful. A dead `vfsd` costs the shell one 5s connect budget, then
+  the prompt appears anyway and per-command errors stay as they were.
 
 ## Milestones
 
