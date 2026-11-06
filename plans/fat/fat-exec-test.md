@@ -148,3 +148,12 @@ for developers, 86Box, and hardware.
   over `pi` - `pi` computes 20 000 digits without exit, `mem` prints a
   distinctive banner and terminates, so the test also proves the shell reaps
   the launched task.
+- 2026-11-06, milestone 3 (`xtask fat-disk`): packs all 27 roster ELFs
+  (1.05 MiB) tool-free - default 16 MiB FAT16 lands at
+  `target/rosx-fat-disk.img`, and `--fat32 --size 64` verifies on the FAT32
+  planner too; `mdir` on the x86_64 image lists the full roster. The
+  fold-collision concern is structural, not procedural: names outside 8.3
+  fail as `InvalidName` and names colliding after uppercase fail as
+  `DuplicateName` inside `add_file`, so the roster check can never silently
+  overwrite. Slot dates written as DOS epoch 1980-01-01 so `mdir` (and any
+  inspection tool) shows a decodable date instead of `1980-00-00`.

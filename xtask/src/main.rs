@@ -6,12 +6,15 @@ mod arch;
 mod check_isa;
 
 use arch::{ArchSpec, X86_64};
+use fat_image::{FatDisk, FatKind};
 use x86_runner::{BootMedium, LaunchMode};
 
 const USER_APPS: [&str; 27] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "bench", "atad", "ata", "format", "mount", "attach", "rm", "cp", "mkdir", "rmdir"];
 
 const RUN_DISK_BYTES: usize = 1024 * 1024;
 const MBR_SIGNATURE_OFFSET: usize = 510;
+const MIB: u64 = 1024 * 1024;
+const FAT_DISK_DEFAULT_MIB: u64 = 16;
 
 const UNSTABLE: [&str; 3] = [
     "-Zbuild-std=core,alloc,compiler_builtins",
@@ -109,6 +112,86 @@ fn pack_rom(spec: &ArchSpec) {
     let rom_path = spec.rom_path();
     std::fs::write(&rom_path, image).expect("failed to write ROM image");
     println!("==> packed ROM image {}", rom_path.display());
+}
+
+struct FatDiskOptions {
+    fat32: bool,
+    size_mib: u64,
+    out: Option<PathBuf>,
+}
+
+fn parse_fat_disk_options(extras: &[String]) -> FatDiskOptions {
+    let mut options = FatDiskOptions { fat32: false, size_mib: FAT_DISK_DEFAULT_MIB, out: None };
+    let mut iter = extras.iter();
+    while let Some(token) = iter.next() {
+        match token.as_str() {
+            "--fat32" => options.fat32 = true,
+            "--size" => {
+                let Some(value) = iter.next() else {
+                    eprintln!("--size wants a MiB count, e.g. --size 64");
+                    usage();
+                    process::exit(2);
+                };
+                options.size_mib = value.parse().unwrap_or_else(|_| {
+                    eprintln!("--size must be an integer MiB count, got '{value}'");
+                    process::exit(2);
+                });
+            }
+            "--out" => {
+                let Some(path) = iter.next() else {
+                    eprintln!("--out wants a file path");
+                    usage();
+                    process::exit(2);
+                };
+                options.out = Some(PathBuf::from(path));
+            }
+            other => {
+                eprintln!("unknown flag: {other}");
+                usage();
+                process::exit(2);
+            }
+        }
+    }
+    options
+}
+
+fn pack_fat_disk(spec: &ArchSpec, options: &FatDiskOptions) {
+    build_apps(spec);
+    let (kind, kind_name) = match options.fat32 {
+        true => (FatKind::Fat32, "FAT32"),
+        false => (FatKind::Fat16, "FAT16"),
+    };
+    let mut disk = FatDisk::new(kind, options.size_mib * MIB).unwrap_or_else(|error| {
+        eprintln!("cannot lay out a {} MiB {kind_name} volume: {error}", options.size_mib);
+        process::exit(1);
+    });
+    let release_dir = spec.user_release_dir();
+    let mut packed = 0usize;
+    let mut payload_bytes = 0usize;
+    for name in USER_APPS {
+        let path = release_dir.join(name);
+        let Ok(bytes) = std::fs::read(&path) else {
+            eprintln!("missing user ELF {}; run `cargo xtask apps {}` first", path.display(), spec.name);
+            process::exit(1);
+        };
+        disk.add_file(name, &bytes).unwrap_or_else(|error| {
+            eprintln!("cannot pack {name} into the {kind_name} volume: {error}");
+            process::exit(1);
+        });
+        packed += 1;
+        payload_bytes += bytes.len();
+    }
+    let out = options.out.clone().unwrap_or_else(|| {
+        workspace_root().join("target").join(format!("{}-fat-disk.img", spec.kernel_dir_name))
+    });
+    disk.write_to(&out).unwrap_or_else(|error| {
+        eprintln!("cannot write {}: {error}", out.display());
+        process::exit(1);
+    });
+    println!(
+        "==> packed {packed} user ELFs ({payload_bytes} bytes) into {kind_name} image {}",
+        out.display()
+    );
 }
 
 fn create_run_disk(spec: &ArchSpec) -> PathBuf {
@@ -311,7 +394,7 @@ fn parse_stages_option(extras: &[String]) -> Result<Option<std::path::PathBuf>, 
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | test [--skip-integration]>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | fat-disk [x86_64|x86_32] [--fat32] [--size MiB] [--out path] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | test [--skip-integration]>"
     );
 }
 
@@ -403,6 +486,11 @@ fn main() {
             let (spec, rest) = split_arch(extras);
             require_no_extras(rest);
             pack_rom(spec);
+        }
+        "fat-disk" => {
+            let (spec, rest) = split_arch(extras);
+            let options = parse_fat_disk_options(rest);
+            pack_fat_disk(spec, &options);
         }
         "check-isa" => {
             let (spec, rest) = split_arch(extras);
