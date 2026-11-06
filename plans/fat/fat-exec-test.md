@@ -139,3 +139,12 @@ for developers, 86Box, and hardware.
   `0x0FFF` is a chain value there, not an end marker (mtools: "Error reading
   FAT"). Media `0xF8` also keeps mtools from inferring floppy geometry and
   refusing the volume.
+- 2026-11-06, milestone 2 (`fat_exec`): one session on each port - a 50 MiB
+  FAT16 superfloppy written by `fat-image` (single file `MEM`), booted with
+  `spawn_with_hdd_disk`, then `mkdir /fat` -> `attach fat0 ATA 1` -> `mount`
+  (auto-detect, never formatted in-guest) -> `ls /fat` -> `format` refused as
+  `Busy` -> `fat/mem` execs and prints `KSTATSD memory snapshot` before the
+  prompt returns. x86_64 21s, x86_32 (-cpu 486) 6.4s. Marker choice: `mem`
+  over `pi` - `pi` computes 20 000 digits without exit, `mem` prints a
+  distinctive banner and terminates, so the test also proves the shell reaps
+  the launched task.
