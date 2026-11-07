@@ -111,8 +111,8 @@ impl VfsServer {
                 Ok((kind, size)) => Reply::Stat { kind, size },
                 Err(error) => Reply::Err(error),
             },
-            Request::ListDir { dir } => {
-                let blob = self.fs.list_dir(dir);
+            Request::List { path } => {
+                let blob = self.fs.list(path);
                 self.payload_reply(connection, owner, blob, |token, total| {
                     Reply::Listed { token, total }
                 })

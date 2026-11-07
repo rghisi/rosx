@@ -15,7 +15,7 @@ pub const WRITE: u8 = 3;
 pub const CLOSE: u8 = 4;
 pub const DELETE: u8 = 5;
 pub const STAT: u8 = 7;
-pub const LIST_DIR: u8 = 8;
+pub const LIST: u8 = 8;
 pub const MOUNT: u8 = 9;
 pub const FORMAT: u8 = 10;
 pub const MKDIR: u8 = 11;
@@ -105,7 +105,7 @@ pub enum Request<'a> {
     Close { handle: u32 },
     Delete { name: &'a str },
     Stat { name: &'a str },
-    ListDir { dir: &'a str },
+    List { path: &'a str },
     MkDir { path: &'a str },
     RmDir { path: &'a str },
     Mount { device: &'a str, dir: &'a str },
@@ -211,7 +211,7 @@ impl Request<'_> {
             }
             Request::Delete { name } => encode_path_frame(DELETE, name),
             Request::Stat { name } => encode_path_frame(STAT, name),
-            Request::ListDir { dir } => encode_path_frame(LIST_DIR, dir),
+            Request::List { path } => encode_path_frame(LIST, path),
             Request::MkDir { path } => encode_path_frame(MKDIR, path),
             Request::RmDir { path } => encode_path_frame(RMDIR, path),
             Request::Mount { device, dir } => {
@@ -285,9 +285,9 @@ impl Request<'_> {
                 let name = decode_path(frame, 2, frame[1] as usize)?;
                 Ok(Request::Stat { name })
             }
-            LIST_DIR => {
-                let dir = decode_path(frame, 2, frame[1] as usize)?;
-                Ok(Request::ListDir { dir })
+            LIST => {
+                let path = decode_path(frame, 2, frame[1] as usize)?;
+                Ok(Request::List { path })
             }
             MKDIR => {
                 let path = decode_path(frame, 2, frame[1] as usize)?;
@@ -654,44 +654,44 @@ mod tests {
     }
 
     #[test]
-    fn list_dir_frame_pins_offsets_for_mount_dir() {
-        let frame = Request::ListDir { dir: "/hdd" }.encode().unwrap();
-        assert_eq!(frame[0], LIST_DIR);
+    fn list_frame_pins_offsets() {
+        let frame = Request::List { path: "/hdd" }.encode().unwrap();
+        assert_eq!(frame[0], LIST);
         assert_eq!(frame[1], 4);
         assert_eq!(&frame[2..6], b"/hdd");
         assert!(frame[6..].iter().all(|byte| *byte == 0));
     }
 
     #[test]
-    fn list_dir_request_roundtrips() {
-        let frame = Request::ListDir { dir: "/hdd" }.encode().unwrap();
-        assert_eq!(Request::decode(&frame), Ok(Request::ListDir { dir: "/hdd" }));
+    fn list_request_roundtrips() {
+        let frame = Request::List { path: "/hdd" }.encode().unwrap();
+        assert_eq!(Request::decode(&frame), Ok(Request::List { path: "/hdd" }));
     }
 
     #[test]
-    fn list_dir_of_root_roundtrips() {
-        let frame = Request::ListDir { dir: "/" }.encode().unwrap();
-        assert_eq!(Request::decode(&frame), Ok(Request::ListDir { dir: "/" }));
+    fn list_of_root_roundtrips() {
+        let frame = Request::List { path: "/" }.encode().unwrap();
+        assert_eq!(Request::decode(&frame), Ok(Request::List { path: "/" }));
     }
 
     #[test]
-    fn list_dir_rejects_invalid_paths() {
-        assert_eq!(Request::ListDir { dir: "" }.encode(), Err(VfsError::InvalidPath));
+    fn list_rejects_invalid_paths() {
+        assert_eq!(Request::List { path: "" }.encode(), Err(VfsError::InvalidPath));
         assert_eq!(
-            Request::ListDir { dir: "hdd" }.encode(),
+            Request::List { path: "hdd" }.encode(),
             Err(VfsError::InvalidPath)
         );
         let mut frame = [0u8; FRAME_BYTES];
-        frame[0] = LIST_DIR;
+        frame[0] = LIST;
         frame[1] = 5;
         frame[2..7].copy_from_slice(b"/a//b");
         assert_eq!(Request::decode(&frame), Err(VfsError::InvalidPath));
     }
 
     #[test]
-    fn list_dir_accepts_nested_paths() {
-        let frame = Request::ListDir { dir: "/hdd/sub" }.encode().unwrap();
-        assert_eq!(Request::decode(&frame), Ok(Request::ListDir { dir: "/hdd/sub" }));
+    fn list_accepts_nested_paths() {
+        let frame = Request::List { path: "/hdd/sub" }.encode().unwrap();
+        assert_eq!(Request::decode(&frame), Ok(Request::List { path: "/hdd/sub" }));
     }
 
     #[test]
@@ -1184,7 +1184,7 @@ mod tests {
         assert_eq!(CLOSE, 4);
         assert_eq!(DELETE, 5);
         assert_eq!(STAT, 7);
-        assert_eq!(LIST_DIR, 8);
+        assert_eq!(LIST, 8);
         assert_eq!(MOUNT, 9);
         assert_eq!(FORMAT, 10);
         assert_eq!(MKDIR, 11);
@@ -1200,7 +1200,7 @@ mod tests {
             CLOSE,
             DELETE,
             STAT,
-            LIST_DIR,
+            LIST,
             MOUNT,
             FORMAT,
             MKDIR,
@@ -1449,7 +1449,7 @@ mod tests {
     fn seed_frames() -> Vec<[u8; FRAME_BYTES]> {
         let requests: Vec<Request> = vec![
             Request::Open { mode: 0, name: "/notes.txt" },
-            Request::ListDir { dir: "/hdd" },
+            Request::List { path: "/hdd" },
             Request::Stat { name: "/" },
             Request::Mount { device: "ata0", dir: "/hdd" },
             Request::Format { device: "ata0" },

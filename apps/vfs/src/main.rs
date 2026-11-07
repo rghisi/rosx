@@ -143,7 +143,7 @@ fn run(vfs: &Vfs) -> bool {
         return failed("reopen kept 9216");
     }
 
-    match vfs.list_dir("/") {
+    match vfs.list("/") {
         Ok(names) if listed(&names, "notes.txt") => {
             println!("  list: {}", names.iter().fold(String::new(), |acc, x| acc + &x.to_string() + ", "));
         }
@@ -201,7 +201,7 @@ fn run(vfs: &Vfs) -> bool {
     }
     println!("vfs ok: stat blob.bin 131072");
 
-    match vfs.list_dir("/") {
+    match vfs.list("/") {
         Ok(names) if listed(&names, "blob.bin") && listed(&names, "notes.txt") => {
             println!("  list: {}", names.iter().fold(String::new(), |acc, x| acc + &x.to_string() + ", "));
         }
@@ -226,7 +226,7 @@ fn run(vfs: &Vfs) -> bool {
     }
     println!("vfs ok: stat after delete denied");
 
-    match vfs.list_dir("/") {
+    match vfs.list("/") {
         Ok(names) if listed(&names, "blob.bin") && !listed(&names, "notes.txt") => {
             println!("  list: {}", names.iter().fold(String::new(), |acc, x| acc + &x.to_string() + ", "));
         }
@@ -239,7 +239,7 @@ fn run(vfs: &Vfs) -> bool {
     }
     println!("vfs ok: delete blob.bin");
 
-    match vfs.list_dir("/") {
+    match vfs.list("/") {
         Ok(names) if !listed(&names, "notes.txt") && !listed(&names, "blob.bin") => {
             println!("  list: {}", names.iter().fold(String::new(), |acc, x| acc + &x.to_string() + ", "));
         }

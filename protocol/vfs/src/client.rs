@@ -120,8 +120,8 @@ impl Vfs {
         }
     }
 
-    pub fn list_dir(&self, dir: &str) -> Result<Vec<String>, ClientError> {
-        let request = wire::Request::ListDir { dir };
+    pub fn list(&self, path: &str) -> Result<Vec<String>, ClientError> {
+        let request = wire::Request::List { path };
         listed_names(transact(self.connection, request)?)
     }
 

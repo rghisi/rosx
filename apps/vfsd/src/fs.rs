@@ -550,12 +550,12 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
         Ok((kind, size))
     }
 
-    pub fn list_dir(&mut self, dir: &str) -> Result<Vec<u8>, VfsError> {
-        if !wire::valid_path(dir) {
+    pub fn list(&mut self, path: &str) -> Result<Vec<u8>, VfsError> {
+        if !wire::valid_path(path) {
             return Err(VfsError::InvalidPath);
         }
-        match self.route(dir)? {
-            Target::Root => readdir_blob(&mut self.engine, dir.as_bytes()),
+        match self.route(path)? {
+            Target::Root => readdir_blob(&mut self.engine, path.as_bytes()),
             Target::Volume(slot, path) => {
                 let volume = self.volume_mut(slot)?;
                 readdir_blob(volume, path.as_bytes())
@@ -912,17 +912,17 @@ mod tests {
     }
 
     #[test]
-    fn list_dir_returns_sorted_newline_joined_names() {
+    fn list_returns_sorted_newline_joined_names() {
         let mut fs = fresh_store();
         create(&mut fs, OWNER, "/notes.txt");
         create(&mut fs, OWNER, "/blob.bin");
-        assert_eq!(fs.list_dir("/").unwrap(), b"blob.bin\nnotes.txt".to_vec());
+        assert_eq!(fs.list("/").unwrap(), b"blob.bin\nnotes.txt".to_vec());
     }
 
     #[test]
-    fn list_dir_of_empty_root_is_empty() {
+    fn list_of_empty_root_is_empty() {
         let mut fs = fresh_store();
-        assert_eq!(fs.list_dir("/").unwrap(), Vec::new());
+        assert_eq!(fs.list("/").unwrap(), Vec::new());
     }
 
     #[test]
@@ -975,7 +975,7 @@ mod tests {
             }
         }
         assert_eq!(created, 510);
-        let blob = fs.list_dir("/").unwrap();
+        let blob = fs.list("/").unwrap();
         assert!(blob.len() > 510 * 8);
     }
 
@@ -992,7 +992,7 @@ mod tests {
         fs.attach_rom(&fabricated_rom()).unwrap();
         create(&mut fs, OWNER, "/mid.txt");
         assert_eq!(
-            fs.list_dir("/").unwrap(),
+            fs.list("/").unwrap(),
             b"alpha.bin\nbeta.bin\nmid.txt".to_vec()
         );
     }
@@ -1051,7 +1051,7 @@ mod tests {
         let mut fs = fresh_store();
         fs.attach_rom(&fabricated_rom()).unwrap();
         assert_eq!(fs.delete("/alpha.bin"), Err(VfsError::NotPermitted));
-        assert_eq!(fs.list_dir("/").unwrap(), b"alpha.bin\nbeta.bin".to_vec());
+        assert_eq!(fs.list("/").unwrap(), b"alpha.bin\nbeta.bin".to_vec());
     }
 
     #[test]
@@ -1071,7 +1071,7 @@ mod tests {
             fs.attach_rom(b"not a rom image at all"),
             Err(RomMountError::Format(RomError::BadMagic))
         ));
-        assert_eq!(fs.list_dir("/").unwrap(), Vec::new());
+        assert_eq!(fs.list("/").unwrap(), Vec::new());
     }
 
     #[test]
@@ -1082,7 +1082,7 @@ mod tests {
             fs.attach_rom(&image),
             Err(RomMountError::InvalidName(ref name)) if name == "bad\nname"
         ));
-        assert_eq!(fs.list_dir("/").unwrap(), Vec::new());
+        assert_eq!(fs.list("/").unwrap(), Vec::new());
     }
 
     #[test]
@@ -1093,7 +1093,7 @@ mod tests {
             fs.attach_rom(&fabricated_rom()),
             Err(RomMountError::Duplicate(ref name)) if name == "alpha.bin"
         ));
-        assert_eq!(fs.list_dir("/").unwrap(), b"alpha.bin".to_vec());
+        assert_eq!(fs.list("/").unwrap(), b"alpha.bin".to_vec());
         fs.write(OWNER, handle, 0, b"still writable")
             .expect("collision rejection must not convert RAM to ROM");
         assert_eq!(contents(&mut fs, OWNER, handle), b"still writable".to_vec());
@@ -1115,7 +1115,7 @@ mod tests {
         let beta = fs.open(OWNER, 0, "/beta.bin").unwrap();
         let expected_beta: Vec<u8> = (0..4097u32).map(|i| (i % 197) as u8).collect();
         assert_eq!(contents(&mut fs, OWNER, beta), expected_beta);
-        assert_eq!(fs.list_dir("/").unwrap(), b"alpha.bin\nbeta.bin".to_vec());
+        assert_eq!(fs.list("/").unwrap(), b"alpha.bin\nbeta.bin".to_vec());
     }
 
     #[test]
@@ -1155,17 +1155,17 @@ mod tests {
         assert_eq!(contents(&mut fs, OWNER, read), b"on disk");
         assert_eq!(fs.stat("/notes.txt"), Err(VfsError::NotFound));
         assert_eq!(fs.stat("/disk/notes.txt").unwrap(), (EntityKind::File, 7));
-        assert_eq!(fs.list_dir("/").unwrap(), b"disk".to_vec());
+        assert_eq!(fs.list("/").unwrap(), b"disk".to_vec());
     }
 
     #[test]
-    fn routed_list_dir_reads_the_volume() {
+    fn routed_list_reads_the_volume() {
         let mut fs = fresh_store();
         mount_fake(&mut fs, "disk");
         create(&mut fs, OWNER, "/disk/beta");
         create(&mut fs, OWNER, "/disk/alpha");
-        assert_eq!(fs.list_dir("/disk").unwrap(), b"alpha\nbeta".to_vec());
-        assert_eq!(fs.list_dir("/").unwrap(), b"disk".to_vec());
+        assert_eq!(fs.list("/disk").unwrap(), b"alpha\nbeta".to_vec());
+        assert_eq!(fs.list("/").unwrap(), b"disk".to_vec());
     }
 
     #[test]
@@ -1174,7 +1174,7 @@ mod tests {
         assert_eq!(fs.open(OWNER, 0, "/floppy/x"), Err(VfsError::NotFound));
         assert_eq!(fs.delete("/floppy/x"), Err(VfsError::NotFound));
         assert_eq!(fs.stat("/floppy/x"), Err(VfsError::NotFound));
-        assert_eq!(fs.list_dir("/floppy/x"), Err(VfsError::NotFound));
+        assert_eq!(fs.list("/floppy/x"), Err(VfsError::NotFound));
         assert_eq!(fs.mkdir("/floppy/x"), Err(VfsError::NotFound));
     }
 
@@ -1186,7 +1186,7 @@ mod tests {
         fs.close(OWNER, handle).unwrap();
         fs.delete("/disk/gone").unwrap();
         assert_eq!(fs.stat("/disk/gone"), Err(VfsError::NotFound));
-        assert_eq!(fs.list_dir("/disk").unwrap(), Vec::new());
+        assert_eq!(fs.list("/disk").unwrap(), Vec::new());
     }
 
     #[test]
@@ -1196,7 +1196,7 @@ mod tests {
         fs.mkdir("/disk/sub").unwrap();
         let handle = create(&mut fs, OWNER, "/disk/sub/deep");
         fs.close(OWNER, handle).unwrap();
-        assert_eq!(fs.list_dir("/disk/sub").unwrap(), b"deep".to_vec());
+        assert_eq!(fs.list("/disk/sub").unwrap(), b"deep".to_vec());
         assert_eq!(fs.rmdir("/disk/sub"), Err(VfsError::DirectoryNotEmpty));
         fs.delete("/disk/sub/deep").unwrap();
         fs.rmdir("/disk/sub").unwrap();
@@ -1204,22 +1204,22 @@ mod tests {
     }
 
     #[test]
-    fn list_dir_of_unmounted_directory_is_its_own_empty_content() {
+    fn list_of_unmounted_directory_is_its_own_empty_content() {
         let mut fs = fresh_store();
         fs.mkdir("/hdd").unwrap();
-        assert_eq!(fs.list_dir("/hdd").unwrap(), Vec::new());
+        assert_eq!(fs.list("/hdd").unwrap(), Vec::new());
     }
 
     #[test]
-    fn list_dir_of_unknown_directory_is_not_found() {
+    fn list_of_unknown_directory_is_not_found() {
         let mut fs = fresh_store();
-        assert_eq!(fs.list_dir("/floppy"), Err(VfsError::NotFound));
+        assert_eq!(fs.list("/floppy"), Err(VfsError::NotFound));
     }
 
     #[test]
-    fn list_dir_of_relative_directory_is_invalid_path() {
+    fn list_of_relative_directory_is_invalid_path() {
         let mut fs = fresh_store();
-        assert_eq!(fs.list_dir("floppy"), Err(VfsError::InvalidPath));
+        assert_eq!(fs.list("floppy"), Err(VfsError::InvalidPath));
     }
 
     #[test]
@@ -1309,7 +1309,7 @@ mod tests {
         let mut fs = fresh_store();
         fs.mkdir("/disk").unwrap();
         assert_eq!(fs.stat("/disk").unwrap(), (EntityKind::Directory, 4096));
-        assert_eq!(fs.list_dir("/").unwrap(), b"disk".to_vec());
+        assert_eq!(fs.list("/").unwrap(), b"disk".to_vec());
         assert_eq!(fs.mkdir("/disk"), Err(VfsError::AlreadyExists));
     }
 

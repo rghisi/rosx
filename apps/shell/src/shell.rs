@@ -87,12 +87,9 @@ fn ls(cmd: &Command) {
         None => {
             COMMANDS.iter().for_each(|(command, _)| print!("{}\t", command));
             println!();
-            list_through(|vfs| vfs.list_dir("/"));
+            list_through(|vfs| vfs.list("/"));
         }
-        Some(dir) => {
-            let name = dir.as_str();
-            list_through(|vfs| vfs.list_dir(name));
-        }
+        Some(path) => list_through(|vfs| vfs.list(path.as_str())),
     }
 }
 
