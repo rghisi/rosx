@@ -91,17 +91,6 @@ impl Future for TaskCompletionFuture {
     }
 }
 
-pub(crate) struct TaskFuture {
-    pub(crate) task_handle: TaskHandle,
-    pub(crate) future_handle: FutureHandle,
-}
-
-impl TaskFuture {
-    pub(crate) fn is_completed(&self) -> bool {
-        services().future_registry.borrow_mut().get(self.future_handle).unwrap_or(true)
-    }
-}
-
 pub struct FutureRegistry {
     arena: GenerationalArena<Box<dyn Future + Send + Sync>, FUTURE_SLOTS>,
     waiters: BTreeMap<FutureHandle, Vec<TaskHandle>>,
@@ -148,7 +137,7 @@ impl FutureRegistry {
         }
     }
 
-    pub fn new_with_wake_controller(wake_controller: &'static dyn ForWakingTasks) -> Self {
+    pub(crate) fn new_with_wake_controller(wake_controller: &'static dyn ForWakingTasks) -> Self {
         Self {
             arena: GenerationalArena::new(),
             waiters: BTreeMap::new(),

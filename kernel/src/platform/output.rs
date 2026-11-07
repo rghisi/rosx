@@ -21,6 +21,7 @@ pub trait KernelOutput: Send + Sync {
     fn write_str(&self, s: &str);
 }
 
+#[cfg(not(test))]
 pub(crate) fn setup_default_output(output: &'static dyn KernelOutput) {
     DEFAULT_OUTPUT.call_once(|| output);
 }

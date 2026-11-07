@@ -2,6 +2,7 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use alloc::boxed::Box;
 use crate::collections::arena::GenerationalArena;
+#[cfg(test)]
 use crate::future::Future;
 use crate::handle::{FutureHandle, Handle};
 use crate::ipc::errors::{IpcReceiveError, IpcSendError};
@@ -11,7 +12,9 @@ use crate::irq_guard::IrqCell;
 use crate::ports::driven::ForNotifyingFutures;
 use system::ipc::Message;
 
+#[cfg(test)]
 struct NoopNotifier;
+#[cfg(test)]
 impl ForNotifyingFutures for NoopNotifier {
     fn register(&self, _future: Box<dyn Future + Send + Sync>) -> Option<FutureHandle> {
         None
@@ -20,6 +23,7 @@ impl ForNotifyingFutures for NoopNotifier {
     fn complete_ipc_message(&self, _handle: FutureHandle, _message: Message) {}
 }
 
+#[cfg(test)]
 static NOOP_NOTIFIER: NoopNotifier = NoopNotifier;
 
 pub(crate) type MailboxHandle = Handle;
@@ -33,6 +37,7 @@ pub(crate) struct MailboxManager {
 }
 
 impl MailboxManager {
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self {
             mailboxes: GenerationalArena::new(),

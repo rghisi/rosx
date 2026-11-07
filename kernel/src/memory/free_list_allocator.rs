@@ -49,6 +49,7 @@ fn align_up(addr: usize, align: usize) -> usize {
 }
 
 static BAD_FREE_COUNT: AtomicUsize = AtomicUsize::new(0);
+#[cfg(not(test))]
 const BAD_FREE_PRINT_LIMIT: usize = 10;
 
 fn bad_free(reason: &'static str, p: usize, size: usize) {
@@ -85,7 +86,7 @@ impl FreeListAllocator {
         }
     }
 
-    pub unsafe fn allocate(&mut self, layout: Layout, owner: BlockOwner) -> Result<*mut u8, AllocError> {
+    pub(crate) unsafe fn allocate(&mut self, layout: Layout, owner: BlockOwner) -> Result<*mut u8, AllocError> {
         if layout.size() == 0 {
             return Err(AllocError::OutOfMemory);
         }
@@ -470,6 +471,7 @@ mod tests {
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = make_allocator(&[(base, 4096)]);
         #[repr(align(64))]
+        #[expect(dead_code, reason = "address-only fixture; the payload exists to size the object")]
         struct Foreign([usize; 8]);
         let foreign = Foreign([0; 8]);
         let bogus = core::ptr::addr_of!(foreign).cast::<u8>() as usize;
@@ -687,6 +689,7 @@ mod tests {
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = make_allocator(&[(base, 4096)]);
         #[repr(align(64))]
+        #[expect(dead_code, reason = "address-only fixture; the payload exists to size the object")]
         struct Foreign([usize; 8]);
         let foreign = Foreign([0; 8]);
         let bogus = core::ptr::addr_of!(foreign).cast::<u8>() as usize;

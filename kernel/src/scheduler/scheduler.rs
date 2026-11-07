@@ -268,10 +268,6 @@ mod tests {
                 outcome,
             )
         }
-
-        fn take_calls(&self) -> Vec<TaskHandle> {
-            self.calls.lock().unwrap().drain(..).collect()
-        }
     }
 
     impl ForSwitchingTaskContext for FakeContextSwitcher {
