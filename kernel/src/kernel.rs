@@ -275,6 +275,10 @@ impl Kernel {
     }
 
     pub(crate) fn terminate_and_yield(&mut self) -> ! {
+        self.terminate_with_status(system::exit::encode(system::exit::EXIT_REASON_CLEAN, 0))
+    }
+
+    pub(crate) fn terminate_with_status(&mut self, status: i32) -> ! {
         self.execution_state.preemption_enabled = false;
         if let Some(task_handle) = self.execution_state.current_task.take() {
             let group = services().task_manager.borrow().get_group(task_handle);
@@ -284,7 +288,7 @@ impl Kernel {
                 .set_state(task_handle, Terminated);
             if let Some(completion_handle) =
                 services().task_manager.borrow().get_completion_future(task_handle) {
-                    services().future_registry.borrow_mut().notify(completion_handle);
+                    services().future_registry.borrow_mut().notify_with_status(completion_handle, status);
                 }
             if let Some(group) = group {
                 if !services().task_manager.borrow().group_has_live_members(group) {
