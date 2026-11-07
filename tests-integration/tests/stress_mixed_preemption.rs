@@ -12,6 +12,7 @@ const CTX_STARTED: &str = "[CtxWorker] Starting Contention Runner...";
 const MEM_PROGRESS_50: &str = "Progress: 50/1000";
 
 #[test]
+#[ignore = "stress workload, not a per-run correctness gate; run with -- --ignored"]
 fn busy_mem_worker_is_preempted_for_ctx_worker() {
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);

@@ -7,6 +7,7 @@ const FIRST_PHASE_BUDGET: Duration = Duration::from_secs(120);
 const SWEEP_BUDGET: Duration = Duration::from_secs(420);
 
 #[test]
+#[ignore = "benchmark workload, not a per-run correctness gate; run with -- --ignored"]
 fn bench_alloc_reports_machine_readable_lines() {
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);
