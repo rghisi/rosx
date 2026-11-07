@@ -18,6 +18,8 @@ const FAT_DISK_DEFAULT_MIB: u64 = 16;
 
 const DEFAULT_FSTAB: &str = "# boot mount table: alias service drive dir\nhdd0 ATA 1 /hdd\n";
 
+const DEFAULT_ROOT: &str = "# boot root device: alias service drive\nroot0 ATA 0\n";
+
 const INIT_LST: &str = "# boot manifest: service <rom-name>, one per line\nservice randomd\nservice echo\nservice bulk\nservice pong\nservice vfsd\nservice inputd\nservice ps2d\nhandoff hdd/shell\nfallback shell\n";
 
 const UNSTABLE: [&str; 3] = [
@@ -130,6 +132,9 @@ fn pack_rom(spec: &ArchSpec) {
     files.push(("init", init));
     files.push(("fstab", DEFAULT_FSTAB.as_bytes().to_vec()));
     files.push(("init.lst", INIT_LST.as_bytes().to_vec()));
+    if spec.boot == x86_runner::Arch::X86_32 {
+        files.push(("root", DEFAULT_ROOT.as_bytes().to_vec()));
+    }
     files.sort_by_key(|(name, _)| *name);
     let pairs: Vec<(&str, &[u8])> = files
         .iter()

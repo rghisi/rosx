@@ -177,3 +177,27 @@ cannot enter 64-bit.
   fstab entry, the harness's two-drive topology and the persisting-hdd suites go away.
 
 ## Evidence (to be filled during execution)
+
+### Step 2 — `ROOT` record + `VolumeEngine` root (2026-11-07)
+
+- New gate `root_on_fat` (x86_32): blank drive0 answers `[VFSD] root root0: no FAT
+  volume, rom fallback` and keeps the ROM roster; a FAT drive0 (marker + `mem`
+  `mkdir` `format` ELFs) answers `[VFSD] root root0 adopted from ATA 0` — bare
+  `ls` shows `marker.bin` and no tetris (ROM ingestion skipped), `mem` executes
+  from disk bytes, `mkdir data` answers `Vfs(Unsupported)`, `format root0`
+  answers `Vfs(Busy)`.
+- Unit additions: `fstab::parse_root` (6), `first_partition`/`partition_view` (5),
+  root-policy store tests (6) — vfsd lib at 115 host tests. The x86_32 ROM now
+  packs 32 records; x86_64 stays at 31 — its raw BiosBoot drive0 carries a real
+  boot sector, so packing a `root` record there is deliberately deferred to F1
+  (the probe may never gamble against `BootSector::parse` accepting boot-sector
+  junk as a BPB).
+- Full suites: x86_32 integration 0 failed; x86_64 integration 58 passed plus one
+  `ipc_wake_latency` failure — a pre-existing timing flake on its console-order
+  assertion (measured 2 failures / 7 recorded runs of it; the first x86_64 sweep
+  was fully green; `plans/stack/deferred-reschedule-impl.md` documents flakiness
+  in this family). The kernel, `ping`, `pong`, and `arch/` are byte-identical to
+  `init-decoupling` on this branch — no wake-path code is in this arc.
+- `cargo xtask test` (unit battery) clean; `check-isa x86_32`: kernel and 29
+  user ELFs 486-clean; clippy: 34 vfsd-lib warnings vs 35 on base, none on
+  touched lines.

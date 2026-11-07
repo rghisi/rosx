@@ -55,9 +55,10 @@ fn devices_blob(fs: &ActiveStore) -> Vec<u8> {
         if !blob.is_empty() {
             blob.push(b'\n');
         }
-        let state = match fs.mounted_at(&device.id) {
-            Some(dir) => format!("mounted at /{dir}"),
-            None => String::from("free"),
+        let state = match (fs.mounted_at(&device.id), fs.is_root_device(&device.id)) {
+            (Some(dir), _) => format!("mounted at /{dir}"),
+            (None, true) => String::from("root"),
+            (None, false) => String::from("free"),
         };
         blob.extend_from_slice(
             format!(
@@ -83,15 +84,38 @@ impl VfsServer {
         }
     }
 
-    fn mount_rom(&mut self) -> Vec<u8> {
-        let image = read_rom_image();
-        if image.is_empty() {
-            return image;
+    fn apply_root(&mut self, image: &[u8]) {
+        let Ok(rom) = system::rom::RomImage::parse(image) else {
+            return;
+        };
+        let Some(record) = rom.files().find(|file| file.name == fstab::ROOT_FILE_NAME) else {
+            return;
+        };
+        let bytes = &rom.bytes()[record.offset..record.offset + record.len];
+        let (target, skipped) = fstab::parse_root(bytes);
+        if skipped > 0 {
+            println!("[VFSD] root: {skipped} skipped");
         }
-        if let Err(err) = self.fs.attach_rom(&image) {
+        let Some(target) = target else { return };
+        match self.fs.adopt_root(&target) {
+            Ok(()) => println!(
+                "[VFSD] root {} adopted from {} {}",
+                target.alias, target.service, target.drive
+            ),
+            Err(reason) => println!(
+                "[VFSD] root {}: {reason}, rom fallback",
+                target.alias
+            ),
+        }
+    }
+
+    fn ingest_rom(&mut self, image: &[u8]) {
+        if image.is_empty() {
+            return;
+        }
+        if let Err(err) = self.fs.attach_rom(image) {
             panic!("VFS rom mount error: {err:?}");
         }
-        image
     }
 
     fn auto_mount(&mut self, image: &[u8]) {
@@ -347,7 +371,9 @@ impl VfsServer {
 fn main() {
     println!("[IPC Server] VFS");
     let mut server = VfsServer::new();
-    let image = server.mount_rom();
+    let image = read_rom_image();
+    server.apply_root(&image);
+    server.ingest_rom(&image);
     server.auto_mount(&image);
     server.run();
 }

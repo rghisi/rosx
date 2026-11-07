@@ -14,13 +14,52 @@ pub struct RemoteBlock {
 pub struct FatSectors {
     client: Block,
     device: u32,
+    base: u64,
     sectors: u64,
     device_block_size: u64,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct Partition {
+    pub start: u64,
+    pub sectors: u64,
+}
+
+const MBR_SIGNATURE_OFFSET: usize = 0x1FE;
+const MBR_FIRST_ENTRY: usize = 0x1BE;
+const FAT_PARTITION_KINDS: [u8; 7] = [0x01, 0x04, 0x06, 0x0B, 0x0C, 0x0E, 0x0F];
+
+pub fn first_partition(head: &[u8]) -> Option<Partition> {
+    let signature = u16::from_le_bytes(
+        head.get(MBR_SIGNATURE_OFFSET..MBR_SIGNATURE_OFFSET + 2)?
+            .try_into()
+            .ok()?,
+    );
+    if signature != 0xAA55 {
+        return None;
+    }
+    let entry = head.get(MBR_FIRST_ENTRY..MBR_FIRST_ENTRY + 16)?;
+    if !FAT_PARTITION_KINDS.contains(&entry[2]) {
+        return None;
+    }
+    let start = u32::from_le_bytes(entry[8..12].try_into().ok()?) as u64;
+    let sectors = u32::from_le_bytes(entry[12..16].try_into().ok()?) as u64;
+    if start == 0 || sectors == 0 {
+        return None;
+    }
+    Some(Partition { start, sectors })
+}
+
+pub fn partition_view(total_sectors: u64, partition: &Partition) -> Option<u64> {
+    if partition.start >= total_sectors {
+        return None;
+    }
+    Some((total_sectors - partition.start).min(partition.sectors))
+}
+
 pub fn device_blocks_per_block(device_block_size: u32) -> Option<u64> {
     let device_block_size = u64::from(device_block_size);
-    if device_block_size == 0 || BLOCK_BYTES as u64 % device_block_size != 0 {
+    if device_block_size == 0 || !(BLOCK_BYTES as u64).is_multiple_of(device_block_size) {
         return None;
     }
     Some(BLOCK_BYTES as u64 / device_block_size)
@@ -28,7 +67,7 @@ pub fn device_blocks_per_block(device_block_size: u32) -> Option<u64> {
 
 pub fn fat_sector_count(block_count: u64, block_size: u32) -> Option<u64> {
     let block_size = u64::from(block_size);
-    if block_size < u64::from(SECTOR_BYTES) || block_size % u64::from(SECTOR_BYTES) != 0 {
+    if block_size < u64::from(SECTOR_BYTES) || !block_size.is_multiple_of(u64::from(SECTOR_BYTES)) {
         return None;
     }
     block_count.checked_mul(block_size / u64::from(SECTOR_BYTES))
@@ -61,9 +100,38 @@ impl FatSectors {
         Some(FatSectors {
             client,
             device,
+            base: 0,
             sectors,
             device_block_size: u64::from(geometry.block_size),
         })
+    }
+
+    pub fn new_view(
+        client: Block,
+        device: u32,
+        geometry: &Geometry,
+        partition: Option<Partition>,
+    ) -> Option<FatSectors> {
+        let total = fat_sector_count(geometry.block_count, geometry.block_size)?;
+        match partition {
+            None => Some(FatSectors {
+                client,
+                device,
+                base: 0,
+                sectors: total,
+                device_block_size: u64::from(geometry.block_size),
+            }),
+            Some(partition) => {
+                let sectors = partition_view(total, &partition)?;
+                Some(FatSectors {
+                    client,
+                    device,
+                    base: partition.start,
+                    sectors,
+                    device_block_size: u64::from(geometry.block_size),
+                })
+            }
+        }
     }
 }
 
@@ -77,7 +145,7 @@ impl rxfat::device::BlockDevice for FatSectors {
             return Err(IoError::Device);
         }
         let (device_block, offset) =
-            sector_window(sector, self.device_block_size).ok_or(IoError::Device)?;
+            sector_window(sector + self.base, self.device_block_size).ok_or(IoError::Device)?;
         let data = self
             .client
             .read_blocks(self.device, device_block, 1)
@@ -93,7 +161,7 @@ impl rxfat::device::BlockDevice for FatSectors {
         if buf.len() != usize::from(SECTOR_BYTES) || sector >= self.sectors {
             return Err(IoError::Device);
         }
-        if self.device_block_size != u64::from(SECTOR_BYTES) {
+        if self.device_block_size != u64::from(SECTOR_BYTES) || self.base != 0 {
             return Err(IoError::Device);
         }
         self.client
@@ -218,5 +286,76 @@ mod tests {
         assert_eq!(probe_head_blocks(8192), 1);
         assert_eq!(probe_head_blocks(256), 17);
         assert_eq!(probe_head_blocks(0), 1);
+    }
+
+    fn mbr(entry: [u8; 16]) -> Vec<u8> {
+        let mut head = vec![0u8; 512];
+        head[0x1FE] = 0x55;
+        head[0x1FF] = 0xAA;
+        head[0x1BE..0x1CE].copy_from_slice(&entry);
+        head
+    }
+
+    fn lba_entry(kind: u8, start: u32, sectors: u32) -> [u8; 16] {
+        let mut entry = [0u8; 16];
+        entry[2] = kind;
+        entry[8..12].copy_from_slice(&start.to_le_bytes());
+        entry[12..16].copy_from_slice(&sectors.to_le_bytes());
+        entry
+    }
+
+    #[test]
+    fn era_style_fat16_partition_is_decoded() {
+        let head = mbr(lba_entry(0x06, 2_048, 62_512));
+        assert_eq!(
+            first_partition(&head),
+            Some(Partition {
+                start: 2_048,
+                sectors: 62_512
+            })
+        );
+    }
+
+    #[test]
+    fn fat32_partition_kinds_are_decoded() {
+        for kind in [0x0B, 0x0C] {
+            let head = mbr(lba_entry(kind, 63, 4_000));
+            assert_eq!(first_partition(&head).map(|p| p.start), Some(63));
+        }
+    }
+
+    #[test]
+    fn zero_table_with_mbr_signature_is_not_a_partition() {
+        assert_eq!(first_partition(&mbr([0u8; 16])), None);
+    }
+
+    #[test]
+    fn foreign_partition_kinds_and_empty_bounds_are_rejected() {
+        assert_eq!(first_partition(&mbr(lba_entry(0x83, 2_048, 100))), None);
+        assert_eq!(first_partition(&mbr(lba_entry(0x06, 0, 100))), None);
+        assert_eq!(first_partition(&mbr(lba_entry(0x06, 2_048, 0))), None);
+    }
+
+    #[test]
+    fn mbr_without_signature_is_not_a_partition() {
+        let mut head = vec![0u8; 512];
+        head[0x1BE..0x1CE].copy_from_slice(&lba_entry(0x06, 2_048, 100));
+        assert_eq!(first_partition(&head), None);
+        assert_eq!(first_partition(&[]), None);
+        assert_eq!(first_partition(&vec![0u8; 511]), None);
+    }
+
+    #[test]
+    fn partition_view_clamps_to_the_device_and_drops_runaways() {
+        assert_eq!(
+            partition_view(100_000, &Partition { start: 2_048, sectors: 62_512 }),
+            Some(62_512)
+        );
+        assert_eq!(
+            partition_view(3_000, &Partition { start: 2_048, sectors: 62_512 }),
+            Some(952)
+        );
+        assert_eq!(partition_view(2_048, &Partition { start: 2_048, sectors: 10 }), None);
+        assert_eq!(partition_view(0, &Partition { start: 1, sectors: 10 }), None);
     }
 }
