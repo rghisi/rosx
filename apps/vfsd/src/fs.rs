@@ -1,11 +1,11 @@
 use crate::blk::RemoteBlock;
+use crate::error_map;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use block_protocol::client::{Block, ClientError};
-use block_protocol::wire::BlockError;
+use block_protocol::client::Block;
 use fs_core::engine::{Engine, Kind, MetadataView};
 use fs_core::error::FsError;
 use rxfs::device::BlockDevice;
@@ -82,37 +82,6 @@ fn dot_entry(name: &[u8]) -> bool {
     name == b".".as_slice() || name == b"..".as_slice()
 }
 
-fn map_fs_error(error: FsError) -> VfsError {
-    match error {
-        FsError::NotFound => VfsError::NotFound,
-        FsError::AlreadyExists => VfsError::AlreadyExists,
-        FsError::InvalidPath | FsError::PathTooLong | FsError::NameTooLong | FsError::InvalidName => {
-            VfsError::InvalidPath
-        }
-        FsError::BadHandle => VfsError::BadHandle,
-        FsError::NotADirectory => VfsError::NotDirectory,
-        FsError::IsADirectory => VfsError::IsADirectory,
-        FsError::DirectoryNotEmpty => VfsError::DirectoryNotEmpty,
-        _ => VfsError::ServerResource,
-    }
-}
-
-fn map_block_error(error: ClientError) -> VfsError {
-    match error {
-        ClientError::Block(BlockError::NotFound) => VfsError::NotFound,
-        ClientError::Block(BlockError::Unsupported) => VfsError::Unsupported,
-        ClientError::NoConnection => VfsError::NotFound,
-        _ => VfsError::ServerResource,
-    }
-}
-
-fn map_mount_error(error: FsError) -> VfsError {
-    match error {
-        FsError::Corrupt | FsError::DeviceTooSmall => VfsError::NotFormatted,
-        other => map_fs_error(other),
-    }
-}
-
 fn names_blob(names: &[&[u8]]) -> Result<Vec<u8>, VfsError> {
     let mut blob = Vec::new();
     for name in names {
@@ -128,7 +97,7 @@ fn names_blob(names: &[&[u8]]) -> Result<Vec<u8>, VfsError> {
 }
 
 fn readdir_blob<E2: Engine>(engine: &mut E2, path: &[u8]) -> Result<Vec<u8>, VfsError> {
-    let items = engine.readdir(path).map_err(map_fs_error)?;
+    let items = engine.readdir(path).map_err(error_map::fs)?;
     let mut names: Vec<&[u8]> = items
         .iter()
         .map(|item| item.name.as_slice())
@@ -150,14 +119,14 @@ fn open_engine<E2: Engine>(
 ) -> Result<E2::Handle, VfsError> {
     match engine.lookup(path) {
         Ok(_) if mode & wire::MODE_CREATE != 0 => Err(VfsError::AlreadyExists),
-        Ok(_) => engine.open(path).map_err(map_fs_error),
+        Ok(_) => engine.open(path).map_err(error_map::fs),
         Err(FsError::NotFound) if mode & wire::MODE_CREATE != 0 => {
-            let handle = engine.create(path).map_err(map_fs_error)?;
-            engine.sync().map_err(map_fs_error)?;
+            let handle = engine.create(path).map_err(error_map::fs)?;
+            engine.sync().map_err(error_map::fs)?;
             Ok(handle)
         }
         Err(FsError::NotFound) => Err(VfsError::NotFound),
-        Err(error) => Err(map_fs_error(error)),
+        Err(error) => Err(error_map::fs(error)),
     }
 }
 
@@ -193,8 +162,8 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
         {
             return Err(VfsError::Busy);
         }
-        let client = Block::connect(service).map_err(map_block_error)?;
-        let geometry = client.probe(device).map_err(map_block_error)?;
+        let client = Block::connect(service).map_err(error_map::block)?;
+        let geometry = client.probe(device).map_err(error_map::block)?;
         client.disconnect();
         if crate::blk::device_blocks_per_block(geometry.block_size).is_none() {
             return Err(VfsError::Unsupported);
@@ -223,8 +192,8 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
             return Err(VfsError::Busy);
         }
         let (service, device) = (attached.service.clone(), attached.device);
-        let client = Block::connect(&service).map_err(map_block_error)?;
-        let geometry = client.probe(device).map_err(map_block_error)?;
+        let client = Block::connect(&service).map_err(error_map::block)?;
+        let geometry = client.probe(device).map_err(error_map::block)?;
         let disk = RemoteBlock::new(client, device, &geometry).ok_or(VfsError::Unsupported)?;
         let params = FormatParams {
             bytes_per_inode: DEFAULT_BYTES_PER_INODE,
@@ -232,10 +201,10 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
             volume_name: DEVICE_VOLUME_NAME,
             created_at: 0,
         };
-        let fs = FileSystem::format(disk, &params).map_err(map_fs_error)?;
+        let fs = FileSystem::format(disk, &params).map_err(error_map::fs)?;
         fs.unmount()
             .map(|disk| disk.into_client().disconnect())
-            .map_err(map_fs_error)
+            .map_err(error_map::fs)
     }
 
     pub fn mount_device(&mut self, id: &str, dir: &str) -> Result<(), VfsError> {
@@ -248,16 +217,16 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
         {
             return Err(VfsError::Busy);
         }
-        let mount_point = self.engine.lookup(dir.as_bytes()).map_err(map_fs_error)?;
+        let mount_point = self.engine.lookup(dir.as_bytes()).map_err(error_map::fs)?;
         if mount_point.kind() != Kind::Directory {
             return Err(VfsError::NotDirectory);
         }
         let attached = self.attached(id)?;
         let (service, device) = (attached.service.clone(), attached.device);
-        let client = Block::connect(&service).map_err(map_block_error)?;
-        let geometry = client.probe(device).map_err(map_block_error)?;
+        let client = Block::connect(&service).map_err(error_map::block)?;
+        let geometry = client.probe(device).map_err(error_map::block)?;
         let disk = RemoteBlock::new(client, device, &geometry).ok_or(VfsError::Unsupported)?;
-        let fs = FileSystem::mount(disk).map_err(map_mount_error)?;
+        let fs = FileSystem::mount(disk).map_err(error_map::mount)?;
         self.mounts.push(MountedVolume {
             name: String::from(name),
             device: String::from(id),
@@ -430,7 +399,7 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
                 self.volume_mut(slot)?.read(handle, offset, &mut buf)
             }
         }
-        .map_err(map_fs_error)?;
+        .map_err(error_map::fs)?;
         buf.truncate(copied);
         Ok(buf)
     }
@@ -462,14 +431,14 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
                 let written = self
                     .engine
                     .write(engine_handle, offset, payload)
-                    .map_err(map_fs_error)?;
-                self.engine.sync().map_err(map_fs_error)?;
+                    .map_err(error_map::fs)?;
+                self.engine.sync().map_err(error_map::fs)?;
                 written
             }
             OpenLocation::Mount { slot, handle } => {
                 let volume = self.volume_mut(slot)?;
-                let written = volume.write(handle, offset, payload).map_err(map_fs_error)?;
-                volume.sync().map_err(map_fs_error)?;
+                let written = volume.write(handle, offset, payload).map_err(error_map::fs)?;
+                volume.sync().map_err(error_map::fs)?;
                 written
             }
         };
@@ -480,10 +449,10 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
         let location = self.live_location(owner, handle)?;
         match location {
             OpenLocation::Root(engine_handle) => {
-                self.engine.close(engine_handle).map_err(map_fs_error)?
+                self.engine.close(engine_handle).map_err(error_map::fs)?
             }
             OpenLocation::Mount { slot, handle } => {
-                self.volume_mut(slot)?.close(handle).map_err(map_fs_error)?
+                self.volume_mut(slot)?.close(handle).map_err(error_map::fs)?
             }
         }
         self.opens.remove(&handle);
@@ -502,13 +471,13 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
                 if self.rom_names.contains(name) {
                     return Err(VfsError::NotPermitted);
                 }
-                self.engine.remove(name.as_bytes()).map_err(map_fs_error)?;
-                self.engine.sync().map_err(map_fs_error)
+                self.engine.remove(name.as_bytes()).map_err(error_map::fs)?;
+                self.engine.sync().map_err(error_map::fs)
             }
             Target::Volume(slot, path) => {
                 let volume = self.volume_mut(slot)?;
-                volume.remove(path.as_bytes()).map_err(map_fs_error)?;
-                volume.sync().map_err(map_fs_error)
+                volume.remove(path.as_bytes()).map_err(error_map::fs)?;
+                volume.sync().map_err(error_map::fs)
             }
         }
     }
@@ -519,13 +488,13 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
         }
         match self.route(path)? {
             Target::Root => {
-                self.engine.mkdir(path.as_bytes()).map_err(map_fs_error)?;
-                self.engine.sync().map_err(map_fs_error)
+                self.engine.mkdir(path.as_bytes()).map_err(error_map::fs)?;
+                self.engine.sync().map_err(error_map::fs)
             }
             Target::Volume(slot, path) => {
                 let volume = self.volume_mut(slot)?;
-                volume.mkdir(path.as_bytes()).map_err(map_fs_error)?;
-                volume.sync().map_err(map_fs_error)
+                volume.mkdir(path.as_bytes()).map_err(error_map::fs)?;
+                volume.sync().map_err(error_map::fs)
             }
         }
     }
@@ -539,13 +508,13 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
         }
         match self.route(path)? {
             Target::Root => {
-                self.engine.rmdir(path.as_bytes()).map_err(map_fs_error)?;
-                self.engine.sync().map_err(map_fs_error)
+                self.engine.rmdir(path.as_bytes()).map_err(error_map::fs)?;
+                self.engine.sync().map_err(error_map::fs)
             }
             Target::Volume(slot, path) => {
                 let volume = self.volume_mut(slot)?;
-                volume.rmdir(path.as_bytes()).map_err(map_fs_error)?;
-                volume.sync().map_err(map_fs_error)
+                volume.rmdir(path.as_bytes()).map_err(error_map::fs)?;
+                volume.sync().map_err(error_map::fs)
             }
         }
     }
@@ -556,14 +525,14 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
         }
         let (kind, size) = match self.route(name)? {
             Target::Root => {
-                let stat = self.engine.lookup(name.as_bytes()).map_err(map_fs_error)?;
+                let stat = self.engine.lookup(name.as_bytes()).map_err(error_map::fs)?;
                 (stat.kind(), stat.size())
             }
             Target::Volume(slot, path) => {
                 let stat = self
                     .volume_mut(slot)?
                     .lookup(path.as_bytes())
-                    .map_err(map_fs_error)?;
+                    .map_err(error_map::fs)?;
                 (stat.kind(), stat.size())
             }
         };
