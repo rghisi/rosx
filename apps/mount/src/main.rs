@@ -16,13 +16,12 @@ fn main() {
         println!("usage: mount <device-id> <dir>");
         return;
     };
-    let name = directory.strip_prefix('/').unwrap_or(directory);
     let Ok(vfs) = Vfs::connect() else {
         println!("mount no filesystem service");
         return;
     };
-    match vfs.mount(device, name) {
-        Ok(()) => println!("mount ok device={device} dir=/{}", name),
+    match vfs.mount(device, directory) {
+        Ok(()) => println!("mount ok device={device} dir={directory}"),
         Err(error) => println!("mount failed: {error:?}"),
     }
     vfs.disconnect();

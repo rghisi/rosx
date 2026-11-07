@@ -3,7 +3,6 @@
 extern crate alloc;
 
 use alloc::format;
-use alloc::string::String;
 use alloc::vec::Vec;
 use core::cmp::min;
 use usrlib::handle::{UserConnectionHandle, UserDataHandle};
@@ -14,65 +13,12 @@ use vfsd::fs::ActiveStore;
 
 const INCOMING_READ_CHUNK_BYTES: usize = 4096;
 
-fn conn_token(connection: UserConnectionHandle) -> u32 {
-    u32::from_str_radix(&format!("{}", connection), 16).expect("canonical connection token")
-}
-
-fn data_token(handle: &UserDataHandle) -> u32 {
-    u32::from_str_radix(&format!("{}", handle), 16).expect("canonical data token")
-}
-
-fn drain_incoming(token: u32) -> Option<Vec<u8>> {
-    let mut payload = Vec::new();
-    loop {
-        let mut chunk = [0u8; INCOMING_READ_CHUNK_BYTES];
-        let copied = Syscall::ipc_data_read(token as usize, &mut chunk).ok()?;
-        if copied == 0 {
-            return Some(payload);
-        }
-        payload.extend_from_slice(&chunk[..copied]);
-    }
-}
-
-fn read_rom_image() -> Vec<u8> {
-    let mut image = Vec::new();
-    let mut offset: u64 = 0;
-    loop {
-        let mut chunk = [0u8; INCOMING_READ_CHUNK_BYTES];
-        let copied = Syscall::rom_read(offset, &mut chunk);
-        if copied == 0 {
-            return image;
-        }
-        image.extend_from_slice(&chunk[..copied]);
-        offset += copied as u64;
-    }
-}
-
-fn devices_blob(fs: &ActiveStore) -> Vec<u8> {
-    let mut blob = Vec::new();
-    for device in fs.devices() {
-        if !blob.is_empty() {
-            blob.push(b'\n');
-        }
-        let state = match fs.mounted_at(&device.id) {
-            Some(dir) => format!("mounted at /{dir}"),
-            None => String::from("free"),
-        };
-        blob.extend_from_slice(
-            format!(
-                "{} provider {} drive {} blocks={} size={} {}",
-                device.id, device.service, device.device, device.block_count, device.block_size, state
-            )
-            .as_bytes(),
-        );
-    }
-    blob
-}
-
 struct VfsServer {
     fs: ActiveStore,
     held: Vec<(u32, UserDataHandle)>,
-}impl VfsServer {
+}
+
+impl VfsServer {
     fn new() -> VfsServer {
         VfsServer {
             fs: ActiveStore::new(),
@@ -81,7 +27,7 @@ struct VfsServer {
     }
 
     fn mount_rom(&mut self) {
-        let image = read_rom_image();
+        let image = Self::read_rom_image();
         if image.is_empty() {
             return;
         }
@@ -106,7 +52,7 @@ struct VfsServer {
         let Some(connection) = received.connection() else {
             return;
         };
-        let owner = conn_token(connection);
+        let owner = Self::handle_token(connection);
         self.release_held_for(owner);
         let reply = match Request::decode(received.data()) {
             Ok(request) => self.dispatch(connection, owner, request),
@@ -141,7 +87,13 @@ struct VfsServer {
                 handle,
                 offset,
                 count,
-            } => self.read_reply(connection, owner, handle, offset, count),
+            } => {
+                let bounded = min(count as usize, wire::RPC_MAX_DATA_BYTES);
+                let data = self.fs.read(owner, handle, offset, bounded);
+                self.payload_reply(connection, owner, data, |token, total| {
+                    Reply::ReadData { token, count: total }
+                })
+            }
             Request::Write {
                 handle,
                 offset,
@@ -155,15 +107,19 @@ struct VfsServer {
                 Ok(()) => Reply::Ack,
                 Err(error) => Reply::Err(error),
             },
-            Request::List => self.list_reply(connection, owner),
             Request::Stat { name } => match self.fs.stat(name) {
                 Ok((kind, size)) => Reply::Stat { kind, size },
                 Err(error) => Reply::Err(error),
             },
-            Request::ListDir { dir } => self.list_dir_reply(connection, owner, dir),
+            Request::List { path } => {
+                let blob = self.fs.list(path);
+                self.payload_reply(connection, owner, blob, |token, total| {
+                    Reply::Listed { token, total }
+                })
+            }
             Request::Mount { device, dir } => match self.fs.mount_device(device, dir) {
                 Ok(()) => {
-                    println!("[VFSD] mounted rxfs volume '{device}' at /{dir}");
+                    println!("[VFSD] mounted rxfs volume '{device}' at {dir}");
                     Reply::Ack
                 }
                 Err(error) => Reply::Err(error),
@@ -182,7 +138,12 @@ struct VfsServer {
                 }
                 Err(error) => Reply::Err(error),
             },
-            Request::ListDevices => self.list_devices_reply(connection, owner),
+            Request::ListDevices => {
+                let blob = self.fs.devices_blob();
+                self.payload_reply(connection, owner, Ok(blob), |token, total| {
+                    Reply::Listed { token, total }
+                })
+            }
             Request::MkDir { path } => match self.fs.mkdir(path) {
                 Ok(()) => Reply::Ack,
                 Err(error) => Reply::Err(error),
@@ -194,86 +155,24 @@ struct VfsServer {
         }
     }
 
-    fn read_reply(
+    fn payload_reply(
         &mut self,
         connection: UserConnectionHandle,
         owner: u32,
-        handle: u32,
-        offset: u64,
-        count: u32,
-    ) -> Reply {
-        if count == 0 {
-            return Reply::Eof;
-        }
-        let bounded = min(count as usize, wire::RPC_MAX_DATA_BYTES);
-        let data = match self.fs.read(owner, handle, offset, bounded) {
-            Err(error) => return Reply::Err(error),
-            Ok(data) => data,
-        };
-        if data.is_empty() {
-            return Reply::Eof;
-        }
-        self.attach_payload(connection, owner, &data, |token, total| {
-            Reply::ReadData { token, count: total }
-        })
-    }
-
-    fn list_reply(
-        &mut self,
-        connection: UserConnectionHandle,
-        owner: u32,
-    ) -> Reply {
-        let blob = match self.fs.list() {
-            Err(error) => return Reply::Err(error),
-            Ok(blob) => blob,
-        };
-        if blob.is_empty() {
-            return Reply::Eof;
-        }
-        self.attach_payload(connection, owner, &blob, |token, total| {
-            Reply::Listed { token, total }
-        })
-    }
-
-    fn list_dir_reply(
-        &mut self,
-        connection: UserConnectionHandle,
-        owner: u32,
-        dir: &str,
-    ) -> Reply {
-        let blob = match self.fs.list_dir(dir) {
-            Err(error) => return Reply::Err(error),
-            Ok(blob) => blob,
-        };
-        if blob.is_empty() {
-            return Reply::Eof;
-        }
-        self.attach_payload(connection, owner, &blob, |token, total| {
-            Reply::Listed { token, total }
-        })
-    }
-
-    fn list_devices_reply(&mut self, connection: UserConnectionHandle, owner: u32) -> Reply {
-        let blob = devices_blob(&self.fs);
-        if blob.is_empty() {
-            return Reply::Eof;
-        }
-        self.attach_payload(connection, owner, &blob, |token, total| {
-            Reply::Listed { token, total }
-        })
-    }
-
-    fn attach_payload(
-        &mut self,
-        connection: UserConnectionHandle,
-        owner: u32,
-        payload: &[u8],
+        payload: Result<Vec<u8>, VfsError>,
         reply_with: fn(u32, u32) -> Reply,
     ) -> Reply {
-        match Syscall::ipc_data_write(connection, payload) {
+        let payload = match payload {
+            Err(error) => return Reply::Err(error),
+            Ok(payload) => payload,
+        };
+        if payload.is_empty() {
+            return Reply::Eof;
+        }
+        match Syscall::ipc_data_write(connection, &payload) {
             Err(_) => Reply::Err(VfsError::ServerResource),
             Ok(object) => {
-                let token = data_token(&object);
+                let token = Self::handle_token(&object);
                 let reply = reply_with(token, payload.len() as u32);
                 self.held.push((owner, object));
                 reply
@@ -288,13 +187,43 @@ struct VfsServer {
         offset: u64,
         token: u32,
     ) -> Reply {
-        let payload = match drain_incoming(token) {
+        let payload = match Self::drain_incoming(token) {
             None => return Reply::Err(VfsError::BadHandle),
             Some(payload) => payload,
         };
         match self.fs.write(owner, handle, offset, &payload) {
             Ok(written) => Reply::Written { bytes: written as u32 },
             Err(error) => Reply::Err(error),
+        }
+    }
+
+    fn handle_token(value: impl core::fmt::Display) -> u32 {
+        u32::from_str_radix(&format!("{value}"), 16).expect("canonical handle token")
+    }
+
+    fn drain_incoming(token: u32) -> Option<Vec<u8>> {
+        let mut payload = Vec::new();
+        loop {
+            let mut chunk = [0u8; INCOMING_READ_CHUNK_BYTES];
+            let copied = Syscall::ipc_data_read(token as usize, &mut chunk).ok()?;
+            if copied == 0 {
+                return Some(payload);
+            }
+            payload.extend_from_slice(&chunk[..copied]);
+        }
+    }
+
+    fn read_rom_image() -> Vec<u8> {
+        let mut image = Vec::new();
+        let mut offset: u64 = 0;
+        loop {
+            let mut chunk = [0u8; INCOMING_READ_CHUNK_BYTES];
+            let copied = Syscall::rom_read(offset, &mut chunk);
+            if copied == 0 {
+                return image;
+            }
+            image.extend_from_slice(&chunk[..copied]);
+            offset += copied as u64;
         }
     }
 }
