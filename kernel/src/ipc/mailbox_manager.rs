@@ -172,7 +172,7 @@ mod tests {
         assert_eq!(manager.push_back(handle, msg), Ok(()));
 
         // Verify that the future now has the message
-        let mut registry = services().future_registry.borrow_mut();
+        let registry = services().future_registry.borrow_mut();
         let future_box = registry.borrow_mut(fh).unwrap();
         let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
         let delivered = ipc_future.result().unwrap();

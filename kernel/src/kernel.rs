@@ -106,7 +106,7 @@ impl Kernel {
         let port_io = kconfig.port_io;
         crate::kernel_services::init();
         crate::irq_guard::init_cpu(cpu);
-        let scheduler_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
+        let scheduler_task = Task::new("[K] Main Thread", main_thread_run as *const () as usize, 0);
         let scheduler_task_handler = services()
             .task_manager
             .borrow_mut()

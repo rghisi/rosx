@@ -126,7 +126,7 @@ fn random(_cmd: &Command) {
             println!("RANDOM Server: {}", ipc_connection);
             for _ in 1..2 {
                 match ipc_send_value(ipc_connection, 123456) {
-                    Ok(result) => {
+                    Ok(_result) => {
                         println!("RANDOM Value requested");
                         match ipc_receive_value(ipc_connection) {
                             Ok(value) => println!("RANDOM Value: {}", value),
@@ -140,7 +140,7 @@ fn random(_cmd: &Command) {
             }
             Syscall::ipc_disconnect(ipc_connection);
         } else {
-            println!("Connection failed");;
+            println!("Connection failed");
         }
     }
     if let Some(stale) = first {

@@ -1,7 +1,6 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use crate::handle::FutureHandle;
-use crate::kernel_services::services;
 
 pub struct TimerManager {
     next: BTreeMap<u64, Vec<FutureHandle>>,

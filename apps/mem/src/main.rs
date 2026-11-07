@@ -2,7 +2,6 @@
 
 extern crate alloc;
 
-use alloc::format;
 use system::kstats::{
     KSTATSD_SERVICE_NAME, MemorySnapshot, decode_memory_snapshot, encode_memory_request,
 };
