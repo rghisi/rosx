@@ -1,4 +1,5 @@
 use crate::platform::cpu::Cpu;
+#[cfg(not(test))]
 use crate::platform::output::{KernelOutput, setup_default_output};
 use crate::platform::elf::ElfArch;
 use crate::future::{TaskCompletionFuture, TimeFuture};
@@ -6,6 +7,7 @@ use crate::future::waitset::WaitsetTake;
 use system::waitset::WaitEvent;
 use crate::kconfig::KConfig;
 use crate::kernel_services::services;
+#[cfg(not(test))]
 use crate::kprintln;
 use crate::platform::portio::PortIo;
 
