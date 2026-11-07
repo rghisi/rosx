@@ -8,7 +8,7 @@ mod check_isa;
 use arch::{ArchSpec, X86_64};
 use x86_runner::{BootMedium, LaunchMode};
 
-const USER_APPS: [&str; 28] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "bench", "atad", "ata", "format", "mount", "attach", "rm", "cp", "mkdir", "rmdir", "exiter"];
+const USER_APPS: [&str; 30] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "bench", "atad", "ata", "format", "mount", "attach", "rm", "cp", "mkdir", "rmdir", "init", "shell", "exiter"];
 
 const RUN_DISK_BYTES: usize = 1024 * 1024;
 const MBR_SIGNATURE_OFFSET: usize = 510;
@@ -44,7 +44,6 @@ fn build_apps(spec: &ArchSpec) {
     for app in USER_APPS {
         cmd.arg("-p").arg(app);
     }
-    cmd.arg("-p").arg("shell");
     cmd.arg("--target").arg(spec.user_target_spec);
     cmd.args(UNSTABLE);
     run(&mut cmd, &format!("build user-space ELF apps for {}", spec.name));
@@ -247,8 +246,7 @@ fn check_isa_command(spec: &ArchSpec) {
         eprintln!("check-isa audits the x86_32 486 baseline; {} carries no such pin", spec.name);
         process::exit(2);
     }
-    let mut elfs: Vec<&str> = USER_APPS.to_vec();
-    elfs.push("shell");
+    let elfs: Vec<&str> = USER_APPS.to_vec();
     match check_isa::run_check_isa(spec, &elfs) {
         Err(message) => {
             eprintln!("error: {message}");

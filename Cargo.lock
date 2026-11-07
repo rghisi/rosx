@@ -314,6 +314,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "init"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
 name = "input-protocol"
 version = "0.1.0"
 dependencies = [
@@ -549,6 +557,7 @@ dependencies = [
 name = "rosx"
 version = "0.1.0"
 dependencies = [
+ "ata-protocol",
  "bootloader_api",
  "dummy",
  "input-protocol",
@@ -557,6 +566,7 @@ dependencies = [
  "spin",
  "system",
  "usrlib",
+ "vfs-protocol",
  "volatile 0.2.7",
  "x86-generic",
  "x86_64",
@@ -566,10 +576,12 @@ dependencies = [
 name = "rosx-x86_32"
 version = "0.1.0"
 dependencies = [
+ "ata-protocol",
  "input-protocol",
  "kernel",
  "spin",
  "system",
+ "vfs-protocol",
  "volatile 0.2.7",
  "x86-generic",
 ]
