@@ -10,23 +10,30 @@ pub struct RemoteBlock {
     device_blocks_per_block: u64,
 }
 
-pub fn device_blocks_per_block(device_block_size: u32) -> Option<u64> {
-    let device_block_size = u64::from(device_block_size);
-    if device_block_size == 0 || BLOCK_BYTES as u64 % device_block_size != 0 {
-        return None;
-    }
-    Some(BLOCK_BYTES as u64 / device_block_size)
-}
-
 impl RemoteBlock {
-    pub fn new(client: Block, device: u32, geometry: &Geometry) -> Option<RemoteBlock> {
-        let device_blocks_per_block = device_blocks_per_block(geometry.block_size)?;
-        Some(RemoteBlock {
+    pub fn new(
+        client: Block,
+        device: u32,
+        geometry: &Geometry,
+    ) -> Result<RemoteBlock, Block> {
+        let Some(device_blocks_per_block) = Self::device_blocks_per_block(geometry.block_size)
+        else {
+            return Err(client);
+        };
+        Ok(RemoteBlock {
             client,
             device,
             blocks: geometry.block_count / device_blocks_per_block,
             device_blocks_per_block,
         })
+    }
+
+    fn device_blocks_per_block(device_block_size: u32) -> Option<u64> {
+        let device_block_size = u64::from(device_block_size);
+        if device_block_size == 0 || BLOCK_BYTES as u64 % device_block_size != 0 {
+            return None;
+        }
+        Some(BLOCK_BYTES as u64 / device_block_size)
     }
 
     pub fn into_client(self) -> Block {
@@ -83,5 +90,20 @@ impl BlockDevice for RemoteBlock {
 
     fn flush(&mut self) -> Result<(), IoError> {
         self.client.flush(self.device).map_err(|_| IoError::Flush)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_blocks_per_block_divides_the_filesystem_block() {
+        assert_eq!(RemoteBlock::device_blocks_per_block(512), Some(8));
+        assert_eq!(RemoteBlock::device_blocks_per_block(1024), Some(4));
+        assert_eq!(RemoteBlock::device_blocks_per_block(4096), Some(1));
+        assert_eq!(RemoteBlock::device_blocks_per_block(0), None);
+        assert_eq!(RemoteBlock::device_blocks_per_block(33), None);
+        assert_eq!(RemoteBlock::device_blocks_per_block(3072), None);
     }
 }

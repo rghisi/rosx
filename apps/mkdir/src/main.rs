@@ -16,12 +16,11 @@ fn main() {
         println!("usage: mkdir <path>");
         return;
     };
-    let name = path.strip_prefix('/').unwrap_or(path);
     let Ok(vfs) = Vfs::connect() else {
         println!("mkdir no filesystem service");
         return;
     };
-    match vfs.mkdir(name) {
+    match vfs.mkdir(path) {
         Ok(()) => println!("mkdir ok {path}"),
         Err(error) => println!("mkdir failed: {error:?}"),
     }
