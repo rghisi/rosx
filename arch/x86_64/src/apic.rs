@@ -258,24 +258,28 @@ fn ioapic_write_entry(irq: u32, entry: u64) {
 unsafe fn rdmsr(register: u32) -> u64 {
     let low: u32;
     let high: u32;
-    core::arch::asm!(
-        "rdmsr",
-        in("ecx") register,
-        out("eax") low,
-        out("edx") high,
-        options(nomem, nostack, preserves_flags),
-    );
+    unsafe {
+        core::arch::asm!(
+            "rdmsr",
+            in("ecx") register,
+            out("eax") low,
+            out("edx") high,
+            options(nomem, nostack, preserves_flags),
+        );
+    }
     ((high as u64) << 32) | low as u64
 }
 
 unsafe fn wrmsr(register: u32, value: u64) {
     let low = value as u32;
     let high = (value >> 32) as u32;
-    core::arch::asm!(
-        "wrmsr",
-        in("ecx") register,
-        in("eax") low,
-        in("edx") high,
-        options(nomem, nostack, preserves_flags),
-    );
+    unsafe {
+        core::arch::asm!(
+            "wrmsr",
+            in("ecx") register,
+            in("eax") low,
+            in("edx") high,
+            options(nomem, nostack, preserves_flags),
+        );
+    }
 }
