@@ -16,5 +16,6 @@ pub mod error;
 pub mod exit;
 pub mod handle;
 pub mod ipc;
+pub mod rom;
 pub mod syscall;
 mod input;
