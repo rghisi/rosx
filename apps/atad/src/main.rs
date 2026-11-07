@@ -20,7 +20,7 @@ const PRIMARY_TASKFILE_END: u16 = 0x1F7;
 const ALTERNATE_STATUS_PORT: u16 = 0x3F6;
 const REBIND_DELAY_MS: u64 = 100;
 const INCOMING_READ_CHUNK_BYTES: usize = 4096;
-const DENIED_PARK_DELAY_MS: u64 = 1000;
+const EXIT_ACQUIRE_REFUSED: u32 = 1;
 
 struct SyscallBus;
 
@@ -96,16 +96,10 @@ fn acquire_ports() -> bool {
     true
 }
 
-fn park_after_refusal() -> ! {
-    loop {
-        Syscall::sleep(DENIED_PARK_DELAY_MS);
-    }
-}
-
 fn main() {
     println!("[ATAD] ATA disk driver");
     if !acquire_ports() {
-        park_after_refusal();
+        Syscall::exit(EXIT_ACQUIRE_REFUSED);
     }
     let mut drives = probe_drives();
     let mut held: Vec<(u32, UserDataHandle)> = Vec::new();
