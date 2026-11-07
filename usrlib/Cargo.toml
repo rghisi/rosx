@@ -11,3 +11,6 @@ input-protocol = { path = "../protocol/input" }
 
 [features]
 runtime = []
+
+[lints]
+workspace = true

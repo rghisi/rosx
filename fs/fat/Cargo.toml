@@ -7,3 +7,6 @@ edition.workspace = true
 
 [dependencies]
 fs-core = { path = "../core" }
+
+[lints]
+workspace = true

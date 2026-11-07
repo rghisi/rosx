@@ -2,7 +2,6 @@
 #![cfg_attr(not(test), feature(alloc_error_handler))]
 
 extern crate alloc;
-extern crate system;
 
 pub mod collections;
 pub mod elf;

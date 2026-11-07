@@ -6,3 +6,6 @@ edition.workspace = true
 [dependencies]
 x86-runner = { path = "../arch/x86-runner" }
 tempfile = "3"
+
+[lints]
+workspace = true

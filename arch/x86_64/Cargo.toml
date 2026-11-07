@@ -22,3 +22,5 @@ name = "rosx"
 bench = false
 test = false
 
+[lints]
+workspace = true

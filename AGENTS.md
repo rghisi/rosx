@@ -157,6 +157,8 @@ cargo xtask test [--skip-integration] # Run unit tests; --skip-integration exclu
    - Use longer delays to observe task switching behavior in QEMU
    - Verify behavior in QEMU and eventually real hardware
 
+6. **Warnings are errors:** `[workspace.lints.rust]` in the root `Cargo.toml` denies the unused family, implicit unsafe ops in `unsafe fn`, private-in-public interfaces, irrefutable `let-else`, function-item casts, and deprecated APIs; every member crate inherits it. Every build surface (both arches, apps, host unit tests) must end at zero warnings — the only expected diagnostic is the toolchain's own `core` future-incompat report, an artifact of `-Zbuild-std` compiling rust-src and not this repository's code. Deliberate exceptions use `#[expect(lint, reason = "...")]`, never workspace-wide allowances.
+
 ### 486 baseline (x86_32)
 
 The x86_32 port runs on 486-class CPUs and must stay that way — the invariant, not the bug, is the default:

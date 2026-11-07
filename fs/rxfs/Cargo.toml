@@ -10,3 +10,6 @@ fs-core = { path = "../core" }
 
 [features]
 std = []
+
+[lints]
+workspace = true
