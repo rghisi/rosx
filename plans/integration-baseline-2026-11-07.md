@@ -129,6 +129,20 @@ Composition estimate, stacking on the measured release-kernel run (x86_64, 360 s
 sum): −~110 s bench tiering −~60 s `app_lifecycle` sleep trim ≈ ~190 s, then scenario
 grouping and/or 4-way parallel ≈ **under a minute of test time**, vs 695 s today.
 
+## Phase 1 landed (measured on this host, same protocol)
+
+| | dev, serial (baseline) | release kernel + PR tier (now in CI) | Δ |
+|---|---|---|---|
+| x86_64 | 11 m 35 s | **4 m 02 s** | **−65 %** |
+| x86_32 | 5 m 11 s | **2 m 37 s** | **−49 %** |
+
+Implemented by: the boot-measurement test (`8f65004`), the new x86_64 CI integration job
+plus release-kernel booting of both suites (`0e21eed`), and ignoring the bench/stress
+tests outside explicit `--ignored` runs (`4f5c774`). The two CI jobs run in parallel, so
+PR integration wall time is ~4 min on a runner class close to this host. Next levers
+from the table above remain: parallel runner (biggest structural win, needs per-session
+boot images), `app_lifecycle` sleep trim, echo-ack sendkey pacing, scenario grouping.
+
 ## Captured decisions
 
 1. **Add an x86_64 integration job to CI** (today only x86_32 runs the suite).
