@@ -319,6 +319,27 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
             .map(|mount| mount.name.as_str())
     }
 
+    pub fn devices_blob(&self) -> Vec<u8> {
+        let mut blob = Vec::new();
+        for device in self.devices() {
+            if !blob.is_empty() {
+                blob.push(b'\n');
+            }
+            let state = match self.mounted_at(&device.id) {
+                Some(dir) => format!("mounted at /{dir}"),
+                None => String::from("free"),
+            };
+            blob.extend_from_slice(
+                format!(
+                    "{} provider {} drive {} blocks={} size={} {}",
+                    device.id, device.service, device.device, device.block_count, device.block_size, state
+                )
+                .as_bytes(),
+            );
+        }
+        blob
+    }
+
     pub fn device_busy(&self, id: &str) -> bool {
         self.mounts.iter().any(|mount| mount.device == id)
     }
@@ -1262,6 +1283,30 @@ mod tests {
         mount_fake(&mut fs, "ata0");
         assert!(fs.device_busy("ata0"));
         assert!(!fs.device_busy("sata1"));
+    }
+
+    #[test]
+    fn devices_blob_renders_geometry_and_mount_state() {
+        let mut fs = fresh_store();
+        assert_eq!(fs.devices_blob(), Vec::new());
+        fake_attached(&mut fs, "ata0", "ATA", 1);
+        assert_eq!(
+            fs.devices_blob(),
+            b"ata0 provider ATA drive 1 blocks=102400 size=512 free".to_vec()
+        );
+        mount_fake(&mut fs, "ata0");
+        assert_eq!(
+            fs.devices_blob(),
+            b"ata0 provider ATA drive 1 blocks=102400 size=512 mounted at /ata0".to_vec()
+        );
+    }
+
+    #[test]
+    fn read_zero_count_is_empty() {
+        let mut fs = fresh_store();
+        let handle = create(&mut fs, OWNER, "a.txt");
+        fs.write(OWNER, handle, 0, b"abc").unwrap();
+        assert_eq!(fs.read(OWNER, handle, 0, 0).unwrap(), Vec::new());
     }
 
     #[test]
