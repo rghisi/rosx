@@ -79,11 +79,12 @@ fn window_diagnostics(content: &str) -> String {
 
 #[test]
 fn bulk_data_transfer_echo_and_limits_roundtrip() {
-    let session = QemuSession::spawn();
+    let mut session = QemuSession::spawn();
 
     let mark = session.mark();
     session.expect_output("[IPC Server] BulkEcho", READY_TIMEOUT);
     session.expect_output("rose>", READY_TIMEOUT);
+    session.send_line("bulk");
 
     if let Err(output_tail) =
         session.wait_until_since(mark, |delta| delta.contains(DONE_LINE), SWEEP_TIMEOUT)

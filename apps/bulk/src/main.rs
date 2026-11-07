@@ -13,7 +13,6 @@ use usrlib::syscall::Syscall;
 const MAX_DATA_BYTES: usize = 64 * 1024;
 const OBJECT_LENGTHS: [usize; 3] = [32768, 32768, 8192];
 const TOTAL_BYTES: usize = 73728;
-const STARTUP_DELAY_MS: u64 = 40_000;
 
 fn payload_for(object_index: usize, length: usize) -> Vec<u8> {
     (0..length).map(|byte_index| (byte_index * 7 + object_index) as u8).collect()
@@ -93,14 +92,10 @@ fn verification_round(connection: UserConnectionHandle) {
 }
 
 fn main() {
-    Syscall::sleep(STARTUP_DELAY_MS);
     let connection = connect_to_echo();
     probe_oversized_write(connection);
     probe_budget(connection);
     verification_round(connection);
     Syscall::ipc_disconnect(connection);
     println!("BULK Done");
-    loop {
-        Syscall::sleep(1000);
-    }
 }
