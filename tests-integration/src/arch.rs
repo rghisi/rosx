@@ -82,6 +82,16 @@ pub fn not_ported_to_x86_32() -> bool {
     false
 }
 
+pub fn not_ported_to_x86_64() -> bool {
+    if Arch::current() == Arch::X86_64 {
+        eprintln!(
+            "skipped on x86_64: drive0-root media arrives with the Multiboot 2 entry (F1, plans/single-disk-boot.md)"
+        );
+        return true;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::Arch;

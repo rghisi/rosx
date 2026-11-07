@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use vfs_protocol::wire;
 
 pub const ROM_FILE_NAME: &str = "fstab";
+pub const ROOT_FILE_NAME: &str = "root";
 
 #[derive(Debug, PartialEq)]
 pub struct FstabEntry {
@@ -10,6 +11,13 @@ pub struct FstabEntry {
     pub service: String,
     pub drive: u32,
     pub dir: String,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct RootTarget {
+    pub alias: String,
+    pub service: String,
+    pub drive: u32,
 }
 
 pub fn parse(bytes: &[u8]) -> (Vec<FstabEntry>, usize) {
@@ -58,6 +66,48 @@ fn parse_line(line: &str) -> Option<FstabEntry> {
         service: String::from(service),
         drive,
         dir: String::from(dir),
+    })
+}
+
+pub fn parse_root(bytes: &[u8]) -> (Option<RootTarget>, usize) {
+    let mut skipped = 0usize;
+    for line in bytes.split(|byte| *byte == b'\n') {
+        let line = match core::str::from_utf8(line) {
+            Ok(line) => line.trim_end_matches('\r').trim(),
+            Err(_) => {
+                if !line.is_empty() {
+                    skipped += 1;
+                }
+                continue;
+            }
+        };
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        match parse_root_line(line) {
+            Some(target) => return (Some(target), skipped),
+            None => skipped += 1,
+        }
+    }
+    (None, skipped)
+}
+
+fn parse_root_line(line: &str) -> Option<RootTarget> {
+    let mut fields = line.split_whitespace();
+    let alias = fields.next()?;
+    let service = fields.next()?;
+    let drive = fields.next()?;
+    if fields.next().is_some() {
+        return None;
+    }
+    if !wire::valid_name(alias) || !wire::valid_name(service) {
+        return None;
+    }
+    let drive = drive.parse::<u32>().ok()?;
+    Some(RootTarget {
+        alias: String::from(alias),
+        service: String::from(service),
+        drive,
     })
 }
 
@@ -199,5 +249,48 @@ mod tests {
         let (entries, skipped) = parse(b"hdd0 # inline\n");
         assert_eq!(entries.len(), 0);
         assert_eq!(skipped, 1);
+    }
+
+    #[test]
+    fn root_default_convention_line_parses() {
+        let (target, skipped) = parse_root(b"# boot root: alias service drive\nroot0 ATA 0\n");
+        assert_eq!(skipped, 0);
+        assert_eq!(
+            target,
+            Some(RootTarget {
+                alias: String::from("root0"),
+                service: String::from("ATA"),
+                drive: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn root_first_valid_line_wins_and_later_lines_are_ignored() {
+        let (target, skipped) = parse_root(b"a0 ATA 0\nb1 ATA 1\n");
+        assert_eq!(target.map(|t| t.alias), Some(String::from("a0")));
+        assert_eq!(skipped, 0);
+    }
+
+    #[test]
+    fn root_malformed_lines_cost_lines_not_the_record() {
+        let (target, skipped) = parse_root(b"oops ATA x 0\nroot0 ATA 2\n");
+        assert_eq!(skipped, 1);
+        assert_eq!(target.map(|t| t.drive), Some(2));
+    }
+
+    #[test]
+    fn root_rejects_wrong_field_counts_and_bad_names() {
+        assert_eq!(parse_root(b"root0 ATA\n").0, None);
+        assert_eq!(parse_root(b"root0 ATA 0 extra\n").0, None);
+        assert_eq!(parse_root(b"bad/alias ATA 0\n").0, None);
+        assert_eq!(parse_root(b"root0 ATA one\n").0, None);
+        assert_eq!(parse_root(b"root0 ATA -1\n").0, None);
+    }
+
+    #[test]
+    fn root_empty_and_comment_only_input_yield_nothing() {
+        assert_eq!(parse_root(b""), (None, 0));
+        assert_eq!(parse_root(b"# nothing here\n\n"), (None, 0));
     }
 }

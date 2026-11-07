@@ -60,6 +60,31 @@ impl QemuSession {
         Self::spawn_capturing(command, temp_dir)
     }
 
+    pub fn spawn_with_drive0(disk: &Path) -> QemuSession {
+        let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
+        let kernel_elf = kernel_build::kernel_elf();
+        let arch = Arch::current();
+        assert_eq!(
+            arch,
+            Arch::X86_32,
+            "the drive0 boot story is the x86_32 multiboot media until the Multiboot 2 entry"
+        );
+        let medium = x86_runner::prepare_run_medium(&kernel_elf, arch.boot())
+            .unwrap_or_else(|err| panic!(
+                "failed to prepare boot medium for kernel '{}': {err}",
+                kernel_elf.display()
+            ));
+        let mut command =
+            x86_runner::qemu_command(arch.boot(), &medium, x86_runner::LaunchMode::Headless);
+        command
+            .arg("-drive")
+            .arg(format!(
+                "if=ide,index=0,media=disk,format=raw,file={}",
+                disk.display()
+            ));
+        Self::spawn_capturing(command, temp_dir)
+    }
+
     fn spawn_with_scratch(scratch_bytes: Option<usize>) -> QemuSession {
         let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
         let kernel_elf = kernel_build::kernel_elf();
