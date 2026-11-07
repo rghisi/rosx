@@ -481,7 +481,6 @@ name = "ps2d"
 version = "0.1.0"
 dependencies = [
  "input-protocol",
- "system",
  "usrlib",
 ]
 
@@ -542,7 +541,6 @@ name = "rosx"
 version = "0.1.0"
 dependencies = [
  "bootloader_api",
- "dummy",
  "input-protocol",
  "kernel",
  "pic8259",

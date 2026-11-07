@@ -74,10 +74,6 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static ROM_IMAGE: &[u8] = include_bytes!("../../../target/rosx-user/rom.img");
     kernel::rom::init(ROM_IMAGE);
     let _ = kernel.schedule(FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main));
-    // kernel.schedule(FunctionTask::new("1", dummy::app::main));
-    // kernel.schedule(FunctionTask::new("2", dummy::app::main2));
-    // kernel.schedule(FunctionTask::new("3", dummy::app::main3));
-    // kernel.schedule(FunctionTask::new("4", dummy::app::main4));
     static RANDOMD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/randomd");
     let _ = kernel.schedule(new_elf_task("randomd", RANDOMD_ELF));
     static ECHO_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/echo");
@@ -106,7 +102,6 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
     static SHELL_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/shell");
     let _ = kernel.schedule(new_elf_task("shell", SHELL_ELF));
-    // kernel.schedule(FunctionTask::new("6", dummy::app::main_with_wait));
 
     kprintln!("[KERNEL] Starting");
     kernel.start();
