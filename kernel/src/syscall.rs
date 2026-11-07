@@ -11,6 +11,7 @@ use crate::handle::{FutureHandle, IpcConnectionHandle, IpcBindingHandle, IpcData
 #[cfg(not(test))]
 use crate::future::waitset::{AttachError, WaitsetFuture};
 use crate::memory::free_list_allocator::BlockOwner;
+use crate::future::TaskCompletionFuture;
 use crate::ipc::message_future::IpcMessageFuture;
 use crate::task::{new_elf_task, new_elf_task_with_arguments, new_entrypoint_task, validate_arguments_blob};
 #[cfg(not(test))]
@@ -54,15 +55,22 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
                 return ErrorCode::WaitsetLeafRequired.to_reg();
             }
             let out_ptr = arg2;
-            let future = kernel().wait_future(handle).unwrap();
-            match future.as_any().downcast_ref::<IpcMessageFuture>() {
-                Some(ipc) => match ipc.result() {
+            let Ok(future) = kernel().wait_future(handle) else {
+                return ErrorCode::FutureAlreadyConsumed.to_reg();
+            };
+            if let Some(ipc) = future.as_any().downcast_ref::<IpcMessageFuture>() {
+                return match ipc.result() {
                     Ok(message) if out_ptr != 0 => { unsafe { core::ptr::write(out_ptr as *mut Message, message) }; 0 }
                     Ok(_) => 0,
                     Err(e) => ErrorCode::from(e).to_reg(),
-                },
-                None => 0,
+                };
             }
+            if let Some(completion) = future.as_any().downcast_ref::<TaskCompletionFuture>() {
+                if out_ptr != 0 {
+                    unsafe { core::ptr::write(out_ptr as *mut i32, completion.status()) };
+                }
+            }
+            0
         }
         Ok(SyscallNum::IsFutureCompleted) => {
             let Some(handle) = FutureHandle::from_packed(arg1 as usize) else { return 0 };

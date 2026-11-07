@@ -75,6 +75,10 @@ impl TaskCompletionFuture {
             status: system::exit::encode(system::exit::EXIT_REASON_CLEAN, 0),
         }
     }
+
+    pub(crate) fn status(&self) -> i32 {
+        self.status
+    }
 }
 
 impl Future for TaskCompletionFuture {
@@ -449,7 +453,7 @@ mod tests {
 
         let future = TaskCompletionFuture::new(handle);
 
-        assert_eq!(future.status, system::exit::clean_status(0).unwrap());
+        assert_eq!(future.status(), system::exit::clean_status(0).unwrap());
     }
 
     #[test]
@@ -469,7 +473,7 @@ mod tests {
         assert_eq!(services().task_manager.borrow().get_state(handle), TaskState::Ready);
         let future = services().future_registry.borrow_mut().borrow_mut(future_handle).unwrap();
         let completion = future.as_any_mut().downcast_mut::<TaskCompletionFuture>().unwrap();
-        assert_eq!(completion.status, status);
+        assert_eq!(completion.status(), status);
     }
 
     #[test]
@@ -502,7 +506,7 @@ mod tests {
 
         let taken = services().future_registry.borrow_mut().consume(future_handle).unwrap();
         let completion = taken.into_any().downcast::<TaskCompletionFuture>().unwrap();
-        assert_eq!(completion.status, status);
+        assert_eq!(completion.status(), status);
     }
 
     #[test]

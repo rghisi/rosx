@@ -13,6 +13,7 @@ pub mod allocator;
 pub mod out;
 pub mod arch;
 pub mod error;
+pub mod exit;
 pub mod handle;
 pub mod ipc;
 pub mod syscall;
