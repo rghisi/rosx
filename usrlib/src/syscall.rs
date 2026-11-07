@@ -61,6 +61,11 @@ impl Syscall {
         arch::raw_syscall(SyscallNum::Yield as usize, 0, 0, 0);
     }
 
+    pub fn exit(code: u32) -> ! {
+        arch::raw_syscall(SyscallNum::Exit as usize, code as usize, 0, 0);
+        loop {}
+    }
+
     pub fn sleep(ms: u64) {
         arch::raw_syscall(SyscallNum::Sleep as usize, ms as usize, 0, 0);
     }

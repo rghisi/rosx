@@ -29,6 +29,7 @@ pub enum ErrorCode {
     FutureCapacityExhausted = 0x0401,
     PortAccessDenied = 0x0501,
     PortRequestInvalid = 0x0502,
+    ExitCodeOutOfRange = 0x0601,
     Unknown = 0x7FFF_FFFF,
 }
 
@@ -61,6 +62,7 @@ impl ErrorCode {
             0x0401 => ErrorCode::FutureCapacityExhausted,
             0x0501 => ErrorCode::PortAccessDenied,
             0x0502 => ErrorCode::PortRequestInvalid,
+            0x0601 => ErrorCode::ExitCodeOutOfRange,
             _ => ErrorCode::Unknown,
         }
     }
@@ -70,7 +72,7 @@ impl ErrorCode {
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 23] = [
+    const ALL_ERROR_CODES: [ErrorCode; 24] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -93,6 +95,7 @@ mod tests {
         ErrorCode::FutureCapacityExhausted,
         ErrorCode::PortAccessDenied,
         ErrorCode::PortRequestInvalid,
+        ErrorCode::ExitCodeOutOfRange,
         ErrorCode::Unknown,
     ];
 

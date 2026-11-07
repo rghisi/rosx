@@ -44,6 +44,10 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             kernel().task_yield();
             0
         }
+        Ok(SyscallNum::Exit) => match system::exit::status_for_exit_request(arg1 as u32) {
+            Some(status) => kernel().terminate_with_status(status),
+            None => ErrorCode::ExitCodeOutOfRange.to_reg(),
+        },
         Ok(SyscallNum::WaitFuture) => {
             let Some(handle) = FutureHandle::from_packed(arg1 as usize) else { return 0 };
             if services().future_registry.borrow_mut().is_waitset(handle) {

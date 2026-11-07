@@ -21,6 +21,14 @@ pub const fn panicked_status() -> i32 {
     encode(EXIT_REASON_PANICKED, 0)
 }
 
+pub const fn status_for_exit_request(code: u32) -> Option<i32> {
+    if code == EXIT_CODE_PANIC {
+        Some(panicked_status())
+    } else {
+        clean_status(code)
+    }
+}
+
 pub const fn decode_reason(status: i32) -> u32 {
     (status as u32) >> 24
 }
@@ -100,5 +108,23 @@ mod tests {
     fn panic_exit_code_is_far_from_plausible_app_codes() {
         assert!(EXIT_CODE_PANIC > 0xFFFF);
         assert_ne!(EXIT_CODE_PANIC, MAX_EXIT_CODE);
+    }
+
+    #[test]
+    fn exit_request_with_the_panic_code_becomes_the_panicked_status() {
+        assert_eq!(status_for_exit_request(EXIT_CODE_PANIC), Some(panicked_status()));
+    }
+
+    #[test]
+    fn exit_request_with_a_plain_code_becomes_a_clean_status() {
+        assert_eq!(status_for_exit_request(0), clean_status(0));
+        assert_eq!(status_for_exit_request(3), clean_status(3));
+        assert_eq!(status_for_exit_request(MAX_EXIT_CODE), clean_status(MAX_EXIT_CODE));
+    }
+
+    #[test]
+    fn exit_request_beyond_the_code_field_is_rejected() {
+        assert_eq!(status_for_exit_request(MAX_EXIT_CODE + 1), None);
+        assert_eq!(status_for_exit_request(u32::MAX), None);
     }
 }

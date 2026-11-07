@@ -5,6 +5,7 @@ pub enum SyscallNum {
     Sleep = 1,
     Spawn = 2,
     Yield = 3,
+    Exit = 4,
     WaitFuture = 5,
     IsFutureCompleted = 6,
     Alloc = 7,
@@ -41,6 +42,7 @@ impl TryFrom<usize> for SyscallNum {
             1 => Ok(Self::Sleep),
             2 => Ok(Self::Spawn),
             3 => Ok(Self::Yield),
+            4 => Ok(Self::Exit),
             5 => Ok(Self::WaitFuture),
             6 => Ok(Self::IsFutureCompleted),
             7 => Ok(Self::Alloc),
@@ -76,8 +78,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn read_char_and_try_read_char_numbers_stay_retired() {
-        assert!(SyscallNum::try_from(4usize).is_err());
+    fn try_read_char_number_stays_retired() {
         assert!(SyscallNum::try_from(9usize).is_err());
     }
 
@@ -88,6 +89,7 @@ mod tests {
             SyscallNum::Sleep,
             SyscallNum::Spawn,
             SyscallNum::Yield,
+            SyscallNum::Exit,
             SyscallNum::WaitFuture,
             SyscallNum::IsFutureCompleted,
             SyscallNum::Alloc,
