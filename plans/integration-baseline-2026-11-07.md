@@ -133,15 +133,19 @@ grouping and/or 4-way parallel ≈ **under a minute of test time**, vs 695 s tod
 
 | | dev, serial (baseline) | release kernel + PR tier (now in CI) | Δ |
 |---|---|---|---|
-| x86_64 | 11 m 35 s | **4 m 02 s** | **−65 %** |
-| x86_32 | 5 m 11 s | **2 m 37 s** | **−49 %** |
+| x86_64 | 11 m 35 s | **2 m 19 s** | **−80 %** |
+| x86_32 | 5 m 11 s | **1 m 01 s** | **−80 %** |
 
 Implemented by: the boot-measurement test (`8f65004`), the new x86_64 CI integration job
-plus release-kernel booting of both suites (`0e21eed`), and ignoring the bench/stress
-tests outside explicit `--ignored` runs (`4f5c774`). The two CI jobs run in parallel, so
-PR integration wall time is ~4 min on a runner class close to this host. Next levers
-from the table above remain: parallel runner (biggest structural win, needs per-session
-boot images), `app_lifecycle` sleep trim, echo-ack sendkey pacing, scenario grouping.
+plus release-kernel booting of both suites (`0e21eed`), ignoring the bench/stress tests
+outside explicit `--ignored` runs (`4f5c774`), echo-acknowledged keystroke injection
+(`311133a`), and deleting `app_lifecycle.rs` — its wall-clock fault-horizon sleeps were
+38 % of the x86_64 tier; a progress-based replacement is recorded in `docs/todo.md`
+(`e08542a`). The two CI jobs run in parallel, so PR integration wall time is now ~2 min
+on a runner class close to this host (and x86_64 integration is gated in CI at all for
+the first time). Next levers from the table above remain: parallel runner (biggest
+structural win, needs per-session boot images), scenario grouping, and boot-medium work
+on the remaining 3.9 s x86_64 boot floor.
 
 ## Captured decisions
 
