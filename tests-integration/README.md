@@ -30,6 +30,20 @@ to cargo against `arch/x86_64/Cargo.toml`.
 | `ROSX_QEMU_PROFILE` | `dev` (default) or `release`; any other value panics |
 | `ROSX_KERNEL_ELF` | absolute path to a prebuilt kernel ELF; skips the kernel build |
 | `ROSX_QEMU_KEEP_TMP` | if set to a non-empty value, the session temp dir (disk image, monitor socket) is kept on drop and its path is printed to stderr |
+| `ROSX_BOOT_SAMPLES` | sample count for the boot-to-prompt measurement test (default 5) |
+
+## Measuring boot time
+
+`tests/measure_boot.rs` is `#[ignore]`d so it never joins a normal suite run; it samples
+the boot-to-prompt distribution — session spawn (image creation + exec), `[KERNEL]
+Initializing`, `[KERNEL] Starting`, and the `rose>` prompt, all from one start instant:
+
+```
+cargo test -p tests-integration --test measure_boot -- --ignored --nocapture
+```
+
+The measured baseline and the speed-up plan built on it live in
+`plans/integration-baseline-2026-11-07.md`.
 
 ## Tests (`tests/boot_and_shell.rs`)
 
