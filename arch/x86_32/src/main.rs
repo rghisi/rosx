@@ -16,6 +16,7 @@ static KCONFIG: kernel::kconfig::KConfig = kernel::kconfig::KConfig {
     cpu: &CPU,
     elf_arch: &ELF_ARCH,
     port_io: &PORT_IO,
+    port_pool: x86_generic::port::ATA_PORT_POOL,
     scheduler_factory: kernel::scheduler::mfq_scheduler,
 };
 
@@ -70,17 +71,7 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
     static PS2D_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/ps2d");
     let _ = kernel.schedule(kernel::task::new_elf_task("ps2d", PS2D_ELF));
     static ATAD_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/atad");
-    match kernel.schedule_with_task_handle(kernel::task::new_elf_task("atad", ATAD_ELF)) {
-        Ok((atad_handle, _)) => {
-            if !kernel::platform::portio::grant(atad_handle, 0x1F0, 0x1F7) {
-                kernel::kprintln!("[KERNEL] atad primary taskfile grant failed");
-            }
-            if !kernel::platform::portio::grant(atad_handle, 0x3F6, 0x3F6) {
-                kernel::kprintln!("[KERNEL] atad alternate status grant failed");
-            }
-        }
-        Err(()) => kernel::kprintln!("[KERNEL] atad schedule failed"),
-    }
+    let _ = kernel.schedule(kernel::task::new_elf_task("atad", ATAD_ELF));
     static SHELL_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/shell");
     let _ = kernel.schedule(kernel::task::new_elf_task("shell", SHELL_ELF));
     kernel::kprintln!("[KERNEL] Starting");

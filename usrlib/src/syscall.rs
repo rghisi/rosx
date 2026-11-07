@@ -337,6 +337,24 @@ impl Syscall {
         }
     }
 
+    pub fn port_acquire(base: u16, end: u16) -> Result<(), PortError> {
+        let raw = arch::raw_syscall(SyscallNum::PortAcquire as usize, base as usize, end as usize, 0);
+        if is_token(raw) {
+            Ok(())
+        } else {
+            Err(PortError::from(ErrorCode::from_code(raw)))
+        }
+    }
+
+    pub fn port_release(base: u16, end: u16) -> Result<(), PortError> {
+        let raw = arch::raw_syscall(SyscallNum::PortRelease as usize, base as usize, end as usize, 0);
+        if is_token(raw) {
+            Ok(())
+        } else {
+            Err(PortError::from(ErrorCode::from_code(raw)))
+        }
+    }
+
     pub fn port_in_words(port: u16, destination: &mut [u16]) -> Result<(), PortError> {
         let raw = arch::raw_syscall(
             SyscallNum::PortInBlock as usize,

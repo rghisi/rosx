@@ -264,6 +264,21 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
                 }
             }
         }
+        Ok(SyscallNum::PortAcquire) => {
+            let task = kernel().execution_state.current_task();
+            let pool = kernel().port_pool;
+            match crate::platform::portio::authorize_acquire(task, arg1, arg2, pool) {
+                Ok(()) => 0,
+                Err(code) => code.to_reg(),
+            }
+        }
+        Ok(SyscallNum::PortRelease) => {
+            let task = kernel().execution_state.current_task();
+            match crate::platform::portio::authorize_release(task, arg1, arg2) {
+                Ok(()) => 0,
+                Err(code) => code.to_reg(),
+            }
+        }
         Err(_) => 0,
     }
 }
