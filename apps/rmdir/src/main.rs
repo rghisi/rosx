@@ -16,12 +16,11 @@ fn main() {
         println!("usage: rmdir <path>");
         return;
     };
-    let name = path.strip_prefix('/').unwrap_or(path);
     let Ok(vfs) = Vfs::connect() else {
         println!("rmdir no filesystem service");
         return;
     };
-    match vfs.rmdir(name) {
+    match vfs.rmdir(path) {
         Ok(()) => println!("rmdir ok {path}"),
         Err(error) => println!("rmdir failed: {error:?}"),
     }

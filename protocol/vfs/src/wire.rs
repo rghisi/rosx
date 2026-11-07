@@ -14,7 +14,6 @@ pub const READ: u8 = 2;
 pub const WRITE: u8 = 3;
 pub const CLOSE: u8 = 4;
 pub const DELETE: u8 = 5;
-pub const LIST: u8 = 6;
 pub const STAT: u8 = 7;
 pub const LIST_DIR: u8 = 8;
 pub const MOUNT: u8 = 9;
@@ -105,7 +104,6 @@ pub enum Request<'a> {
     Write { handle: u32, offset: u64, token: u32 },
     Close { handle: u32 },
     Delete { name: &'a str },
-    List,
     Stat { name: &'a str },
     ListDir { dir: &'a str },
     MkDir { path: &'a str },
@@ -140,7 +138,17 @@ pub fn valid_name(name: &str) -> bool {
 }
 
 pub fn valid_path(path: &str) -> bool {
-    !path.is_empty() && path.len() <= MAX_NAME_BYTES && path.split('/').all(valid_name)
+    let Some(body) = path.strip_prefix('/') else {
+        return false;
+    };
+    if body.is_empty() {
+        return true;
+    }
+    path.len() <= MAX_NAME_BYTES && body.split('/').all(valid_name)
+}
+
+pub fn valid_mount_dir(dir: &str) -> bool {
+    dir != "/" && valid_path(dir) && !dir[1..].contains('/')
 }
 
 fn encode_path_frame(opcode: u8, path: &str) -> Result<[u8; FRAME_BYTES], VfsError> {
@@ -202,18 +210,13 @@ impl Request<'_> {
                 Ok(frame)
             }
             Request::Delete { name } => encode_path_frame(DELETE, name),
-            Request::List => {
-                let mut frame = [0u8; FRAME_BYTES];
-                frame[0] = LIST;
-                Ok(frame)
-            }
             Request::Stat { name } => encode_path_frame(STAT, name),
             Request::ListDir { dir } => encode_path_frame(LIST_DIR, dir),
             Request::MkDir { path } => encode_path_frame(MKDIR, path),
             Request::RmDir { path } => encode_path_frame(RMDIR, path),
             Request::Mount { device, dir } => {
                 if !valid_name(device)
-                    || !valid_name(dir)
+                    || !valid_mount_dir(dir)
                     || device.len() + dir.len() > MOUNT_STRING_BUDGET
                 {
                     return Err(VfsError::InvalidPath);
@@ -278,7 +281,6 @@ impl Request<'_> {
                 let name = decode_path(frame, 2, frame[1] as usize)?;
                 Ok(Request::Delete { name })
             }
-            LIST => Ok(Request::List),
             STAT => {
                 let name = decode_path(frame, 2, frame[1] as usize)?;
                 Ok(Request::Stat { name })
@@ -302,7 +304,7 @@ impl Request<'_> {
                 if dir_at >= FRAME_BYTES {
                     return Err(VfsError::InvalidPath);
                 }
-                let dir = decode_name(frame, dir_at + 1, frame[dir_at] as usize)?;
+                let dir = decode_mount_dir(frame, dir_at + 1, frame[dir_at] as usize)?;
                 Ok(Request::Mount { device, dir })
             }
             FORMAT => {
@@ -339,6 +341,14 @@ fn decode_path<'a>(
     path_len: usize,
 ) -> Result<&'a str, VfsError> {
     decode_str(frame, offset, path_len, valid_path)
+}
+
+fn decode_mount_dir<'a>(
+    frame: &'a [u8; FRAME_BYTES],
+    offset: usize,
+    dir_len: usize,
+) -> Result<&'a str, VfsError> {
+    decode_str(frame, offset, dir_len, valid_mount_dir)
 }
 
 fn decode_str<'a>(
@@ -471,23 +481,23 @@ mod tests {
 
     #[test]
     fn open_frame_pins_offsets_for_short_name() {
-        let frame = Request::Open { mode: MODE_WRITE | MODE_CREATE, name: "a.txt" }
+        let frame = Request::Open { mode: MODE_WRITE | MODE_CREATE, name: "/a.txt" }
             .encode()
             .unwrap();
         assert_eq!(frame[0], OPEN);
         assert_eq!(frame[1], 3);
-        assert_eq!(frame[2], 5);
-        assert_eq!(&frame[3..8], b"a.txt");
-        assert!(frame[8..].iter().all(|byte| *byte == 0));
+        assert_eq!(frame[2], 6);
+        assert_eq!(&frame[3..9], b"/a.txt");
+        assert!(frame[9..].iter().all(|byte| *byte == 0));
     }
 
     #[test]
     fn delete_frame_pins_offsets_for_short_name() {
-        let frame = Request::Delete { name: "a.txt" }.encode().unwrap();
+        let frame = Request::Delete { name: "/a.txt" }.encode().unwrap();
         assert_eq!(frame[0], DELETE);
-        assert_eq!(frame[1], 5);
-        assert_eq!(&frame[2..7], b"a.txt");
-        assert!(frame[7..].iter().all(|byte| *byte == 0));
+        assert_eq!(frame[1], 6);
+        assert_eq!(&frame[2..8], b"/a.txt");
+        assert!(frame[8..].iter().all(|byte| *byte == 0));
     }
 
     #[test]
@@ -547,27 +557,20 @@ mod tests {
     }
 
     #[test]
-    fn list_frame_uses_op_byte_only() {
-        let frame = Request::List.encode().unwrap();
-        assert_eq!(frame[0], LIST);
-        assert!(frame[1..].iter().all(|byte| *byte == 0));
-    }
-
-    #[test]
     fn open_request_roundtrips() {
-        let frame = Request::Open { mode: MODE_WRITE, name: "notes.txt" }.encode().unwrap();
+        let frame = Request::Open { mode: MODE_WRITE, name: "/notes.txt" }.encode().unwrap();
         assert_eq!(
             Request::decode(&frame),
             Ok(Request::Open {
                 mode: MODE_WRITE,
-                name: "notes.txt"
+                name: "/notes.txt"
             })
         );
     }
 
     #[test]
-    fn open_request_roundtrips_maximum_name() {
-        let name = name_of_len(MAX_NAME_BYTES);
+    fn open_request_roundtrips_maximum_path() {
+        let name = alloc::format!("/{}", name_of_len(MAX_NAME_BYTES - 1));
         let frame = Request::Open { mode: 0, name: &name }.encode().unwrap();
         assert_eq!(Request::decode(&frame), Ok(Request::Open { mode: 0, name: &name }));
     }
@@ -618,102 +621,103 @@ mod tests {
 
     #[test]
     fn delete_request_roundtrips() {
-        let frame = Request::Delete { name: "blob.bin" }.encode().unwrap();
+        let frame = Request::Delete { name: "/blob.bin" }.encode().unwrap();
         assert_eq!(
             Request::decode(&frame),
-            Ok(Request::Delete { name: "blob.bin" })
+            Ok(Request::Delete { name: "/blob.bin" })
         );
-    }
-
-    #[test]
-    fn list_request_roundtrips() {
-        assert_eq!(Request::decode(&Request::List.encode().unwrap()), Ok(Request::List));
     }
 
     #[test]
     fn stat_frame_pins_offsets_for_short_name() {
-        let frame = Request::Stat { name: "a.txt" }.encode().unwrap();
+        let frame = Request::Stat { name: "/a.txt" }.encode().unwrap();
         assert_eq!(frame[0], STAT);
-        assert_eq!(frame[1], 5);
-        assert_eq!(&frame[2..7], b"a.txt");
-        assert!(frame[7..].iter().all(|byte| *byte == 0));
+        assert_eq!(frame[1], 6);
+        assert_eq!(&frame[2..8], b"/a.txt");
+        assert!(frame[8..].iter().all(|byte| *byte == 0));
     }
 
     #[test]
     fn stat_request_roundtrips() {
-        let frame = Request::Stat { name: "notes.txt" }.encode().unwrap();
+        let frame = Request::Stat { name: "/notes.txt" }.encode().unwrap();
         assert_eq!(
             Request::decode(&frame),
-            Ok(Request::Stat { name: "notes.txt" })
+            Ok(Request::Stat { name: "/notes.txt" })
         );
     }
 
     #[test]
-    fn stat_request_roundtrips_maximum_name() {
-        let name = name_of_len(MAX_NAME_BYTES);
+    fn stat_request_roundtrips_maximum_path() {
+        let name = alloc::format!("/{}", name_of_len(MAX_NAME_BYTES - 1));
         let frame = Request::Stat { name: &name }.encode().unwrap();
         assert_eq!(Request::decode(&frame), Ok(Request::Stat { name: &name }));
     }
 
     #[test]
     fn list_dir_frame_pins_offsets_for_mount_dir() {
-        let frame = Request::ListDir { dir: "hdd" }.encode().unwrap();
+        let frame = Request::ListDir { dir: "/hdd" }.encode().unwrap();
         assert_eq!(frame[0], LIST_DIR);
-        assert_eq!(frame[1], 3);
-        assert_eq!(&frame[2..5], b"hdd");
-        assert!(frame[5..].iter().all(|byte| *byte == 0));
+        assert_eq!(frame[1], 4);
+        assert_eq!(&frame[2..6], b"/hdd");
+        assert!(frame[6..].iter().all(|byte| *byte == 0));
     }
 
     #[test]
     fn list_dir_request_roundtrips() {
-        let frame = Request::ListDir { dir: "hdd" }.encode().unwrap();
-        assert_eq!(Request::decode(&frame), Ok(Request::ListDir { dir: "hdd" }));
+        let frame = Request::ListDir { dir: "/hdd" }.encode().unwrap();
+        assert_eq!(Request::decode(&frame), Ok(Request::ListDir { dir: "/hdd" }));
+    }
+
+    #[test]
+    fn list_dir_of_root_roundtrips() {
+        let frame = Request::ListDir { dir: "/" }.encode().unwrap();
+        assert_eq!(Request::decode(&frame), Ok(Request::ListDir { dir: "/" }));
     }
 
     #[test]
     fn list_dir_rejects_invalid_paths() {
         assert_eq!(Request::ListDir { dir: "" }.encode(), Err(VfsError::InvalidPath));
         assert_eq!(
-            Request::ListDir { dir: "/hdd" }.encode(),
+            Request::ListDir { dir: "hdd" }.encode(),
             Err(VfsError::InvalidPath)
         );
         let mut frame = [0u8; FRAME_BYTES];
         frame[0] = LIST_DIR;
-        frame[1] = 4;
-        frame[2..6].copy_from_slice(b"a//b");
+        frame[1] = 5;
+        frame[2..7].copy_from_slice(b"/a//b");
         assert_eq!(Request::decode(&frame), Err(VfsError::InvalidPath));
     }
 
     #[test]
     fn list_dir_accepts_nested_paths() {
-        let frame = Request::ListDir { dir: "hdd/sub" }.encode().unwrap();
-        assert_eq!(Request::decode(&frame), Ok(Request::ListDir { dir: "hdd/sub" }));
+        let frame = Request::ListDir { dir: "/hdd/sub" }.encode().unwrap();
+        assert_eq!(Request::decode(&frame), Ok(Request::ListDir { dir: "/hdd/sub" }));
     }
 
     #[test]
     fn mount_frame_pins_device_and_dir_offsets() {
-        let frame = Request::Mount { device: "ata0", dir: "hdd" }.encode().unwrap();
+        let frame = Request::Mount { device: "ata0", dir: "/hdd" }.encode().unwrap();
         assert_eq!(frame[0], MOUNT);
         assert_eq!(frame[1], 4);
         assert_eq!(&frame[2..6], b"ata0");
-        assert_eq!(frame[6], 3);
-        assert_eq!(&frame[7..10], b"hdd");
-        assert!(frame[10..].iter().all(|byte| *byte == 0));
+        assert_eq!(frame[6], 4);
+        assert_eq!(&frame[7..11], b"/hdd");
+        assert!(frame[11..].iter().all(|byte| *byte == 0));
     }
 
     #[test]
     fn mount_request_roundtrips() {
-        let frame = Request::Mount { device: "ata0", dir: "hdd" }.encode().unwrap();
+        let frame = Request::Mount { device: "ata0", dir: "/hdd" }.encode().unwrap();
         assert_eq!(
             Request::decode(&frame),
-            Ok(Request::Mount { device: "ata0", dir: "hdd" })
+            Ok(Request::Mount { device: "ata0", dir: "/hdd" })
         );
     }
 
     #[test]
     fn mount_rejects_invalid_device_or_dir_names() {
         assert_eq!(
-            Request::Mount { device: "", dir: "hdd" }.encode(),
+            Request::Mount { device: "", dir: "/hdd" }.encode(),
             Err(VfsError::InvalidPath)
         );
         assert_eq!(
@@ -721,22 +725,34 @@ mod tests {
             Err(VfsError::InvalidPath)
         );
         assert_eq!(
-            Request::Mount { device: "ata0", dir: "bad\nname" }.encode(),
+            Request::Mount { device: "ata0", dir: "hdd" }.encode(),
             Err(VfsError::InvalidPath)
         );
         assert_eq!(
-            Request::Mount { device: "a/b", dir: "hdd" }.encode(),
+            Request::Mount { device: "ata0", dir: "/" }.encode(),
+            Err(VfsError::InvalidPath)
+        );
+        assert_eq!(
+            Request::Mount { device: "ata0", dir: "/hdd/sub" }.encode(),
+            Err(VfsError::InvalidPath)
+        );
+        assert_eq!(
+            Request::Mount { device: "ata0", dir: "/bad\nname" }.encode(),
+            Err(VfsError::InvalidPath)
+        );
+        assert_eq!(
+            Request::Mount { device: "a/b", dir: "/hdd" }.encode(),
             Err(VfsError::InvalidPath)
         );
     }
 
     #[test]
     fn mount_rejects_strings_beyond_the_combined_budget() {
-        let fits = name_of_len(MOUNT_STRING_BUDGET - 1);
-        assert!(Request::Mount { device: &fits, dir: "d" }.encode().is_ok());
-        let over = name_of_len(MOUNT_STRING_BUDGET);
+        let fits = name_of_len(MOUNT_STRING_BUDGET - 2);
+        assert!(Request::Mount { device: &fits, dir: "/d" }.encode().is_ok());
+        let over = name_of_len(MOUNT_STRING_BUDGET - 1);
         assert_eq!(
-            Request::Mount { device: &over, dir: "d" }.encode(),
+            Request::Mount { device: &over, dir: "/d" }.encode(),
             Err(VfsError::InvalidPath)
         );
     }
@@ -827,12 +843,12 @@ mod tests {
     }
 
     #[test]
-    fn decode_stat_rejects_invalid_paths() {
-        let mut dot = [0u8; FRAME_BYTES];
-        dot[0] = STAT;
-        dot[1] = 1;
-        dot[2] = b'.';
-        assert_eq!(Request::decode(&dot), Err(VfsError::InvalidPath));
+    fn decode_stat_rejects_relative_and_corrupt_names() {
+        let mut relative = [0u8; FRAME_BYTES];
+        relative[0] = STAT;
+        relative[1] = 5;
+        relative[2..7].copy_from_slice(b"a.txt");
+        assert_eq!(Request::decode(&relative), Err(VfsError::InvalidPath));
         let mut nul = [0u8; FRAME_BYTES];
         nul[0] = STAT;
         nul[1] = 3;
@@ -842,9 +858,18 @@ mod tests {
     }
 
     #[test]
+    fn decode_stat_accepts_absolute_and_root() {
+        let mut root = [0u8; FRAME_BYTES];
+        root[0] = STAT;
+        root[1] = 1;
+        root[2] = b'/';
+        assert_eq!(Request::decode(&root), Ok(Request::Stat { name: "/" }));
+    }
+
+    #[test]
     fn decode_request_rejects_unknown_op_bytes() {
-        for op in [0u8, 15, 255] {
-            let mut frame = Request::List.encode().unwrap();
+        for op in [0u8, 6, 15, 255] {
+            let mut frame = Request::Stat { name: "/a" }.encode().unwrap();
             frame[0] = op;
             assert_eq!(
                 Request::decode(&frame),
@@ -856,7 +881,7 @@ mod tests {
 
     #[test]
     fn mkdir_and_rmdir_ops_are_known_with_a_bad_payload() {
-        let mut frame = Request::List.encode().unwrap();
+        let mut frame = Request::Format { device: "ata0" }.encode().unwrap();
         frame[0] = MKDIR;
         assert_eq!(Request::decode(&frame), Err(VfsError::InvalidPath));
         frame[0] = RMDIR;
@@ -865,26 +890,26 @@ mod tests {
 
     #[test]
     fn decode_request_rejects_zero_name_len() {
-        let mut open_frame = Request::Open { mode: 0, name: "x" }.encode().unwrap();
+        let mut open_frame = Request::Open { mode: 0, name: "/x" }.encode().unwrap();
         open_frame[2] = 0;
         assert_eq!(Request::decode(&open_frame), Err(VfsError::InvalidPath));
-        let mut delete_frame = Request::Delete { name: "x" }.encode().unwrap();
+        let mut delete_frame = Request::Delete { name: "/x" }.encode().unwrap();
         delete_frame[1] = 0;
         assert_eq!(Request::decode(&delete_frame), Err(VfsError::InvalidPath));
-        let mut stat_frame = Request::Stat { name: "x" }.encode().unwrap();
+        let mut stat_frame = Request::Stat { name: "/x" }.encode().unwrap();
         stat_frame[1] = 0;
         assert_eq!(Request::decode(&stat_frame), Err(VfsError::InvalidPath));
     }
 
     #[test]
     fn decode_request_rejects_name_len_beyond_limit() {
-        let mut open_frame = Request::Open { mode: 0, name: "x" }.encode().unwrap();
+        let mut open_frame = Request::Open { mode: 0, name: "/x" }.encode().unwrap();
         open_frame[2] = 58;
         assert_eq!(Request::decode(&open_frame), Err(VfsError::InvalidPath));
-        let mut delete_frame = Request::Delete { name: "x" }.encode().unwrap();
+        let mut delete_frame = Request::Delete { name: "/x" }.encode().unwrap();
         delete_frame[1] = 58;
         assert_eq!(Request::decode(&delete_frame), Err(VfsError::InvalidPath));
-        let mut stat_frame = Request::Stat { name: "x" }.encode().unwrap();
+        let mut stat_frame = Request::Stat { name: "/x" }.encode().unwrap();
         stat_frame[1] = 58;
         assert_eq!(Request::decode(&stat_frame), Err(VfsError::InvalidPath));
     }
@@ -907,34 +932,39 @@ mod tests {
 
     #[test]
     fn decode_request_rejects_invalid_utf8_name() {
-        let mut frame = Request::Open { mode: 0, name: "abc" }.encode().unwrap();
+        let mut frame = Request::Open { mode: 0, name: "/abc" }.encode().unwrap();
         frame[4] = 0xFF;
         assert_eq!(Request::decode(&frame), Err(VfsError::InvalidPath));
     }
 
     #[test]
-    fn decode_open_accepts_nested_path() {
+    fn decode_open_accepts_nested_absolute_path() {
         let mut frame = [0u8; FRAME_BYTES];
         frame[0] = OPEN;
-        frame[2] = 5;
-        frame[3..8].copy_from_slice(b"a/b/c");
+        frame[2] = 6;
+        frame[3..9].copy_from_slice(b"/a/b/c");
         assert_eq!(
             Request::decode(&frame),
-            Ok(Request::Open { mode: 0, name: "a/b/c" })
+            Ok(Request::Open { mode: 0, name: "/a/b/c" })
         );
     }
 
     #[test]
-    fn decode_open_rejects_dot_and_dotdot_names() {
+    fn decode_open_rejects_relative_and_dot_names() {
+        let mut relative = [0u8; FRAME_BYTES];
+        relative[0] = OPEN;
+        relative[2] = 5;
+        relative[3..8].copy_from_slice(b"a.txt");
+        assert_eq!(Request::decode(&relative), Err(VfsError::InvalidPath));
         let mut dot = [0u8; FRAME_BYTES];
         dot[0] = OPEN;
-        dot[2] = 1;
-        dot[3] = b'.';
+        dot[2] = 2;
+        dot[3..5].copy_from_slice(b"/.");
         assert_eq!(Request::decode(&dot), Err(VfsError::InvalidPath));
         let mut dotdot = [0u8; FRAME_BYTES];
         dotdot[0] = OPEN;
-        dotdot[2] = 2;
-        dotdot[3..5].copy_from_slice(b"..");
+        dotdot[2] = 3;
+        dotdot[3..6].copy_from_slice(b"/..");
         assert_eq!(Request::decode(&dotdot), Err(VfsError::InvalidPath));
     }
 
@@ -947,36 +977,34 @@ mod tests {
         assert_eq!(Request::decode(&dot), Err(VfsError::InvalidPath));
         let mut nested = [0u8; FRAME_BYTES];
         nested[0] = DELETE;
-        nested[1] = 4;
-        nested[2..6].copy_from_slice(b"a//b");
+        nested[1] = 5;
+        nested[2..7].copy_from_slice(b"/a//b");
         assert_eq!(Request::decode(&nested), Err(VfsError::InvalidPath));
     }
 
     #[test]
     fn delete_accepts_nested_path() {
-        let frame = Request::Delete { name: "hdd/x" }.encode().unwrap();
-        assert_eq!(Request::decode(&frame), Ok(Request::Delete { name: "hdd/x" }));
+        let frame = Request::Delete { name: "/hdd/x" }.encode().unwrap();
+        assert_eq!(Request::decode(&frame), Ok(Request::Delete { name: "/hdd/x" }));
     }
 
     #[test]
     fn decode_open_rejects_newline_and_nul_in_name() {
         let mut newline = [0u8; FRAME_BYTES];
         newline[0] = OPEN;
-        newline[2] = 3;
-        newline[3..6].copy_from_slice(b"a\nb");
+        newline[2] = 4;
+        newline[3..7].copy_from_slice(b"/a\nb");
         assert_eq!(Request::decode(&newline), Err(VfsError::InvalidPath));
         let mut nul = [0u8; FRAME_BYTES];
         nul[0] = OPEN;
-        nul[2] = 3;
-        nul[3] = b'a';
-        nul[4] = 0x00;
-        nul[5] = b'b';
+        nul[2] = 4;
+        nul[3..7].copy_from_slice(b"/a\0b");
         assert_eq!(Request::decode(&nul), Err(VfsError::InvalidPath));
     }
 
     #[test]
     fn decode_request_unknown_op_outranks_bad_name() {
-        let mut frame = Request::Delete { name: "x" }.encode().unwrap();
+        let mut frame = Request::Delete { name: "/x" }.encode().unwrap();
         frame[0] = 200;
         frame[1] = 255;
         assert_eq!(Request::decode(&frame), Err(VfsError::Protocol));
@@ -1010,63 +1038,80 @@ mod tests {
     }
 
     #[test]
-    fn valid_path_accepts_single_names_and_nested_paths() {
-        assert!(valid_path("a"));
-        assert!(valid_path("hdd/x"));
-        assert!(valid_path("a/b/c"));
-        assert!(valid_path("hdd/deep/inner/file.bin"));
+    fn valid_path_accepts_the_root_and_absolute_paths() {
+        assert!(valid_path("/"));
+        assert!(valid_path("/a"));
+        assert!(valid_path("/hdd/x"));
+        assert!(valid_path("/a/b/c"));
+        assert!(valid_path("/hdd/deep/inner/file.bin"));
     }
 
     #[test]
-    fn valid_path_rejects_empty_segments_and_dots() {
+    fn valid_path_rejects_relative_forms_invalid_segments_and_dots() {
         assert!(!valid_path(""));
-        assert!(!valid_path("/"));
-        assert!(!valid_path("/abs"));
-        assert!(!valid_path("a/"));
-        assert!(!valid_path("a//b"));
-        assert!(!valid_path("./x"));
-        assert!(!valid_path("a/.."));
-        assert!(!valid_path("a/b\n"));
+        assert!(!valid_path("a"));
+        assert!(!valid_path("a/b"));
+        assert!(!valid_path("//"));
+        assert!(!valid_path("/a//b"));
+        assert!(!valid_path("/a/"));
+        assert!(!valid_path("/./x"));
+        assert!(!valid_path("/a/.."));
+        assert!(!valid_path("/a/b\n"));
     }
 
     #[test]
     fn valid_path_bounds_total_length_at_the_frame_limit() {
-        let name = name_of_len(MAX_NAME_BYTES);
-        assert!(valid_path(&name));
-        let nested = alloc::format!("hdd/{}", name_of_len(MAX_NAME_BYTES - 4));
-        assert!(valid_path(&nested));
-        assert!(!valid_path(&name_of_len(MAX_NAME_BYTES + 1)));
-        assert!(!valid_path(&alloc::format!("h/{}", name_of_len(MAX_NAME_BYTES))));
+        assert!(valid_path(&alloc::format!("/{}", name_of_len(MAX_NAME_BYTES - 1))));
+        assert!(valid_path(&alloc::format!("/hdd/{}", name_of_len(MAX_NAME_BYTES - 5))));
+        assert!(!valid_path(&alloc::format!("/{}", name_of_len(MAX_NAME_BYTES))));
+        assert!(!valid_path(&alloc::format!("/h/{}", name_of_len(MAX_NAME_BYTES - 1))));
+    }
+
+    #[test]
+    fn valid_mount_dir_names_a_single_absolute_directory() {
+        assert!(valid_mount_dir("/hdd"));
+        assert!(valid_mount_dir(&alloc::format!("/{}", name_of_len(MAX_NAME_BYTES - 1))));
+        assert!(!valid_mount_dir("/"));
+        assert!(!valid_mount_dir("hdd"));
+        assert!(!valid_mount_dir("/hdd/sub"));
+        assert!(!valid_mount_dir("/hdd/"));
+        assert!(!valid_mount_dir("/."));
+        assert!(!valid_mount_dir(""));
     }
 
     #[test]
     fn mkdir_frame_pins_path_offset() {
-        let frame = Request::MkDir { path: "hdd" }.encode().unwrap();
+        let frame = Request::MkDir { path: "/hdd" }.encode().unwrap();
         assert_eq!(frame[0], MKDIR);
-        assert_eq!(frame[1], 3);
-        assert_eq!(&frame[2..5], b"hdd");
-        assert!(frame[5..].iter().all(|byte| *byte == 0));
+        assert_eq!(frame[1], 4);
+        assert_eq!(&frame[2..6], b"/hdd");
+        assert!(frame[6..].iter().all(|byte| *byte == 0));
     }
 
     #[test]
     fn mkdir_and_rmdir_requests_roundtrip() {
-        let frame = Request::MkDir { path: "hdd/sub" }.encode().unwrap();
-        assert_eq!(Request::decode(&frame), Ok(Request::MkDir { path: "hdd/sub" }));
-        let frame = Request::RmDir { path: "hdd/sub" }.encode().unwrap();
-        assert_eq!(Request::decode(&frame), Ok(Request::RmDir { path: "hdd/sub" }));
+        let frame = Request::MkDir { path: "/hdd/sub" }.encode().unwrap();
+        assert_eq!(Request::decode(&frame), Ok(Request::MkDir { path: "/hdd/sub" }));
+        let frame = Request::RmDir { path: "/hdd/sub" }.encode().unwrap();
+        assert_eq!(Request::decode(&frame), Ok(Request::RmDir { path: "/hdd/sub" }));
     }
 
     #[test]
     fn mkdir_and_rmdir_reject_invalid_paths() {
         assert_eq!(Request::MkDir { path: "" }.encode(), Err(VfsError::InvalidPath));
-        assert_eq!(Request::MkDir { path: "a/" }.encode(), Err(VfsError::InvalidPath));
+        assert_eq!(Request::MkDir { path: "hdd" }.encode(), Err(VfsError::InvalidPath));
+        assert_eq!(Request::MkDir { path: "/hdd/" }.encode(), Err(VfsError::InvalidPath));
         assert_eq!(Request::RmDir { path: "." }.encode(), Err(VfsError::InvalidPath));
-        assert_eq!(Request::RmDir { path: "/x" }.encode(), Err(VfsError::InvalidPath));
+        assert_eq!(Request::RmDir { path: "x" }.encode(), Err(VfsError::InvalidPath));
     }
 
     #[test]
     fn request_encode_rejects_invalid_names() {
         assert_eq!(Request::Open { mode: 0, name: "" }.encode(), Err(VfsError::InvalidPath));
+        assert_eq!(
+            Request::Open { mode: 0, name: "notes.txt" }.encode(),
+            Err(VfsError::InvalidPath)
+        );
         assert_eq!(
             Request::Open { mode: 0, name: &name_of_len(MAX_NAME_BYTES + 1) }.encode(),
             Err(VfsError::InvalidPath)
@@ -1138,7 +1183,6 @@ mod tests {
         assert_eq!(WRITE, 3);
         assert_eq!(CLOSE, 4);
         assert_eq!(DELETE, 5);
-        assert_eq!(LIST, 6);
         assert_eq!(STAT, 7);
         assert_eq!(LIST_DIR, 8);
         assert_eq!(MOUNT, 9);
@@ -1155,7 +1199,6 @@ mod tests {
             WRITE,
             CLOSE,
             DELETE,
-            LIST,
             STAT,
             LIST_DIR,
             MOUNT,
@@ -1405,8 +1448,10 @@ mod tests {
 
     fn seed_frames() -> Vec<[u8; FRAME_BYTES]> {
         let requests: Vec<Request> = vec![
-            Request::Open { mode: 0, name: "notes.txt" },
-            Request::Mount { device: "ata0", dir: "hdd" },
+            Request::Open { mode: 0, name: "/notes.txt" },
+            Request::ListDir { dir: "/hdd" },
+            Request::Stat { name: "/" },
+            Request::Mount { device: "ata0", dir: "/hdd" },
             Request::Format { device: "ata0" },
             Request::Attach { id: "ata0", service: "ATA", device: 1 },
             Request::ListDevices,

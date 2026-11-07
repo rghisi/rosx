@@ -1,4 +1,5 @@
 use crate::command::Command;
+use alloc::format;
 use alloc::vec::Vec;
 use system::args::{MAX_ARGUMENT_BYTES, MAX_ARGUMENT_COUNT};
 use usrlib::println;
@@ -17,7 +18,8 @@ pub fn run(cmd: &Command) {
             return;
         }
     };
-    let entity = match vfs.stat(cmd.name.as_str()) {
+    let program_path = format!("/{}", cmd.name);
+    let entity = match vfs.stat(&program_path) {
         Ok(entity) => entity,
         Err(ClientError::Vfs(VfsError::NotFound)) => {
             println!("Unknown command: {}", cmd.name);
@@ -35,7 +37,7 @@ pub fn run(cmd: &Command) {
         vfs.disconnect();
         return;
     }
-    let mut file = match vfs.open(cmd.name.as_str(), 0) {
+    let mut file = match vfs.open(program_path.as_str(), 0) {
         Ok(file) => file,
         Err(ClientError::Vfs(VfsError::NotFound)) => {
             println!("Unknown command: {}", cmd.name);

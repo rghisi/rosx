@@ -19,8 +19,6 @@ fn main() {
         println!("usage: cp <source> <target>");
         return;
     };
-    let source = source.strip_prefix('/').unwrap_or(source);
-    let target = target.strip_prefix('/').unwrap_or(target);
     let Ok(vfs) = Vfs::connect() else {
         println!("cp no filesystem service");
         return;

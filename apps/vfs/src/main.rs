@@ -28,19 +28,19 @@ fn failed(check: &str) -> bool {
 }
 
 fn run(vfs: &Vfs) -> bool {
-    match vfs.stat("notes.txt") {
+    match vfs.stat("/notes.txt") {
         Err(ClientError::Vfs(VfsError::NotFound)) => {}
         _ => return failed("stat ghost denied"),
     }
     println!("vfs ok: stat ghost denied");
 
-    match vfs.stat("randomd") {
+    match vfs.stat("/randomd") {
         Ok(entity) if entity.kind == EntityKind::File && entity.size > 0 => {}
         _ => return failed("stat randomd rom intact"),
     }
     println!("vfs ok: stat randomd rom intact");
 
-    let Ok(mut notes) = vfs.open("notes.txt", MODE_WRITE | MODE_CREATE) else {
+    let Ok(mut notes) = vfs.open("/notes.txt", MODE_WRITE | MODE_CREATE) else {
         return failed("create notes.txt");
     };
     println!("vfs ok: create notes.txt");
@@ -54,7 +54,7 @@ fn run(vfs: &Vfs) -> bool {
         return failed("write 4096 at 0");
     }
 
-    let Ok(mut notes) = vfs.open("notes.txt", MODE_WRITE) else {
+    let Ok(mut notes) = vfs.open("/notes.txt", MODE_WRITE) else {
         return failed("write 1024 at 8192");
     };
     notes.seek(HOLE_END as u64);
@@ -67,7 +67,7 @@ fn run(vfs: &Vfs) -> bool {
         return failed("write 1024 at 8192");
     }
 
-    let Ok(mut notes) = vfs.open("notes.txt", 0) else {
+    let Ok(mut notes) = vfs.open("/notes.txt", 0) else {
         return failed("read 9216 hole zeroed");
     };
     let mut whole = vec![0u8; NOTES_BYTES];
@@ -102,13 +102,13 @@ fn run(vfs: &Vfs) -> bool {
         return failed("eof at 9216");
     }
 
-    match vfs.stat("notes.txt") {
+    match vfs.stat("/notes.txt") {
         Ok(entity) if entity.kind == EntityKind::File && entity.size == NOTES_BYTES as u64 => {}
         _ => return failed("stat notes.txt 9216"),
     }
     println!("vfs ok: stat notes.txt 9216");
 
-    let Ok(mut notes) = vfs.open("notes.txt", MODE_WRITE) else {
+    let Ok(mut notes) = vfs.open("/notes.txt", MODE_WRITE) else {
         return failed("zero write accepted");
     };
     if notes.write(&[]).is_err() {
@@ -119,7 +119,7 @@ fn run(vfs: &Vfs) -> bool {
         return failed("zero write accepted");
     }
 
-    let Ok(mut notes) = vfs.open("notes.txt", 0) else {
+    let Ok(mut notes) = vfs.open("/notes.txt", 0) else {
         return failed("write denied mode 0");
     };
     match notes.write(&[vfs_byte(0)]) {
@@ -131,7 +131,7 @@ fn run(vfs: &Vfs) -> bool {
         return failed("write denied mode 0");
     }
 
-    let Ok(mut notes) = vfs.open("notes.txt", 0) else {
+    let Ok(mut notes) = vfs.open("/notes.txt", 0) else {
         return failed("reopen kept 9216");
     };
     match notes.read(&mut whole) {
@@ -143,7 +143,7 @@ fn run(vfs: &Vfs) -> bool {
         return failed("reopen kept 9216");
     }
 
-    match vfs.list() {
+    match vfs.list_dir("/") {
         Ok(names) if listed(&names, "notes.txt") => {
             println!("  list: {}", names.iter().fold(String::new(), |acc, x| acc + &x.to_string() + ", "));
         }
@@ -151,19 +151,19 @@ fn run(vfs: &Vfs) -> bool {
     }
     println!("vfs ok: list got notes.txt");
 
-    match vfs.open("notes.txt", MODE_CREATE) {
+    match vfs.open("/notes.txt", MODE_CREATE) {
         Err(ClientError::Vfs(VfsError::AlreadyExists)) => {}
         _ => return failed("create existing denied"),
     }
     println!("vfs ok: create existing denied");
 
-    match vfs.open("missing.txt", 0) {
+    match vfs.open("/missing.txt", 0) {
         Err(ClientError::Vfs(VfsError::NotFound)) => {}
         _ => return failed("open missing denied"),
     }
     println!("vfs ok: open missing denied");
 
-    let Ok(mut blob) = vfs.open("blob.bin", MODE_WRITE | MODE_CREATE) else {
+    let Ok(mut blob) = vfs.open("/blob.bin", MODE_WRITE | MODE_CREATE) else {
         return failed("chunked write 131072");
     };
     let data: Vec<u8> = (0..BLOB_BYTES).map(vfs_byte).collect();
@@ -177,7 +177,7 @@ fn run(vfs: &Vfs) -> bool {
         return failed("chunked write 131072");
     }
 
-    let Ok(mut blob) = vfs.open("blob.bin", 0) else {
+    let Ok(mut blob) = vfs.open("/blob.bin", 0) else {
         return failed("chunked read 131072 verified");
     };
     let mut readback = vec![0u8; BLOB_BYTES];
@@ -195,13 +195,13 @@ fn run(vfs: &Vfs) -> bool {
         return failed("chunked read 131072 verified");
     }
 
-    match vfs.stat("blob.bin") {
+    match vfs.stat("/blob.bin") {
         Ok(entity) if entity.kind == EntityKind::File && entity.size == BLOB_BYTES as u64 => {}
         _ => return failed("stat blob.bin 131072"),
     }
     println!("vfs ok: stat blob.bin 131072");
 
-    match vfs.list() {
+    match vfs.list_dir("/") {
         Ok(names) if listed(&names, "blob.bin") && listed(&names, "notes.txt") => {
             println!("  list: {}", names.iter().fold(String::new(), |acc, x| acc + &x.to_string() + ", "));
         }
@@ -209,24 +209,24 @@ fn run(vfs: &Vfs) -> bool {
     }
     println!("vfs ok: list got blob.bin notes.txt");
 
-    if vfs.delete("notes.txt").is_err() {
+    if vfs.delete("/notes.txt").is_err() {
         return failed("delete notes.txt");
     }
     println!("vfs ok: delete notes.txt");
 
-    match vfs.delete("notes.txt") {
+    match vfs.delete("/notes.txt") {
         Err(ClientError::Vfs(VfsError::NotFound)) => {}
         _ => return failed("delete twice denied"),
     }
     println!("vfs ok: delete twice denied");
 
-    match vfs.stat("notes.txt") {
+    match vfs.stat("/notes.txt") {
         Err(ClientError::Vfs(VfsError::NotFound)) => {}
         _ => return failed("stat after delete denied"),
     }
     println!("vfs ok: stat after delete denied");
 
-    match vfs.list() {
+    match vfs.list_dir("/") {
         Ok(names) if listed(&names, "blob.bin") && !listed(&names, "notes.txt") => {
             println!("  list: {}", names.iter().fold(String::new(), |acc, x| acc + &x.to_string() + ", "));
         }
@@ -234,12 +234,12 @@ fn run(vfs: &Vfs) -> bool {
     }
     println!("vfs ok: list got blob.bin");
 
-    if vfs.delete("blob.bin").is_err() {
+    if vfs.delete("/blob.bin").is_err() {
         return failed("delete blob.bin");
     }
     println!("vfs ok: delete blob.bin");
 
-    match vfs.list() {
+    match vfs.list_dir("/") {
         Ok(names) if !listed(&names, "notes.txt") && !listed(&names, "blob.bin") => {
             println!("  list: {}", names.iter().fold(String::new(), |acc, x| acc + &x.to_string() + ", "));
         }

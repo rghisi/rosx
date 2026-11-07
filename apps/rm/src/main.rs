@@ -16,12 +16,11 @@ fn main() {
         println!("usage: rm <path>");
         return;
     };
-    let name = path.strip_prefix('/').unwrap_or(path);
     let Ok(vfs) = Vfs::connect() else {
         println!("rm no filesystem service");
         return;
     };
-    match vfs.delete(name) {
+    match vfs.delete(path) {
         Ok(()) => println!("rm ok {path}"),
         Err(error) => println!("rm failed: {error:?}"),
     }

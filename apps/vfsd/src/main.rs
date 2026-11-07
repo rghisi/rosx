@@ -107,12 +107,6 @@ impl VfsServer {
                 Ok(()) => Reply::Ack,
                 Err(error) => Reply::Err(error),
             },
-            Request::List => {
-                let blob = self.fs.list();
-                self.payload_reply(connection, owner, blob, |token, total| {
-                    Reply::Listed { token, total }
-                })
-            }
             Request::Stat { name } => match self.fs.stat(name) {
                 Ok((kind, size)) => Reply::Stat { kind, size },
                 Err(error) => Reply::Err(error),
@@ -125,7 +119,7 @@ impl VfsServer {
             }
             Request::Mount { device, dir } => match self.fs.mount_device(device, dir) {
                 Ok(()) => {
-                    println!("[VFSD] mounted rxfs volume '{device}' at /{dir}");
+                    println!("[VFSD] mounted rxfs volume '{device}' at {dir}");
                     Reply::Ack
                 }
                 Err(error) => Reply::Err(error),

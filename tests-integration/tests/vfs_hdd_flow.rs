@@ -53,15 +53,15 @@ fn attach_format_and_carve_directories_on_the_hard_disk_volume() {
             "ls /hdd on the fresh volume must succeed: {listing}"
         );
 
-        run(&mut session, "cp pi hdd/pi", "cp ok pi -> hdd/pi");
+        run(&mut session, "cp /pi /hdd/pi", "cp ok /pi -> /hdd/pi");
 
         let listing = run(&mut session, "ls /hdd", "rose>");
         assert!(listing.contains("pi"), "the copied file must list: {listing}");
 
-        run(&mut session, "mkdir hdd/sub", "mkdir ok hdd/sub");
-        run(&mut session, "cp echo hdd/sub/echo", "cp ok echo -> hdd/sub/echo");
+        run(&mut session, "mkdir /hdd/sub", "mkdir ok /hdd/sub");
+        run(&mut session, "cp /echo /hdd/sub/echo", "cp ok /echo -> /hdd/sub/echo");
 
-        let listing = run(&mut session, "ls hdd/sub", "rose>");
+        let listing = run(&mut session, "ls /hdd/sub", "rose>");
         assert!(listing.contains("echo"), "the nested copy must list: {listing}");
 
         run(&mut session, "rm /hdd", "rm failed: Vfs(NotPermitted)");
@@ -85,15 +85,15 @@ fn attach_format_and_carve_directories_on_the_hard_disk_volume() {
         "the disk must survive the reboot: {listing}"
     );
 
-    let listing = run(&mut session, "ls hdd/sub", "rose>");
+    let listing = run(&mut session, "ls /hdd/sub", "rose>");
     assert!(listing.contains("echo"), "nested content must survive: {listing}");
 
-    run(&mut session, "rm hdd/pi", "rm ok hdd/pi");
+    run(&mut session, "rm /hdd/pi", "rm ok /hdd/pi");
 
     let listing = run(&mut session, "ls /hdd", "rose>");
     assert!(!listing.contains("pi\t"), "rm must clear the file: {listing}");
 
-    run(&mut session, "rmdir hdd/sub", "rmdir failed: Vfs(DirectoryNotEmpty)");
-    run(&mut session, "rm hdd/sub/echo", "rm ok hdd/sub/echo");
-    run(&mut session, "rmdir hdd/sub", "rmdir ok hdd/sub");
+    run(&mut session, "rmdir /hdd/sub", "rmdir failed: Vfs(DirectoryNotEmpty)");
+    run(&mut session, "rm /hdd/sub/echo", "rm ok /hdd/sub/echo");
+    run(&mut session, "rmdir /hdd/sub", "rmdir ok /hdd/sub");
 }
