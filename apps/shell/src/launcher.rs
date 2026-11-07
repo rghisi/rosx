@@ -1,6 +1,7 @@
 use crate::command::Command;
 use alloc::vec::Vec;
 use system::args::{MAX_ARGUMENT_BYTES, MAX_ARGUMENT_COUNT};
+use usrlib::exit::ExitStatus;
 use usrlib::println;
 use usrlib::syscall::Syscall;
 use vfs_protocol::client::{ClientError, EntityKind, Vfs, VfsFile};
@@ -98,7 +99,21 @@ fn launch(image: Vec<u8>, cmd: &Command) {
     argv.push(cmd.name.clone());
     argv.extend(cmd.args.iter().cloned());
     match Syscall::load_with_args(&image, &argv) {
-        Some(handle) => Syscall::wait_future(handle),
+        Some(handle) => match Syscall::wait_for_exit_status(handle) {
+            Ok(status) => report_exit(&cmd.name, status),
+            Err(error) => println!("Cannot watch {}: {}", cmd.name, error),
+        },
         None => println!("Cannot launch: {}", cmd.name),
+    }
+}
+
+fn report_exit(name: &str, status: ExitStatus) {
+    match status {
+        ExitStatus::Clean(0) => {}
+        ExitStatus::Clean(code) => println!("{} exited with code {}", name, code),
+        ExitStatus::Panicked => println!("{} panicked", name),
+        ExitStatus::Unknown { reason, code } => {
+            println!("{} exited with reason {} code {}", name, reason, code)
+        }
     }
 }

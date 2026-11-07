@@ -15,6 +15,7 @@ members = [
     "apps/shell",
     "apps/dummy",
     "apps/pi",
+    "apps/exiter",
     "apps/randomd",
     "apps/echo",
     "apps/bulk",
