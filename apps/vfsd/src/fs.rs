@@ -5,7 +5,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use block_protocol::client::Block;
+use block_protocol::client::{Block, Geometry};
 use fs_core::engine::{Engine, Kind, MetadataView};
 use fs_core::error::FsError;
 use rxfs::device::BlockDevice;
@@ -162,12 +162,8 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
         {
             return Err(VfsError::Busy);
         }
-        let client = Block::connect(service).map_err(error_map::block)?;
-        let geometry = client.probe(device).map_err(error_map::block)?;
-        client.disconnect();
-        if crate::blk::device_blocks_per_block(geometry.block_size).is_none() {
-            return Err(VfsError::Unsupported);
-        }
+        let (disk, geometry) = self.open_remote_block(service, device)?;
+        disk.into_client().disconnect();
         self.devices.push(AttachedDevice {
             id: String::from(id),
             service: String::from(service),
@@ -186,15 +182,29 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
             .ok_or(VfsError::NotFound)
     }
 
+    fn open_remote_block(
+        &self,
+        service: &str,
+        device: u32,
+    ) -> Result<(RemoteBlock, Geometry), VfsError> {
+        let client = Block::connect(service).map_err(error_map::block)?;
+        let geometry = client.probe(device).map_err(error_map::block)?;
+        let disk = match RemoteBlock::new(client, device, &geometry) {
+            Ok(disk) => disk,
+            Err(client) => {
+                client.disconnect();
+                return Err(VfsError::Unsupported);
+            }
+        };
+        Ok((disk, geometry))
+    }
+
     pub fn format_device(&mut self, id: &str) -> Result<(), VfsError> {
         let attached = self.attached(id)?;
         if self.device_busy(id) {
             return Err(VfsError::Busy);
         }
-        let (service, device) = (attached.service.clone(), attached.device);
-        let client = Block::connect(&service).map_err(error_map::block)?;
-        let geometry = client.probe(device).map_err(error_map::block)?;
-        let disk = RemoteBlock::new(client, device, &geometry).ok_or(VfsError::Unsupported)?;
+        let (disk, _) = self.open_remote_block(&attached.service, attached.device)?;
         let params = FormatParams {
             bytes_per_inode: DEFAULT_BYTES_PER_INODE,
             uuid: DEVICE_VOLUME_UUID,
@@ -222,10 +232,7 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
             return Err(VfsError::NotDirectory);
         }
         let attached = self.attached(id)?;
-        let (service, device) = (attached.service.clone(), attached.device);
-        let client = Block::connect(&service).map_err(error_map::block)?;
-        let geometry = client.probe(device).map_err(error_map::block)?;
-        let disk = RemoteBlock::new(client, device, &geometry).ok_or(VfsError::Unsupported)?;
+        let (disk, _) = self.open_remote_block(&attached.service, attached.device)?;
         let fs = FileSystem::mount(disk).map_err(error_map::mount)?;
         self.mounts.push(MountedVolume {
             name: String::from(name),
