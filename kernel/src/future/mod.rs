@@ -65,11 +65,19 @@ impl Future for TimeFuture {
 
 pub struct TaskCompletionFuture {
     task_handle: TaskHandle,
+    status: i32,
 }
 
 impl TaskCompletionFuture {
     pub fn new(task_handle: TaskHandle) -> Self {
-        Self { task_handle }
+        Self {
+            task_handle,
+            status: system::exit::encode(system::exit::EXIT_REASON_CLEAN, 0),
+        }
+    }
+
+    pub(crate) fn status(&self) -> i32 {
+        self.status
     }
 }
 
@@ -204,6 +212,16 @@ impl FutureRegistry {
 
     pub fn notify(&mut self, handle: FutureHandle) {
         let _section = FUTURE_SECTION.acquire();
+        self.notify_inner(handle);
+    }
+
+    pub fn notify_with_status(&mut self, handle: FutureHandle, status: i32) {
+        let _section = FUTURE_SECTION.acquire();
+        if let Ok(future) = self.arena.borrow_mut(handle.into()) {
+            if let Some(completion) = future.as_any_mut().downcast_mut::<TaskCompletionFuture>() {
+                completion.status = status;
+            }
+        }
         self.notify_inner(handle);
     }
 
@@ -425,6 +443,83 @@ mod tests {
         // Second notify does nothing (no waiters left)
         services().future_registry.borrow_mut().notify(future_handle);
         assert_eq!(services().task_manager.borrow().get_state(handle), TaskState::Ready);
+    }
+
+    #[test]
+    fn task_completion_future_defaults_to_clean_zero_status() {
+        setup();
+        let task = Task::new("T", 0x1000, 0);
+        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+
+        let future = TaskCompletionFuture::new(handle);
+
+        assert_eq!(future.status(), system::exit::clean_status(0).unwrap());
+    }
+
+    #[test]
+    fn notify_with_status_stamps_task_completion_future_and_wakes_waiters() {
+        setup();
+        let task = Task::new("T", 0x1000, 0);
+        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+        services().task_manager.borrow_mut().set_state(handle, TaskState::Blocked);
+
+        let completion = Box::new(TaskCompletionFuture::new(handle));
+        let future_handle = services().future_registry.borrow_mut().register(completion).unwrap();
+        services().future_registry.borrow_mut().register_waiter(future_handle, handle);
+
+        let status = system::exit::encode(system::exit::EXIT_REASON_PANICKED, 0);
+        services().future_registry.borrow_mut().notify_with_status(future_handle, status);
+
+        assert_eq!(services().task_manager.borrow().get_state(handle), TaskState::Ready);
+        let future = services().future_registry.borrow_mut().borrow_mut(future_handle).unwrap();
+        let completion = future.as_any_mut().downcast_mut::<TaskCompletionFuture>().unwrap();
+        assert_eq!(completion.status(), status);
+    }
+
+    #[test]
+    fn notify_with_status_wakes_non_task_future_waiters_and_carries_no_status() {
+        setup();
+        let task = Task::new("T", 0x1000, 0);
+        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+        services().task_manager.borrow_mut().set_state(handle, TaskState::Blocked);
+
+        let future_handle = services().future_registry.borrow_mut().register(Box::new(DummyFuture)).unwrap();
+        services().future_registry.borrow_mut().register_waiter(future_handle, handle);
+
+        services().future_registry.borrow_mut().notify_with_status(future_handle, 7);
+
+        assert_eq!(services().task_manager.borrow().get_state(handle), TaskState::Ready);
+    }
+
+    #[test]
+    fn consumed_task_completion_future_carries_the_stamped_status() {
+        setup();
+        let task = Task::new("T", 0x1000, 0);
+        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+
+        let completion = Box::new(TaskCompletionFuture::new(handle));
+        let future_handle = services().future_registry.borrow_mut().register(completion).unwrap();
+
+        let status = system::exit::clean_status(3).unwrap();
+        services().future_registry.borrow_mut().notify_with_status(future_handle, status);
+        services().task_manager.borrow_mut().set_state(handle, TaskState::Terminated);
+
+        let taken = services().future_registry.borrow_mut().consume(future_handle).unwrap();
+        let completion = taken.into_any().downcast::<TaskCompletionFuture>().unwrap();
+        assert_eq!(completion.status(), status);
+    }
+
+    #[test]
+    fn notify_with_status_on_unknown_handle_is_inert() {
+        setup();
+        let registry = &services().future_registry;
+        let task = Task::new("T", 0x1000, 0);
+        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+        let completion = Box::new(TaskCompletionFuture::new(handle));
+        let live_handle = registry.borrow_mut().register(completion).unwrap();
+        let _ = registry.borrow_mut().consume(live_handle).unwrap();
+
+        registry.borrow_mut().notify_with_status(live_handle, 5);
     }
 
     // === TimeFuture tests ===

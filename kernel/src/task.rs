@@ -529,10 +529,10 @@ pub(crate) extern "C" fn elf_task_wrapper(context: usize) {
 
     kernel().execution_state.preemption_enabled = true;
 
-    task_entry_point(context.argc(), context.argv());
+    let return_code = task_entry_point(context.argc(), context.argv());
 
     drop(image);
     drop(context);
 
-    kernel().terminate_and_yield();
+    kernel().terminate_with_status(system::exit::encode(system::exit::EXIT_REASON_CLEAN, return_code as u32));
 }

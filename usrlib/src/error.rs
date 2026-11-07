@@ -184,11 +184,35 @@ impl Display for PortError {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum TaskExitError {
+    AlreadyConsumed,
+    NotFound,
+}
+
+impl From<ErrorCode> for TaskExitError {
+    fn from(code: ErrorCode) -> Self {
+        match code {
+            ErrorCode::FutureAlreadyConsumed => Self::AlreadyConsumed,
+            _ => Self::NotFound,
+        }
+    }
+}
+
+impl Display for TaskExitError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            TaskExitError::AlreadyConsumed => write!(f, "Task exit already collected"),
+            TaskExitError::NotFound => write!(f, "Task future not found"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 21] = [
+    const ALL_ERROR_CODES: [ErrorCode; 23] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -207,8 +231,10 @@ mod tests {
         ErrorCode::WaitsetNotFound,
         ErrorCode::WaitsetLeafRequired,
         ErrorCode::FutureCapacityExhausted,
+        ErrorCode::FutureAlreadyConsumed,
         ErrorCode::PortAccessDenied,
         ErrorCode::PortRequestInvalid,
+        ErrorCode::ExitCodeOutOfRange,
         ErrorCode::Unknown,
     ];
 
@@ -222,6 +248,7 @@ mod tests {
             let data = DataError::from(code);
             let waitset = WaitsetError::from(code);
             let port = PortError::from(code);
+            let task_exit = TaskExitError::from(code);
 
             let expected_connection = match code {
                 ErrorCode::IpcConnectionCannotBeEstablished => {
@@ -255,6 +282,10 @@ mod tests {
                 ErrorCode::PortAccessDenied => PortError::Denied,
                 _ => PortError::Invalid,
             };
+            let expected_task_exit = match code {
+                ErrorCode::FutureAlreadyConsumed => TaskExitError::AlreadyConsumed,
+                _ => TaskExitError::NotFound,
+            };
 
             assert_eq!(connection, expected_connection);
             assert_eq!(binding, IpcBindingError::AlreadyBound);
@@ -263,6 +294,7 @@ mod tests {
             assert_eq!(data, expected_data);
             assert_eq!(waitset, expected_waitset);
             assert_eq!(port, expected_port);
+            assert_eq!(task_exit, expected_task_exit);
         }
     }
 
@@ -287,5 +319,6 @@ mod tests {
         assert_eq!(DataError::from(ErrorCode::Unknown), DataError::NotFound);
         assert_eq!(WaitsetError::from(ErrorCode::Unknown), WaitsetError::NotFound);
         assert_eq!(PortError::from(ErrorCode::Unknown), PortError::Invalid);
+        assert_eq!(TaskExitError::from(ErrorCode::Unknown), TaskExitError::NotFound);
     }
 }

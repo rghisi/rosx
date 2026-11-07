@@ -54,7 +54,7 @@ fn panic(info: &PanicInfo) -> ! {
         None => print_raw("panic"),
     }
     print_raw("\n");
-    loop {}
+    crate::syscall::Syscall::exit(system::exit::EXIT_CODE_PANIC)
 }
 
 fn print_raw(text: &str) {
