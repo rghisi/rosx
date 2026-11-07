@@ -61,7 +61,10 @@ The measured baseline and the speed-up plan built on it live in
   collected into a shared, ANSI-stripped buffer.
 - Keystroke injection: QEMU is started with `-monitor
   unix:<tempdir>/monitor.sock,server=on,wait=off`; characters are mapped to
-  `sendkey` tokens and sent one per command with a 50 ms inter-key delay.
+  `sendkey` tokens and sent one per command. Each keystroke is acknowledged by
+  its echo on the debug console before the next one is sent, and resent up to
+  three times before the test panics; `send_line` finishes with a plain
+  (un-echoed) Enter.
 - Each test owns its `QemuSession`: private temp dir (disk image + monitor
   socket) and private QEMU child; on drop the session sends monitor `quit`,
   reaps the child, and deletes the temp dir unless `ROSX_QEMU_KEEP_TMP` is set.

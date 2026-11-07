@@ -14,7 +14,8 @@ use crate::output::{self, strip_ansi, SharedOutput};
 use crate::sendkey;
 
 const STDERR_TAIL_BYTES: usize = 4096;
-const INTER_KEY_DELAY: Duration = Duration::from_millis(50);
+const ECHO_ACK_CAP: Duration = Duration::from_millis(500);
+const KEY_ATTEMPTS: usize = 3;
 const DROP_QUIT_CAP: Duration = Duration::from_secs(5);
 const DROP_REAP_CAP: Duration = Duration::from_secs(5);
 const DROP_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -236,10 +237,27 @@ impl QemuSession {
             .unwrap_or_else(|err| panic!("monitor command sendkey {token} failed: {err}"));
     }
 
+    fn send_key_acked(&mut self, c: char) {
+        for _attempt in 1..=KEY_ATTEMPTS {
+            let mark = self.mark();
+            self.send_key(c);
+            if self
+                .output
+                .wait_for_since(mark, |delta| delta.contains(c), ECHO_ACK_CAP)
+                .is_ok()
+            {
+                return;
+            }
+        }
+        panic!(
+            "keystroke for {c:?} never echoed after {KEY_ATTEMPTS} sendkey attempts\n{}",
+            self.content_since(0)
+        );
+    }
+
     pub fn send_text(&mut self, s: &str) {
         for c in s.chars() {
-            self.send_key(c);
-            thread::sleep(INTER_KEY_DELAY);
+            self.send_key_acked(c);
         }
     }
 
