@@ -7,7 +7,7 @@ use system::waitset::WaitEvent;
 use crate::kconfig::KConfig;
 use crate::kernel_services::services;
 use crate::kprintln;
-use crate::platform::portio::PortIo;
+use crate::platform::portio::{PortIo, PortRange};
 
 use crate::state::{ExecutionContext, ExecutionState};
 use crate::task::TaskState;
@@ -94,6 +94,7 @@ pub struct Kernel {
     cpu: &'static dyn Cpu,
     pub(crate) elf_arch: &'static dyn ElfArch,
     pub(crate) port_io: &'static dyn PortIo,
+    pub(crate) port_pool: &'static [PortRange],
     pub(crate) execution_state: ExecutionState,
 }
 
@@ -102,6 +103,7 @@ impl Kernel {
         let cpu = kconfig.cpu;
         let elf_arch = kconfig.elf_arch;
         let port_io = kconfig.port_io;
+        let port_pool = kconfig.port_pool;
         crate::kernel_services::init();
         crate::irq_guard::init_cpu(cpu);
         let scheduler_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
@@ -124,6 +126,7 @@ impl Kernel {
             cpu,
             elf_arch,
             port_io,
+            port_pool,
             execution_state: ExecutionState {
                 scheduler: scheduler_task_handler,
                 current_task: None,
@@ -172,7 +175,7 @@ impl Kernel {
         self.schedule_with_task_handle(task).map(|(_task_handle, future_handle)| future_handle)
     }
 
-    pub fn schedule_with_task_handle(&mut self, task: SharedTask) -> Result<(TaskHandle, FutureHandle), ()> {
+    pub(crate) fn schedule_with_task_handle(&mut self, task: SharedTask) -> Result<(TaskHandle, FutureHandle), ()> {
         let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
         let result = services().task_manager.borrow_mut().add_task(task);
@@ -286,6 +289,7 @@ impl Kernel {
                 .task_manager
                 .borrow_mut()
                 .set_state(task_handle, Terminated);
+            crate::platform::portio::revoke(task_handle);
             if let Some(completion_handle) =
                 services().task_manager.borrow().get_completion_future(task_handle) {
                     services().future_registry.borrow_mut().notify_with_status(completion_handle, status);
@@ -378,6 +382,7 @@ mod tests {
             cpu,
             elf_arch: Box::leak(Box::new(StubElfArch)) as &'static dyn ElfArch,
             port_io: Box::leak(Box::new(StubPortIo)) as &'static dyn PortIo,
+            port_pool: &[],
             execution_state: ExecutionState {
                 scheduler,
                 current_task,

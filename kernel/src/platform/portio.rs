@@ -36,11 +36,37 @@ const GRANT_CAPACITY: usize = 8;
 pub(crate) const BLOCK_WORDS_MAX: usize = 32768;
 const PORT_SPACE: usize = 0x10000;
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct PortRange {
+    pub base: u16,
+    pub end: u16,
+}
+
+impl PortRange {
+    pub const fn new(base: u16, end: u16) -> PortRange {
+        PortRange { base, end }
+    }
+
+    fn contains(self, first: u16, last: u16) -> bool {
+        u32::from(self.base) <= u32::from(first) && u32::from(last) <= u32::from(self.end)
+    }
+}
+
 #[derive(Copy, Clone)]
 struct Grant {
     task: TaskHandle,
     base: u16,
     end: u16,
+}
+
+impl Grant {
+    fn covers(self, first: u16, last: u16) -> bool {
+        u32::from(self.base) <= u32::from(first) && u32::from(last) <= u32::from(self.end)
+    }
+
+    fn overlaps(self, first: u16, last: u16) -> bool {
+        u32::from(self.base) <= u32::from(last) && u32::from(first) <= u32::from(self.end)
+    }
 }
 
 pub(crate) struct GrantTable {
@@ -54,14 +80,49 @@ impl GrantTable {
         }
     }
 
-    pub(crate) fn grant(&mut self, task: TaskHandle, base: u16, end: u16) -> bool {
+    pub(crate) fn acquire(
+        &mut self,
+        task: TaskHandle,
+        base: u16,
+        end: u16,
+        pool: &[PortRange],
+    ) -> Result<(), ErrorCode> {
+        if !pool.iter().any(|entry| entry.contains(base, end)) {
+            return Err(ErrorCode::PortRangeNotInPool);
+        }
+        if self
+            .entries
+            .iter()
+            .flatten()
+            .any(|held| held.task == task && held.covers(base, end))
+        {
+            return Ok(());
+        }
+        if self
+            .entries
+            .iter()
+            .flatten()
+            .any(|held| held.task != task && held.overlaps(base, end))
+        {
+            return Err(ErrorCode::PortRangeBusy);
+        }
         for slot in self.entries.iter_mut() {
             if slot.is_none() {
                 *slot = Some(Grant { task, base, end });
-                return true;
+                return Ok(());
             }
         }
-        false
+        Err(ErrorCode::PortGrantTableFull)
+    }
+
+    pub(crate) fn release(&mut self, task: TaskHandle, base: u16, end: u16) -> Result<(), ErrorCode> {
+        for slot in self.entries.iter_mut() {
+            if matches!(slot, Some(held) if held.task == task && held.base == base && held.end == end) {
+                *slot = None;
+                return Ok(());
+            }
+        }
+        Err(ErrorCode::PortAccessDenied)
     }
 
     pub(crate) fn revoke(&mut self, task: TaskHandle) {
@@ -83,12 +144,34 @@ impl GrantTable {
 
 static GRANTS: KernelCell<GrantTable> = KernelCell::new(GrantTable::new());
 
-pub fn grant(task: TaskHandle, base: u16, end: u16) -> bool {
-    GRANTS.borrow_mut().grant(task, base, end)
+pub(crate) fn revoke(task: TaskHandle) {
+    GRANTS.borrow_mut().revoke(task);
 }
 
-pub fn revoke(task: TaskHandle) {
-    GRANTS.borrow_mut().revoke(task);
+pub(crate) fn authorize_acquire(
+    caller: TaskHandle,
+    raw_base: usize,
+    raw_end: usize,
+    pool: &[PortRange],
+) -> Result<(), ErrorCode> {
+    let (base, end) = validate_pair(raw_base, raw_end)?;
+    GRANTS.borrow_mut().acquire(caller, base, end, pool)
+}
+
+pub(crate) fn authorize_release(
+    caller: TaskHandle,
+    raw_base: usize,
+    raw_end: usize,
+) -> Result<(), ErrorCode> {
+    let (base, end) = validate_pair(raw_base, raw_end)?;
+    GRANTS.borrow_mut().release(caller, base, end)
+}
+
+fn validate_pair(raw_base: usize, raw_end: usize) -> Result<(u16, u16), ErrorCode> {
+    if raw_base >= PORT_SPACE || raw_end >= PORT_SPACE || raw_base > raw_end {
+        return Err(ErrorCode::PortRequestInvalid);
+    }
+    Ok((raw_base as u16, raw_end as u16))
 }
 
 pub(crate) fn validate_single(raw_port: usize, raw_width: usize) -> Result<(u16, PortWidth), ErrorCode> {
@@ -144,6 +227,23 @@ mod tests {
     const WIDE_WIDTH: usize = 3;
     const ONE_WORD: usize = 1;
 
+    const ATA_POOL: &[PortRange] = &[
+        PortRange::new(PRIMARY_DATA_BASE, PRIMARY_DATA_END),
+        PortRange::new(ALTERNATE_STATUS, ALTERNATE_STATUS),
+    ];
+    const PARTIAL_POOL: &[PortRange] = &[PortRange::new(PRIMARY_DATA_BASE, 0x1F6)];
+    const WIDE_POOL: &[PortRange] = &[
+        PortRange::new(0x300, 0x300),
+        PortRange::new(0x301, 0x301),
+        PortRange::new(0x302, 0x302),
+        PortRange::new(0x303, 0x303),
+        PortRange::new(0x304, 0x304),
+        PortRange::new(0x305, 0x305),
+        PortRange::new(0x306, 0x306),
+        PortRange::new(0x307, 0x307),
+        PortRange::new(0x308, 0x308),
+    ];
+
     fn task(index: u16, generation: u16) -> TaskHandle {
         TaskHandle::new(index, generation)
     }
@@ -152,26 +252,140 @@ mod tests {
         GRANTS.replace(GrantTable::new());
     }
 
-    fn grant_both(task_handle: TaskHandle) {
-        assert!(GRANTS.borrow_mut().grant(task_handle, PRIMARY_DATA_BASE, PRIMARY_DATA_END));
-        assert!(GRANTS.borrow_mut().grant(task_handle, ALTERNATE_STATUS, ALTERNATE_STATUS));
+    fn acquire_both(task_handle: TaskHandle) {
+        let base = PRIMARY_DATA_BASE as usize;
+        let end = PRIMARY_DATA_END as usize;
+        let status = ALTERNATE_STATUS as usize;
+        assert!(authorize_acquire(task_handle, base, end, ATA_POOL).is_ok());
+        assert!(authorize_acquire(task_handle, status, status, ATA_POOL).is_ok());
     }
 
     #[test]
-    fn grant_admits_inclusive_span_and_authorizes_both_ends() {
+    fn acquire_admits_pool_span_and_authorizes_both_ends() {
         reset_grants();
         let handle = task(1, 0);
-        grant_both(handle);
+        acquire_both(handle);
         assert!(authorize_single(handle, 0x1F0, 1).is_ok());
         assert!(authorize_single(handle, 0x1F7, 1).is_ok());
         assert!(authorize_single(handle, 0x3F6, 1).is_ok());
     }
 
     #[test]
+    fn acquire_subrange_of_a_pool_entry_is_admitted() {
+        reset_grants();
+        let handle = task(2, 0);
+        assert!(authorize_acquire(handle, 0x1F0, 0x1F2, ATA_POOL).is_ok());
+        assert!(authorize_single(handle, 0x1F2, 1).is_ok());
+        assert_eq!(
+            authorize_single(handle, 0x1F3, 1).unwrap_err(),
+            ErrorCode::PortAccessDenied
+        );
+    }
+
+    #[test]
+    fn acquire_of_a_range_outside_the_pool_is_rejected() {
+        reset_grants();
+        let handle = task(3, 0);
+        assert_eq!(
+            authorize_acquire(handle, UNGRANTED_PORT as usize, UNGRANTED_PORT as usize, ATA_POOL),
+            Err(ErrorCode::PortRangeNotInPool)
+        );
+    }
+
+    #[test]
+    fn acquire_straddling_two_pool_entries_is_rejected() {
+        reset_grants();
+        let handle = task(4, 0);
+        assert_eq!(
+            authorize_acquire(handle, PRIMARY_DATA_BASE as usize, ALTERNATE_STATUS as usize, ATA_POOL),
+            Err(ErrorCode::PortRangeNotInPool)
+        );
+    }
+
+    #[test]
+    fn acquire_overlapping_another_tasks_grant_is_busy() {
+        reset_grants();
+        let holder = task(5, 0);
+        let rival = task(6, 0);
+        acquire_both(holder);
+        assert_eq!(
+            authorize_acquire(rival, PRIMARY_DATA_BASE as usize, PRIMARY_DATA_END as usize, ATA_POOL),
+            Err(ErrorCode::PortRangeBusy)
+        );
+        assert_eq!(
+            authorize_acquire(rival, 0x1F4, 0x1F4, ATA_POOL),
+            Err(ErrorCode::PortRangeBusy)
+        );
+    }
+
+    #[test]
+    fn acquire_by_the_holder_already_covering_the_range_is_idempotent() {
+        reset_grants();
+        let handle = task(7, 0);
+        acquire_both(handle);
+        assert!(authorize_acquire(handle, 0x1F2, 0x1F4, ATA_POOL).is_ok());
+        assert!(authorize_acquire(handle, PRIMARY_DATA_BASE as usize, PRIMARY_DATA_END as usize, ATA_POOL).is_ok());
+        assert_eq!(
+            authorize_acquire(task(8, 0), PRIMARY_DATA_BASE as usize, PRIMARY_DATA_END as usize, ATA_POOL),
+            Err(ErrorCode::PortRangeBusy)
+        );
+    }
+
+    #[test]
+    fn release_hands_the_range_to_the_next_holder() {
+        reset_grants();
+        let holder = task(9, 0);
+        let successor = task(10, 0);
+        acquire_both(holder);
+        let status = ALTERNATE_STATUS as usize;
+        assert!(authorize_release(holder, status, status).is_ok());
+        assert!(authorize_acquire(successor, status, status, ATA_POOL).is_ok());
+        assert_eq!(
+            authorize_single(holder, ALTERNATE_STATUS as usize, 1).unwrap_err(),
+            ErrorCode::PortAccessDenied
+        );
+        assert_eq!(
+            authorize_acquire(successor, PRIMARY_DATA_BASE as usize, PRIMARY_DATA_END as usize, ATA_POOL),
+            Err(ErrorCode::PortRangeBusy)
+        );
+    }
+
+    #[test]
+    fn release_of_a_partial_or_foreign_span_is_denied() {
+        reset_grants();
+        let holder = task(11, 0);
+        let stranger = task(12, 0);
+        acquire_both(holder);
+        assert_eq!(
+            authorize_release(holder, PRIMARY_DATA_BASE as usize, 0x1F2),
+            Err(ErrorCode::PortAccessDenied)
+        );
+        assert_eq!(
+            authorize_release(stranger, PRIMARY_DATA_BASE as usize, PRIMARY_DATA_END as usize),
+            Err(ErrorCode::PortAccessDenied)
+        );
+        assert!(authorize_single(holder, 0x1F0, 1).is_ok());
+    }
+
+    #[test]
+    fn acquire_pair_malformed_is_invalid() {
+        reset_grants();
+        let handle = task(13, 0);
+        assert_eq!(
+            authorize_acquire(handle, 0x1F7, PRIMARY_DATA_BASE as usize, ATA_POOL),
+            Err(ErrorCode::PortRequestInvalid)
+        );
+        assert_eq!(
+            authorize_acquire(handle, PORT_SPACE, PORT_SPACE, ATA_POOL),
+            Err(ErrorCode::PortRequestInvalid)
+        );
+    }
+
+    #[test]
     fn single_access_straddling_grant_edge_is_denied() {
         reset_grants();
         let handle = task(2, 0);
-        assert!(GRANTS.borrow_mut().grant(handle, PRIMARY_DATA_BASE, 0x1F6));
+        assert!(authorize_acquire(handle, PRIMARY_DATA_BASE as usize, 0x1F6, PARTIAL_POOL).is_ok());
         assert_eq!(
             authorize_single(handle, 0x1F6, 4).unwrap_err(),
             ErrorCode::PortAccessDenied
@@ -182,7 +396,7 @@ mod tests {
     fn four_byte_access_fits_exactly_at_grant_end() {
         reset_grants();
         let handle = task(3, 0);
-        grant_both(handle);
+        acquire_both(handle);
         assert!(authorize_single(handle, 0x1F4, 4).is_ok());
         assert_eq!(
             authorize_single(handle, 0x1F5, 4).unwrap_err(),
@@ -194,7 +408,7 @@ mod tests {
     fn block_access_requires_grant_covering_the_word() {
         reset_grants();
         let handle = task(4, 0);
-        assert!(GRANTS.borrow_mut().grant(handle, PRIMARY_DATA_BASE, 0x1F2));
+        assert!(authorize_acquire(handle, PRIMARY_DATA_BASE as usize, 0x1F2, PARTIAL_POOL).is_ok());
         assert!(authorize_block(handle, 0x1F0, ONE_WORD).is_ok());
         assert!(authorize_block(handle, 0x1F1, ONE_WORD).is_ok());
         assert_eq!(
@@ -208,7 +422,7 @@ mod tests {
     fn block_at_grant_end_reaches_beyond_the_grant() {
         reset_grants();
         let handle = task(5, 0);
-        assert!(GRANTS.borrow_mut().grant(handle, PRIMARY_DATA_BASE, PRIMARY_DATA_END));
+        acquire_both(handle);
         assert_eq!(
             authorize_block(handle, 0x1F7, ONE_WORD).unwrap_err(),
             ErrorCode::PortAccessDenied
@@ -220,7 +434,7 @@ mod tests {
         reset_grants();
         let granted = task(6, 0);
         let outsider = task(7, 0);
-        grant_both(granted);
+        acquire_both(granted);
         assert_eq!(
             authorize_single(outsider, 0x1F0, 1).unwrap_err(),
             ErrorCode::PortAccessDenied
@@ -239,7 +453,7 @@ mod tests {
     fn recycled_slot_with_new_generation_misses_the_grant() {
         reset_grants();
         let dead = task(8, 3);
-        assert!(GRANTS.borrow_mut().grant(dead, PRIMARY_DATA_BASE, PRIMARY_DATA_END));
+        assert!(authorize_acquire(dead, PRIMARY_DATA_BASE as usize, PRIMARY_DATA_END as usize, ATA_POOL).is_ok());
         let reborn = task(8, 4);
         assert_eq!(
             authorize_single(reborn, 0x1F0, 1).unwrap_err(),
@@ -252,7 +466,7 @@ mod tests {
     fn revoke_removes_every_entry_of_the_task() {
         reset_grants();
         let handle = task(9, 0);
-        grant_both(handle);
+        acquire_both(handle);
         revoke(handle);
         assert_eq!(
             authorize_single(handle, 0x1F0, 1).unwrap_err(),
@@ -265,12 +479,26 @@ mod tests {
     }
 
     #[test]
-    fn grant_beyond_capacity_fails() {
+    fn revoke_frees_the_range_for_the_next_task() {
+        reset_grants();
+        let holder = task(14, 0);
+        let successor = task(15, 0);
+        acquire_both(holder);
+        revoke(holder);
+        assert!(authorize_acquire(successor, PRIMARY_DATA_BASE as usize, PRIMARY_DATA_END as usize, ATA_POOL).is_ok());
+    }
+
+    #[test]
+    fn acquire_beyond_capacity_fails() {
         reset_grants();
         for index in 0..GRANT_CAPACITY {
-            assert!(GRANTS.borrow_mut().grant(task(20 + index as u16, 0), 0x1F0, 0x1F7));
+            let port = 0x300 + index;
+            assert!(authorize_acquire(task(20 + index as u16, 0), port, port, WIDE_POOL).is_ok());
         }
-        assert!(!GRANTS.borrow_mut().grant(task(99, 0), 0x1F0, 0x1F7));
+        assert_eq!(
+            authorize_acquire(task(99, 0), 0x308, 0x308, WIDE_POOL),
+            Err(ErrorCode::PortGrantTableFull)
+        );
     }
 
     #[test]
@@ -325,7 +553,7 @@ mod tests {
     fn malformed_request_is_rejected_before_grant_consultation() {
         reset_grants();
         let handle = task(10, 0);
-        grant_both(handle);
+        acquire_both(handle);
         assert_eq!(
             authorize_single(handle, 0x1F0, WIDE_WIDTH).unwrap_err(),
             ErrorCode::PortRequestInvalid
