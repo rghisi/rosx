@@ -52,6 +52,22 @@ pub fn parse_mbr(sector: &[u8; SECTOR_BYTES], disk_sectors: u64) -> Table {
     Table { state, entries }
 }
 
+pub fn encode_mbr(entries: &[Option<Entry>; ENTRY_COUNT]) -> [u8; SECTOR_BYTES] {
+    let mut sector = [0u8; SECTOR_BYTES];
+    for (slot, entry) in entries.iter().enumerate() {
+        if let Some(entry) = entry {
+            let bytes = &mut sector[TABLE_OFFSET + slot * ENTRY_BYTES..][..ENTRY_BYTES];
+            bytes[0] = entry.boot;
+            bytes[4] = entry.type_id;
+            bytes[8..12].copy_from_slice(&entry.start_lba.to_le_bytes());
+            bytes[12..16].copy_from_slice(&entry.sector_count.to_le_bytes());
+        }
+    }
+    sector[SIGNATURE_OFFSET] = SIGNATURE[0];
+    sector[SIGNATURE_OFFSET + 1] = SIGNATURE[1];
+    sector
+}
+
 fn signature_present(sector: &[u8; SECTOR_BYTES]) -> bool {
     sector[SIGNATURE_OFFSET..SECTOR_BYTES] == SIGNATURE
 }
@@ -335,5 +351,37 @@ mod tests {
         stamp_entry(&mut sector, 1, 0x00, 0x0b, 4096, 2_048);
         let table = parse_mbr(&sector, DISK_SECTORS);
         assert_eq!(table.state, TableState::Corrupt);
+    }
+
+    #[test]
+    fn encoding_entries_round_trips_through_the_parser() {
+        let entries = [
+            Some(Entry { boot: 0x80, type_id: 0x83, start_lba: 2048, sector_count: 100_352 }),
+            None,
+            None,
+            Some(Entry { boot: 0x00, type_id: 0x82, start_lba: 102_400, sector_count: 102_400 }),
+        ];
+        let table = parse_mbr(&encode_mbr(&entries), DISK_SECTORS);
+        assert_eq!(table.state, TableState::Valid);
+        assert_eq!(table.entries, entries);
+    }
+
+    #[test]
+    fn encoding_no_entries_produces_a_table_the_parser_calls_empty() {
+        let table = parse_mbr(&encode_mbr(&[None; ENTRY_COUNT]), DISK_SECTORS);
+        assert_eq!(table.state, TableState::Empty);
+        assert_eq!(table.entries, [None; ENTRY_COUNT]);
+    }
+
+    #[test]
+    fn parse_then_encode_is_stable_once_chs_is_dropped() {
+        let mut sector = signed_master_boot_record();
+        stamp_entry(&mut sector, 0, 0x80, 0x06, 63, 1_985);
+        let entry = &mut sector[TABLE_OFFSET..TABLE_OFFSET + ENTRY_BYTES];
+        entry[1..4].fill(0xFF);
+        entry[5..8].fill(0xFF);
+        let first = parse_mbr(&sector, 2_048);
+        let reborn = parse_mbr(&encode_mbr(&first.entries), 2_048);
+        assert_eq!(first, reborn);
     }
 }
