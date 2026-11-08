@@ -68,10 +68,10 @@ fn parse_size(raw: &str, line: &str) -> usize {
 fn shell_ping_capability_data_roundtrip() {
     let mut session = QemuSession::spawn();
 
-    let mark = session.mark();
     session.expect_output("[IPC Server] Ping", READY_TIMEOUT);
     session.expect_output("rose>", READY_TIMEOUT);
 
+    let mark = session.mark();
     session.send_line("ping");
 
     if let Err(output_tail) =
