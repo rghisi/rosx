@@ -328,6 +328,7 @@ version = "0.1.0"
 dependencies = [
  "system",
  "usrlib",
+ "vfs-protocol",
 ]
 
 [[package]]

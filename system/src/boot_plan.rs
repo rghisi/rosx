@@ -20,6 +20,15 @@ pub enum Program<'a> {
     ImplicitRom(&'a str),
 }
 
+impl<'a> Program<'a> {
+    pub fn name(&self) -> &'a str {
+        match self {
+            Program::Rom(name) | Program::ImplicitRom(name) => name,
+            Program::Vfs(path) => path,
+        }
+    }
+}
+
 pub fn parse_program(token: &str) -> Option<Program<'_>> {
     if token.is_empty() {
         return None;
@@ -329,6 +338,13 @@ mod tests {
         assert_eq!(parse_program("rom:vfsd"), Some(Program::Rom("vfsd")));
         assert_eq!(parse_program("/shell"), Some(Program::Vfs("/shell")));
         assert_eq!(parse_program("vfsd"), Some(Program::ImplicitRom("vfsd")));
+    }
+
+    #[test]
+    fn program_name_gives_the_source_stripped_identity() {
+        assert_eq!(parse_program("rom:vfsd").unwrap().name(), "vfsd");
+        assert_eq!(parse_program("/shell").unwrap().name(), "/shell");
+        assert_eq!(parse_program("shell").unwrap().name(), "shell");
     }
 
     #[test]
