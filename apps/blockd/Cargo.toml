@@ -16,6 +16,7 @@ test = false
 
 [dependencies]
 block-protocol = { path = "../../protocol/block" }
+rxpart = { path = "../../fs/partition" }
 usrlib = { path = "../../usrlib" }
 
 [target.'cfg(target_os = "none")'.dependencies]
