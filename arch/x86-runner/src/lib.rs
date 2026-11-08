@@ -74,6 +74,21 @@ pub fn prepare_run_medium(kernel_elf: &Path, arch: Arch) -> Result<BootMedium, I
     Ok(medium)
 }
 
+pub fn prepare_run_medium_in(
+    kernel_elf: &Path,
+    arch: Arch,
+    directory: &Path,
+) -> Result<BootMedium, ImageError> {
+    match arch {
+        Arch::X86_64 => {
+            let image = directory.join(bios_disk_image_name(kernel_elf));
+            create_bios_disk_image_to(kernel_elf, &image)?;
+            Ok(BootMedium::DiskImage(image))
+        }
+        Arch::X86_32 => Ok(BootMedium::MultibootKernel(kernel_elf.to_path_buf())),
+    }
+}
+
 #[derive(Debug)]
 pub struct GrubTooling {
     missing: Vec<String>,
@@ -164,10 +179,14 @@ fn on_path(name: &str) -> Option<PathBuf> {
 
 pub fn create_bios_disk_image(kernel_elf: &Path) -> Result<PathBuf, ImageError> {
     let image = bios_disk_image_path(kernel_elf);
-    bootloader::BiosBoot::new(kernel_elf)
-        .create_disk_image(&image)
-        .map_err(ImageError)?;
+    create_bios_disk_image_to(kernel_elf, &image)?;
     Ok(image)
+}
+
+fn create_bios_disk_image_to(kernel_elf: &Path, image: &Path) -> Result<(), ImageError> {
+    bootloader::BiosBoot::new(kernel_elf)
+        .create_disk_image(image)
+        .map_err(ImageError)
 }
 
 pub fn qemu_command(arch: Arch, medium: &BootMedium, mode: LaunchMode) -> Command {
@@ -243,8 +262,12 @@ pub fn attach_persistent_hdd(command: &mut Command) {
 }
 
 fn bios_disk_image_path(kernel_elf: &Path) -> PathBuf {
+    kernel_elf.with_file_name(bios_disk_image_name(kernel_elf))
+}
+
+fn bios_disk_image_name(kernel_elf: &Path) -> String {
     let stem = kernel_elf.file_stem().expect("kernel path has no file stem");
-    kernel_elf.with_file_name(format!("{}-{}.img", stem.to_string_lossy(), Arch::X86_64.name()))
+    format!("{}-{}.img", stem.to_string_lossy(), Arch::X86_64.name())
 }
 
 #[cfg(test)]

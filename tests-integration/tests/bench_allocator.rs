@@ -10,6 +10,7 @@ const CHURN_BEST_BUDGET: Duration = Duration::from_secs(180);
 const CHURN_DONE_BUDGET: Duration = Duration::from_secs(60);
 
 #[test]
+#[ignore = "benchmark workload, not a per-run correctness gate; run with -- --ignored"]
 fn bench_allocator_suites_report_machine_readable_lines() {
     let mut session = QemuSession::spawn();
     let boot_mark = session.mark();
