@@ -1,6 +1,6 @@
 use alloc::string::String;
 use block_protocol::manager::client::{Geometry, Manager};
-use rxfs::device::BlockDevice;
+use fs_core::device::BlockDevice;
 use rxfs::error::IoError;
 use rxfs::spec::BLOCK_BYTES;
 

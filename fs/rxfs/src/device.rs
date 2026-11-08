@@ -4,12 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Range;
 
-pub trait BlockDevice {
-    fn block_count(&self) -> u64;
-    fn read_block(&mut self, block: u64, buf: &mut [u8]) -> Result<(), IoError>;
-    fn write_block(&mut self, block: u64, buf: &[u8]) -> Result<(), IoError>;
-    fn flush(&mut self) -> Result<(), IoError>;
-}
+pub use fs_core::device::BlockDevice;
 
 pub struct MemoryDevice {
     bytes: Vec<u8>,
