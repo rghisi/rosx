@@ -22,6 +22,8 @@ const DROP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SCRATCH_DISK_BYTES: usize = 1024 * 1024;
 const MASTER_DISK_BYTES: usize = 1024 * 1024;
 const MBR_SIGNATURE_OFFSET: usize = 510;
+const MBR_PARTITION_TABLE_OFFSET: usize = 446;
+const MBR_ENTRY_BYTES: usize = 16;
 
 pub struct QemuSession {
     child: Mutex<Child>,
@@ -38,6 +40,25 @@ impl QemuSession {
 
     pub fn spawn_with_scratch_disk() -> QemuSession {
         QemuSession::spawn_with_scratch(Some(SCRATCH_DISK_BYTES))
+    }
+
+    pub fn spawn_with_partitioned_hdd_disk(disk: &Path) -> QemuSession {
+        let mut image = std::fs::read(disk).expect("failed to read the hdd image to carve");
+        stamp_mbr_entry(&mut image, 1, 0x83, 2048, 65_536);
+        stamp_mbr_entry(&mut image, 2, 0x82, 67_584, 4_096);
+        image[MBR_SIGNATURE_OFFSET] = 0x55;
+        image[MBR_SIGNATURE_OFFSET + 1] = 0xAA;
+        std::fs::write(disk, image).expect("failed to write the carved hdd image");
+        QemuSession::spawn_with_hdd_disk(disk)
+    }
+
+    pub fn spawn_with_corrupt_partitioned_hdd_disk(disk: &Path) -> QemuSession {
+        let mut image = std::fs::read(disk).expect("failed to read the hdd image to corrupt");
+        image[MBR_PARTITION_TABLE_OFFSET..MBR_SIGNATURE_OFFSET].fill(0xCD);
+        image[MBR_SIGNATURE_OFFSET] = 0x55;
+        image[MBR_SIGNATURE_OFFSET + 1] = 0xAA;
+        std::fs::write(disk, image).expect("failed to write the corrupted hdd image");
+        QemuSession::spawn_with_hdd_disk(disk)
     }
 
     pub fn spawn_with_hdd_disk(disk: &Path) -> QemuSession {

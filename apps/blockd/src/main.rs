@@ -144,12 +144,9 @@ fn register(table: &mut DeviceTable, service: &str) -> [u8; wire::FRAME_BYTES] {
     };
     match table.register(service, provider) {
         Err(error) => encode_reply(&Reply::Err(error)),
-        Ok(()) => {
-            for device in table.list() {
-                println!(
-                    "[BLOCKD] {} {} {}x{}",
-                    device.name, device.description, device.block_count, device.block_size
-                );
+        Ok(verdicts) => {
+            for verdict in verdicts {
+                println!("[BLOCKD] {verdict}");
             }
             encode_reply(&Reply::Ack)
         }
