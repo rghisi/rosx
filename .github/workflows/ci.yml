@@ -78,6 +78,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-build-
 
+      - name: Install mtools for the FAT boot disk
+        run: sudo apt-get update && sudo apt-get install -y mtools
+
       - name: Build
         run: cargo xtask build x86_32
 

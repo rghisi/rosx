@@ -58,15 +58,18 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
     let _ = kernel.schedule(kernel::task::FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main));
     static INIT_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/init");
     let boot_plan = system::boot_plan::BootPlan::new()
-        .service("vfsd", vfs_protocol::wire::SERVICE_NAME)
-        .service("inputd", input_protocol::wire::SERVICE_NAME)
-        .service("ps2d", input_protocol::wire::SOURCE_NAME_PS2KEYBOARD)
-        .service("atad", ata_protocol::wire::SERVICE_NAME)
-        .service("blockd", block_protocol::manager::wire::SERVICE_NAME)
-        .service("randomd", "RANDOM")
-        .service("echo", "BULKECHO")
-        .service("pong", "PING")
-        .exec("shell", &[]);
+        .service("rom:atad", ata_protocol::wire::SERVICE_NAME)
+        .service("rom:blockd", block_protocol::manager::wire::SERVICE_NAME)
+        .run("rom:attach", &["ATA"])
+        .service("rom:vfsd", vfs_protocol::wire::SERVICE_NAME)
+        .service("rom:inputd", input_protocol::wire::SERVICE_NAME)
+        .service("rom:ps2d", input_protocol::wire::SOURCE_NAME_PS2KEYBOARD)
+        .service("rom:randomd", "RANDOM")
+        .service("rom:echo", "BULKECHO")
+        .service("rom:pong", "PING")
+        .run("rom:mount", &["ata0d0p0", "/"])
+        .exec("/shell", &[])
+        .exec("rom:shell", &[]);
     let _ = kernel.schedule(kernel::task::new_elf_task_with_arguments("init", INIT_ELF, boot_plan.encode()));
     kernel::kprintln!("[KERNEL] Starting");
     kernel.start();

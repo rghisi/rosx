@@ -3,15 +3,13 @@ use std::path::PathBuf;
 use std::process::{self, Command};
 
 mod arch;
+mod boot_disk;
 mod check_isa;
 
 use arch::{ArchSpec, X86_64};
 use x86_runner::{BootMedium, LaunchMode};
 
 const USER_APPS: [&str; 31] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "bench", "atad", "blockd", "ata", "format", "mount", "attach", "rm", "cp", "mkdir", "rmdir", "init", "shell", "exiter"];
-
-const RUN_DISK_BYTES: usize = 1024 * 1024;
-const MBR_SIGNATURE_OFFSET: usize = 510;
 
 const UNSTABLE: [&str; 3] = [
     "-Zbuild-std=core,alloc,compiler_builtins",
@@ -80,7 +78,7 @@ fn prepare_medium(debug: bool, spec: &ArchSpec) -> BootMedium {
 fn launch(medium: &BootMedium, spec: &ArchSpec) {
     let mut cmd = x86_runner::qemu_command(spec.boot, medium, LaunchMode::Interactive);
     if let BootMedium::MultibootKernel(_) = medium {
-        let disk = create_run_disk(spec);
+        let disk = boot_disk::boot_disk_path(spec);
         cmd.arg("-drive")
             .arg(format!("if=ide,index=0,media=disk,format=raw,file={}", disk.display()));
     }
@@ -110,15 +108,10 @@ fn pack_rom(spec: &ArchSpec) {
     println!("==> packed ROM image {}", rom_path.display());
 }
 
-fn create_run_disk(spec: &ArchSpec) -> PathBuf {
-    let path = workspace_root()
-        .join("target")
-        .join(format!("{}-run-disk.img", spec.kernel_dir_name));
-    let mut image = vec![0u8; RUN_DISK_BYTES];
-    image[MBR_SIGNATURE_OFFSET] = 0x55;
-    image[MBR_SIGNATURE_OFFSET + 1] = 0xAA;
-    std::fs::write(&path, image).expect("failed to create run disk image");
-    path
+fn create_boot_disk(debug: bool, spec: &ArchSpec) {
+    if spec.fat_boot_disk {
+        boot_disk::create_boot_disk(debug, spec);
+    }
 }
 
 fn era_script(name: &str) -> PathBuf {
@@ -366,6 +359,7 @@ fn main() {
             pack_rom(spec);
             build_kernel(debug, spec);
             prepare_medium(debug, spec);
+            create_boot_disk(debug, spec);
         }
         "run" => {
             let (spec, rest) = split_arch(extras);
@@ -374,6 +368,7 @@ fn main() {
             pack_rom(spec);
             build_kernel(debug, spec);
             let medium = prepare_medium(debug, spec);
+            create_boot_disk(debug, spec);
             launch(&medium, spec);
         }
         "image" => {

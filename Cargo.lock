@@ -999,6 +999,7 @@ dependencies = [
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "rxpart",
  "system",
  "x86-runner",
 ]
