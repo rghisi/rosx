@@ -6,7 +6,8 @@ use std::process::{self, Command};
 use rxpart::mbr::{Entry, ENTRY_COUNT};
 
 use crate::arch::ArchSpec;
-use crate::{check_isa, run, workspace_root, USER_APPS};
+use crate::arch::USER_APPS;
+use crate::{check_isa, run, workspace_root};
 
 const SECTOR_BYTES: u64 = 512;
 const HEADS: &str = "16";

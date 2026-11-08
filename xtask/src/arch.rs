@@ -2,6 +2,10 @@ use std::path::PathBuf;
 
 use crate::workspace_root;
 
+pub const USER_APPS: [&str; 31] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "bench", "atad", "blockd", "ata", "format", "mount", "attach", "rm", "cp", "mkdir", "rmdir", "init", "shell", "exiter"];
+
+pub const BOOTSTRAP_APPS: [&str; 8] = ["atad", "blockd", "attach", "mount", "vfsd", "inputd", "ps2d", "shell"];
+
 pub struct ArchSpec {
     pub name: &'static str,
     pub kernel_package: &'static str,
@@ -12,6 +16,7 @@ pub struct ArchSpec {
     pub user_dir_name: &'static str,
     pub boot: x86_runner::Arch,
     pub fat_boot_disk: bool,
+    pub rom_apps: &'static [&'static str],
 }
 
 pub static X86_64: ArchSpec = ArchSpec {
@@ -24,6 +29,7 @@ pub static X86_64: ArchSpec = ArchSpec {
     user_dir_name: "rosx-user",
     boot: x86_runner::Arch::X86_64,
     fat_boot_disk: false,
+    rom_apps: &USER_APPS,
 };
 
 pub static X86_32: ArchSpec = ArchSpec {
@@ -36,6 +42,7 @@ pub static X86_32: ArchSpec = ArchSpec {
     user_dir_name: "rosx-i486-user",
     boot: x86_runner::Arch::X86_32,
     fat_boot_disk: true,
+    rom_apps: &BOOTSTRAP_APPS,
 };
 
 pub static ALL: [&ArchSpec; 2] = [&X86_64, &X86_32];

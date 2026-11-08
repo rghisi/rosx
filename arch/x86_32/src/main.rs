@@ -64,10 +64,10 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
         .service("rom:vfsd", vfs_protocol::wire::SERVICE_NAME)
         .service("rom:inputd", input_protocol::wire::SERVICE_NAME)
         .service("rom:ps2d", input_protocol::wire::SOURCE_NAME_PS2KEYBOARD)
-        .service("rom:randomd", "RANDOM")
-        .service("rom:echo", "BULKECHO")
-        .service("rom:pong", "PING")
         .run("rom:mount", &["ata0d0p0", "/"])
+        .service("/randomd", "RANDOM")
+        .service("/echo", "BULKECHO")
+        .service("/pong", "PING")
         .exec("/shell", &[])
         .exec("rom:shell", &[]);
     let _ = kernel.schedule(kernel::task::new_elf_task_with_arguments("init", INIT_ELF, boot_plan.encode()));

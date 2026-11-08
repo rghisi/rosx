@@ -6,10 +6,8 @@ mod arch;
 mod boot_disk;
 mod check_isa;
 
-use arch::{ArchSpec, X86_64};
+use arch::{ArchSpec, X86_64, USER_APPS};
 use x86_runner::{BootMedium, LaunchMode};
-
-const USER_APPS: [&str; 31] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "bench", "atad", "blockd", "ata", "format", "mount", "attach", "rm", "cp", "mkdir", "rmdir", "init", "shell", "exiter"];
 
 const UNSTABLE: [&str; 3] = [
     "-Zbuild-std=core,alloc,compiler_builtins",
@@ -89,7 +87,7 @@ fn launch(medium: &BootMedium, spec: &ArchSpec) {
 fn pack_rom(spec: &ArchSpec) {
     let mut files: Vec<(&str, Vec<u8>)> = Vec::new();
     let release_dir = spec.user_release_dir();
-    for name in USER_APPS {
+    for name in spec.rom_apps {
         let path = release_dir.join(name);
         let Ok(bytes) = std::fs::read(&path) else {
             eprintln!("missing user ELF {}; run `cargo xtask apps {}` first", path.display(), spec.name);
