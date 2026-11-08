@@ -18,6 +18,7 @@ test = false
 block-protocol = { path = "../../protocol/block" }
 fs-core = { path = "../../fs/core" }
 rxfs = { path = "../../fs/rxfs" }
+rxfat = { path = "../../fs/fat" }
 system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }
 vfs-protocol = { path = "../../protocol/vfs" }

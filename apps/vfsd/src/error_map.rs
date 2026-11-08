@@ -11,6 +11,7 @@ pub(crate) fn fs(error: FsError) -> VfsError {
             VfsError::InvalidPath
         }
         FsError::BadHandle => VfsError::BadHandle,
+        FsError::Unsupported => VfsError::Unsupported,
         FsError::NotADirectory => VfsError::NotDirectory,
         FsError::IsADirectory => VfsError::IsADirectory,
         FsError::DirectoryNotEmpty => VfsError::DirectoryNotEmpty,
@@ -47,6 +48,7 @@ mod tests {
         assert_eq!(fs(FsError::NameTooLong), VfsError::InvalidPath);
         assert_eq!(fs(FsError::InvalidName), VfsError::InvalidPath);
         assert_eq!(fs(FsError::BadHandle), VfsError::BadHandle);
+        assert_eq!(fs(FsError::Unsupported), VfsError::Unsupported);
         assert_eq!(fs(FsError::NotADirectory), VfsError::NotDirectory);
         assert_eq!(fs(FsError::IsADirectory), VfsError::IsADirectory);
         assert_eq!(fs(FsError::DirectoryNotEmpty), VfsError::DirectoryNotEmpty);
