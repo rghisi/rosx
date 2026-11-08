@@ -1,4 +1,4 @@
-use crate::blk::RemoteBlock;
+use crate::blk::RemoteWindow;
 use crate::error_map;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
@@ -10,7 +10,7 @@ use fs_core::device::BlockDevice;
 use fs_core::engine::{Engine, Kind, MetadataView};
 use fs_core::error::FsError;
 use rxfs::device::MemoryDevice;
-use rxfs::spec::DEFAULT_BYTES_PER_INODE;
+use rxfs::spec::{BLOCK_BYTES, DEFAULT_BYTES_PER_INODE};
 use rxfs::superblock::UUID_BYTES;
 use rxfs::volume::{FileSystem, FormatParams, Handle as RxfsHandle};
 use system::rom::{RomError, RomImage};
@@ -23,7 +23,7 @@ const DEVICE_VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ata-vol-001";
 const DEVICE_VOLUME_NAME: &[u8] = b"rosx-hdd";
 
 pub type ActiveVolume = FileSystem<MemoryDevice>;
-pub type ActiveStore = VfsStore<ActiveVolume, RemoteBlock>;
+pub type ActiveStore = VfsStore<ActiveVolume, RemoteWindow>;
 
 struct MountedVolume<D: BlockDevice> {
     name: String,
@@ -120,8 +120,8 @@ fn open_engine<E2: Engine>(
     }
 }
 
-impl VfsStore<ActiveVolume, RemoteBlock> {
-    pub fn new() -> VfsStore<ActiveVolume, RemoteBlock> {
+impl VfsStore<ActiveVolume, RemoteWindow> {
+    pub fn new() -> VfsStore<ActiveVolume, RemoteWindow> {
         let params = FormatParams {
             bytes_per_inode: DEFAULT_BYTES_PER_INODE,
             uuid: VOLUME_UUID,
@@ -133,7 +133,7 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
         VfsStore::from_engine(engine)
     }
 
-    fn open_remote_block(&self, device: &str) -> Result<RemoteBlock, VfsError> {
+    fn open_window(&self, device: &str, unit_bytes: u64) -> Result<RemoteWindow, VfsError> {
         let client = Manager::connect().map_err(error_map::block)?;
         let geometry = match client.probe(device) {
             Ok(geometry) => geometry,
@@ -142,7 +142,7 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
                 return Err(error_map::block(error));
             }
         };
-        match RemoteBlock::new(client, device, &geometry) {
+        match RemoteWindow::new(client, device, &geometry, unit_bytes) {
             Ok(disk) => Ok(disk),
             Err(client) => {
                 client.disconnect();
@@ -155,7 +155,7 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
         if self.device_busy(device) {
             return Err(VfsError::Busy);
         }
-        let disk = self.open_remote_block(device)?;
+        let disk = self.open_window(device, BLOCK_BYTES as u64)?;
         let params = FormatParams {
             bytes_per_inode: DEFAULT_BYTES_PER_INODE,
             uuid: DEVICE_VOLUME_UUID,
@@ -182,7 +182,7 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
         if mount_point.kind() != Kind::Directory {
             return Err(VfsError::NotDirectory);
         }
-        let disk = self.open_remote_block(device)?;
+        let disk = self.open_window(device, BLOCK_BYTES as u64)?;
         let fs = FileSystem::mount(disk).map_err(error_map::mount)?;
         self.mounts.push(MountedVolume {
             name: String::from(name),
