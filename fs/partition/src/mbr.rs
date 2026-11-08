@@ -263,4 +263,77 @@ mod tests {
         let table = parse_mbr(&sector, 16);
         assert_eq!(table.state, TableState::Corrupt);
     }
+
+    #[test]
+    fn missing_signature_is_no_signature_with_no_slots_reported() {
+        let mut sector = [0u8; SECTOR_BYTES];
+        stamp_entry(&mut sector, 0, 0x80, 0x83, 2048, 196_608);
+        let table = parse_mbr(&sector, DISK_SECTORS);
+        assert_eq!(table.state, TableState::NoSignature);
+        assert_eq!(table.entries, [None; ENTRY_COUNT]);
+    }
+
+    #[test]
+    fn one_wrong_signature_byte_is_no_signature() {
+        let mut sector = signed_master_boot_record();
+        stamp_entry(&mut sector, 0, 0x80, 0x83, 2048, 196_608);
+        sector[SIGNATURE_OFFSET + 1] = 0xAB;
+        let table = parse_mbr(&sector, DISK_SECTORS);
+        assert_eq!(table.state, TableState::NoSignature);
+        assert_eq!(table.entries, [None; ENTRY_COUNT]);
+    }
+
+    #[test]
+    fn all_zero_table_bytes_is_empty() {
+        let sector = signed_master_boot_record();
+        let table = parse_mbr(&sector, DISK_SECTORS);
+        assert_eq!(table.state, TableState::Empty);
+        assert_eq!(table.entries, [None; ENTRY_COUNT]);
+    }
+
+    #[test]
+    fn one_zero_byte_in_the_signature_turns_the_same_table_to_no_signature() {
+        let mut sector = [0u8; SECTOR_BYTES];
+        sector[SIGNATURE_OFFSET] = 0x55;
+        let table = parse_mbr(&sector, DISK_SECTORS);
+        assert_eq!(table.state, TableState::NoSignature);
+    }
+
+    #[test]
+    fn type_zero_slots_stay_empty_however_dirty_their_bytes() {
+        let mut sector = signed_master_boot_record();
+        let entry = &mut sector[TABLE_OFFSET + ENTRY_BYTES..][..ENTRY_BYTES];
+        entry[0] = 0x80;
+        entry[5..].fill(0xCD);
+        let table = parse_mbr(&sector, DISK_SECTORS);
+        assert_eq!(table.state, TableState::Valid);
+        assert_eq!(table.entries, [None; ENTRY_COUNT]);
+    }
+
+    #[test]
+    fn adjacent_partitions_do_not_overlap() {
+        let mut sector = signed_master_boot_record();
+        stamp_entry(&mut sector, 0, 0x00, 0x83, 2048, 100_352);
+        stamp_entry(&mut sector, 1, 0x00, 0x82, 102_400, 102_400);
+        let table = parse_mbr(&sector, DISK_SECTORS);
+        assert_eq!(table.state, TableState::Valid);
+    }
+
+    #[test]
+    fn one_shared_sector_between_partitions_is_corrupt() {
+        let mut sector = signed_master_boot_record();
+        stamp_entry(&mut sector, 0, 0x00, 0x83, 2048, 100_353);
+        stamp_entry(&mut sector, 1, 0x00, 0x82, 102_400, 102_399);
+        let table = parse_mbr(&sector, DISK_SECTORS);
+        assert_eq!(table.state, TableState::Corrupt);
+    }
+
+    #[test]
+    fn fully_contained_partition_is_corrupt() {
+        let mut sector = signed_master_boot_record();
+        stamp_entry(&mut sector, 0, 0x00, 0x83, 2048, 196_608);
+        stamp_entry(&mut sector, 1, 0x00, 0x0b, 4096, 2_048);
+        let table = parse_mbr(&sector, DISK_SECTORS);
+        assert_eq!(table.state, TableState::Corrupt);
+    }
 }
