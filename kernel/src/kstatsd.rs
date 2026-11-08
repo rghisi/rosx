@@ -51,7 +51,6 @@ fn reply_payload(
 
 fn snapshot(stats: MemoryStats, uptime_ms: u64) -> MemorySnapshot {
     MemorySnapshot {
-        used_bytes: stats.used_bytes as u64,
         total_bytes: stats.total_bytes as u64,
         free_bytes: stats.free_bytes as u64,
         largest_free_block: stats.largest_free_block as u64,
@@ -70,7 +69,6 @@ mod tests {
 
     fn stats_fixture() -> MemoryStats {
         MemoryStats {
-            used_bytes: 4096,
             total_bytes: 1024 * 1024,
             free_bytes: 512 * 1024,
             largest_free_block: 256 * 1024,
@@ -80,7 +78,6 @@ mod tests {
 
     fn expected_snapshot() -> MemorySnapshot {
         MemorySnapshot {
-            used_bytes: 4096,
             total_bytes: 1024 * 1024,
             free_bytes: 512 * 1024,
             largest_free_block: 256 * 1024,
