@@ -61,6 +61,26 @@ impl QemuSession {
         QemuSession::spawn_with_hdd_disk(disk)
     }
 
+    pub fn spawn_with_master_disk(disk: &Path) -> QemuSession {
+        let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
+        let kernel_elf = kernel_build::kernel_elf();
+        let arch = Arch::current();
+        let medium = x86_runner::prepare_run_medium_in(&kernel_elf, arch.boot(), temp_dir.path())
+            .unwrap_or_else(|err| panic!(
+                "failed to prepare boot medium for kernel '{}': {err}",
+                kernel_elf.display()
+            ));
+        let mut command =
+            x86_runner::qemu_command(arch.boot(), &medium, x86_runner::LaunchMode::Headless);
+        command
+            .arg("-drive")
+            .arg(format!(
+                "if=ide,index=0,media=disk,format=raw,file={}",
+                disk.display()
+            ));
+        Self::spawn_capturing(command, temp_dir)
+    }
+
     pub fn spawn_with_hdd_disk(disk: &Path) -> QemuSession {
         let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
         let kernel_elf = kernel_build::kernel_elf();
