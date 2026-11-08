@@ -5,8 +5,6 @@ fn main() {
     println!("cargo::rerun-if-changed=../../apps/randomd/Cargo.toml");
     println!("cargo::rerun-if-changed=../../apps/echo/src");
     println!("cargo::rerun-if-changed=../../apps/echo/Cargo.toml");
-    println!("cargo::rerun-if-changed=../../apps/bulk/src");
-    println!("cargo::rerun-if-changed=../../apps/bulk/Cargo.toml");
     println!("cargo::rerun-if-changed=../../apps/pong/src");
     println!("cargo::rerun-if-changed=../../apps/pong/Cargo.toml");
     println!("cargo::rerun-if-changed=../../apps/vfsd/src");
@@ -23,10 +21,6 @@ fn main() {
     let echo_path = "../../target/rosx-user/release/echo";
     if !Path::new(echo_path).exists() {
         panic!("missing user ELF {echo_path}; run `cargo xtask apps` first");
-    }
-    let bulk_path = "../../target/rosx-user/release/bulk";
-    if !Path::new(bulk_path).exists() {
-        panic!("missing user ELF {bulk_path}; run `cargo xtask apps` first");
     }
     let pong_path = "../../target/rosx-user/release/pong";
     if !Path::new(pong_path).exists() {

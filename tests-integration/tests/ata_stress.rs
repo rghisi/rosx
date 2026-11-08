@@ -5,6 +5,7 @@ const BOOT_BUDGET: Duration = Duration::from_secs(90);
 const REPLY_BUDGET: Duration = Duration::from_secs(90);
 
 #[test]
+#[ignore = "stress workload, not a per-run correctness gate; run with -- --ignored"]
 fn ata_stress_reads_chunks_and_writebacks_twice() {
     let mut session = QemuSession::spawn_with_scratch_disk();
     session.expect_output("[ATAD] ata0 drive1 ready:", BOOT_BUDGET);

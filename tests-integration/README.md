@@ -30,6 +30,20 @@ to cargo against `arch/x86_64/Cargo.toml`.
 | `ROSX_QEMU_PROFILE` | `dev` (default) or `release`; any other value panics |
 | `ROSX_KERNEL_ELF` | absolute path to a prebuilt kernel ELF; skips the kernel build |
 | `ROSX_QEMU_KEEP_TMP` | if set to a non-empty value, the session temp dir (disk image, monitor socket) is kept on drop and its path is printed to stderr |
+| `ROSX_BOOT_SAMPLES` | sample count for the boot-to-prompt measurement test (default 5) |
+
+## Measuring boot time
+
+`tests/measure_boot.rs` is `#[ignore]`d so it never joins a normal suite run; it samples
+the boot-to-prompt distribution — session spawn (image creation + exec), `[KERNEL]
+Initializing`, `[KERNEL] Starting`, and the `rose>` prompt, all from one start instant:
+
+```
+cargo test -p tests-integration --test measure_boot -- --ignored --nocapture
+```
+
+The measured baseline and the speed-up plan built on it live in
+`plans/integration-baseline-2026-11-07.md`.
 
 ## Tests (`tests/boot_and_shell.rs`)
 
@@ -47,7 +61,10 @@ to cargo against `arch/x86_64/Cargo.toml`.
   collected into a shared, ANSI-stripped buffer.
 - Keystroke injection: QEMU is started with `-monitor
   unix:<tempdir>/monitor.sock,server=on,wait=off`; characters are mapped to
-  `sendkey` tokens and sent one per command with a 50 ms inter-key delay.
+  `sendkey` tokens and sent one per command. Each keystroke is acknowledged by
+  its echo on the debug console before the next one is sent, and resent up to
+  three times before the test panics; `send_line` finishes with a plain
+  (un-echoed) Enter.
 - Each test owns its `QemuSession`: private temp dir (disk image + monitor
   socket) and private QEMU child; on drop the session sends monitor `quit`,
   reaps the child, and deletes the temp dir unless `ROSX_QEMU_KEEP_TMP` is set.
