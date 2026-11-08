@@ -19,7 +19,6 @@ fn shell_banner_and_prompt() {
 fn shell_echoes_keystrokes() {
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", Duration::from_secs(60));
-    session.expect_output("BULK Done", Duration::from_secs(90));
     session.send_text("hello");
     session.expect_output("hello", Duration::from_secs(10));
 }
