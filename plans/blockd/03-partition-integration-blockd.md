@@ -230,12 +230,14 @@ Gates (commands and results):
 - New QEMU proofs, green on both arches: `partitioned_hdd_flow` 40.7 s (x86_64) /
   37.3 s (x86_32); `expose_corrupt_hdd` 21.0 s / 19.7 s; `blockd_refresh_witness`
   20.9 s / 15.8 s.
-- Full pre-existing suites: the first both-arches pass stopped on two flakes outside
-  the subsystem — x86_64 `ipc_wake_latency` (missed the 5 s pong window of its
-  wake-ordering witness) and x86_32 `partitioned_hdd_flow` (format overran its 60 s
-  budget under suite load) — and both passed on isolated rerun (17.6 s / 37.3 s). The
-  `--no-fail-fast` rerun of the x86_64 suite completed green (exit 0) as this PR opened;
-  the x86_32 rerun was in flight and is tracked on the PR.
+- Full pre-existing suites, `--no-fail-fast` rerun, both arches green (exit 0 each):
+  the first both-arches pass had stopped on two flakes outside the subsystem — x86_64
+  `ipc_wake_latency` (missed the 5 s pong window of its wake-ordering witness) and
+  x86_32 `partitioned_hdd_flow` (format overran its 60 s budget under suite load) — and
+  in the clean rerun both passed in place (`ipc_wake_latency` 17.3 s on x86_64,
+  `partitioned_hdd_flow` 37.5 s on x86_32).
+  `vfs_hdd_flow`/`ata_*`/`ipc_vfs` untouched and green — the integration is
+  `blockd`-local, demonstrated.
 
 Notes, honest:
 
