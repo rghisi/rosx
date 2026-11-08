@@ -1,7 +1,8 @@
 # Plan 1 — `blockd`: the Block Device Manager, and the Refactor
 
-> **Status:** Plan (no code written). Written 2026-11-08; decisions owner-approved in the
-> design discussion of 2026-11-08.
+> **Status:** Executed 2026-11-08, M0–M8 complete on branch
+> `blockd-service-and-refactor` (forked from PR #140 tip `91e66ef`); evidence below.
+> Written 2026-11-08; decisions owner-approved in the design discussion of 2026-11-08.
 > **Feature:** a new user-space service `blockd` ("BLOCKD") that becomes the single
 > provider of record of block devices for all filesystem tools. `blockd` registers
 > low-level providers (`ATA` first), presents every disk under a canonical name, and
@@ -251,3 +252,56 @@ rosx> format ata0d1     →  rosx> mkdir /hdd     →  rosx> mount ata0d1 /hdd
 
 This file's Status line and a trailing `## Evidence` section track completion (commands,
 wall times, notable output), matching the `plans/*-impl.md` house pattern in-place.
+
+---
+
+## Evidence
+
+Executed 2026-11-08 on branch `blockd-service-and-refactor`, forked from the PR #140 tip
+(`91e66ef`).
+
+| Commit | Milestone |
+|---|---|
+| `addebbd` | M0 — `manager::wire` codec + 30 byte-level tests |
+| `298b62f` | M1 — `manager::client` typed client |
+| `5cb347f` | M2 — `apps/blockd` (namespace, `AtaProvider`, serve loop) |
+| `c95b663` | M3+M4 — boot plans on both arches, `attach` repurposed |
+| `67c75a9` | M5+M6 — VFS alias layer retired, `vfsd` refactored onto blockd |
+| `c9d4394` | M7 — integration rewrite; temporary boot-probe test deleted |
+
+Gates (commands and results):
+
+- `cargo test -p block-protocol` — 72 passed (30 new manager byte-level tests: round-trips,
+  odd-length and zero-tail rejection, name validation, kind/state accepts, budget bounds).
+- `cargo test -p blockd` — 17 passed (register/refresh, unknown service, name lookup,
+  `base/len` bounds, error mapping, over the fake provider).
+- `cargo test -p system` — 65 passed (boot-plan example and test moved to `run attach ATA`).
+- `cargo test -p vfs-protocol` — 77 passed (opcodes 13/14 decode as `Protocol`, pinned).
+- `cargo test -p vfsd` — 71 passed after the registry deletion.
+- `cargo xtask build` and `cargo xtask build x86_32` — clean; `cargo xtask check-isa x86_32`
+  — 31 user ELFs, 486-clean; zero warnings on every build surface apart from the
+  toolchain's own `core` future-incompat report.
+- Full integration suites, `--test-threads=1`: x86_64 all green (rewritten `vfs_hdd_flow`
+  48.12 s; `ata_*` vendor suites, `ipc_vfs`, `kstats_mem` green untouched);
+  x86_32 all green, exit 0 (`vfs_hdd_flow` 46.09 s).
+- `cargo xtask test --skip-integration` — exit 0 (the integration suites ran just before,
+  on both arches).
+
+**The hop's cost, honestly.** Post-refactor `vfs_hdd_flow` takes 48.12 s on x86_64 and
+46.09 s on x86_32; bare boot-and-shell tests of the same suite run 13.5–17 s, so the disk
+flow adds ~31–34 s dominated by the 50 MiB format through the
+`vfsd`→`blockd`→`atad` chain plus a reboot with a fresh `attach ATA`. The alias-era flow
+never had its wall time recorded, so a before/after *delta* for the added IPC hop cannot be
+honestly stated from this run; these numbers are the baseline any deferred IPC optimization
+should be measured against. The hop itself is one frame encode/decode plus one task handoff
+per block request — pure integer, no copies beyond the 4 KiB chunks the alias-era chain
+already moved.
+
+Deviations from the plan text:
+
+- §M3 wrote `block_protocol::manager::SERVICE_NAME`; the constant lives at
+  `block_protocol::manager::wire::SERVICE_NAME`, which is what the arch plans use.
+- §3.2's `DeviceEntry` field list omitted the block size; the entry carries it because the
+  `List` and `Probe` replies must answer geometry from the table.
+- The temporary boot-probe integration test used during M3/M4 was deleted; the rewritten
+  `vfs_hdd_flow` boots blockd on both arches and proves registration on every run.
