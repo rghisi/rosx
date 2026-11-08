@@ -56,24 +56,17 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
     static ROM_IMAGE: &[u8] = include_bytes!("../../../target/rosx-i486-user/rom.img");
     kernel::rom::init(ROM_IMAGE);
     let _ = kernel.schedule(kernel::task::FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main));
-    static RANDOMD_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/randomd");
-    let _ = kernel.schedule(kernel::task::new_elf_task("randomd", RANDOMD_ELF));
-    static ECHO_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/echo");
-    let _ = kernel.schedule(kernel::task::new_elf_task("echo", ECHO_ELF));
-    static BULK_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/bulk");
-    let _ = kernel.schedule(kernel::task::new_elf_task("bulk", BULK_ELF));
-    static PONG_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/pong");
-    let _ = kernel.schedule(kernel::task::new_elf_task("pong", PONG_ELF));
-    static VFSD_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/vfsd");
-    let _ = kernel.schedule(kernel::task::new_elf_task("vfsd", VFSD_ELF));
-    static INPUTD_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/inputd");
-    let _ = kernel.schedule(kernel::task::new_elf_task("inputd", INPUTD_ELF));
-    static PS2D_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/ps2d");
-    let _ = kernel.schedule(kernel::task::new_elf_task("ps2d", PS2D_ELF));
-    static ATAD_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/atad");
-    let _ = kernel.schedule(kernel::task::new_elf_task("atad", ATAD_ELF));
-    static SHELL_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/shell");
-    let _ = kernel.schedule(kernel::task::new_elf_task("shell", SHELL_ELF));
+    static INIT_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/init");
+    let boot_plan = system::boot_plan::BootPlan::new()
+        .service("vfsd", vfs_protocol::wire::SERVICE_NAME)
+        .service("inputd", input_protocol::wire::SERVICE_NAME)
+        .service("ps2d", input_protocol::wire::SOURCE_NAME_PS2KEYBOARD)
+        .service("atad", ata_protocol::wire::SERVICE_NAME)
+        .service("randomd", "RANDOM")
+        .service("echo", "BULKECHO")
+        .service("pong", "PING")
+        .exec("shell", &[]);
+    let _ = kernel.schedule(kernel::task::new_elf_task_with_arguments("init", INIT_ELF, boot_plan.encode()));
     kernel::kprintln!("[KERNEL] Starting");
     kernel.start();
     panic!("[KERNEL] Crashed spectacularly, should never reached here.");

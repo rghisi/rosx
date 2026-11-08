@@ -2,6 +2,7 @@
 extern crate alloc;
 
 pub mod args;
+pub mod boot_plan;
 pub mod syscall_numbers;
 pub mod ipc;
 pub mod error;

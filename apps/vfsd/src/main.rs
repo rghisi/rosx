@@ -27,7 +27,7 @@ impl VfsServer {
     }
 
     fn mount_rom(&mut self) {
-        let image = Self::read_rom_image();
+        let image = usrlib::rom::read_image();
         if image.is_empty() {
             return;
         }
@@ -210,20 +210,6 @@ impl VfsServer {
                 return Some(payload);
             }
             payload.extend_from_slice(&chunk[..copied]);
-        }
-    }
-
-    fn read_rom_image() -> Vec<u8> {
-        let mut image = Vec::new();
-        let mut offset: u64 = 0;
-        loop {
-            let mut chunk = [0u8; INCOMING_READ_CHUNK_BYTES];
-            let copied = Syscall::rom_read(offset, &mut chunk);
-            if copied == 0 {
-                return image;
-            }
-            image.extend_from_slice(&chunk[..copied]);
-            offset += copied as u64;
         }
     }
 }

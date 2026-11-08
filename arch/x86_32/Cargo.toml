@@ -8,6 +8,8 @@ kernel = { path = "../../kernel" }
 x86-generic = { path = "../x86-generic" }
 system = { path = "../../system" }
 input-protocol = { path = "../../protocol/input" }
+vfs-protocol = { path = "../../protocol/vfs" }
+ata-protocol = { path = "../../protocol/ata" }
 spin = "0.10.0"
 volatile = "0.2.6"
 
