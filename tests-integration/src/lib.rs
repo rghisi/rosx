@@ -1,5 +1,6 @@
 pub mod arch;
 pub mod bench_history;
+pub mod fat_disk;
 pub mod kernel_build;
 pub mod monitor;
 pub mod sendkey;
