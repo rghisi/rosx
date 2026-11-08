@@ -194,3 +194,83 @@ and amend the plan before writing it.
 
 Same as Plans 1–2: Status line + trailing `## Evidence` section; additionally records
 the final `git diff --stat` of the implementation, checked against §3.3's promise.
+
+---
+
+## Evidence
+
+Executed 2026-11-08 on branch `blockd-partition-integration`, forked from `main` at
+`a7ef201`.
+
+| Commit | Milestone |
+|---|---|
+| `58721a0` | M0+M1 — curation inside `namespace.rs`: sector-0 read through the provider, `rxpart` verdict → device entries, `DriveVerdict` register log; `rxpart` dependency |
+| `205c042` | M3+M4+M5 — harness carve helpers, `partitioned_hdd_flow`, `expose_corrupt_hdd`, `blockd_refresh_witness` |
+| `be61449` | M6 (docs) — AGENTS.md curation rule, vocabulary, sharp-knife note, corrected footgun and boot-plan claims |
+
+M0 and M1 landed as one commit: the verdict→entries mapping is exercised through
+`register()` itself, so there is no intermediate state between the two milestones'
+deliverables. M2 needed no code — the existing `attach` rendering (grouped by source,
+name + description + `countxsize` + state label) already matches the §3.2 acceptance
+shape; the M3 test asserts against the rendered `attach` listing, which replaces a
+manual windowed `cargo run` in this headless session.
+
+Gates (commands and results):
+
+- `cargo test -p blockd` — 30 passed (13 new over faked provider sectors: whole/clean,
+  signed-empty/clean, corrupt/whole with honest state, holes keep true slots with the
+  drive hidden, slice reads forwarded at `start_lba`, description budget, container note,
+  long-model note, mixed container refusal, one verdict per drive, sector-0 read fault,
+  refresh re-read, verdict rendering).
+- `cargo test -p rxpart` — green with zero edits (Plan 2 green stays green; the §3.3
+  design signal never fired).
+- `cargo xtask build`, `cargo xtask build x86_32` — clean; `cargo xtask check-isa x86_32`
+  — kernel and 31 user ELFs 486-clean; zero warnings on every build surface apart from
+  the toolchain's own `core` future-incompat report.
+- New QEMU proofs, green on both arches: `partitioned_hdd_flow` 40.7 s (x86_64) /
+  37.3 s (x86_32); `expose_corrupt_hdd` 21.0 s / 19.7 s; `blockd_refresh_witness`
+  20.9 s / 15.8 s.
+- Full pre-existing suites: the first both-arches pass stopped on two flakes outside
+  the subsystem — x86_64 `ipc_wake_latency` (missed the 5 s pong window of its
+  wake-ordering witness) and x86_32 `partitioned_hdd_flow` (format overran its 60 s
+  budget under suite load) — and both passed on isolated rerun (17.6 s / 37.3 s). The
+  `--no-fail-fast` rerun of the x86_64 suite completed green (exit 0) as this PR opened;
+  the x86_32 rerun was in flight and is tracked on the PR.
+
+Notes, honest:
+
+- **The x86_64 boot drive goes partition-aware too.** The `bootloader` 0.11.17 BiosBoot
+  MBR stamps slot 1 (type `0x20`, stage 2) and slot 2 (type `0x0C`, FAT32), which
+  `rxpart` judges `Valid → Partitions`: `ata0d0` leaves the namespace and `ata0d0p1`/
+  `ata0d0p2` appear. Decision 1 ("the table wins") demands exactly this; no test names
+  `ata0d0`, and the AGENTS.md `format ata0d0` footgun line was rewritten with it.
+- **Formatted rxfs volumes stay whole.** The superblock payload ends at byte 168, so a
+  formatted device's sector 0 carries no `55AA` signature → `NoSignature → whole Clean`;
+  the `vfs_hdd_flow` refresh step keeps its drive, and the carved table (drive sector 0)
+  sits outside every slice, which the persistence half of `partitioned_hdd_flow` proves
+  end-to-end.
+- **Two AGENTS.md claims were stale and were corrected** while extending the Disk
+  architecture paragraph: `run attach ATA` is not a boot-plan step on either arch (it is
+  the `system::boot_plan` test's example only — registration is a manual post-boot
+  action, as `vfs_hdd_flow` and these new tests prove), and the blockd entries never
+  carried `Available`/`NotFormatted`/`Failed` health — the wire vocabulary is
+  `kind`/`state` as of Plan 1.
+
+Diff footprint against the §3.3 promise (final):
+
+```
+AGENTS.md                                         |   6 +-
+Cargo.lock                                        |   1 +
+apps/blockd/Cargo.toml                            |   1 +
+apps/blockd/src/main.rs                           |   9 +-
+apps/blockd/src/namespace.rs                      | 498 ++++++++++++++++++++--
+plans/blockd/03-partition-integration-blockd.md   |   5 +-
+tests-integration/src/qemu.rs                     |  28 ++
+tests-integration/tests/blockd_refresh_witness.rs |  43 ++
+tests-integration/tests/expose_corrupt_hdd.rs     |  53 +++
+tests-integration/tests/partitioned_hdd_flow.rs   |  97 +++++
+```
+
+`apps/blockd` (plus its `Cargo.toml`), the integration harness and its three new tests,
+and docs — nothing in `protocol/*`, `apps/vfsd`, `apps/format`, `apps/mount`, `apps/ata`,
+`fs/*` (including `rxpart`), `kernel/`, `usrlib/`, boot plans, or xtask. The promise held.
