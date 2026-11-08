@@ -133,19 +133,28 @@ grouping and/or 4-way parallel ≈ **under a minute of test time**, vs 695 s tod
 
 | | dev, serial (baseline) | release kernel + PR tier (now in CI) | Δ |
 |---|---|---|---|
-| x86_64 | 11 m 35 s | **2 m 19 s** | **−80 %** |
-| x86_32 | 5 m 11 s | **1 m 01 s** | **−80 %** |
+| x86_64 | 11 m 35 s | **1 m 43 s** | **−85 %** |
+| x86_32 | 5 m 11 s | **21 s** | **−93 %** |
 
-Implemented by: the boot-measurement test (`8f65004`), the new x86_64 CI integration job
-plus release-kernel booting of both suites (`0e21eed`), ignoring the bench/stress tests
-outside explicit `--ignored` runs (`4f5c774`), echo-acknowledged keystroke injection
-(`311133a`), and deleting `app_lifecycle.rs` — its wall-clock fault-horizon sleeps were
-38 % of the x86_64 tier; a progress-based replacement is recorded in `docs/todo.md`
-(`e08542a`). The two CI jobs run in parallel, so PR integration wall time is now ~2 min
-on a runner class close to this host (and x86_64 integration is gated in CI at all for
-the first time). Next levers from the table above remain: parallel runner (biggest
-structural win, needs per-session boot images), scenario grouping, and boot-medium work
-on the remaining 3.9 s x86_64 boot floor.
+Implemented by: the boot-measurement test (`ddd8090`), the new x86_64 CI integration
+job plus release-kernel booting of both suites (`d62506d`), ignoring the bench/stress
+tests outside explicit `--ignored` runs (`33d9f01`), echo-acknowledged keystroke
+injection (`e5418b6`), deleting `app_lifecycle.rs` — its wall-clock fault-horizon
+sleeps were 38 % of the x86_64 tier; a progress-based replacement is recorded in
+`docs/todo.md` (`8e6f46f`) — and the per-session boot image (`2ce2a6d`, `a0b19c1`).
+`bulk` left the boot path on its own track: #134 replaced the embedded rosters with
+the init-driven boot plan, which keeps `bulk` out and lets it exit when done, and the
+`ipc_bulk` test launches it on demand from the shell. The two CI jobs run in parallel,
+so PR integration wall time is now under two minutes on a runner class close to this
+host (and x86_64 integration is gated in CI at all for the first time).
+
+Two output-window races surfaced along the way — both latent test assumptions that the
+old 40-second idle bulk had been masking: the echo test typing into a transcript bulk
+could interrupt (closed by #134's on-demand `bulk`, as above), and `ipc_ping` counting
+server lines that trail the client's final line (fixed upstream in #135 while this work
+was open; the branch carries that fix via rebase). Remaining levers from the table
+above: the parallel runner (groundwork landed with the per-session image; decision
+pending), scenario grouping, and boot-medium work on the 3.9 s x86_64 floor.
 
 ## Captured decisions
 
