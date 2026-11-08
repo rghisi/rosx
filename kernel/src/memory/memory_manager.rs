@@ -1,6 +1,6 @@
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::platform::cpu::Cpu;
 use crate::kernel_cell::KernelCell;
@@ -26,7 +26,6 @@ pub(crate) struct MemoryStats {
 
 pub struct MemoryManager {
     allocator: KernelCell<Option<FreeListAllocator>>,
-    used: AtomicUsize,
     is_setup: AtomicBool,
     cpu: KernelCell<Option<&'static dyn Cpu>>,
     memory_blocks: KernelCell<Option<MemoryBlocks>>,
@@ -36,7 +35,6 @@ impl MemoryManager {
     pub const fn new() -> Self {
         MemoryManager {
             allocator: KernelCell::new(None),
-            used: AtomicUsize::new(0),
             is_setup: AtomicBool::new(false),
             cpu: KernelCell::new(None),
             memory_blocks: KernelCell::new(None),
@@ -51,10 +49,6 @@ impl MemoryManager {
     pub fn setup(&self, cpu: &'static dyn Cpu) {
         *self.cpu.borrow_mut() = Some(cpu);
         self.is_setup.store(true, Ordering::SeqCst);
-    }
-
-    pub fn used(&self) -> usize {
-        self.used.load(Ordering::Relaxed)
     }
 
     pub(crate) fn stats(&self) -> MemoryStats {
@@ -78,7 +72,7 @@ impl MemoryManager {
             self.cpu.borrow().unwrap().enable_interrupts();
         }
         MemoryStats {
-            used_bytes: self.used.load(Ordering::Relaxed),
+            used_bytes: total_bytes - free_list.free_bytes,
             total_bytes,
             free_bytes: free_list.free_bytes,
             largest_free_block: free_list.largest_free_block,
@@ -103,10 +97,7 @@ impl MemoryManager {
             self.cpu.borrow().unwrap().enable_interrupts();
         }
         match result {
-            Ok(ptr) => {
-                self.used.fetch_add(layout.size(), Ordering::Relaxed);
-                ptr
-            }
+            Ok(ptr) => ptr,
             Err(_) => ptr::null_mut(),
         }
     }
@@ -117,16 +108,13 @@ impl MemoryManager {
         if interrupts_enabled {
             self.cpu.borrow().unwrap().disable_interrupts();
         }
-        let freed = unsafe {
+        unsafe {
             self.allocator
                 .borrow_mut()
                 .as_mut()
                 .expect("MemoryManager not bootstrapped")
                 .deallocate_by_owner(group_id)
         };
-        let _ = self
-            .used
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| used.checked_sub(freed));
         if interrupts_enabled {
             self.cpu.borrow().unwrap().enable_interrupts();
         }
@@ -169,7 +157,6 @@ unsafe impl GlobalAlloc for MemoryManager {
                 .expect("MemoryManager not bootstrapped")
                 .deallocate(ptr, layout.align())
         };
-        self.used.fetch_sub(layout.size(), Ordering::Relaxed);
         if interrupts_enabled {
             self.cpu.borrow().unwrap().enable_interrupts();
         }
@@ -179,6 +166,7 @@ unsafe impl GlobalAlloc for MemoryManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::free_list_allocator::{ALLOC_HDR, BACKREF_BYTES};
     use crate::platform::cpu::Cpu;
     use crate::memory::MemoryBlock;
     use core::alloc::{GlobalAlloc, Layout};
@@ -214,11 +202,16 @@ mod tests {
         manager
     }
 
+    fn used(manager: &MemoryManager) -> usize {
+        let stats = manager.stats();
+        stats.total_bytes - stats.free_bytes
+    }
+
     #[test]
     fn used_starts_at_zero() {
         let mut memory = vec![0u8; 1024 * 1024];
         let manager = make_manager(&mut memory);
-        assert_eq!(manager.used(), 0);
+        assert_eq!(used(&manager), 0);
     }
 
     #[test]
@@ -237,7 +230,7 @@ mod tests {
         let manager = make_manager(&mut memory);
         let layout = Layout::from_size_align(64, 8).unwrap();
         let ptr = unsafe { manager.alloc(layout) };
-        assert_eq!(manager.used(), 64);
+        assert_eq!(used(&manager), 64 + ALLOC_HDR);
         unsafe { manager.dealloc(ptr, layout) };
     }
 
@@ -248,7 +241,7 @@ mod tests {
         let layout = Layout::from_size_align(64, 8).unwrap();
         let ptr = unsafe { manager.alloc(layout) };
         unsafe { manager.dealloc(ptr, layout) };
-        assert_eq!(manager.used(), 0);
+        assert_eq!(used(&manager), 0);
     }
 
     #[test]
@@ -278,9 +271,9 @@ mod tests {
         let manager = make_manager(&mut memory);
         let layout = Layout::from_size_align(128, 8).unwrap();
         let ptr = unsafe { manager.alloc_with_owner(layout, BlockOwner::Group(4)) };
-        assert_eq!(manager.used(), 128);
+        assert_eq!(used(&manager), 128 + ALLOC_HDR);
         unsafe { manager.dealloc(ptr, layout) };
-        assert_eq!(manager.used(), 0);
+        assert_eq!(used(&manager), 0);
     }
 
     #[test]
@@ -301,13 +294,13 @@ mod tests {
         let layout = Layout::from_size_align(256, 8).unwrap();
         let ptr = unsafe { manager.alloc_with_owner(layout, BlockOwner::Group(2)) };
         assert!(ptr.is_null());
-        assert_eq!(manager.used(), 0);
+        assert_eq!(used(&manager), 0);
         let fits = Layout::from_size_align(64, 8).unwrap();
         let ptr = unsafe { manager.alloc_with_owner(fits, BlockOwner::Group(2)) };
         assert!(!ptr.is_null());
-        assert_eq!(manager.used(), 64);
+        assert_eq!(used(&manager), 64 + ALLOC_HDR);
         unsafe { manager.dealloc(ptr, fits) };
-        assert_eq!(manager.used(), 0);
+        assert_eq!(used(&manager), 0);
     }
 
     #[test]
@@ -318,9 +311,9 @@ mod tests {
         let ptr = unsafe { manager.alloc(layout) };
         assert!(!ptr.is_null());
         assert_eq!(ptr as usize % 16, 0);
-        assert_eq!(manager.used(), 64);
+        assert_eq!(used(&manager), 64 + ALLOC_HDR + 16 + BACKREF_BYTES);
         unsafe { manager.dealloc(ptr, layout) };
-        assert_eq!(manager.used(), 0);
+        assert_eq!(used(&manager), 0);
     }
 
     #[test]
@@ -343,11 +336,41 @@ mod tests {
         let kernel_layout = Layout::from_size_align(64, 8).unwrap();
         unsafe { manager.alloc_with_owner(task_layout, BlockOwner::Group(3)) };
         let kernel_ptr = unsafe { manager.alloc(kernel_layout) };
-        assert_eq!(manager.used(), 192);
+        assert_eq!(used(&manager), 128 + 64 + 2 * ALLOC_HDR);
         unsafe { manager.release_group_allocations(3) };
-        assert_eq!(manager.used(), 64);
+        assert_eq!(used(&manager), 64 + ALLOC_HDR);
         unsafe { manager.dealloc(kernel_ptr, kernel_layout) };
-        assert_eq!(manager.used(), 0);
+        assert_eq!(used(&manager), 0);
+    }
+
+    #[test]
+    fn group_release_of_slab_allocation_restores_used_exactly() {
+        let mut memory = vec![0u8; 4 * 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let kernel_layout = Layout::from_size_align(2 * 1024 * 1024, 8).unwrap();
+        let kernel_ptr = unsafe { manager.alloc(kernel_layout) };
+        assert_eq!(used(&manager), 2 * 1024 * 1024 + ALLOC_HDR);
+        let slab_layout = Layout::from_size_align(65_536, 4_096).unwrap();
+        unsafe { manager.alloc_with_owner(slab_layout, BlockOwner::Group(8)) };
+        assert_eq!(
+            used(&manager),
+            2 * 1024 * 1024 + ALLOC_HDR + 65_536 + ALLOC_HDR + 4_096 + BACKREF_BYTES
+        );
+        unsafe { manager.release_group_allocations(8) };
+        assert_eq!(used(&manager), 2 * 1024 * 1024 + ALLOC_HDR);
+        unsafe { manager.dealloc(kernel_ptr, kernel_layout) };
+        assert_eq!(used(&manager), 0);
+    }
+
+    #[test]
+    fn group_release_of_unaligned_allocation_restores_used_to_zero() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let odd = Layout::from_size_align(100, 8).unwrap();
+        unsafe { manager.alloc_with_owner(odd, BlockOwner::Group(6)) };
+        assert_eq!(used(&manager), 104 + ALLOC_HDR);
+        unsafe { manager.release_group_allocations(6) };
+        assert_eq!(used(&manager), 0);
     }
 
     #[test]
@@ -357,9 +380,9 @@ mod tests {
         let layout = Layout::from_size_align(64, 8).unwrap();
         let ptr = unsafe { manager.alloc_with_owner(layout, BlockOwner::Group(5)) };
         unsafe { manager.release_group_allocations(99) };
-        assert_eq!(manager.used(), 64);
+        assert_eq!(used(&manager), 64 + ALLOC_HDR);
         unsafe { manager.dealloc(ptr, layout) };
-        assert_eq!(manager.used(), 0);
+        assert_eq!(used(&manager), 0);
     }
 
     #[test]
@@ -367,7 +390,7 @@ mod tests {
         let mut memory = vec![0u8; 1024 * 1024];
         let manager = make_manager(&mut memory);
         let stats = manager.stats();
-        assert_eq!(stats.used_bytes, 0);
+        assert_eq!(used(&manager), 0);
         assert_eq!(stats.total_bytes, 1024 * 1024);
         assert_eq!(stats.free_block_count, 1);
         assert!(stats.free_bytes > 0);
@@ -383,14 +406,14 @@ mod tests {
         let layout = Layout::from_size_align(128, 8).unwrap();
         let ptr = unsafe { manager.alloc(layout) };
         let after = manager.stats();
-        assert_eq!(after.used_bytes, 128);
+        assert_eq!(used(&manager), 128 + ALLOC_HDR);
         assert_eq!(after.total_bytes, fresh.total_bytes);
         assert!(after.free_bytes < fresh.free_bytes);
         assert_eq!(after.free_block_count, fresh.free_block_count);
         assert!(after.largest_free_block < fresh.largest_free_block);
         unsafe { manager.dealloc(ptr, layout) };
         let restored = manager.stats();
-        assert_eq!(restored.used_bytes, 0);
+        assert_eq!(used(&manager), 0);
         assert_eq!(restored.free_bytes, fresh.free_bytes);
         assert_eq!(restored.free_block_count, fresh.free_block_count);
         assert_eq!(restored.largest_free_block, fresh.largest_free_block);

@@ -23,8 +23,8 @@ pub(crate) enum BlockOwner {
 
 const BLOCK_HDR: usize = core::mem::size_of::<FreeBlock>();
 const BLOCK_ALIGN: usize = core::mem::align_of::<FreeBlock>();
-const ALLOC_HDR: usize = core::mem::size_of::<AllocHeader>();
-const BACKREF_BYTES: usize = core::mem::size_of::<usize>();
+pub(crate) const ALLOC_HDR: usize = core::mem::size_of::<AllocHeader>();
+pub(crate) const BACKREF_BYTES: usize = core::mem::size_of::<usize>();
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum AllocError {
@@ -237,9 +237,8 @@ impl FreeListAllocator {
         }
     }
 
-    pub unsafe fn deallocate_by_owner(&mut self, group_id: usize) -> usize {
+    pub unsafe fn deallocate_by_owner(&mut self, group_id: usize) {
         let target = BlockOwner::Group(group_id);
-        let mut freed_usable = 0usize;
         let mut prev_next: *mut *mut AllocHeader = &mut self.alloc_head;
         let mut current = self.alloc_head;
         while !current.is_null() {
@@ -250,14 +249,12 @@ impl FreeListAllocator {
                 }
                 let start = current as usize;
                 let block_size = unsafe { (*current).size };
-                freed_usable += block_size.saturating_sub(ALLOC_HDR);
                 unsafe { self.insert_free_block(start, block_size) };
             } else {
                 prev_next = unsafe { &mut (*current).next };
             }
             current = next;
         }
-        freed_usable
     }
 
     unsafe fn insert_free_block(&mut self, start: usize, block_size: usize) -> bool {
@@ -611,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn deallocate_by_owner_returns_total_freed_usable_bytes() {
+    fn deallocate_by_owner_is_repeatable() {
         let region_size = 3 * needed_for(64);
         let mut memory = vec![0u8; region_size];
         let base = memory.as_mut_ptr() as usize;
@@ -620,8 +617,14 @@ mod tests {
         unsafe { alloc.allocate(layout, BlockOwner::Group(7)) }.unwrap();
         unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
         unsafe { alloc.allocate(layout, BlockOwner::Group(7)) }.unwrap();
-        assert_eq!(unsafe { alloc.deallocate_by_owner(7) }, 2 * 64);
-        assert_eq!(unsafe { alloc.deallocate_by_owner(7) }, 0);
+        unsafe { alloc.deallocate_by_owner(7) };
+        unsafe { alloc.deallocate_by_owner(7) };
+        assert!(unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_ok());
+        assert!(unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_ok());
+        assert!(matches!(
+            unsafe { alloc.allocate(layout, BlockOwner::Kernel) },
+            Err(AllocError::OutOfMemory)
+        ));
     }
 
     fn free_entries(alloc: &FreeListAllocator) -> Vec<(usize, usize)> {
