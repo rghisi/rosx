@@ -258,3 +258,35 @@ failures and zero warnings across the workspace.
 - Decisions taken where the plan left room: none needed — the §3.2 order and the §0 rule
   transferred 1:1; the only judgment call (type-byte-only emptiness for in-use slots) was pinned
   by test `type_zero_slots_stay_empty_however_dirty_their_bytes`.
+
+## 9. Standard-tool compatibility (owner requests of 2026-11-08, after plan approval)
+
+The owner asked for proof of compatibility with standard PC/DOS partitions in both directions,
+and overrode the §1 "table writing" non-goal by choosing a **production** `encode_mbr`
+(`8adfc37`) over a test-only builder: entries in, 512 sector out, total, zero CHS (LBA-only),
+signature stamped. `parse∘encode` is the identity on parser-producible entries and idempotent
+once CHS is dropped (3 tests).
+
+- **Real tools → `rxpart` (`0358dfa`):** `fs/partition/fixtures/` pins sector 0 as written by
+  util-linux sfdisk/fdisk 2.41.3, GNU parted and gdisk; `generate.sh` regenerates the eight
+  tool captures bit-exactly (verified; only the random disk identifier varies). Shapes no
+  synthetic test produced: legacy-63 with real CHS bytes, a true hole from an `fdisk` delete,
+  `0x05` and `0x0F` containers, data-beside-container, gdisk protective `0xEE`, four primaries.
+- **`rxpart` → real tools (`659d63b`):** live tests write `encode_mbr` tables into real images;
+  `sfdisk --dump` must report identical slot numbers, starts, sizes, types and bootable flags
+  (hole included: dump names come back `img1`/`img3`/`img4` — slot truth survives the tool),
+  `sfdisk --verify` must accept them, `fdisk -l` must see a `dos` label. Skips with a note when
+  util-linux is absent.
+- **Era hardware (`this commit`):** two sector-0 captures from **Free FDISK 1.3.4 running on
+  the 86Box 486DX2-66** (booted from the official FreeDOS 1.3 boot floppy; procedure pinned in
+  `generate.sh`'s header, including the LiveCD image sha256): a maximum-size active primary
+  (63-sector start, real clamped CHS, **no disk identifier written**) and a 200 MB primary plus
+  the remainder as a `0x05` extended container with a three-drive logical chain (EBRs live at
+  the container start — recognized, refused, exactly the v1 contract). The captures confirmed
+  era behavior the Linux tools never produce: FDISK leaves the last 2016 sectors unallocated,
+  and its MBR has valid table bytes with **zero bootstrap code** — a disk the BIOS refuses to
+  boot but `rxpart` (like `sfdisk`/`fdisk`) parses and exposes honestly; the FreeDOS kernel
+  itself calls that very blank disk an "illegal partition table", which is the §0
+  expose-on-corrupt rescue path observed from two directions.
+- Suite today: 46 tests (`cargo test -p rxpart`): 32 unit + 10 standard-tool fixtures + 4 live
+  round-trips; clippy silent throughout.

@@ -1,6 +1,7 @@
 use rxpart::{exposure, parse_mbr, Entry, Exposure, Slice, TableState, SECTOR_BYTES};
 
 const DISK_SECTORS: u64 = 204_800;
+const ERA_DISK_SECTORS: u64 = 1_000_944;
 
 fn entry(boot: u8, type_id: u8, start_lba: u32, sector_count: u32) -> Entry {
     Entry {
@@ -22,6 +23,13 @@ fn partitions_of(sector: &[u8; SECTOR_BYTES]) -> Vec<Slice> {
             assert_eq!(table.state, TableState::Valid);
             slices
         }
+        Exposure::Whole { table } => panic!("expected partitions, verdict was {table:?}"),
+    }
+}
+
+fn partitions_of_disk(sector: &[u8; SECTOR_BYTES], disk_sectors: u64) -> Vec<Slice> {
+    match exposure(&parse_mbr(sector, disk_sectors)) {
+        Exposure::Partitions(slices) => slices,
         Exposure::Whole { table } => panic!("expected partitions, verdict was {table:?}"),
     }
 }
@@ -153,4 +161,43 @@ fn gdisk_protective_mbr_exposes_the_whole_disk_and_is_not_corrupt() {
     assert_eq!(table.entries[0], Some(entry(0x00, 0xee, 1, 204_799)));
     assert_eq!(&sector[451..454], &[0xbe, 0x32, 0x0c]);
     assert_eq!(whole_exposure_of(sector), TableState::Valid);
+}
+
+#[test]
+fn dos_fdisk_max_primary_keeps_the_era_geometry_and_no_disk_identifier() {
+    let sector: &[u8; SECTOR_BYTES] = include_bytes!("../fixtures/dos-fdisk-max-primary.mbr");
+    let table = parse_mbr(sector, ERA_DISK_SECTORS);
+    assert_eq!(table.state, TableState::Valid);
+    assert_eq!(table.entries[0], Some(entry(0x80, 0x06, 63, 998_865)));
+    assert_eq!(table.entries[1..], [None, None, None]);
+    assert_eq!(&sector[447..450], &[0x01, 0x01, 0x00]);
+    assert_eq!(&sector[451..454], &[0x0f, 0xff, 0xde]);
+    assert_eq!(&sector[440..444], &[0u8; 4]);
+    assert_eq!(
+        partitions_of_disk(sector, ERA_DISK_SECTORS),
+        vec![Slice {
+            slot: 0,
+            type_id: 0x06,
+            start_lba: 63,
+            sector_count: 998_865,
+        }]
+    );
+}
+
+#[test]
+fn dos_fdisk_primary_and_extended_container_expose_only_the_primary_slice() {
+    let sector: &[u8; SECTOR_BYTES] = include_bytes!("../fixtures/dos-fdisk-primary-extended.mbr");
+    let table = parse_mbr(sector, ERA_DISK_SECTORS);
+    assert_eq!(table.state, TableState::Valid);
+    assert_eq!(table.entries[0], Some(entry(0x80, 0x06, 63, 410_193)));
+    assert_eq!(table.entries[1], Some(entry(0x00, 0x05, 410_256, 588_672)));
+    assert_eq!(
+        partitions_of_disk(sector, ERA_DISK_SECTORS),
+        vec![Slice {
+            slot: 0,
+            type_id: 0x06,
+            start_lba: 63,
+            sector_count: 410_193,
+        }]
+    );
 }

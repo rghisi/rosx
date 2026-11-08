@@ -9,6 +9,18 @@
 # reproduces the committed fixtures everywhere except those four bytes; the
 # table bytes and the tests do not depend on them.
 #
+# The dos-fdisk-*.mbr fixtures are NOT script-regenerable: they are sector 0
+# of a blank 993/16/63 (1 000 944 sector) disk on a 486DX2-66 (86Box), booted
+# from the FreeDOS 1.3 boot floppy (FD13BOOT.img of FD13-LiveCD.zip; the
+# FD13LIVE.iso inside carries sha256 aaeeb690301b0403e012ed5a80d813a5472c095f
+# e81a07410daa379f44a380e9) and partitioned by the running Free FDISK 1.3.4
+# with large-disk support refused. dos-fdisk-max-primary is the maximum-size
+# active primary of the Y-Y path; dos-fdisk-primary-extended is a 200 MB
+# active primary plus the remaining space in an extended container holding
+# three logical drives (its EBR chain lives at the container start, exactly
+# what v1 recognizes and refuses to walk). Both captures verified against
+# sfdisk --dump, sfdisk --verify and fdisk -l on the host.
+#
 # usage: generate.sh [output-dir]   (default: the script's own directory)
 set -eu
 
