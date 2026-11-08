@@ -2,8 +2,10 @@
 
 extern crate alloc;
 
+use alloc::vec::Vec;
+use block_protocol::manager::client::Manager;
+use block_protocol::manager::wire::DeviceInfo;
 use usrlib::println;
-use vfs_protocol::client::Vfs;
 
 fn main() {
     let arguments = usrlib::args();
@@ -12,40 +14,54 @@ fn main() {
     } else {
         &arguments[1..]
     };
-    let Ok(vfs) = Vfs::connect() else {
-        println!("attach no filesystem service");
+    let Ok(manager) = Manager::connect() else {
+        println!("attach no block device manager");
         return;
     };
     match requested {
-        ["list"] => list_devices(&vfs),
-        [id, service, device] => attach_device(&vfs, id, service, device),
-        _ => println!("usage: attach <id> <service> <device> | attach list"),
+        [] => list_devices(&manager),
+        [service] => register_provider(&manager, service),
+        _ => println!("usage: attach | attach <service>"),
     }
-    vfs.disconnect();
+    manager.disconnect();
 }
 
-fn attach_device(vfs: &Vfs, id: &str, service: &str, device: &str) {
-    let Ok(device) = device.parse::<u32>() else {
-        println!("attach wants a numeric device id");
-        return;
-    };
-    match vfs.attach(id, service, device) {
-        Ok(()) => println!("attach ok id={id} service={service} device={device}"),
+fn register_provider(manager: &Manager, service: &str) {
+    match manager.register(service) {
         Err(error) => println!("attach failed: {error:?}"),
+        Ok(()) => {
+            println!("attach registered {service}");
+            list_devices(manager);
+        }
     }
 }
 
-fn list_devices(vfs: &Vfs) {
-    match vfs.list_devices() {
-        Ok(devices) => {
-            if devices.is_empty() {
-                println!("no devices attached");
-                return;
-            }
-            for device in devices {
-                println!("{device}");
-            }
-        }
+fn list_devices(manager: &Manager) {
+    match manager.list() {
         Err(error) => println!("attach list failed: {error:?}"),
+        Ok(devices) if devices.is_empty() => println!("no block devices"),
+        Ok(devices) => render_grouped(&devices),
+    }
+}
+
+fn render_grouped(devices: &[DeviceInfo]) {
+    let mut sources: Vec<&str> = Vec::new();
+    for device in devices {
+        if !sources.contains(&device.source.as_str()) {
+            sources.push(&device.source);
+        }
+    }
+    for source in sources {
+        println!("{source}:");
+        for device in devices.iter().filter(|device| device.source == source) {
+            println!(
+                "  {}  {}  {}x{}  {}",
+                device.name,
+                device.description,
+                device.block_count,
+                device.block_size,
+                device.state.label()
+            );
+        }
     }
 }

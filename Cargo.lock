@@ -39,8 +39,8 @@ dependencies = [
 name = "attach"
 version = "0.1.0"
 dependencies = [
+ "block-protocol",
  "usrlib",
- "vfs-protocol",
 ]
 
 [[package]]
@@ -565,6 +565,7 @@ name = "rosx"
 version = "0.1.0"
 dependencies = [
  "ata-protocol",
+ "block-protocol",
  "bootloader_api",
  "input-protocol",
  "kernel",
@@ -583,6 +584,7 @@ name = "rosx-x86_32"
 version = "0.1.0"
 dependencies = [
  "ata-protocol",
+ "block-protocol",
  "input-protocol",
  "kernel",
  "spin",

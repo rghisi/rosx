@@ -160,9 +160,9 @@ mod tests {
     #[test]
     fn encode_appends_run_and_exec_arguments_in_order() {
         let plan = BootPlan::new()
-            .run("attach", &["hdd", "ATA", "0"])
+            .run("attach", &["ATA"])
             .exec("shell", &["--fast"]);
-        assert_eq!(plan.encode(), b"init\0run attach hdd ATA 0\0exec shell --fast\0");
+        assert_eq!(plan.encode(), b"init\0run attach ATA\0exec shell --fast\0");
     }
 
     #[test]
