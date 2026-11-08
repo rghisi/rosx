@@ -1,18 +1,20 @@
-use crate::blk::RemoteBlock;
+use crate::blk::RemoteWindow;
 use crate::error_map;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use block_protocol::manager::client::Manager;
-use fs_core::engine::{Engine, Kind, MetadataView};
+use block_protocol::manager::client::{Geometry, Manager};
+use fs_core::device::BlockDevice;
+use fs_core::engine::{DirItem, Engine, Kind, MetadataView};
 use fs_core::error::FsError;
-use rxfs::device::BlockDevice;
+use rxfat::boot::BootSector;
+use rxfat::{FatHandle, FatMetadata};
 use rxfs::device::MemoryDevice;
-use rxfs::spec::DEFAULT_BYTES_PER_INODE;
+use rxfs::spec::{BLOCK_BYTES, DEFAULT_BYTES_PER_INODE, FS_MAGIC, SUPERBLOCK_BLOCK};
 use rxfs::superblock::UUID_BYTES;
-use rxfs::volume::{FileSystem, FormatParams, Handle as RxfsHandle};
+use rxfs::volume::{FileSystem, FormatParams, Handle as RxfsHandle, Stat};
 use system::rom::{RomError, RomImage};
 use vfs_protocol::wire::{self, EntityKind, VfsError};
 
@@ -21,19 +23,204 @@ const VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ram-vol-001";
 const VOLUME_NAME: &[u8] = b"rosx-ram";
 const DEVICE_VOLUME_UUID: [u8; UUID_BYTES] = *b"rosx-ata-vol-001";
 const DEVICE_VOLUME_NAME: &[u8] = b"rosx-hdd";
+const BOOT_SECTOR_BYTES: u64 = 512;
 
 pub type ActiveVolume = FileSystem<MemoryDevice>;
-pub type ActiveStore = VfsStore<ActiveVolume, RemoteBlock>;
+pub type ActiveStore = VfsStore<ActiveVolume, RemoteWindow>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VolumeKind {
+    Rxfs,
+    Fat { unit_bytes: u64 },
+}
+
+fn probe_volume(
+    client: &Manager,
+    device: &str,
+    geometry: &Geometry,
+) -> Result<VolumeKind, VfsError> {
+    let device_block_bytes = u64::from(geometry.block_size);
+    if device_block_bytes == 0 {
+        return Err(VfsError::Unsupported);
+    }
+    let superblock_offset = SUPERBLOCK_BLOCK as usize * BLOCK_BYTES;
+    let head_blocks = (superblock_offset + FS_MAGIC.len())
+        .max(BOOT_SECTOR_BYTES as usize)
+        .div_ceil(device_block_bytes as usize) as usize;
+    let head = client.read_blocks(device, 0, head_blocks).map_err(error_map::block)?;
+    let superblock_region = superblock_offset..superblock_offset + FS_MAGIC.len();
+    if head.get(superblock_region) == Some(FS_MAGIC.as_slice()) {
+        return Ok(VolumeKind::Rxfs);
+    }
+    let Some(sector0) = head.get(..BOOT_SECTOR_BYTES as usize) else {
+        return Err(VfsError::NotFormatted);
+    };
+    let Some(total_sectors) = geometry
+        .block_count
+        .checked_mul(device_block_bytes)
+        .and_then(|bytes| bytes.checked_div(BOOT_SECTOR_BYTES))
+    else {
+        return Err(VfsError::Unsupported);
+    };
+    match BootSector::parse(sector0, total_sectors) {
+        Ok(boot) => Ok(VolumeKind::Fat {
+            unit_bytes: u64::from(boot.bytes_per_sector),
+        }),
+        Err(_) => Err(VfsError::NotFormatted),
+    }
+}
 
 struct MountedVolume<D: BlockDevice> {
     name: String,
     device: String,
-    fs: FileSystem<D>,
+    fs: MountedEngine<D>,
+}
+
+enum MountedEngine<D: BlockDevice> {
+    Rxfs(FileSystem<D>),
+    Fat(rxfat::FileSystem<RemoteWindow>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MountHandle {
+    Rxfs(RxfsHandle),
+    Fat(FatHandle),
+}
+
+enum MountMetadata {
+    Rxfs(Stat),
+    Fat(FatMetadata),
+}
+
+impl MetadataView for MountMetadata {
+    fn kind(&self) -> Kind {
+        match self {
+            MountMetadata::Rxfs(stat) => stat.kind(),
+            MountMetadata::Fat(stat) => stat.kind(),
+        }
+    }
+
+    fn size(&self) -> u64 {
+        match self {
+            MountMetadata::Rxfs(stat) => stat.size(),
+            MountMetadata::Fat(stat) => stat.size(),
+        }
+    }
+}
+
+impl<D: BlockDevice> Engine for MountedEngine<D> {
+    type Handle = MountHandle;
+    type Metadata = MountMetadata;
+
+    fn lookup(&mut self, path_bytes: &[u8]) -> Result<MountMetadata, FsError> {
+        match self {
+            MountedEngine::Rxfs(fs) => fs.lookup(path_bytes).map(MountMetadata::Rxfs),
+            MountedEngine::Fat(fs) => fs.lookup(path_bytes).map(MountMetadata::Fat),
+        }
+    }
+
+    fn open(&mut self, path_bytes: &[u8]) -> Result<MountHandle, FsError> {
+        match self {
+            MountedEngine::Rxfs(fs) => fs.open(path_bytes).map(MountHandle::Rxfs),
+            MountedEngine::Fat(fs) => fs.open(path_bytes).map(MountHandle::Fat),
+        }
+    }
+
+    fn create(&mut self, path_bytes: &[u8]) -> Result<MountHandle, FsError> {
+        match self {
+            MountedEngine::Rxfs(fs) => fs.create(path_bytes).map(MountHandle::Rxfs),
+            MountedEngine::Fat(fs) => fs.create(path_bytes).map(MountHandle::Fat),
+        }
+    }
+
+    fn mkdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        match self {
+            MountedEngine::Rxfs(fs) => fs.mkdir(path_bytes),
+            MountedEngine::Fat(fs) => fs.mkdir(path_bytes),
+        }
+    }
+
+    fn rmdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        match self {
+            MountedEngine::Rxfs(fs) => fs.rmdir(path_bytes),
+            MountedEngine::Fat(fs) => fs.rmdir(path_bytes),
+        }
+    }
+
+    fn read(&mut self, handle: MountHandle, offset: u64, buf: &mut [u8]) -> Result<usize, FsError> {
+        match (self, handle) {
+            (MountedEngine::Rxfs(fs), MountHandle::Rxfs(engine_handle)) => {
+                fs.read(engine_handle, offset, buf)
+            }
+            (MountedEngine::Fat(fs), MountHandle::Fat(engine_handle)) => {
+                fs.read(engine_handle, offset, buf)
+            }
+            _ => Err(FsError::BadHandle),
+        }
+    }
+
+    fn write(
+        &mut self,
+        handle: MountHandle,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<usize, FsError> {
+        match (self, handle) {
+            (MountedEngine::Rxfs(fs), MountHandle::Rxfs(engine_handle)) => {
+                fs.write(engine_handle, offset, data)
+            }
+            (MountedEngine::Fat(fs), MountHandle::Fat(engine_handle)) => {
+                fs.write(engine_handle, offset, data)
+            }
+            _ => Err(FsError::BadHandle),
+        }
+    }
+
+    fn stat(&mut self, handle: MountHandle) -> Result<MountMetadata, FsError> {
+        match (self, handle) {
+            (MountedEngine::Rxfs(fs), MountHandle::Rxfs(engine_handle)) => {
+                fs.stat(engine_handle).map(MountMetadata::Rxfs)
+            }
+            (MountedEngine::Fat(fs), MountHandle::Fat(engine_handle)) => {
+                fs.stat(engine_handle).map(MountMetadata::Fat)
+            }
+            _ => Err(FsError::BadHandle),
+        }
+    }
+
+    fn close(&mut self, handle: MountHandle) -> Result<(), FsError> {
+        match (self, handle) {
+            (MountedEngine::Rxfs(fs), MountHandle::Rxfs(engine_handle)) => fs.close(engine_handle),
+            (MountedEngine::Fat(fs), MountHandle::Fat(engine_handle)) => fs.close(engine_handle),
+            _ => Err(FsError::BadHandle),
+        }
+    }
+
+    fn remove(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
+        match self {
+            MountedEngine::Rxfs(fs) => fs.remove(path_bytes),
+            MountedEngine::Fat(fs) => fs.remove(path_bytes),
+        }
+    }
+
+    fn readdir(&mut self, path_bytes: &[u8]) -> Result<Vec<DirItem>, FsError> {
+        match self {
+            MountedEngine::Rxfs(fs) => fs.readdir(path_bytes),
+            MountedEngine::Fat(fs) => fs.readdir(path_bytes),
+        }
+    }
+
+    fn sync(&mut self) -> Result<(), FsError> {
+        match self {
+            MountedEngine::Rxfs(fs) => fs.sync(),
+            MountedEngine::Fat(fs) => fs.sync(),
+        }
+    }
 }
 
 enum OpenLocation<E: Engine> {
     Root(E::Handle),
-    Mount { slot: usize, handle: RxfsHandle },
+    Mount { slot: usize, handle: MountHandle },
 }
 
 impl<E: Engine> Copy for OpenLocation<E> {}
@@ -120,8 +307,8 @@ fn open_engine<E2: Engine>(
     }
 }
 
-impl VfsStore<ActiveVolume, RemoteBlock> {
-    pub fn new() -> VfsStore<ActiveVolume, RemoteBlock> {
+impl VfsStore<ActiveVolume, RemoteWindow> {
+    pub fn new() -> VfsStore<ActiveVolume, RemoteWindow> {
         let params = FormatParams {
             bytes_per_inode: DEFAULT_BYTES_PER_INODE,
             uuid: VOLUME_UUID,
@@ -133,7 +320,7 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
         VfsStore::from_engine(engine)
     }
 
-    fn open_remote_block(&self, device: &str) -> Result<RemoteBlock, VfsError> {
+    fn open_window(&self, device: &str, unit_bytes: u64) -> Result<RemoteWindow, VfsError> {
         let client = Manager::connect().map_err(error_map::block)?;
         let geometry = match client.probe(device) {
             Ok(geometry) => geometry,
@@ -142,7 +329,7 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
                 return Err(error_map::block(error));
             }
         };
-        match RemoteBlock::new(client, device, &geometry) {
+        match RemoteWindow::new(client, device, &geometry, unit_bytes) {
             Ok(disk) => Ok(disk),
             Err(client) => {
                 client.disconnect();
@@ -155,7 +342,7 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
         if self.device_busy(device) {
             return Err(VfsError::Busy);
         }
-        let disk = self.open_remote_block(device)?;
+        let disk = self.open_window(device, BLOCK_BYTES as u64)?;
         let params = FormatParams {
             bytes_per_inode: DEFAULT_BYTES_PER_INODE,
             uuid: DEVICE_VOLUME_UUID,
@@ -182,8 +369,38 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
         if mount_point.kind() != Kind::Directory {
             return Err(VfsError::NotDirectory);
         }
-        let disk = self.open_remote_block(device)?;
-        let fs = FileSystem::mount(disk).map_err(error_map::mount)?;
+        let client = Manager::connect().map_err(error_map::block)?;
+        let geometry = match client.probe(device) {
+            Ok(geometry) => geometry,
+            Err(error) => {
+                client.disconnect();
+                return Err(error_map::block(error));
+            }
+        };
+        let kind = match probe_volume(&client, device, &geometry) {
+            Ok(kind) => kind,
+            Err(error) => {
+                client.disconnect();
+                return Err(error);
+            }
+        };
+        let unit_bytes = match kind {
+            VolumeKind::Rxfs => BLOCK_BYTES as u64,
+            VolumeKind::Fat { unit_bytes } => unit_bytes,
+        };
+        let disk = match RemoteWindow::new(client, device, &geometry, unit_bytes) {
+            Ok(disk) => disk,
+            Err(client) => {
+                client.disconnect();
+                return Err(VfsError::Unsupported);
+            }
+        };
+        let fs = match kind {
+            VolumeKind::Rxfs => MountedEngine::Rxfs(FileSystem::mount(disk).map_err(error_map::mount)?),
+            VolumeKind::Fat { .. } => {
+                MountedEngine::Fat(rxfat::FileSystem::new(disk).map_err(error_map::mount)?)
+            }
+        };
         self.mounts.push(MountedVolume {
             name: String::from(name),
             device: String::from(device),
@@ -218,7 +435,7 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
         }
     }
 
-    fn volume_mut(&mut self, slot: usize) -> Result<&mut FileSystem<D>, VfsError> {
+    fn volume_mut(&mut self, slot: usize) -> Result<&mut MountedEngine<D>, VfsError> {
         self.mounts
             .get_mut(slot)
             .map(|mounted| &mut mounted.fs)
@@ -512,7 +729,7 @@ mod tests {
         fs.mounts.push(MountedVolume {
             name: String::from(name),
             device: String::from(name),
-            fs: volume,
+            fs: MountedEngine::Rxfs(volume),
         });
     }
 

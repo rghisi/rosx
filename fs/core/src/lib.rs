@@ -2,5 +2,6 @@
 
 extern crate alloc;
 
+pub mod device;
 pub mod engine;
 pub mod error;
