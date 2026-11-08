@@ -40,7 +40,8 @@
 ### Goal
 - `rxpart` parses a 512-byte master boot record plus the disk's sector count and returns
   a typed `Table` verdict and an `Exposure` decision — total, infallible (no `Result`
-  for malformed input; malformed means `Corrupt`, not failure), allocation-free.
+  for malformed input; malformed means `Corrupt`, not failure); the parse itself is
+  allocation-free.
 - The curation rule is a **pure function in this crate**, so partition *policy* is
   host-testable without QEMU, disks, or IPC — the deepest argument for the `blockd`
   topology lands here.
@@ -74,8 +75,8 @@
   joins that list and `default-members` (like `fs/ramfs`), so `cargo test` and
   `cargo xtask test` pick it up with no xtask change.
 - House style for such crates: zero third-party deps, `#![no_std]` + `extern crate alloc`
-  only if needed (`rxpart` needs **neither** — fixed-size output, no allocation),
-  `#[cfg(test)]` modules in each file.
+  (`rxpart` uses `alloc` only for `Exposure::Partitions` — once per verdict, never on a
+  hot path), `#[cfg(test)]` modules in each file.
 
 ## 3. Design
 
