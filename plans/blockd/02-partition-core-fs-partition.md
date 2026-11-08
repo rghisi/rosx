@@ -1,6 +1,7 @@
 # Plan 2 — Partition core: `fs/partition` (`rxpart`)
 
-> **Status:** Plan (no code written). Written 2026-11-08; decisions owner-approved in the
+> **Status:** Implemented on branch `blockd-partition-core` (2026-11-08) — see
+> `## Evidence`. Written 2026-11-08; decisions owner-approved in the
 > design discussion of 2026-11-08.
 > **Feature:** a standalone `no_std`, zero-dependency crate `fs/partition` (package
 > `rxpart`) that parses MBR master boot records and applies the **curation rule** —
@@ -201,3 +202,59 @@ crate (names, kind/state wire bytes) is Plan 3's translation of these verdicts.
 ## 7. Evidence log convention
 
 Same as Plan 1: Status line + trailing `## Evidence` section updated as milestones land.
+
+---
+
+## Evidence
+
+Implemented 2026-11-08 on branch `blockd-partition-core` (forked from the plans-PR head), four
+gated commits. Host: Linux, QEMU 10.2.1, pinned nightly toolchain; `cargo clippy -p rxpart
+--all-targets` silent at every gate (0 diagnostics).
+
+**M0** — crate skeleton (`72e8852`): workspace member `fs/partition` + `default-members` (both
+lists, between `fs/fat` and `fs/ramfs`), package `rxpart`, zero dependencies, inherits workspace
+lints, `lib.rs` = `#![cfg_attr(not(test), no_std)]` only. *Gate:* `cargo test -p rxpart` green
+(0 tests); `cargo xtask test --skip-integration` green across the whole workspace, zero warnings.
+
+**M1** — `mbr.rs` (`cbf2348`): constants, `Slot`, `Entry`, `TableState`, `Table`, `parse_mbr`
+(total, allocation-free). In-use rule: type byte ≠ 0. Validity in order: signature 55AA, then
+all-zero table → `Empty`, then `sector_count > 0 ∧ start_lba ≥ 1 ∧ start+count ≤ disk_sectors`
+(u64 arithmetic, cannot wrap) and pairwise half-open-range disjointness. Tests 1–12: the golden
+sectors (canonical 0x83@2048, legacy-63, four slots, holes keep indices 0 and 3, boot indicator
+and garbage CHS ignored) + boundary matrix (end == disk valid; past-end, zero count, LBA 0,
+u32::MAX-on-small-disk corrupt-and-still-reported; u32::MAX-on-u64::MAX disk valid — the wrap
+guard proven from both sides; tiny disk corrupt). Fixture correction mid-M1: legacy-63's count
+(1_985 on a 2_048-sector disk) — the parser caught its own test, production code unchanged.
+
+**M2** — `rule.rs` (`e6d1e0d`): `is_supported` (0x05/0x0F/0x85 containers and 0xEE protective
+recognized-but-refused; every other non-zero type a candidate), `Slice`, `Exposure`, `exposure`
+(only allocation site in the crate, once per verdict). Tests 13–27: support matrix, every
+non-Valid state → `Whole` carrying its state, extended-only → `Whole { Valid }`, mixed
+0x0F+0x83 → only the 0x83 slice at its true slot, protective-MBR-spanning-the-disk → `Valid`
+(not Corrupt) → `Whole { Valid }`, slices carry true slot indices across holes; in `mbr.rs`:
+NoSignature (absent and one-wrong-byte), Empty, dirty type-zero bytes stay uninformative
+(Valid/Empty distinction honored per §3.2), adjacent valid, one shared sector corrupt,
+fully-contained corrupt.
+
+**M3** (this commit) — no-panic sweep: 10_000 seeded xorshift rounds × 6 disk sizes (0, 1, 63,
+2048, 204_800, u64::MAX); odd rounds carry the 55AA stamp so both the NoSignature and the
+in-parse paths are exercised; every `Partitions` verdict re-checked (state is Valid, ≤ 4 slices,
+each slice matches its true table entry and is supported, pairwise non-overlap); the sweep
+asserts non-vacuity (both verdict families observed). Cross-check fixture: the
+`xtask`/`tests-integration` harness shape (zeroed 1 MiB disk, bytes 510/511 = 55AA) → `Empty` →
+`Whole { Empty }` — the current run-disk really is addressed whole by the rule, today's behavior
+proven unchanged before Plan 3 integrates. Crate docs: vocabulary (controller → disk → partition;
+*volume* reserved for rxfs), the curation rule and the expose-on-corrupt and extended-only
+decisions. *Gate:* `cargo test -p rxpart` 29 tests green; full `cargo xtask test` — see below.
+
+Full suite (`cargo xtask test`, integration included): green — every unit target and the whole
+QEMU integration suite passed, all doc-test groups ok (rxpart included in the workspace run), zero
+failures and zero warnings across the workspace.
+
+## 8. Result notes
+
+- `exposure` allocates exactly one `Vec` per decision, at register time only (Plan 3's usage);
+  the parse path is allocation-free as designed.
+- Decisions taken where the plan left room: none needed — the §3.2 order and the §0 rule
+  transferred 1:1; the only judgment call (type-byte-only emptiness for in-use slots) was pinned
+  by test `type_zero_slots_stay_empty_however_dirty_their_bytes`.

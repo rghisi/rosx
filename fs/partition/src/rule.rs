@@ -176,4 +176,79 @@ mod tests {
             ])
         );
     }
+
+    #[test]
+    fn harness_stamped_master_disk_shape_is_empty_exposing_the_whole_disk() {
+        let mut sector = [0u8; SECTOR_BYTES];
+        sector[SECTOR_BYTES - 2] = SIGNATURE[0];
+        sector[SECTOR_BYTES - 1] = SIGNATURE[1];
+        let one_mib_in_sectors = (1024 * 1024 / SECTOR_BYTES) as u64;
+        let table = parse_mbr(&sector, one_mib_in_sectors);
+        assert_eq!(table.state, TableState::Empty);
+        assert_eq!(exposure(&table), Exposure::Whole { table: TableState::Empty });
+    }
+
+    #[test]
+    fn ten_thousand_seeded_sectors_never_panic_and_valid_exposures_never_overlap() {
+        let disk_sizes = [0u64, 1, 63, 2048, 204_800, u64::MAX];
+        let mut partitions_seen = 0u32;
+        let mut whole_seen = 0u32;
+        for round in 0..10_000u64 {
+            let sector = seeded_sector(round);
+            for disk_sectors in disk_sizes {
+                let table = parse_mbr(&sector, disk_sectors);
+                match exposure(&table) {
+                    Exposure::Whole { .. } => whole_seen += 1,
+                    Exposure::Partitions(slices) => {
+                        partitions_seen += 1;
+                        assert!(!slices.is_empty());
+                        assert_eq!(table.state, TableState::Valid);
+                        assert!(slices.len() <= ENTRY_COUNT);
+                        for slice in &slices {
+                            let entry = table.entries[slice.slot as usize].unwrap();
+                            assert!(is_supported(slice.type_id));
+                            assert_eq!(
+                                (slice.type_id, slice.start_lba, slice.sector_count),
+                                (entry.type_id, entry.start_lba, entry.sector_count)
+                            );
+                        }
+                        for (index, first) in slices.iter().enumerate() {
+                            for second in &slices[index + 1..] {
+                                let first_end =
+                                    u64::from(first.start_lba) + u64::from(first.sector_count);
+                                let second_end =
+                                    u64::from(second.start_lba) + u64::from(second.sector_count);
+                                assert!(
+                                    u64::from(first.start_lba) >= second_end
+                                        || u64::from(second.start_lba) >= first_end
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(partitions_seen > 0);
+        assert!(whole_seen > 0);
+    }
+
+    fn seeded_sector(round: u64) -> [u8; SECTOR_BYTES] {
+        let mut state = 0x9E37_79B9_7F4A_7C15 ^ (round.wrapping_mul(0xFF51_AF7D_2723_EE6B));
+        let mut sector = [0u8; SECTOR_BYTES];
+        for byte in sector.iter_mut() {
+            *byte = next_random(&mut state) as u8;
+        }
+        if round % 2 == 1 {
+            sector[SECTOR_BYTES - 2] = SIGNATURE[0];
+            sector[SECTOR_BYTES - 1] = SIGNATURE[1];
+        }
+        sector
+    }
+
+    fn next_random(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
 }
