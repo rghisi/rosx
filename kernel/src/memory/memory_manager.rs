@@ -17,7 +17,6 @@ pub fn alloc_error_handler(layout: Layout) -> ! {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct MemoryStats {
-    pub used_bytes: usize,
     pub total_bytes: usize,
     pub free_bytes: usize,
     pub largest_free_block: usize,
@@ -72,7 +71,6 @@ impl MemoryManager {
             self.cpu.borrow().unwrap().enable_interrupts();
         }
         MemoryStats {
-            used_bytes: total_bytes - free_list.free_bytes,
             total_bytes,
             free_bytes: free_list.free_bytes,
             largest_free_block: free_list.largest_free_block,

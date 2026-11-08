@@ -1,18 +1,17 @@
 use crate::ipc::MESSAGE_PAYLOAD_BYTES;
 
 pub const KSTATSD_SERVICE_NAME: &str = "KSTATSD";
-pub const SNAPSHOT_SCHEMA_VERSION: u8 = 1;
+pub const SNAPSHOT_SCHEMA_VERSION: u8 = 2;
 const OP_MEMORY_SNAPSHOT: u8 = 0;
 
 const OP_OFFSET: usize = 0;
 const VERSION_OFFSET: usize = 0;
-const USED_BYTES_OFFSET: usize = 1;
-const TOTAL_BYTES_OFFSET: usize = 9;
-const FREE_BYTES_OFFSET: usize = 17;
-const LARGEST_FREE_BLOCK_OFFSET: usize = 25;
-const FREE_BLOCK_COUNT_OFFSET: usize = 33;
-const UPTIME_MS_OFFSET: usize = 41;
-pub const SNAPSHOT_BYTES: usize = 49;
+const TOTAL_BYTES_OFFSET: usize = 1;
+const FREE_BYTES_OFFSET: usize = 9;
+const LARGEST_FREE_BLOCK_OFFSET: usize = 17;
+const FREE_BLOCK_COUNT_OFFSET: usize = 25;
+const UPTIME_MS_OFFSET: usize = 33;
+pub const SNAPSHOT_BYTES: usize = 41;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum KstatsRequest {
@@ -21,7 +20,6 @@ pub enum KstatsRequest {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct MemorySnapshot {
-    pub used_bytes: u64,
     pub total_bytes: u64,
     pub free_bytes: u64,
     pub largest_free_block: u64,
@@ -45,7 +43,6 @@ pub fn decode_request(data: &[u8; MESSAGE_PAYLOAD_BYTES]) -> Option<KstatsReques
 pub fn encode_memory_snapshot(snapshot: &MemorySnapshot) -> [u8; MESSAGE_PAYLOAD_BYTES] {
     let mut data = [0u8; MESSAGE_PAYLOAD_BYTES];
     data[VERSION_OFFSET] = SNAPSHOT_SCHEMA_VERSION;
-    write_u64(&mut data, USED_BYTES_OFFSET, snapshot.used_bytes);
     write_u64(&mut data, TOTAL_BYTES_OFFSET, snapshot.total_bytes);
     write_u64(&mut data, FREE_BYTES_OFFSET, snapshot.free_bytes);
     write_u64(&mut data, LARGEST_FREE_BLOCK_OFFSET, snapshot.largest_free_block);
@@ -59,7 +56,6 @@ pub fn decode_memory_snapshot(data: &[u8; MESSAGE_PAYLOAD_BYTES]) -> Option<Memo
         return None;
     }
     Some(MemorySnapshot {
-        used_bytes: read_u64(data, USED_BYTES_OFFSET),
         total_bytes: read_u64(data, TOTAL_BYTES_OFFSET),
         free_bytes: read_u64(data, FREE_BYTES_OFFSET),
         largest_free_block: read_u64(data, LARGEST_FREE_BLOCK_OFFSET),
@@ -82,7 +78,6 @@ mod tests {
 
     fn sample_snapshot() -> MemorySnapshot {
         MemorySnapshot {
-            used_bytes: 0x0101_0101_0101_0101,
             total_bytes: 0x0202_0202_0202_0202,
             free_bytes: 0x0303_0303_0303_0303,
             largest_free_block: 0x0404_0404_0404_0404,
@@ -121,7 +116,6 @@ mod tests {
         let snapshot = sample_snapshot();
         let data = encode_memory_snapshot(&snapshot);
         assert_eq!(data[VERSION_OFFSET], SNAPSHOT_SCHEMA_VERSION);
-        assert_eq!(&data[USED_BYTES_OFFSET..TOTAL_BYTES_OFFSET], &snapshot.used_bytes.to_le_bytes());
         assert_eq!(&data[TOTAL_BYTES_OFFSET..FREE_BYTES_OFFSET], &snapshot.total_bytes.to_le_bytes());
         assert_eq!(&data[UPTIME_MS_OFFSET..SNAPSHOT_BYTES], &snapshot.uptime_ms.to_le_bytes());
     }
@@ -142,7 +136,6 @@ mod tests {
     #[test]
     fn zeroed_snapshot_roundtrips() {
         let snapshot = MemorySnapshot {
-            used_bytes: 0,
             total_bytes: 0,
             free_bytes: 0,
             largest_free_block: 0,

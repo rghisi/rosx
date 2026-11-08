@@ -32,11 +32,15 @@ fn in_kib(bytes: u64) -> u64 {
     bytes / 1024
 }
 
+fn used_bytes(snapshot: &MemorySnapshot) -> u64 {
+    snapshot.total_bytes.saturating_sub(snapshot.free_bytes)
+}
+
 fn used_percentage(snapshot: &MemorySnapshot) -> u64 {
     if snapshot.total_bytes == 0 {
         0
     } else {
-        snapshot.used_bytes * 100 / snapshot.total_bytes
+        used_bytes(snapshot) * 100 / snapshot.total_bytes
     }
 }
 
@@ -44,7 +48,7 @@ fn report(snapshot: &MemorySnapshot) {
     println!("KSTATSD memory snapshot");
     println!(
         "  used:     {} KiB ({}%)",
-        in_kib(snapshot.used_bytes),
+        in_kib(used_bytes(snapshot)),
         used_percentage(snapshot)
     );
     println!("  free:     {} KiB", in_kib(snapshot.free_bytes));
