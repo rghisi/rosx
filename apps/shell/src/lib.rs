@@ -4,8 +4,6 @@
 extern crate std as core;
 
 extern crate alloc;
-extern crate system;
-extern crate usrlib;
 
 pub mod command;
 pub mod launcher;

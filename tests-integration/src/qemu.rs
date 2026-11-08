@@ -358,7 +358,7 @@ impl QemuSession {
     fn release_temp_dir(&mut self) {
         if let Some(temp_dir) = self.temp_dir.take() {
             if should_keep_temp_dir(env::var_os("ROSX_QEMU_KEEP_TMP").as_deref()) {
-                let path = temp_dir.into_path();
+                let path = temp_dir.keep();
                 eprintln!(
                     "ROSX_QEMU_KEEP_TMP is set; retained test temp dir at {}",
                     path.display()

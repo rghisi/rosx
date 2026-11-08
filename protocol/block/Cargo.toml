@@ -7,3 +7,6 @@ edition.workspace = true
 
 [dependencies]
 usrlib = { path = "../../usrlib" }
+
+[lints]
+workspace = true

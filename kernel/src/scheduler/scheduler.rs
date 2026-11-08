@@ -190,7 +190,6 @@ mod tests {
     use super::*;
     use crate::task::YieldReason;
     use crate::task::TaskState as KS;
-    use alloc::collections::VecDeque;
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
@@ -268,10 +267,6 @@ mod tests {
                 calls,
                 outcome,
             )
-        }
-
-        fn take_calls(&self) -> Vec<TaskHandle> {
-            self.calls.lock().unwrap().drain(..).collect()
         }
     }
 

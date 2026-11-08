@@ -2,6 +2,7 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use alloc::boxed::Box;
 use crate::collections::arena::GenerationalArena;
+#[cfg(test)]
 use crate::future::Future;
 use crate::handle::{FutureHandle, Handle};
 use crate::ipc::errors::{IpcReceiveError, IpcSendError};
@@ -11,7 +12,9 @@ use crate::irq_guard::IrqCell;
 use crate::ports::driven::ForNotifyingFutures;
 use system::ipc::Message;
 
+#[cfg(test)]
 struct NoopNotifier;
+#[cfg(test)]
 impl ForNotifyingFutures for NoopNotifier {
     fn register(&self, _future: Box<dyn Future + Send + Sync>) -> Option<FutureHandle> {
         None
@@ -20,6 +23,7 @@ impl ForNotifyingFutures for NoopNotifier {
     fn complete_ipc_message(&self, _handle: FutureHandle, _message: Message) {}
 }
 
+#[cfg(test)]
 static NOOP_NOTIFIER: NoopNotifier = NoopNotifier;
 
 pub(crate) type MailboxHandle = Handle;
@@ -33,6 +37,7 @@ pub(crate) struct MailboxManager {
 }
 
 impl MailboxManager {
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self {
             mailboxes: GenerationalArena::new(),
@@ -172,7 +177,7 @@ mod tests {
         assert_eq!(manager.push_back(handle, msg), Ok(()));
 
         // Verify that the future now has the message
-        let mut registry = services().future_registry.borrow_mut();
+        let registry = services().future_registry.borrow_mut();
         let future_box = registry.borrow_mut(fh).unwrap();
         let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
         let delivered = ipc_future.result().unwrap();

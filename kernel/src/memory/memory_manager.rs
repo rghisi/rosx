@@ -180,7 +180,7 @@ unsafe impl GlobalAlloc for MemoryManager {
 mod tests {
     use super::*;
     use crate::platform::cpu::Cpu;
-    use crate::memory::{MemoryBlock, MAX_MEMORY_BLOCKS};
+    use crate::memory::MemoryBlock;
     use core::alloc::{GlobalAlloc, Layout};
 
     struct MockCpu;

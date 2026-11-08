@@ -16,12 +16,14 @@ impl BitmapFont {
     }
 }
 
+#[expect(dead_code, reason = "approved console font palette; TERMINUS_8X16 is the rendered one. Case-specific approval - not a precedent for other dead code")]
 pub const IBM_8X8: BitmapFont = BitmapFont {
     glyphs: &IBM_8X8_GLYPHS,
     char_w: 8,
     char_h: 8,
 };
 
+#[expect(dead_code, reason = "approved console font palette; TERMINUS_8X16 is the rendered one. Case-specific approval - not a precedent for other dead code")]
 pub const IBM_VGA_8X16: BitmapFont = BitmapFont {
     glyphs: &IBM_VGA_8X16_GLYPHS,
     char_w: 8,
@@ -34,6 +36,7 @@ pub const TERMINUS_8X16: BitmapFont = BitmapFont {
     char_h: 16,
 };
 
+#[expect(dead_code, reason = "approved console font palette; TERMINUS_8X16 is the rendered one. Case-specific approval - not a precedent for other dead code")]
 pub const SPLEEN_8X16: BitmapFont = BitmapFont {
     glyphs: &SPLEEN_8X16_GLYPHS,
     char_w: 8,

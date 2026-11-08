@@ -188,13 +188,13 @@ pub struct FunctionTask {}
 
 impl FunctionTask {
     pub fn new(name: &'static str, job: fn()) -> SharedTask {
-        Task::new(name, task_wrapper as usize, job as usize)
+        Task::new(name, task_wrapper as *const () as usize, job as usize)
     }
 }
 
 pub fn idle_task_factory(cpu: &'static dyn Cpu) -> Box<Task> {
     let cpu_ptr = Box::into_raw(Box::new(cpu)) as usize;
-    Task::new("[K] Idle", idle_entry as usize, cpu_ptr)
+    Task::new("[K] Idle", idle_entry as *const () as usize, cpu_ptr)
 }
 
 extern "C" fn idle_entry(cpu_ptr: usize) {
@@ -207,7 +207,7 @@ extern "C" fn idle_entry(cpu_ptr: usize) {
 }
 
 pub fn new_entrypoint_task(entrypoint: usize, group: GroupId) -> SharedTask {
-    let mut task = Task::new("EPT", task_wrapper as usize, entrypoint);
+    let mut task = Task::new("EPT", task_wrapper as *const () as usize, entrypoint);
     task.group = group;
     task
 }
@@ -279,12 +279,12 @@ pub fn validate_arguments_blob(blob: &[u8]) -> Result<(), ErrorCode> {
 
 pub fn new_elf_task(name: &'static str, elf: &[u8]) -> SharedTask {
     let context = ElfTaskContext::new(elf, &[name]);
-    Task::new(name, elf_task_wrapper as usize, Box::into_raw(context) as usize)
+    Task::new(name, elf_task_wrapper as *const () as usize, Box::into_raw(context) as usize)
 }
 
 pub fn new_elf_task_with_arguments(name: &'static str, elf: &[u8], arguments_blob: Vec<u8>) -> SharedTask {
     let context = ElfTaskContext::with_blob(elf, arguments_blob);
-    Task::new(name, elf_task_wrapper as usize, Box::into_raw(context) as usize)
+    Task::new(name, elf_task_wrapper as *const () as usize, Box::into_raw(context) as usize)
 }
 
 pub(crate) extern "C" fn task_wrapper(entry_point: usize) {

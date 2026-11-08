@@ -5,7 +5,6 @@ use tests_integration::output::strip_ansi;
 use tests_integration::qemu::QemuSession;
 
 const BOOT_BUDGET: Duration = Duration::from_secs(90);
-const MONITOR_STEP_TIMEOUT: Duration = Duration::from_secs(10);
 
 const MIRROR_STATUS_PORT: u16 = 0x3F6;
 const COMMAND_PORT: u16 = 0x1F7;

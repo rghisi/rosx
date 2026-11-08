@@ -2,6 +2,7 @@ use alloc::collections::{BTreeMap};
 use alloc::string::String;
 use alloc::boxed::Box;
 use crate::collections::arena::GenerationalArena;
+#[cfg(test)]
 use crate::future::Future;
 use crate::handle::{FutureHandle, IpcBindingHandle, IpcConnectionHandle, IpcDataHandle};
 use crate::ipc::data_manager::IpcDataManager;
@@ -12,7 +13,9 @@ use crate::ipc::mailbox_manager::{MailboxManager, MailboxHandle};
 use crate::ports::driven::ForNotifyingFutures;
 use crate::task::TaskHandle;
 
+#[cfg(test)]
 struct NoopIpcNotifier;
+#[cfg(test)]
 impl ForNotifyingFutures for NoopIpcNotifier {
     fn register(&self, _future: Box<dyn Future + Send + Sync>) -> Option<FutureHandle> {
         None
@@ -21,18 +24,17 @@ impl ForNotifyingFutures for NoopIpcNotifier {
     fn complete_ipc_message(&self, _handle: FutureHandle, _message: Message) {}
 }
 
+#[cfg(test)]
 static NOOP_IPC_NOTIFIER: NoopIpcNotifier = NoopIpcNotifier;
 
 struct IpcServerBinding {
-    pub service: String,
     pub mailbox_handle: MailboxHandle
 }
 
 impl IpcServerBinding {
 
-    pub(crate) fn new(service: String, mailbox_handle: MailboxHandle) -> IpcServerBinding {
+    pub(crate) fn new(mailbox_handle: MailboxHandle) -> IpcServerBinding {
         IpcServerBinding {
-            service,
             mailbox_handle
         }
     }
@@ -55,6 +57,7 @@ pub(crate) struct IpcManager {
 
 impl IpcManager {
 
+    #[cfg(test)]
     pub(crate) fn new() -> IpcManager {
         IpcManager {
             bindings: GenerationalArena::new(),
@@ -83,7 +86,7 @@ impl IpcManager {
         }
 
         let mailbox_handle = self.mailbox_manager.create();
-        let binding = IpcServerBinding::new(String::from(service), mailbox_handle);
+        let binding = IpcServerBinding::new(mailbox_handle);
         let binding_handle = IpcBindingHandle::from(self.bindings.add(binding).unwrap());
         self.registry.insert(String::from(service), binding_handle);
 

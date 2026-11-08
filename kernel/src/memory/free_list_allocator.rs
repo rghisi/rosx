@@ -49,6 +49,7 @@ fn align_up(addr: usize, align: usize) -> usize {
 }
 
 static BAD_FREE_COUNT: AtomicUsize = AtomicUsize::new(0);
+#[cfg(not(test))]
 const BAD_FREE_PRINT_LIMIT: usize = 10;
 
 fn bad_free(reason: &'static str, p: usize, size: usize) {
@@ -58,7 +59,7 @@ fn bad_free(reason: &'static str, p: usize, size: usize) {
         crate::kprintln!("BAD-FREE {} p=0x{:x} sz=0x{:x}", reason, p, size);
     }
     #[cfg(test)]
-    let _ = (reason, count);
+    let _ = (reason, count, p, size);
 }
 
 impl FreeListAllocator {
@@ -85,7 +86,7 @@ impl FreeListAllocator {
         }
     }
 
-    pub unsafe fn allocate(&mut self, layout: Layout, owner: BlockOwner) -> Result<*mut u8, AllocError> {
+    pub(crate) unsafe fn allocate(&mut self, layout: Layout, owner: BlockOwner) -> Result<*mut u8, AllocError> {
         if layout.size() == 0 {
             return Err(AllocError::OutOfMemory);
         }
@@ -102,25 +103,31 @@ impl FreeListAllocator {
         let mut prev_next: *mut *mut FreeBlock = &mut self.head;
         let mut current = self.head;
         while !current.is_null() {
-            let block_size = (*current).size;
+            let block_size = unsafe { (*current).size };
             if block_size >= needed {
                 let start = current as usize;
                 let remaining = block_size - needed;
                 let used_size;
                 if remaining >= BLOCK_HDR {
                     let split = (start + needed) as *mut FreeBlock;
-                    (*split).size = remaining;
-                    (*split).next = (*current).next;
-                    *prev_next = split;
+                    unsafe {
+                        (*split).size = remaining;
+                        (*split).next = (*current).next;
+                        *prev_next = split;
+                    }
                     used_size = needed;
                 } else {
-                    *prev_next = (*current).next;
+                    unsafe {
+                        *prev_next = (*current).next;
+                    }
                     used_size = block_size;
                 }
                 let header = start as *mut AllocHeader;
-                (*header).size = used_size;
-                (*header).owner = owner;
-                (*header).next = self.alloc_head;
+                unsafe {
+                    (*header).size = used_size;
+                    (*header).owner = owner;
+                    (*header).next = self.alloc_head;
+                }
                 self.alloc_head = header;
                 if align <= BLOCK_ALIGN {
                     return Ok((start + ALLOC_HDR) as *mut u8);
@@ -132,8 +139,8 @@ impl FreeListAllocator {
                 }
                 return Ok(aligned as *mut u8);
             }
-            prev_next = &mut (*current).next;
-            current = (*current).next;
+            prev_next = unsafe { &mut (*current).next };
+            current = unsafe { (*current).next };
         }
         Err(AllocError::OutOfMemory)
     }
@@ -163,7 +170,7 @@ impl FreeListAllocator {
     }
 
     pub unsafe fn deallocate(&mut self, ptr: *mut u8, align: usize) {
-        let Some(start) = self.block_start(ptr as usize, align) else {
+        let Some(start) = (unsafe { self.block_start(ptr as usize, align) }) else {
             return;
         };
         if start % BLOCK_ALIGN != 0 {
@@ -175,7 +182,7 @@ impl FreeListAllocator {
             return;
         }
         let header = start as *mut AllocHeader;
-        let block_size = (*header).size;
+        let block_size = unsafe { (*header).size };
         if block_size < ALLOC_HDR || !self.region_contains(start, block_size) {
             bad_free("insane-header-size", ptr as usize, block_size);
             return;
@@ -184,16 +191,18 @@ impl FreeListAllocator {
         let mut prev_next: *mut *mut AllocHeader = &mut self.alloc_head;
         let mut current = self.alloc_head;
         while !current.is_null() && current != header {
-            prev_next = &mut (*current).next;
-            current = (*current).next;
+            prev_next = unsafe { &mut (*current).next };
+            current = unsafe { (*current).next };
         }
         if current.is_null() {
             bad_free("not-in-alloc-list", ptr as usize, block_size);
             return;
         }
-        *prev_next = (*header).next;
+        unsafe {
+            *prev_next = (*header).next;
+        }
 
-        self.insert_free_block(start, block_size);
+        unsafe { self.insert_free_block(start, block_size) };
     }
 
     fn region_contains(&self, start: usize, size: usize) -> bool {
@@ -234,15 +243,17 @@ impl FreeListAllocator {
         let mut prev_next: *mut *mut AllocHeader = &mut self.alloc_head;
         let mut current = self.alloc_head;
         while !current.is_null() {
-            let next = (*current).next;
-            if (*current).owner == target {
-                *prev_next = next;
+            let next = unsafe { (*current).next };
+            if unsafe { (*current).owner } == target {
+                unsafe {
+                    *prev_next = next;
+                }
                 let start = current as usize;
-                let block_size = (*current).size;
+                let block_size = unsafe { (*current).size };
                 freed_usable += block_size.saturating_sub(ALLOC_HDR);
-                self.insert_free_block(start, block_size);
+                unsafe { self.insert_free_block(start, block_size) };
             } else {
-                prev_next = &mut (*current).next;
+                prev_next = unsafe { &mut (*current).next };
             }
             current = next;
         }
@@ -270,36 +281,46 @@ impl FreeListAllocator {
         }
 
         let block = start as *mut FreeBlock;
-        (*block).size = block_size;
+        unsafe {
+            (*block).size = block_size;
+        }
 
         let mut prev: *mut FreeBlock = ptr::null_mut();
         let mut current = self.head;
         while !current.is_null() && (current as usize) < start {
             prev = current;
-            current = (*current).next;
+            current = unsafe { (*current).next };
         }
 
-        (*block).next = current;
+        unsafe {
+            (*block).next = current;
+        }
         if prev.is_null() {
             self.head = block;
         } else {
-            (*prev).next = block;
+            unsafe {
+                (*prev).next = block;
+            }
         }
 
-        if !(*block).next.is_null() {
-            let block_end = start + (*block).size;
-            let next = (*block).next;
-            if block_end == next as usize {
-                (*block).size += (*next).size;
-                (*block).next = (*next).next;
+        let successor = unsafe { (*block).next };
+        if !successor.is_null() {
+            let block_end = start + block_size;
+            if block_end == successor as usize {
+                unsafe {
+                    (*block).size += (*successor).size;
+                    (*block).next = (*successor).next;
+                }
             }
         }
 
         if !prev.is_null() {
-            let prev_end = prev as usize + (*prev).size;
+            let prev_end = prev as usize + unsafe { (*prev).size };
             if prev_end == start {
-                (*prev).size += (*block).size;
-                (*prev).next = (*block).next;
+                unsafe {
+                    (*prev).size += (*block).size;
+                    (*prev).next = (*block).next;
+                }
             }
         }
         true
@@ -450,6 +471,7 @@ mod tests {
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = make_allocator(&[(base, 4096)]);
         #[repr(align(64))]
+        #[expect(dead_code, reason = "address-only fixture; the payload exists to size the object")]
         struct Foreign([usize; 8]);
         let foreign = Foreign([0; 8]);
         let bogus = core::ptr::addr_of!(foreign).cast::<u8>() as usize;
@@ -667,6 +689,7 @@ mod tests {
         let base = memory.as_mut_ptr() as usize;
         let mut alloc = make_allocator(&[(base, 4096)]);
         #[repr(align(64))]
+        #[expect(dead_code, reason = "address-only fixture; the payload exists to size the object")]
         struct Foreign([usize; 8]);
         let foreign = Foreign([0; 8]);
         let bogus = core::ptr::addr_of!(foreign).cast::<u8>() as usize;

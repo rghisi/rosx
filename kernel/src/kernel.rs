@@ -1,4 +1,5 @@
 use crate::platform::cpu::Cpu;
+#[cfg(not(test))]
 use crate::platform::output::{KernelOutput, setup_default_output};
 use crate::platform::elf::ElfArch;
 use crate::future::{TaskCompletionFuture, TimeFuture};
@@ -6,7 +7,9 @@ use crate::future::waitset::WaitsetTake;
 use system::waitset::WaitEvent;
 use crate::kconfig::KConfig;
 use crate::kernel_services::services;
+#[cfg(not(test))]
 use crate::kprintln;
+#[cfg(not(test))]
 use crate::platform::portio::{PortIo, PortRange};
 
 use crate::state::{ExecutionContext, ExecutionState};
@@ -93,7 +96,9 @@ pub fn kernel() -> &'static mut Kernel {
 pub struct Kernel {
     cpu: &'static dyn Cpu,
     pub(crate) elf_arch: &'static dyn ElfArch,
+    #[cfg(not(test))]
     pub(crate) port_io: &'static dyn PortIo,
+    #[cfg(not(test))]
     pub(crate) port_pool: &'static [PortRange],
     pub(crate) execution_state: ExecutionState,
 }
@@ -102,11 +107,13 @@ impl Kernel {
     pub fn new(kconfig: &'static KConfig) -> Self {
         let cpu = kconfig.cpu;
         let elf_arch = kconfig.elf_arch;
+        #[cfg(not(test))]
         let port_io = kconfig.port_io;
+        #[cfg(not(test))]
         let port_pool = kconfig.port_pool;
         crate::kernel_services::init();
         crate::irq_guard::init_cpu(cpu);
-        let scheduler_task = Task::new("[K] Main Thread", main_thread_run as usize, 0);
+        let scheduler_task = Task::new("[K] Main Thread", main_thread_run as *const () as usize, 0);
         let scheduler_task_handler = services()
             .task_manager
             .borrow_mut()
@@ -125,7 +132,9 @@ impl Kernel {
         Kernel {
             cpu,
             elf_arch,
+            #[cfg(not(test))]
             port_io,
+            #[cfg(not(test))]
             port_pool,
             execution_state: ExecutionState {
                 scheduler: scheduler_task_handler,
@@ -334,7 +343,6 @@ impl Kernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::portio::PortWidth;
 
     struct StubCpu;
 
@@ -361,17 +369,6 @@ mod tests {
         fn apply_relocation(&self, _base: usize, _offset: usize, _info: u64, _addend: i64) {}
     }
 
-    struct StubPortIo;
-
-    impl PortIo for StubPortIo {
-        fn read(&self, _port: u16, _width: PortWidth) -> u32 {
-            0
-        }
-        fn write(&self, _port: u16, _value: u32, _width: PortWidth) {}
-        fn read_words(&self, _port: u16, _destination: &mut [u16]) {}
-        fn write_words(&self, _port: u16, _source: &[u16]) {}
-    }
-
     fn add_created_task(name: &'static str) -> TaskHandle {
         services().task_manager.borrow_mut().add_task(Task::new(name, 0x1000, 0)).unwrap()
     }
@@ -381,8 +378,6 @@ mod tests {
         let kernel: &'static mut Kernel = Box::leak(Box::new(Kernel {
             cpu,
             elf_arch: Box::leak(Box::new(StubElfArch)) as &'static dyn ElfArch,
-            port_io: Box::leak(Box::new(StubPortIo)) as &'static dyn PortIo,
-            port_pool: &[],
             execution_state: ExecutionState {
                 scheduler,
                 current_task,

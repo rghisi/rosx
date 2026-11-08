@@ -8,3 +8,6 @@ edition.workspace = true
 [dependencies]
 system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }
+
+[lints]
+workspace = true

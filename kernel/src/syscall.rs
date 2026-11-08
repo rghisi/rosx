@@ -1,18 +1,32 @@
+#[cfg(not(test))]
 use core::alloc::{GlobalAlloc, Layout};
+#[cfg(not(test))]
 use alloc::boxed::Box;
+#[cfg(not(test))]
 use alloc::vec::Vec;
+#[cfg(not(test))]
 use crate::kernel::kernel;
+#[cfg(not(test))]
 use crate::kernel_services::services;
+#[cfg(not(test))]
 use crate::platform::output::print;
+#[cfg(not(test))]
 use system::syscall_numbers::SyscallNum;
+#[cfg(not(test))]
 use system::error::ErrorCode;
+#[cfg(not(test))]
 use system::ipc::Message;
+#[cfg(not(test))]
 use crate::handle::{FutureHandle, IpcConnectionHandle, IpcBindingHandle, IpcDataHandle};
 #[cfg(not(test))]
 use crate::future::waitset::{AttachError, WaitsetFuture};
+#[cfg(not(test))]
 use crate::memory::free_list_allocator::BlockOwner;
+#[cfg(not(test))]
 use crate::future::TaskCompletionFuture;
+#[cfg(not(test))]
 use crate::ipc::message_future::IpcMessageFuture;
+#[cfg(not(test))]
 use crate::task::{new_elf_task, new_elf_task_with_arguments, new_entrypoint_task, validate_arguments_blob};
 #[cfg(not(test))]
 use system::waitset::WaitEvent;

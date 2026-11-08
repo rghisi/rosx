@@ -7,3 +7,6 @@ edition.workspace = true
 kernel = { path = "../../kernel" }
 spin = "0.10.0"
 volatile = "0.2.6"
+
+[lints]
+workspace = true

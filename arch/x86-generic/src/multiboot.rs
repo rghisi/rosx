@@ -40,12 +40,12 @@ const ONE_MIB: u64 = 1024 * 1024;
 const MAX_ADDRESSABLE: u64 = usize::MAX as u64;
 
 pub unsafe fn usable_memory(info_ptr: *const u8) -> BootMemory {
-    let flags = unsafe { read_info_u32(info_ptr, FLAGS_OFFSET) };
-    let mem_lower_kib = unsafe { read_info_u32(info_ptr, MEM_LOWER_OFFSET) };
-    let mem_upper_kib = unsafe { read_info_u32(info_ptr, MEM_UPPER_OFFSET) };
+    let flags = read_info_u32(info_ptr, FLAGS_OFFSET);
+    let mem_lower_kib = read_info_u32(info_ptr, MEM_LOWER_OFFSET);
+    let mem_upper_kib = read_info_u32(info_ptr, MEM_UPPER_OFFSET);
     let mmap_entries = if flags & FLAG_MEMORY_MAP != 0 {
-        let address = unsafe { read_info_u32(info_ptr, MMAP_ADDRESS_OFFSET) } as usize;
-        let length = unsafe { read_info_u32(info_ptr, MMAP_LENGTH_OFFSET) } as usize;
+        let address = read_info_u32(info_ptr, MMAP_ADDRESS_OFFSET) as usize;
+        let length = read_info_u32(info_ptr, MMAP_LENGTH_OFFSET) as usize;
         unsafe { core::slice::from_raw_parts(address as *const u8, length) }
     } else {
         &[]

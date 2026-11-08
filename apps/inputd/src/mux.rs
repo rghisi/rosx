@@ -78,9 +78,7 @@ mod tests {
         let mut mux: InputMux<u32> = InputMux::new();
         assert_eq!(mux.handle_read(7), None);
         let action = mux.handle_push('a').expect("pending reader receives the char");
-        let MuxAction::Reply(reader, frame) = action else {
-            panic!("expected a reply");
-        };
+        let MuxAction::Reply(reader, frame) = action;
         assert_eq!(reader, 7);
         assert_eq!(replied_char(&frame), 'a');
     }
@@ -90,9 +88,7 @@ mod tests {
         let mut mux: InputMux<u32> = InputMux::new();
         assert_eq!(mux.handle_push('b'), None);
         let action = mux.handle_read(3).expect("buffered char answers the read");
-        let MuxAction::Reply(reader, frame) = action else {
-            panic!("expected a reply");
-        };
+        let MuxAction::Reply(reader, frame) = action;
         assert_eq!(reader, 3);
         assert_eq!(replied_char(&frame), 'b');
     }
@@ -102,9 +98,7 @@ mod tests {
         let mut mux: InputMux<u32> = InputMux::new();
         mux.handle_push('c');
         let action = mux.handle_read_nowait(5).expect("nowait always answers");
-        let MuxAction::Reply(reader, frame) = action else {
-            panic!("expected a reply");
-        };
+        let MuxAction::Reply(reader, frame) = action;
         assert_eq!(reader, 5);
         assert_eq!(replied_char(&frame), 'c');
     }
@@ -113,9 +107,7 @@ mod tests {
     fn nowait_replies_no_key_when_the_buffer_is_empty() {
         let mut mux: InputMux<u32> = InputMux::new();
         let action = mux.handle_read_nowait(9).expect("nowait always answers");
-        let MuxAction::Reply(reader, frame) = action else {
-            panic!("expected a reply");
-        };
+        let MuxAction::Reply(reader, frame) = action;
         assert_eq!(reader, 9);
         assert_eq!(frame_tag(&frame), TAG_NO_KEY);
     }
@@ -125,14 +117,8 @@ mod tests {
         let mut mux: InputMux<u32> = InputMux::new();
         assert_eq!(mux.handle_read(1), None);
         assert_eq!(mux.handle_read(2), None);
-        let MuxAction::Reply(first_reader, first) = mux.handle_push('x').expect("first push") else {
-            panic!("expected a reply");
-        };
-        let MuxAction::Reply(second_reader, second) =
-            mux.handle_push('y').expect("second push")
-        else {
-            panic!("expected a reply");
-        };
+        let MuxAction::Reply(first_reader, first) = mux.handle_push('x').expect("first push");
+        let MuxAction::Reply(second_reader, second) = mux.handle_push('y').expect("second push");
         assert_eq!(first_reader, 1);
         assert_eq!(replied_char(&first), 'x');
         assert_eq!(second_reader, 2);
@@ -144,15 +130,10 @@ mod tests {
         let mut mux: InputMux<u32> = InputMux::new();
         mux.handle_read(1);
         mux.handle_read(2);
-        let MuxAction::Reply(first, frame) = mux.handle_push('m').expect("first reader served")
-        else {
-            panic!("expected a reply");
-        };
+        let MuxAction::Reply(first, frame) = mux.handle_push('m').expect("first reader served");
         assert_eq!(first, 1);
         assert_eq!(replied_char(&frame), 'm');
-        let MuxAction::Reply(_, probe) = mux.handle_read_nowait(3).expect("nowait answers") else {
-            panic!("expected a reply");
-        };
+        let MuxAction::Reply(_, probe) = mux.handle_read_nowait(3).expect("nowait answers");
         assert_eq!(frame_tag(&probe), TAG_NO_KEY);
     }
 
@@ -165,9 +146,7 @@ mod tests {
         }
         assert_eq!(mux.handle_push('Z'), None);
         let action = mux.handle_read(1).expect("read after overflow");
-        let MuxAction::Reply(_, frame) = action else {
-            panic!("expected a reply");
-        };
+        let MuxAction::Reply(_, frame) = action;
         assert_eq!(replied_char(&frame), 'b');
     }
 
@@ -178,9 +157,7 @@ mod tests {
         mux.forget(1);
         mux.handle_read(2);
         let action = mux.handle_push('k').expect("live reader receives the char");
-        let MuxAction::Reply(reader, frame) = action else {
-            panic!("expected a reply");
-        };
+        let MuxAction::Reply(reader, frame) = action;
         assert_eq!(reader, 2);
         assert_eq!(replied_char(&frame), 'k');
     }
@@ -194,9 +171,7 @@ mod tests {
             mux.handle_push(c);
         }
         let action = mux.handle_read_nowait(1).expect("nowait always answers");
-        let MuxAction::Reply(_, frame) = action else {
-            panic!("expected a reply");
-        };
+        let MuxAction::Reply(_, frame) = action;
         assert_eq!(frame_tag(&frame), TAG_NO_KEY);
     }
 
@@ -207,12 +182,8 @@ mod tests {
         assert_eq!(mux.handle_push('2'), None);
         let first = mux.handle_read(10).expect("first buffered char");
         let second = mux.handle_read(11).expect("second buffered char");
-        let MuxAction::Reply(first_reader, first_frame) = first else {
-            panic!("expected a reply");
-        };
-        let MuxAction::Reply(second_reader, second_frame) = second else {
-            panic!("expected a reply");
-        };
+        let MuxAction::Reply(first_reader, first_frame) = first;
+        let MuxAction::Reply(second_reader, second_frame) = second;
         assert_eq!(first_reader, 10);
         assert_eq!(replied_char(&first_frame), '1');
         assert_eq!(second_reader, 11);

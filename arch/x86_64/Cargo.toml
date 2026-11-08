@@ -12,7 +12,6 @@ usrlib = { path = "../../usrlib" }
 input-protocol = { path = "../../protocol/input" }
 vfs-protocol = { path = "../../protocol/vfs" }
 ata-protocol = { path = "../../protocol/ata" }
-dummy = { path = "../../apps/dummy"}
 
 bootloader_api = "0.11"
 volatile = "0.2.6"
@@ -25,3 +24,5 @@ name = "rosx"
 bench = false
 test = false
 
+[lints]
+workspace = true

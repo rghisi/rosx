@@ -16,8 +16,10 @@ test = false
 
 [dependencies]
 system = { path = "../../system" }
-usrlib = { path = "../../usrlib" }
 input-protocol = { path = "../../protocol/input" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 usrlib = { path = "../../usrlib", features = ["runtime"] }
+
+[lints]
+workspace = true

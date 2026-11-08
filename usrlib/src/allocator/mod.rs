@@ -78,10 +78,10 @@ mod shim {
             let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
                 return ptr::null_mut();
             };
-            let new_ptr = self.alloc(new_layout);
+            let new_ptr = unsafe { self.alloc(new_layout) };
             if !new_ptr.is_null() {
                 unsafe { ptr::copy_nonoverlapping(ptr, new_ptr, layout.size().min(new_size)) };
-                self.dealloc(ptr, layout);
+                unsafe { self.dealloc(ptr, layout) };
             }
             new_ptr
         }

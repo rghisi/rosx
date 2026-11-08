@@ -6,7 +6,6 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use usrlib::println;
-use usrlib::syscall::Syscall;
 use vfs_protocol::client::{ClientError, EntityKind, Vfs, MODE_CREATE, MODE_WRITE};
 use vfs_protocol::wire::VfsError;
 

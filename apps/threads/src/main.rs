@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use usrlib::handle::UserConnectionHandle;
 use usrlib::ipc::ipc_send_value;
 use usrlib::syscall::Syscall;
-use usrlib::{print, println};
+use usrlib::println;
 
 static SHARED_COUNTER: AtomicUsize = AtomicUsize::new(0);
 static S2_STOP: AtomicBool = AtomicBool::new(false);
@@ -40,8 +40,8 @@ fn run_safe_scenarios() {
 fn scenario_shared_counter_spawn_and_join() {
     SHARED_COUNTER.store(0, Ordering::SeqCst);
     println!("S1 SPAWN two workers over one atomic counter");
-    let first_worker = Syscall::spawn(worker_a as usize);
-    let second_worker = Syscall::spawn(worker_b as usize);
+    let first_worker = Syscall::spawn(worker_a as *const () as usize);
+    let second_worker = Syscall::spawn(worker_b as *const () as usize);
     if let Some(handle) = first_worker {
         Syscall::wait_future(handle);
     }
@@ -63,7 +63,7 @@ fn scenario_spin_wait_cost() {
     S2_STOP.store(false, Ordering::SeqCst);
     S2_SPIN_TICKS.store(0, Ordering::SeqCst);
     println!("S2 SPAWN pure spin worker waiting on an atomic flag");
-    let spinner = Syscall::spawn(worker_spin_on_flag as usize);
+    let spinner = Syscall::spawn(worker_spin_on_flag as *const () as usize);
     Syscall::sleep(500);
     Syscall::sleep(1);
     Syscall::sleep(1);
@@ -95,7 +95,7 @@ fn scenario_shared_connection_ownership() {
     println!("S3 CONNECTED {}", connection);
     let leaked = Box::leak(Box::new(connection));
     SHARED_CONNECTION.store(leaked as *mut UserConnectionHandle, Ordering::SeqCst);
-    let worker = Syscall::spawn(worker_sends_on_shared_connection as usize);
+    let worker = Syscall::spawn(worker_sends_on_shared_connection as *const () as usize);
     if let Some(handle) = worker {
         Syscall::wait_future(handle);
     }
@@ -140,7 +140,7 @@ fn worker_sends_on_shared_connection() {
 
 fn scenario_image_lifetime_hazard() {
     println!("S4 SPAWN worker that outlives main without join");
-    Syscall::spawn(worker_outliving_main as usize);
+    Syscall::spawn(worker_outliving_main as *const () as usize);
     println!("S4 MAIN_EXITING");
 }
 

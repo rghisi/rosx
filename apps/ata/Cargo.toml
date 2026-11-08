@@ -17,3 +17,6 @@ ata-protocol = { path = "../../protocol/ata" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 usrlib = { path = "../../usrlib", features = ["runtime"] }
+
+[lints]
+workspace = true

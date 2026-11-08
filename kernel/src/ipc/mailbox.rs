@@ -23,10 +23,6 @@ impl Mailbox {
         Ok(())
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.queue.is_empty()
-    }
-
     pub fn pop_front(&mut self) -> Option<Message> {
         self.queue.pop_front()
     }
