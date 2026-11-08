@@ -4,7 +4,6 @@ pub const MAX_NAME_BYTES: usize = 57;
 pub const SERVICE_NAME: &str = "VFS";
 
 pub const MOUNT_STRING_BUDGET: usize = FRAME_BYTES - 3;
-pub const ATTACH_STRING_BUDGET: usize = FRAME_BYTES - 7;
 
 pub const MODE_WRITE: u8 = 1;
 pub const MODE_CREATE: u8 = 2;
@@ -20,8 +19,6 @@ pub const MOUNT: u8 = 9;
 pub const FORMAT: u8 = 10;
 pub const MKDIR: u8 = 11;
 pub const RMDIR: u8 = 12;
-pub const ATTACH: u8 = 13;
-pub const LIST_DEVICES: u8 = 14;
 
 pub const REPLY_ACK: u8 = 0x10;
 pub const REPLY_ERROR: u8 = 0x11;
@@ -110,8 +107,6 @@ pub enum Request<'a> {
     RmDir { path: &'a str },
     Mount { device: &'a str, dir: &'a str },
     Format { device: &'a str },
-    Attach { id: &'a str, service: &'a str, device: u32 },
-    ListDevices,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -231,29 +226,6 @@ impl Request<'_> {
                 Ok(frame)
             }
             Request::Format { device } => encode_name_frame(FORMAT, device),
-            Request::Attach { id, service, device } => {
-                if !valid_name(id)
-                    || !valid_name(service)
-                    || id.len() + service.len() > ATTACH_STRING_BUDGET
-                {
-                    return Err(VfsError::InvalidPath);
-                }
-                let mut frame = [0u8; FRAME_BYTES];
-                frame[0] = ATTACH;
-                frame[1] = id.len() as u8;
-                frame[2] = service.len() as u8;
-                frame[3..7].copy_from_slice(&device.to_le_bytes());
-                let id_at = 7;
-                frame[id_at..id_at + id.len()].copy_from_slice(id.as_bytes());
-                let service_at = id_at + id.len();
-                frame[service_at..service_at + service.len()].copy_from_slice(service.as_bytes());
-                Ok(frame)
-            }
-            Request::ListDevices => {
-                let mut frame = [0u8; FRAME_BYTES];
-                frame[0] = LIST_DEVICES;
-                Ok(frame)
-            }
         }
     }
 
@@ -311,17 +283,6 @@ impl Request<'_> {
                 let device = decode_name(frame, 2, frame[1] as usize)?;
                 Ok(Request::Format { device })
             }
-            ATTACH => {
-                let id_len = frame[1] as usize;
-                let id = decode_name(frame, 7, id_len)?;
-                let service = decode_name(frame, 7 + id_len, frame[2] as usize)?;
-                Ok(Request::Attach {
-                    id,
-                    service,
-                    device: read_u32(frame, 3),
-                })
-            }
-            LIST_DEVICES => Ok(Request::ListDevices),
             _ => Err(VfsError::Protocol),
         }
     }
@@ -782,64 +743,16 @@ mod tests {
     }
 
     #[test]
-    fn attach_frame_pins_offsets() {
-        let frame = Request::Attach { id: "ata0", service: "ATA", device: 1 }
-            .encode()
-            .unwrap();
-        assert_eq!(frame[0], ATTACH);
-        assert_eq!(frame[1], 4);
-        assert_eq!(frame[2], 3);
-        assert_eq!(&frame[3..7], &[0x01, 0x00, 0x00, 0x00]);
-        assert_eq!(&frame[7..11], b"ata0");
-        assert_eq!(&frame[11..14], b"ATA");
-        assert!(frame[14..].iter().all(|byte| *byte == 0));
-    }
-
-    #[test]
-    fn attach_request_roundtrips() {
-        let requests = [
-            Request::Attach { id: "ata0", service: "ATA", device: 0 },
-            Request::Attach { id: "d", service: "S", device: u32::MAX },
-            Request::Attach {
-                id: "disk-7",
-                service: "BLKDEV",
-                device: 4096,
-            },
-        ];
-        for request in requests {
-            assert_eq!(Request::decode(&request.encode().unwrap()), Ok(request));
+    fn the_retired_attach_opcodes_decode_as_protocol_errors() {
+        for op in [13u8, 14] {
+            let mut frame = Request::Format { device: "ata0" }.encode().unwrap();
+            frame[0] = op;
+            assert_eq!(
+                Request::decode(&frame),
+                Err(VfsError::Protocol),
+                "retired op {op} accepted"
+            );
         }
-    }
-
-    #[test]
-    fn attach_rejects_invalid_names_and_budget_overflow() {
-        assert_eq!(
-            Request::Attach { id: "", service: "ATA", device: 0 }.encode(),
-            Err(VfsError::InvalidPath)
-        );
-        assert_eq!(
-            Request::Attach { id: "ata0", service: "", device: 0 }.encode(),
-            Err(VfsError::InvalidPath)
-        );
-        assert_eq!(
-            Request::Attach { id: "a/b", service: "ATA", device: 0 }.encode(),
-            Err(VfsError::InvalidPath)
-        );
-        let id = name_of_len(ATTACH_STRING_BUDGET - 1);
-        assert!(Request::Attach { id: &id, service: "s", device: 1 }.encode().is_ok());
-        let over = name_of_len(ATTACH_STRING_BUDGET);
-        assert_eq!(
-            Request::Attach { id: &over, service: "s", device: 1 }.encode(),
-            Err(VfsError::InvalidPath)
-        );
-    }
-
-    #[test]
-    fn list_devices_frame_uses_op_byte_only() {
-        let frame = Request::ListDevices.encode().unwrap();
-        assert_eq!(frame[0], LIST_DEVICES);
-        assert!(frame[1..].iter().all(|byte| *byte == 0));
-        assert_eq!(Request::decode(&frame), Ok(Request::ListDevices));
     }
 
     #[test]
@@ -1189,24 +1102,10 @@ mod tests {
         assert_eq!(FORMAT, 10);
         assert_eq!(MKDIR, 11);
         assert_eq!(RMDIR, 12);
-        assert_eq!(ATTACH, 13);
-        assert_eq!(LIST_DEVICES, 14);
         assert_eq!(EntityKind::File.to_byte(), 0);
         assert_eq!(EntityKind::Directory.to_byte(), 1);
         let opcodes = [
-            OPEN,
-            READ,
-            WRITE,
-            CLOSE,
-            DELETE,
-            STAT,
-            LIST,
-            MOUNT,
-            FORMAT,
-            MKDIR,
-            RMDIR,
-            ATTACH,
-            LIST_DEVICES,
+            OPEN, READ, WRITE, CLOSE, DELETE, STAT, LIST, MOUNT, FORMAT, MKDIR, RMDIR,
         ];
         let tags = [
             REPLY_ACK,
@@ -1451,10 +1350,8 @@ mod tests {
             Request::Open { mode: 0, name: "/notes.txt" },
             Request::List { path: "/hdd" },
             Request::Stat { name: "/" },
-            Request::Mount { device: "ata0", dir: "/hdd" },
-            Request::Format { device: "ata0" },
-            Request::Attach { id: "ata0", service: "ATA", device: 1 },
-            Request::ListDevices,
+            Request::Mount { device: "ata0d1", dir: "/hdd" },
+            Request::Format { device: "ata0d1" },
         ];
         let replies = [
             Reply::Ack,

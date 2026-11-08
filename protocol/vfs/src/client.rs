@@ -143,19 +143,6 @@ impl Vfs {
         }
     }
 
-    pub fn attach(&self, id: &str, service: &str, device: u32) -> Result<(), ClientError> {
-        let request = wire::Request::Attach { id, service, device };
-        match transact(self.connection, request)? {
-            Reply::Ack => Ok(()),
-            Reply::Err(error) => Err(ClientError::Vfs(error)),
-            _ => Err(ClientError::Protocol),
-        }
-    }
-
-    pub fn list_devices(&self) -> Result<Vec<String>, ClientError> {
-        listed_names(transact(self.connection, wire::Request::ListDevices)?)
-    }
-
     pub fn mkdir(&self, path: &str) -> Result<(), ClientError> {
         let request = wire::Request::MkDir { path };
         match transact(self.connection, request)? {

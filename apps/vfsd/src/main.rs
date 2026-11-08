@@ -131,19 +131,6 @@ impl VfsServer {
                 }
                 Err(error) => Reply::Err(error),
             },
-            Request::Attach { id, service, device } => match self.fs.attach_device(id, service, device) {
-                Ok(()) => {
-                    println!("[VFSD] attached device '{id}' -> service {service} drive {device}");
-                    Reply::Ack
-                }
-                Err(error) => Reply::Err(error),
-            },
-            Request::ListDevices => {
-                let blob = self.fs.devices_blob();
-                self.payload_reply(connection, owner, Ok(blob), |token, total| {
-                    Reply::Listed { token, total }
-                })
-            }
             Request::MkDir { path } => match self.fs.mkdir(path) {
                 Ok(()) => Reply::Ack,
                 Err(error) => Reply::Err(error),
