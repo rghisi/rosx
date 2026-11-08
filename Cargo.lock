@@ -224,6 +224,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "exiter"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -303,6 +311,14 @@ dependencies = [
  "crc",
  "log",
  "uuid",
+]
+
+[[package]]
+name = "init"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
 ]
 
 [[package]]
@@ -540,6 +556,7 @@ dependencies = [
 name = "rosx"
 version = "0.1.0"
 dependencies = [
+ "ata-protocol",
  "bootloader_api",
  "input-protocol",
  "kernel",
@@ -547,6 +564,7 @@ dependencies = [
  "spin",
  "system",
  "usrlib",
+ "vfs-protocol",
  "volatile 0.2.7",
  "x86-generic",
  "x86_64",
@@ -556,10 +574,12 @@ dependencies = [
 name = "rosx-x86_32"
 version = "0.1.0"
 dependencies = [
+ "ata-protocol",
  "input-protocol",
  "kernel",
  "spin",
  "system",
+ "vfs-protocol",
  "volatile 0.2.7",
  "x86-generic",
 ]

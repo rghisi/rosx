@@ -23,6 +23,8 @@ use crate::future::waitset::{AttachError, WaitsetFuture};
 #[cfg(not(test))]
 use crate::memory::free_list_allocator::BlockOwner;
 #[cfg(not(test))]
+use crate::future::TaskCompletionFuture;
+#[cfg(not(test))]
 use crate::ipc::message_future::IpcMessageFuture;
 #[cfg(not(test))]
 use crate::task::{new_elf_task, new_elf_task_with_arguments, new_entrypoint_task, validate_arguments_blob};
@@ -57,21 +59,32 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             kernel().task_yield();
             0
         }
+        Ok(SyscallNum::Exit) => match system::exit::status_for_exit_request(arg1 as u32) {
+            Some(status) => kernel().terminate_with_status(status),
+            None => ErrorCode::ExitCodeOutOfRange.to_reg(),
+        },
         Ok(SyscallNum::WaitFuture) => {
             let Some(handle) = FutureHandle::from_packed(arg1 as usize) else { return 0 };
             if services().future_registry.borrow_mut().is_waitset(handle) {
                 return ErrorCode::WaitsetLeafRequired.to_reg();
             }
             let out_ptr = arg2;
-            let future = kernel().wait_future(handle).unwrap();
-            match future.as_any().downcast_ref::<IpcMessageFuture>() {
-                Some(ipc) => match ipc.result() {
+            let Ok(future) = kernel().wait_future(handle) else {
+                return ErrorCode::FutureAlreadyConsumed.to_reg();
+            };
+            if let Some(ipc) = future.as_any().downcast_ref::<IpcMessageFuture>() {
+                return match ipc.result() {
                     Ok(message) if out_ptr != 0 => { unsafe { core::ptr::write(out_ptr as *mut Message, message) }; 0 }
                     Ok(_) => 0,
                     Err(e) => ErrorCode::from(e).to_reg(),
-                },
-                None => 0,
+                };
             }
+            if let Some(completion) = future.as_any().downcast_ref::<TaskCompletionFuture>() {
+                if out_ptr != 0 {
+                    unsafe { core::ptr::write(out_ptr as *mut i32, completion.status()) };
+                }
+            }
+            0
         }
         Ok(SyscallNum::IsFutureCompleted) => {
             let Some(handle) = FutureHandle::from_packed(arg1 as usize) else { return 0 };
@@ -263,6 +276,21 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
                     kernel().port_io.write_words(port, source);
                     0
                 }
+            }
+        }
+        Ok(SyscallNum::PortAcquire) => {
+            let task = kernel().execution_state.current_task();
+            let pool = kernel().port_pool;
+            match crate::platform::portio::authorize_acquire(task, arg1, arg2, pool) {
+                Ok(()) => 0,
+                Err(code) => code.to_reg(),
+            }
+        }
+        Ok(SyscallNum::PortRelease) => {
+            let task = kernel().execution_state.current_task();
+            match crate::platform::portio::authorize_release(task, arg1, arg2) {
+                Ok(()) => 0,
+                Err(code) => code.to_reg(),
             }
         }
         Err(_) => 0,

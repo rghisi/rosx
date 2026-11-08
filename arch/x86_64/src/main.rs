@@ -24,8 +24,9 @@ use kernel::kernel::Kernel;
 use kernel::scheduler;
 use kernel::kprintln;
 use kernel::panic::handle_panic;
+use system::boot_plan::BootPlan;
 use kernel::task::FunctionTask;
-use kernel::task::new_elf_task;
+use kernel::task::new_elf_task_with_arguments;
 use x86_generic::debug_console::QemuDebugConsole;
 use x86_generic::port::X86PortIo;
 
@@ -43,6 +44,7 @@ static KCONFIG: KConfig = KConfig {
     cpu: &CPU,
     elf_arch: &ELF_ARCH,
     port_io: &PORT_IO,
+    port_pool: x86_generic::port::ATA_PORT_POOL,
     scheduler_factory: scheduler::mfq_scheduler,
 };
 
@@ -74,34 +76,17 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static ROM_IMAGE: &[u8] = include_bytes!("../../../target/rosx-user/rom.img");
     kernel::rom::init(ROM_IMAGE);
     let _ = kernel.schedule(FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main));
-    static RANDOMD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/randomd");
-    let _ = kernel.schedule(new_elf_task("randomd", RANDOMD_ELF));
-    static ECHO_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/echo");
-    let _ = kernel.schedule(new_elf_task("echo", ECHO_ELF));
-    static BULK_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/bulk");
-    let _ = kernel.schedule(new_elf_task("bulk", BULK_ELF));
-    static PONG_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/pong");
-    let _ = kernel.schedule(new_elf_task("pong", PONG_ELF));
-    static VFSD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/vfsd");
-    let _ = kernel.schedule(new_elf_task("vfsd", VFSD_ELF));
-    static INPUTD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/inputd");
-    let _ = kernel.schedule(new_elf_task("inputd", INPUTD_ELF));
-    static PS2D_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/ps2d");
-    let _ = kernel.schedule(new_elf_task("ps2d", PS2D_ELF));
-    static ATAD_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/atad");
-    match kernel.schedule_with_task_handle(new_elf_task("atad", ATAD_ELF)) {
-        Ok((atad_handle, _)) => {
-            if !kernel::platform::portio::grant(atad_handle, 0x1F0, 0x1F7) {
-                kprintln!("[KERNEL] atad primary taskfile grant failed");
-            }
-            if !kernel::platform::portio::grant(atad_handle, 0x3F6, 0x3F6) {
-                kprintln!("[KERNEL] atad alternate status grant failed");
-            }
-        }
-        Err(()) => kprintln!("[KERNEL] atad schedule failed"),
-    }
-    static SHELL_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/shell");
-    let _ = kernel.schedule(new_elf_task("shell", SHELL_ELF));
+    static INIT_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/init");
+    let boot_plan = BootPlan::new()
+        .service("vfsd", vfs_protocol::wire::SERVICE_NAME)
+        .service("inputd", input_protocol::wire::SERVICE_NAME)
+        .service("ps2d", input_protocol::wire::SOURCE_NAME_PS2KEYBOARD)
+        .service("atad", ata_protocol::wire::SERVICE_NAME)
+        .service("randomd", "RANDOM")
+        .service("echo", "BULKECHO")
+        .service("pong", "PING")
+        .exec("shell", &[]);
+    let _ = kernel.schedule(new_elf_task_with_arguments("init", INIT_ELF, boot_plan.encode()));
 
     kprintln!("[KERNEL] Starting");
     kernel.start();

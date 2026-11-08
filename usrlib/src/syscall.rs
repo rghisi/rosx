@@ -1,8 +1,9 @@
 use crate::arch;
 use crate::error::{
     DataError, IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError, PortError,
-    WaitsetError,
+    TaskExitError, WaitsetError,
 };
+use crate::exit::ExitStatus;
 use crate::handle::{UserBindingHandle, UserConnectionHandle, UserDataHandle, UserFutureHandle};
 use crate::ipc::ReceivedMessage;
 use alloc::string::String;
@@ -61,6 +62,11 @@ impl Syscall {
         arch::raw_syscall(SyscallNum::Yield as usize, 0, 0, 0);
     }
 
+    pub fn exit(code: u32) -> ! {
+        arch::raw_syscall(SyscallNum::Exit as usize, code as usize, 0, 0);
+        loop {}
+    }
+
     pub fn sleep(ms: u64) {
         arch::raw_syscall(SyscallNum::Sleep as usize, ms as usize, 0, 0);
     }
@@ -85,6 +91,21 @@ impl Syscall {
             Ok(ReceivedMessage::new(envelope))
         } else {
             Err(IpcReceiveError::from(ErrorCode::from_code(raw)))
+        }
+    }
+
+    pub fn wait_for_exit_status(handle: UserFutureHandle) -> Result<ExitStatus, TaskExitError> {
+        let mut status: i32 = 0;
+        let raw = arch::raw_syscall(
+            SyscallNum::WaitFuture as usize,
+            handle.value(),
+            &mut status as *mut i32 as usize,
+            0,
+        );
+        if is_token(raw) {
+            Ok(ExitStatus::from(status))
+        } else {
+            Err(TaskExitError::from(ErrorCode::from_code(raw)))
         }
     }
 
@@ -309,6 +330,24 @@ impl Syscall {
 
     pub fn port_out(port: u16, value: usize, width: usize) -> Result<(), PortError> {
         let raw = arch::raw_syscall(SyscallNum::PortOut as usize, port as usize, value, width);
+        if is_token(raw) {
+            Ok(())
+        } else {
+            Err(PortError::from(ErrorCode::from_code(raw)))
+        }
+    }
+
+    pub fn port_acquire(base: u16, end: u16) -> Result<(), PortError> {
+        let raw = arch::raw_syscall(SyscallNum::PortAcquire as usize, base as usize, end as usize, 0);
+        if is_token(raw) {
+            Ok(())
+        } else {
+            Err(PortError::from(ErrorCode::from_code(raw)))
+        }
+    }
+
+    pub fn port_release(base: u16, end: u16) -> Result<(), PortError> {
+        let raw = arch::raw_syscall(SyscallNum::PortRelease as usize, base as usize, end as usize, 0);
         if is_token(raw) {
             Ok(())
         } else {

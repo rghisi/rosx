@@ -27,8 +27,13 @@ pub enum ErrorCode {
     WaitsetNotFound = 0x0304,
     WaitsetLeafRequired = 0x0305,
     FutureCapacityExhausted = 0x0401,
+    FutureAlreadyConsumed = 0x0402,
     PortAccessDenied = 0x0501,
     PortRequestInvalid = 0x0502,
+    PortRangeNotInPool = 0x0503,
+    PortRangeBusy = 0x0504,
+    PortGrantTableFull = 0x0505,
+    ExitCodeOutOfRange = 0x0601,
     Unknown = 0x7FFF_FFFF,
 }
 
@@ -59,8 +64,13 @@ impl ErrorCode {
             0x0304 => ErrorCode::WaitsetNotFound,
             0x0305 => ErrorCode::WaitsetLeafRequired,
             0x0401 => ErrorCode::FutureCapacityExhausted,
+            0x0402 => ErrorCode::FutureAlreadyConsumed,
             0x0501 => ErrorCode::PortAccessDenied,
             0x0502 => ErrorCode::PortRequestInvalid,
+            0x0503 => ErrorCode::PortRangeNotInPool,
+            0x0504 => ErrorCode::PortRangeBusy,
+            0x0505 => ErrorCode::PortGrantTableFull,
+            0x0601 => ErrorCode::ExitCodeOutOfRange,
             _ => ErrorCode::Unknown,
         }
     }
@@ -70,7 +80,7 @@ impl ErrorCode {
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 23] = [
+    const ALL_ERROR_CODES: [ErrorCode; 28] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -91,8 +101,13 @@ mod tests {
         ErrorCode::WaitsetNotFound,
         ErrorCode::WaitsetLeafRequired,
         ErrorCode::FutureCapacityExhausted,
+        ErrorCode::FutureAlreadyConsumed,
         ErrorCode::PortAccessDenied,
         ErrorCode::PortRequestInvalid,
+        ErrorCode::PortRangeNotInPool,
+        ErrorCode::PortRangeBusy,
+        ErrorCode::PortGrantTableFull,
+        ErrorCode::ExitCodeOutOfRange,
         ErrorCode::Unknown,
     ];
 

@@ -15,9 +15,12 @@ use usrlib::println;
 use usrlib::syscall::Syscall;
 
 const PRIMARY_CHANNEL: &str = "ata0";
+const PRIMARY_TASKFILE_BASE: u16 = 0x1F0;
+const PRIMARY_TASKFILE_END: u16 = 0x1F7;
+const ALTERNATE_STATUS_PORT: u16 = 0x3F6;
 const REBIND_DELAY_MS: u64 = 100;
 const INCOMING_READ_CHUNK_BYTES: usize = 4096;
-const DENIED_PARK_DELAY_MS: u64 = 1000;
+const EXIT_ACQUIRE_REFUSED: u32 = 1;
 
 struct SyscallBus;
 
@@ -66,10 +69,8 @@ fn drain_incoming(token: u32) -> Option<Vec<u8>> {
 fn probe_drives() -> [AtaDrive<SyscallBus>; 2] {
     let mut drives = [AtaDrive::new(SyscallBus, 0), AtaDrive::new(SyscallBus, 1)];
     for (slot, drive) in drives.iter_mut().enumerate() {
-        match drive.probe() {
-            Ok(identity) => report_ready(slot, &identity),
-            Err(DriveFault::Denied) if slot == 0 => park_without_port_access(),
-            Err(_) => {}
+        if let Ok(identity) = drive.probe() {
+            report_ready(slot, &identity);
         }
     }
     drives
@@ -82,15 +83,24 @@ fn report_ready(slot: usize, identity: &Identity) {
     );
 }
 
-fn park_without_port_access() -> ! {
-    println!("[ATAD] no port access");
-    loop {
-        Syscall::sleep(DENIED_PARK_DELAY_MS);
+fn acquire_ports() -> bool {
+    if let Err(error) = Syscall::port_acquire(PRIMARY_TASKFILE_BASE, PRIMARY_TASKFILE_END) {
+        println!("[ATAD] primary taskfile ports refused: {error}");
+        return false;
     }
+    if let Err(error) = Syscall::port_acquire(ALTERNATE_STATUS_PORT, ALTERNATE_STATUS_PORT) {
+        println!("[ATAD] alternate status port refused: {error}");
+        let _ = Syscall::port_release(PRIMARY_TASKFILE_BASE, PRIMARY_TASKFILE_END);
+        return false;
+    }
+    true
 }
 
 fn main() {
     println!("[ATAD] ATA disk driver");
+    if !acquire_ports() {
+        Syscall::exit(EXIT_ACQUIRE_REFUSED);
+    }
     let mut drives = probe_drives();
     let mut held: Vec<(u32, UserDataHandle)> = Vec::new();
     loop {

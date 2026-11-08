@@ -10,7 +10,7 @@ use crate::kernel_services::services;
 #[cfg(not(test))]
 use crate::kprintln;
 #[cfg(not(test))]
-use crate::platform::portio::PortIo;
+use crate::platform::portio::{PortIo, PortRange};
 
 use crate::state::{ExecutionContext, ExecutionState};
 use crate::task::TaskState;
@@ -98,6 +98,8 @@ pub struct Kernel {
     pub(crate) elf_arch: &'static dyn ElfArch,
     #[cfg(not(test))]
     pub(crate) port_io: &'static dyn PortIo,
+    #[cfg(not(test))]
+    pub(crate) port_pool: &'static [PortRange],
     pub(crate) execution_state: ExecutionState,
 }
 
@@ -107,6 +109,8 @@ impl Kernel {
         let elf_arch = kconfig.elf_arch;
         #[cfg(not(test))]
         let port_io = kconfig.port_io;
+        #[cfg(not(test))]
+        let port_pool = kconfig.port_pool;
         crate::kernel_services::init();
         crate::irq_guard::init_cpu(cpu);
         let scheduler_task = Task::new("[K] Main Thread", main_thread_run as *const () as usize, 0);
@@ -130,6 +134,8 @@ impl Kernel {
             elf_arch,
             #[cfg(not(test))]
             port_io,
+            #[cfg(not(test))]
+            port_pool,
             execution_state: ExecutionState {
                 scheduler: scheduler_task_handler,
                 current_task: None,
@@ -178,7 +184,7 @@ impl Kernel {
         self.schedule_with_task_handle(task).map(|(_task_handle, future_handle)| future_handle)
     }
 
-    pub fn schedule_with_task_handle(&mut self, task: SharedTask) -> Result<(TaskHandle, FutureHandle), ()> {
+    pub(crate) fn schedule_with_task_handle(&mut self, task: SharedTask) -> Result<(TaskHandle, FutureHandle), ()> {
         let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
         let result = services().task_manager.borrow_mut().add_task(task);
@@ -281,6 +287,10 @@ impl Kernel {
     }
 
     pub(crate) fn terminate_and_yield(&mut self) -> ! {
+        self.terminate_with_status(system::exit::encode(system::exit::EXIT_REASON_CLEAN, 0))
+    }
+
+    pub(crate) fn terminate_with_status(&mut self, status: i32) -> ! {
         self.execution_state.preemption_enabled = false;
         if let Some(task_handle) = self.execution_state.current_task.take() {
             let group = services().task_manager.borrow().get_group(task_handle);
@@ -288,9 +298,10 @@ impl Kernel {
                 .task_manager
                 .borrow_mut()
                 .set_state(task_handle, Terminated);
+            crate::platform::portio::revoke(task_handle);
             if let Some(completion_handle) =
                 services().task_manager.borrow().get_completion_future(task_handle) {
-                    services().future_registry.borrow_mut().notify(completion_handle);
+                    services().future_registry.borrow_mut().notify_with_status(completion_handle, status);
                 }
             if let Some(group) = group {
                 if !services().task_manager.borrow().group_has_live_members(group) {
@@ -366,6 +377,7 @@ mod tests {
         let cpu = Box::leak(Box::new(StubCpu)) as &'static dyn Cpu;
         let kernel: &'static mut Kernel = Box::leak(Box::new(Kernel {
             cpu,
+            elf_arch: Box::leak(Box::new(StubElfArch)) as &'static dyn ElfArch,
             elf_arch: Box::leak(Box::new(StubElfArch)) as &'static dyn ElfArch,
             execution_state: ExecutionState {
                 scheduler,
