@@ -378,7 +378,6 @@ mod tests {
         let kernel: &'static mut Kernel = Box::leak(Box::new(Kernel {
             cpu,
             elf_arch: Box::leak(Box::new(StubElfArch)) as &'static dyn ElfArch,
-            elf_arch: Box::leak(Box::new(StubElfArch)) as &'static dyn ElfArch,
             execution_state: ExecutionState {
                 scheduler,
                 current_task,
