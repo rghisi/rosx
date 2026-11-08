@@ -143,7 +143,7 @@ pub fn valid_path(path: &str) -> bool {
 }
 
 pub fn valid_mount_dir(dir: &str) -> bool {
-    dir != "/" && valid_path(dir) && !dir[1..].contains('/')
+    dir == "/" || (valid_path(dir) && !dir[1..].contains('/'))
 }
 
 fn encode_path_frame(opcode: u8, path: &str) -> Result<[u8; FRAME_BYTES], VfsError> {
@@ -676,6 +676,15 @@ mod tests {
     }
 
     #[test]
+    fn mount_request_roundtrips_the_root_mount_dir() {
+        let frame = Request::Mount { device: "ata0d0p0", dir: "/" }.encode().unwrap();
+        assert_eq!(
+            Request::decode(&frame),
+            Ok(Request::Mount { device: "ata0d0p0", dir: "/" })
+        );
+    }
+
+    #[test]
     fn mount_rejects_invalid_device_or_dir_names() {
         assert_eq!(
             Request::Mount { device: "", dir: "/hdd" }.encode(),
@@ -687,10 +696,6 @@ mod tests {
         );
         assert_eq!(
             Request::Mount { device: "ata0", dir: "hdd" }.encode(),
-            Err(VfsError::InvalidPath)
-        );
-        assert_eq!(
-            Request::Mount { device: "ata0", dir: "/" }.encode(),
             Err(VfsError::InvalidPath)
         );
         assert_eq!(
@@ -981,10 +986,10 @@ mod tests {
     }
 
     #[test]
-    fn valid_mount_dir_names_a_single_absolute_directory() {
+    fn valid_mount_dir_names_the_root_or_a_single_absolute_directory() {
+        assert!(valid_mount_dir("/"));
         assert!(valid_mount_dir("/hdd"));
         assert!(valid_mount_dir(&alloc::format!("/{}", name_of_len(MAX_NAME_BYTES - 1))));
-        assert!(!valid_mount_dir("/"));
         assert!(!valid_mount_dir("hdd"));
         assert!(!valid_mount_dir("/hdd/sub"));
         assert!(!valid_mount_dir("/hdd/"));

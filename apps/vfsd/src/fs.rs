@@ -424,6 +424,9 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
 
     fn route(&self, path: &str) -> Result<Target, VfsError> {
         let body = path.strip_prefix('/').unwrap_or(path);
+        if let Some(slot) = self.mounts.iter().position(|mount| mount.name.is_empty()) {
+            return Ok(Target::Volume(slot, format!("/{body}")));
+        }
         let (head, rest) = match body.split_once('/') {
             Some(split) => split,
             None => (body, ""),
@@ -729,6 +732,21 @@ mod tests {
         fs.mounts.push(MountedVolume {
             name: String::from(name),
             device: String::from(name),
+            fs: MountedEngine::Rxfs(volume),
+        });
+    }
+
+    fn mount_root_fake(fs: &mut VfsStore<ActiveVolume, MemoryDevice>) {
+        let params = FormatParams {
+            bytes_per_inode: DEFAULT_BYTES_PER_INODE,
+            uuid: DEVICE_VOLUME_UUID,
+            volume_name: DEVICE_VOLUME_NAME,
+            created_at: 0,
+        };
+        let volume = FileSystem::format(MemoryDevice::new(64), &params).unwrap();
+        fs.mounts.push(MountedVolume {
+            name: String::new(),
+            device: String::from("rootdev"),
             fs: MountedEngine::Rxfs(volume),
         });
     }
@@ -1300,6 +1318,32 @@ mod tests {
         create(&mut fs, OWNER, "/disk/alpha");
         assert_eq!(fs.list("/disk").unwrap(), b"alpha\nbeta".to_vec());
         assert_eq!(fs.list("/").unwrap(), b"disk".to_vec());
+    }
+
+    #[test]
+    fn root_mount_captures_every_path_before_the_root_engine() {
+        let mut fs = fresh_store();
+        let shadowed = create(&mut fs, OWNER, "/rom-era.txt");
+        fs.write(OWNER, shadowed, 0, b"shadowed").unwrap();
+        fs.close(OWNER, shadowed).unwrap();
+        mount_root_fake(&mut fs);
+        assert_eq!(fs.stat("/rom-era.txt"), Err(VfsError::NotFound));
+        assert_eq!(fs.list("/").unwrap(), Vec::new());
+        assert_eq!(fs.stat("/").unwrap().0, EntityKind::Directory);
+        fs.mkdir("/fresh").unwrap();
+        let handle = create(&mut fs, OWNER, "/fresh/on-disk.txt");
+        fs.write(OWNER, handle, 0, b"root mounted").unwrap();
+        fs.close(OWNER, handle).unwrap();
+        assert_eq!(fs.stat("/fresh/on-disk.txt").unwrap(), (EntityKind::File, 12));
+        assert_eq!(fs.list("/fresh").unwrap(), b"on-disk.txt".to_vec());
+    }
+
+    #[test]
+    fn the_root_stays_undeletable_under_a_root_mount() {
+        let mut fs = fresh_store();
+        mount_root_fake(&mut fs);
+        assert_eq!(fs.delete("/"), Err(VfsError::NotPermitted));
+        assert_eq!(fs.rmdir("/"), Err(VfsError::NotPermitted));
     }
 
     #[test]
