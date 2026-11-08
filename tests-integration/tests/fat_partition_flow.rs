@@ -34,6 +34,15 @@ fn host_run(program: &str, args: &[&str]) {
     assert!(status.success(), "{program} {args:?} failed");
 }
 
+fn mtools_missing() -> bool {
+    Command::new("mformat")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_err()
+}
+
 fn host_run_capture(program: &str, args: &[&str]) -> Vec<u8> {
     let output = Command::new(program)
         .args(args)
@@ -105,6 +114,10 @@ fn build_partitioned_fat_hdd(disk: &Path) -> String {
 
 #[test]
 fn fat_partition_mounts_by_autodetection_and_survives_reboot() {
+    if mtools_missing() {
+        eprintln!("note: mtools not installed, skipping the FAT partition flow");
+        return;
+    }
     let volume_dir = tempfile::tempdir().expect("tempdir for the fat hdd image");
     let disk = volume_dir.path().join("hdd-fat.img");
     let fat_target = build_partitioned_fat_hdd(&disk);
