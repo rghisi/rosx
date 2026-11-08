@@ -305,6 +305,13 @@ impl QemuSession {
     }
 }
 
+fn stamp_mbr_entry(image: &mut [u8], slot: usize, type_id: u8, start_lba: u32, sector_count: u32) {
+    let entry = &mut image[MBR_PARTITION_TABLE_OFFSET + slot * MBR_ENTRY_BYTES..][..MBR_ENTRY_BYTES];
+    entry[4] = type_id;
+    entry[8..12].copy_from_slice(&start_lba.to_le_bytes());
+    entry[12..16].copy_from_slice(&sector_count.to_le_bytes());
+}
+
 fn attach_multiboot_master_disk(
     command: &mut Command,
     medium: &x86_runner::BootMedium,
