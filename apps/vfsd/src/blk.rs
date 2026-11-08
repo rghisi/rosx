@@ -1,28 +1,25 @@
-use block_protocol::client::{Block, Geometry};
+use alloc::string::String;
+use block_protocol::manager::client::{Geometry, Manager};
 use rxfs::device::BlockDevice;
 use rxfs::error::IoError;
 use rxfs::spec::BLOCK_BYTES;
 
 pub struct RemoteBlock {
-    client: Block,
-    device: u32,
+    client: Manager,
+    name: String,
     blocks: u64,
     device_blocks_per_block: u64,
 }
 
 impl RemoteBlock {
-    pub fn new(
-        client: Block,
-        device: u32,
-        geometry: &Geometry,
-    ) -> Result<RemoteBlock, Block> {
+    pub fn new(client: Manager, name: &str, geometry: &Geometry) -> Result<RemoteBlock, Manager> {
         let Some(device_blocks_per_block) = Self::device_blocks_per_block(geometry.block_size)
         else {
             return Err(client);
         };
         Ok(RemoteBlock {
             client,
-            device,
+            name: String::from(name),
             blocks: geometry.block_count / device_blocks_per_block,
             device_blocks_per_block,
         })
@@ -36,7 +33,7 @@ impl RemoteBlock {
         Some(BLOCK_BYTES as u64 / device_block_size)
     }
 
-    pub fn into_client(self) -> Block {
+    pub fn into_client(self) -> Manager {
         self.client
     }
 
@@ -60,11 +57,7 @@ impl BlockDevice for RemoteBlock {
         let device_block = self.device_block(block).ok_or(IoError::Device)?;
         let data = self
             .client
-            .read_blocks(
-                self.device,
-                device_block,
-                self.device_blocks_per_block as usize,
-            )
+            .read_blocks(&self.name, device_block, self.device_blocks_per_block as usize)
             .map_err(|_| IoError::Device)?;
         if data.len() != BLOCK_BYTES {
             return Err(IoError::Device);
@@ -80,7 +73,7 @@ impl BlockDevice for RemoteBlock {
         let device_block = self.device_block(block).ok_or(IoError::Device)?;
         self.client
             .write_blocks(
-                self.device,
+                &self.name,
                 device_block,
                 self.device_blocks_per_block as usize,
                 buf,
@@ -89,7 +82,7 @@ impl BlockDevice for RemoteBlock {
     }
 
     fn flush(&mut self) -> Result<(), IoError> {
-        self.client.flush(self.device).map_err(|_| IoError::Flush)
+        self.client.flush(&self.name).map_err(|_| IoError::Flush)
     }
 }
 

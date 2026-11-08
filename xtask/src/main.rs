@@ -8,7 +8,7 @@ mod check_isa;
 use arch::{ArchSpec, X86_64};
 use x86_runner::{BootMedium, LaunchMode};
 
-const USER_APPS: [&str; 30] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "bench", "atad", "ata", "format", "mount", "attach", "rm", "cp", "mkdir", "rmdir", "init", "shell", "exiter"];
+const USER_APPS: [&str; 31] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "bench", "atad", "blockd", "ata", "format", "mount", "attach", "rm", "cp", "mkdir", "rmdir", "init", "shell", "exiter"];
 
 const RUN_DISK_BYTES: usize = 1024 * 1024;
 const MBR_SIGNATURE_OFFSET: usize = 510;

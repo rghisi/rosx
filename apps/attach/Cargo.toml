@@ -12,7 +12,7 @@ test = false
 
 [dependencies]
 usrlib = { path = "../../usrlib" }
-vfs-protocol = { path = "../../protocol/vfs" }
+block-protocol = { path = "../../protocol/block" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 usrlib = { path = "../../usrlib", features = ["runtime"] }

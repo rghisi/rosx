@@ -26,7 +26,7 @@ pub struct Geometry {
     pub description: String,
 }
 
-fn data_token(handle: &UserDataHandle) -> u32 {
+pub(crate) fn data_token(handle: &UserDataHandle) -> u32 {
     u32::from_str_radix(&format!("{}", handle), 16).expect("canonical data token")
 }
 
@@ -43,7 +43,7 @@ fn drain_chunks(token: u32) -> Result<Vec<u8>, ClientError> {
     }
 }
 
-fn drain_data_object(token: u32) -> Result<Vec<u8>, ClientError> {
+pub(crate) fn drain_data_object(token: u32) -> Result<Vec<u8>, ClientError> {
     let drained = drain_chunks(token);
     if let Some(mut object) = UserDataHandle::from_token(token as usize) {
         let _ = object.release();
@@ -51,11 +51,10 @@ fn drain_data_object(token: u32) -> Result<Vec<u8>, ClientError> {
     drained
 }
 
-fn transact_frame(
+pub(crate) fn transact_frame(
     connection: UserConnectionHandle,
-    request: Request,
+    frame: [u8; wire::FRAME_BYTES],
 ) -> Result<[u8; wire::FRAME_BYTES], ClientError> {
-    let frame = request.encode().map_err(ClientError::Block)?;
     Syscall::ipc_send(connection, &frame).map_err(|_| ClientError::Transport)?;
     let future = Syscall::ipc_receive_message(connection).ok_or(ClientError::Transport)?;
     let received = Syscall::wait_for_message(future).map_err(|_| ClientError::Transport)?;
@@ -63,6 +62,14 @@ fn transact_frame(
         return Err(ClientError::NoConnection);
     }
     Ok(*received.data())
+}
+
+fn transact(
+    connection: UserConnectionHandle,
+    request: Request,
+) -> Result<[u8; wire::FRAME_BYTES], ClientError> {
+    let frame = request.encode().map_err(ClientError::Block)?;
+    transact_frame(connection, frame)
 }
 
 pub struct Block {
@@ -81,7 +88,7 @@ impl Block {
     }
 
     pub fn probe(&self, device: u32) -> Result<Geometry, ClientError> {
-        let frame = transact_frame(self.connection, Request::Probe { device })?;
+        let frame = transact(self.connection, Request::Probe { device })?;
         match Reply::decode(&frame).map_err(ClientError::Block)? {
             Reply::Probe {
                 block_count,
@@ -107,7 +114,7 @@ impl Block {
                 block: block + requested as u64,
                 count: chunk_blocks,
             };
-            let frame = transact_frame(self.connection, request)?;
+            let frame = transact(self.connection, request)?;
             match Reply::decode(&frame).map_err(ClientError::Block)? {
                 Reply::Data { token } => {
                     let chunk = drain_data_object(token)?;
@@ -149,7 +156,8 @@ impl Block {
                 count: chunk_blocks as u16,
                 token: data_token(&object),
             };
-            let reply = transact_frame(self.connection, request);
+            let encoded = request.encode().map_err(ClientError::Block)?;
+            let reply = transact_frame(self.connection, encoded);
             let _ = object.release();
             match Reply::decode(&reply?).map_err(ClientError::Block)? {
                 Reply::Ack => {
@@ -164,7 +172,7 @@ impl Block {
     }
 
     pub fn flush(&self, device: u32) -> Result<(), ClientError> {
-        let frame = transact_frame(self.connection, Request::Flush { device })?;
+        let frame = transact(self.connection, Request::Flush { device })?;
         match Reply::decode(&frame).map_err(ClientError::Block)? {
             Reply::Ack => Ok(()),
             Reply::Err(error) => Err(ClientError::Block(error)),

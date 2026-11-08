@@ -12,6 +12,7 @@ usrlib = { path = "../../usrlib" }
 input-protocol = { path = "../../protocol/input" }
 vfs-protocol = { path = "../../protocol/vfs" }
 ata-protocol = { path = "../../protocol/ata" }
+block-protocol = { path = "../../protocol/block" }
 
 bootloader_api = "0.11"
 volatile = "0.2.6"

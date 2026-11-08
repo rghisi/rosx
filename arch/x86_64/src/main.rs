@@ -82,6 +82,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         .service("inputd", input_protocol::wire::SERVICE_NAME)
         .service("ps2d", input_protocol::wire::SOURCE_NAME_PS2KEYBOARD)
         .service("atad", ata_protocol::wire::SERVICE_NAME)
+        .service("blockd", block_protocol::manager::wire::SERVICE_NAME)
         .service("randomd", "RANDOM")
         .service("echo", "BULKECHO")
         .service("pong", "PING")

@@ -5,7 +5,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use block_protocol::client::{Block, Geometry};
+use block_protocol::manager::client::Manager;
 use fs_core::engine::{Engine, Kind, MetadataView};
 use fs_core::error::FsError;
 use rxfs::device::BlockDevice;
@@ -24,15 +24,6 @@ const DEVICE_VOLUME_NAME: &[u8] = b"rosx-hdd";
 
 pub type ActiveVolume = FileSystem<MemoryDevice>;
 pub type ActiveStore = VfsStore<ActiveVolume, RemoteBlock>;
-
-pub struct AttachedDevice {
-    pub id: String,
-    pub service: String,
-    pub device: u32,
-    pub block_count: u64,
-    pub block_size: u32,
-    pub description: String,
-}
 
 struct MountedVolume<D: BlockDevice> {
     name: String,
@@ -70,7 +61,6 @@ pub enum RomMountError {
 
 pub struct VfsStore<E: Engine, D: BlockDevice> {
     engine: E,
-    devices: Vec<AttachedDevice>,
     mounts: Vec<MountedVolume<D>>,
     opens: BTreeMap<u32, OpenEntry<E>>,
     next_handle: u32,
@@ -143,68 +133,29 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
         VfsStore::from_engine(engine)
     }
 
-    pub fn attach_device(
-        &mut self,
-        id: &str,
-        service: &str,
-        device: u32,
-    ) -> Result<(), VfsError> {
-        if !wire::valid_name(id) {
-            return Err(VfsError::InvalidPath);
-        }
-        if self.devices.iter().any(|attached| attached.id == id) {
-            return Err(VfsError::Busy);
-        }
-        if self
-            .devices
-            .iter()
-            .any(|attached| attached.service == service && attached.device == device)
-        {
-            return Err(VfsError::Busy);
-        }
-        let (disk, geometry) = self.open_remote_block(service, device)?;
-        disk.into_client().disconnect();
-        self.devices.push(AttachedDevice {
-            id: String::from(id),
-            service: String::from(service),
-            device,
-            block_count: geometry.block_count,
-            block_size: geometry.block_size,
-            description: geometry.description,
-        });
-        Ok(())
-    }
-
-    fn attached(&self, id: &str) -> Result<&AttachedDevice, VfsError> {
-        self.devices
-            .iter()
-            .find(|attached| attached.id == id)
-            .ok_or(VfsError::NotFound)
-    }
-
-    fn open_remote_block(
-        &self,
-        service: &str,
-        device: u32,
-    ) -> Result<(RemoteBlock, Geometry), VfsError> {
-        let client = Block::connect(service).map_err(error_map::block)?;
-        let geometry = client.probe(device).map_err(error_map::block)?;
-        let disk = match RemoteBlock::new(client, device, &geometry) {
-            Ok(disk) => disk,
-            Err(client) => {
+    fn open_remote_block(&self, device: &str) -> Result<RemoteBlock, VfsError> {
+        let client = Manager::connect().map_err(error_map::block)?;
+        let geometry = match client.probe(device) {
+            Ok(geometry) => geometry,
+            Err(error) => {
                 client.disconnect();
-                return Err(VfsError::Unsupported);
+                return Err(error_map::block(error));
             }
         };
-        Ok((disk, geometry))
+        match RemoteBlock::new(client, device, &geometry) {
+            Ok(disk) => Ok(disk),
+            Err(client) => {
+                client.disconnect();
+                Err(VfsError::Unsupported)
+            }
+        }
     }
 
-    pub fn format_device(&mut self, id: &str) -> Result<(), VfsError> {
-        let attached = self.attached(id)?;
-        if self.device_busy(id) {
+    pub fn format_device(&mut self, device: &str) -> Result<(), VfsError> {
+        if self.device_busy(device) {
             return Err(VfsError::Busy);
         }
-        let (disk, _) = self.open_remote_block(&attached.service, attached.device)?;
+        let disk = self.open_remote_block(device)?;
         let params = FormatParams {
             bytes_per_inode: DEFAULT_BYTES_PER_INODE,
             uuid: DEVICE_VOLUME_UUID,
@@ -217,12 +168,12 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
             .map_err(error_map::fs)
     }
 
-    pub fn mount_device(&mut self, id: &str, dir: &str) -> Result<(), VfsError> {
+    pub fn mount_device(&mut self, device: &str, dir: &str) -> Result<(), VfsError> {
         if !wire::valid_mount_dir(dir) {
             return Err(VfsError::InvalidPath);
         }
         let name = &dir[1..];
-        if self.mounts.iter().any(|mount| mount.device == id)
+        if self.mounts.iter().any(|mount| mount.device == device)
             || self.mounts.iter().any(|mount| mount.name == name)
         {
             return Err(VfsError::Busy);
@@ -231,12 +182,11 @@ impl VfsStore<ActiveVolume, RemoteBlock> {
         if mount_point.kind() != Kind::Directory {
             return Err(VfsError::NotDirectory);
         }
-        let attached = self.attached(id)?;
-        let (disk, _) = self.open_remote_block(&attached.service, attached.device)?;
+        let disk = self.open_remote_block(device)?;
         let fs = FileSystem::mount(disk).map_err(error_map::mount)?;
         self.mounts.push(MountedVolume {
             name: String::from(name),
-            device: String::from(id),
+            device: String::from(device),
             fs,
         });
         Ok(())
@@ -247,7 +197,6 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
     fn from_engine(engine: E) -> VfsStore<E, D> {
         VfsStore {
             engine,
-            devices: Vec::new(),
             mounts: Vec::new(),
             opens: BTreeMap::new(),
             next_handle: 1,
@@ -292,38 +241,6 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
             None => (body, ""),
         };
         rest.is_empty() && self.mounts.iter().any(|mount| mount.name == head)
-    }
-
-    pub fn devices(&self) -> &[AttachedDevice] {
-        &self.devices
-    }
-
-    pub fn mounted_at(&self, id: &str) -> Option<&str> {
-        self.mounts
-            .iter()
-            .find(|mount| mount.device == id)
-            .map(|mount| mount.name.as_str())
-    }
-
-    pub fn devices_blob(&self) -> Vec<u8> {
-        let mut blob = Vec::new();
-        for device in self.devices() {
-            if !blob.is_empty() {
-                blob.push(b'\n');
-            }
-            let state = match self.mounted_at(&device.id) {
-                Some(dir) => format!("mounted at /{dir}"),
-                None => String::from("free"),
-            };
-            blob.extend_from_slice(
-                format!(
-                    "{} provider {} drive {} blocks={} size={} {}",
-                    device.id, device.service, device.device, device.block_count, device.block_size, state
-                )
-                .as_bytes(),
-            );
-        }
-        blob
     }
 
     pub fn device_busy(&self, id: &str) -> bool {
@@ -1238,62 +1155,13 @@ mod tests {
         );
     }
 
-    fn fake_attached(fs: &mut VfsStore<ActiveVolume, MemoryDevice>, id: &str, service: &str, device: u32) {
-        fs.devices.push(AttachedDevice {
-            id: String::from(id),
-            service: String::from(service),
-            device,
-            block_count: 102400,
-            block_size: 512,
-            description: String::from("QEMU HARDDISK"),
-        });
-    }
-
     #[test]
-    fn attached_devices_and_mount_points_are_visible() {
+    fn a_live_volume_marks_its_blockd_device_busy() {
         let mut fs = fresh_store();
-        assert!(fs.devices().is_empty());
-        assert_eq!(fs.mounted_at("ata0"), None);
-        fake_attached(&mut fs, "ata0", "ATA", 1);
-        assert_eq!(fs.devices().len(), 1);
-        assert_eq!(fs.devices()[0].service, "ATA");
-        mount_fake(&mut fs, "ata0");
-        assert_eq!(fs.mounted_at("ata0"), Some("ata0"));
-        assert_eq!(fs.mounted_at("sata1"), None);
-    }
-
-    #[test]
-    fn mount_and_format_of_unknown_device_id_are_not_found_before_touching_the_service() {
-        let mut fs = ActiveStore::new();
-        fs.mkdir("/hdd").unwrap();
-        assert_eq!(fs.mount_device("ghost", "/hdd"), Err(VfsError::NotFound));
-        assert_eq!(fs.format_device("ghost"), Err(VfsError::NotFound));
-    }
-
-    #[test]
-    fn a_live_volume_marks_its_device_busy() {
-        let mut fs = fresh_store();
-        fake_attached(&mut fs, "ata0", "ATA", 0);
-        assert!(!fs.device_busy("ata0"));
-        mount_fake(&mut fs, "ata0");
-        assert!(fs.device_busy("ata0"));
-        assert!(!fs.device_busy("sata1"));
-    }
-
-    #[test]
-    fn devices_blob_renders_geometry_and_mount_state() {
-        let mut fs = fresh_store();
-        assert_eq!(fs.devices_blob(), Vec::new());
-        fake_attached(&mut fs, "ata0", "ATA", 1);
-        assert_eq!(
-            fs.devices_blob(),
-            b"ata0 provider ATA drive 1 blocks=102400 size=512 free".to_vec()
-        );
-        mount_fake(&mut fs, "ata0");
-        assert_eq!(
-            fs.devices_blob(),
-            b"ata0 provider ATA drive 1 blocks=102400 size=512 mounted at /ata0".to_vec()
-        );
+        assert!(!fs.device_busy("ata0d0"));
+        mount_fake(&mut fs, "ata0d0");
+        assert!(fs.device_busy("ata0d0"));
+        assert!(!fs.device_busy("ata0d1"));
     }
 
     #[test]
