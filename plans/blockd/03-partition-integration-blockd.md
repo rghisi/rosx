@@ -1,7 +1,8 @@
 # Plan 3 — Partition integration: curation inside `blockd`
 
-> **Status:** Plan (no code written). Written 2026-11-08; decisions owner-approved in the
-> design discussion of 2026-11-08.
+> **Status:** Executed 2026-11-08, M0–M6 complete on branch `blockd-partition-integration`
+> (forked from `main` at `a7ef201`); evidence below. Written 2026-11-08; decisions
+> owner-approved in the design discussion of 2026-11-08.
 > **Feature:** wire the `rxpart` verdicts (Plan 2) into `blockd`'s register flow so the
 > namespace becomes partition-aware: a disk with a valid, supported table exposes
 > `ata0d0p0`-style slice devices and hides the whole drive; a disk without one exposes
