@@ -383,13 +383,6 @@ impl<D: BlockDevice> FileSystem<D> {
         }
     }
 
-    fn data_chain(&mut self, first_cluster: u32) -> Result<Vec<u32>, FsError> {
-        if first_cluster < 2 {
-            return Ok(Vec::new());
-        }
-        fat::cluster_chain(&mut self.device, &self.boot, first_cluster)
-    }
-
     fn cluster_bytes(&self) -> u64 {
         u64::from(self.boot.sectors_per_cluster) * u64::from(self.boot.bytes_per_sector)
     }
@@ -590,12 +583,11 @@ impl<D: BlockDevice> FileSystem<D> {
         if located.entry.is_directory {
             return Err(FsError::IsADirectory);
         }
-        let freed = self.data_chain(located.entry.first_cluster)?.len() as u32;
         dir::erase_slot(&mut self.device, located.sector, located.offset)?;
-        let chain = fat::free_chain(&mut self.device, &self.boot, located.entry.first_cluster)?;
-        self.note_freed(chain.lowest);
+        let freed = fat::free_chain(&mut self.device, &self.boot, located.entry.first_cluster)?;
+        self.note_freed(freed.lowest);
         self.chain_epoch += 1;
-        self.release_clusters(freed)
+        self.release_clusters(freed.clusters)
     }
 
     pub fn mkdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
@@ -632,7 +624,6 @@ impl<D: BlockDevice> FileSystem<D> {
         if !located.entry.is_directory {
             return Err(FsError::NotADirectory);
         }
-        let chain = self.data_chain(located.entry.first_cluster)?;
         let entries =
             dir::read_directory(&mut self.device, &self.boot, DirLocation::Chain(located.entry.first_cluster))?;
         if !entries.is_empty() {
@@ -642,7 +633,7 @@ impl<D: BlockDevice> FileSystem<D> {
         let freed = fat::free_chain(&mut self.device, &self.boot, located.entry.first_cluster)?;
         self.note_freed(freed.lowest);
         self.chain_epoch += 1;
-        self.release_clusters(chain.len() as u32)
+        self.release_clusters(freed.clusters)
     }
 }
 
