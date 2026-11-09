@@ -262,7 +262,7 @@ pub fn allocate_chain<D: BlockDevice>(
     device: &mut D,
     boot: &BootSector,
     count: u32,
-) -> Result<u32, FsError> {
+) -> Result<Vec<u32>, FsError> {
     if count == 0 {
         return Err(FsError::InvalidPath);
     }
@@ -285,7 +285,7 @@ pub fn allocate_chain<D: BlockDevice>(
         };
         write_fat_entry(device, boot, free[index], next)?;
     }
-    Ok(free[0])
+    Ok(free)
 }
 
 pub fn append_chain<D: BlockDevice>(
@@ -293,7 +293,7 @@ pub fn append_chain<D: BlockDevice>(
     boot: &BootSector,
     tail_cluster: u32,
     count: u32,
-) -> Result<u32, FsError> {
+) -> Result<Vec<u32>, FsError> {
     let free = scan_free_clusters(device, boot, count)?;
     let zero_block = [0u8; SECTOR_BYTES as usize];
     for cluster in &free {
@@ -314,7 +314,7 @@ pub fn append_chain<D: BlockDevice>(
         };
         write_fat_entry(device, boot, free[index], next)?;
     }
-    Ok(free[0])
+    Ok(free)
 }
 
 pub fn free_chain<D: BlockDevice>(
@@ -775,7 +775,7 @@ mod tests {
         for byte in device.bytes[49 * 512..52 * 512].iter_mut() {
             *byte = 0xAA;
         }
-        assert_eq!(allocate_chain(&mut device, &boot, 3).expect("head"), 2);
+        assert_eq!(allocate_chain(&mut device, &boot, 3).expect("chain"), vec![2, 3, 4]);
         assert_eq!(fat_entry_value(&device, 2), 3);
         assert_eq!(fat_entry_value(&device, 3), 4);
         assert_eq!(fat_entry_value(&device, 4), 0xFFF8);

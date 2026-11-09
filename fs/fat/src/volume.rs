@@ -1,7 +1,7 @@
 use crate::boot::{BootSector, FatType};
 use crate::device::BlockDevice;
 use crate::dir::{self, DirEntry, DirLocation};
-use crate::fat;
+use crate::fat::{self, ClusterNext};
 use crate::file;
 use crate::path::{self, PathParts};
 use alloc::vec::Vec;
@@ -30,13 +30,14 @@ impl MetadataView for FatMetadata {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 struct OpenEntry {
     generation: u32,
     first_cluster: u32,
     size: u64,
     chain: Vec<u32>,
-    parent: DirLocation,
+    tail: Option<u32>,
+    epoch: u64,
     slot_sector: u64,
     slot_offset: usize,
     slot_name: [u8; 11],
@@ -60,6 +61,7 @@ pub struct FileSystem<D: BlockDevice> {
     opens: Vec<Option<OpenEntry>>,
     next_generation: u32,
     free_clusters: Option<u32>,
+    chain_epoch: u64,
 }
 
 impl<D: BlockDevice> FileSystem<D> {
@@ -77,6 +79,7 @@ impl<D: BlockDevice> FileSystem<D> {
             opens: Vec::new(),
             next_generation: 1,
             free_clusters: None,
+            chain_epoch: 0,
         })
     }
 
@@ -104,7 +107,6 @@ impl<D: BlockDevice> FileSystem<D> {
         if located.entry.is_directory {
             return Err(FsError::IsADirectory);
         }
-        let chain = self.data_chain(located.entry.first_cluster)?;
         let generation = self.next_generation;
         self.next_generation = self.next_generation.wrapping_add(1);
         let slot = self.reserve_open_slot();
@@ -112,8 +114,9 @@ impl<D: BlockDevice> FileSystem<D> {
             generation,
             first_cluster: located.entry.first_cluster,
             size: located.entry.size,
-            chain,
-            parent,
+            chain: Vec::new(),
+            tail: (located.entry.first_cluster >= 2).then_some(located.entry.first_cluster),
+            epoch: self.chain_epoch,
             slot_sector: located.sector,
             slot_offset: located.offset,
             slot_name: located.slot_name,
@@ -131,10 +134,20 @@ impl<D: BlockDevice> FileSystem<D> {
         offset: u64,
         buf: &mut [u8],
     ) -> Result<usize, FsError> {
-        let entry = self.live_entry(handle)?;
-        let size = entry.size;
-        let chain = entry.chain.clone();
-        file::read_file(&mut self.device, &self.boot, &chain, size, offset, buf)
+        let size = self.live_entry(handle)?.size;
+        if offset >= size || buf.is_empty() {
+            return Ok(0);
+        }
+        let cluster_bytes = self.cluster_bytes();
+        let available = core::cmp::min(buf.len() as u64, size - offset);
+        self.materialize(handle, ((offset + available - 1) / cluster_bytes) as usize)?;
+        let Self { boot, device, opens, .. } = self;
+        let entry = opens
+            .get(handle.slot as usize)
+            .and_then(Option::as_ref)
+            .filter(|entry| entry.generation == handle.generation)
+            .ok_or(FsError::BadHandle)?;
+        file::read_file(device, boot, &entry.chain, size, offset, buf)
     }
 
     pub fn stat(&mut self, handle: FatHandle) -> Result<FatMetadata, FsError> {
@@ -174,6 +187,93 @@ impl<D: BlockDevice> FileSystem<D> {
             .and_then(|slot| slot.as_ref())
             .filter(|entry| entry.generation == handle.generation)
             .ok_or(FsError::BadHandle)
+    }
+
+    fn live_entry_mut(&mut self, handle: FatHandle) -> Result<&mut OpenEntry, FsError> {
+        self.opens
+            .get_mut(handle.slot as usize)
+            .and_then(|slot| slot.as_mut())
+            .filter(|entry| entry.generation == handle.generation)
+            .ok_or(FsError::BadHandle)
+    }
+
+    fn chain_cluster(&self, handle: FatHandle, index: usize) -> Result<u32, FsError> {
+        let entry = self.live_entry(handle)?;
+        let cluster = *entry.chain.get(index).ok_or(FsError::Corrupt)?;
+        Ok(cluster)
+    }
+
+    fn reseed_cursor(&mut self, handle: FatHandle) -> Result<(), FsError> {
+        let epoch = self.chain_epoch;
+        let entry = self.live_entry_mut(handle)?;
+        if entry.epoch == epoch {
+            return Ok(());
+        }
+        entry.chain.clear();
+        entry.tail = (entry.first_cluster >= 2).then_some(entry.first_cluster);
+        entry.epoch = epoch;
+        Ok(())
+    }
+
+    fn walk_cursor(&mut self, handle: FatHandle, limit: usize) -> Result<(), FsError> {
+        self.reseed_cursor(handle)?;
+        let mut memo = None;
+        let Self { boot, device, opens, .. } = self;
+        let entry = opens
+            .get_mut(handle.slot as usize)
+            .and_then(|slot| slot.as_mut())
+            .ok_or(FsError::BadHandle)?;
+        while entry.chain.len() < limit {
+            let Some(cluster) = entry.tail else {
+                return Ok(());
+            };
+            if entry.chain.len() >= boot.cluster_count as usize {
+                return Err(FsError::Corrupt);
+            }
+            entry.chain.push(cluster);
+            entry.tail = match fat::next_cluster(device, boot, cluster, &mut memo)? {
+                ClusterNext::End => None,
+                ClusterNext::Next(next) => Some(next),
+            };
+        }
+        Ok(())
+    }
+
+    fn materialize(&mut self, handle: FatHandle, index: usize) -> Result<(), FsError> {
+        self.walk_cursor(handle, index + 1)?;
+        let entry = self.live_entry(handle)?;
+        if entry.chain.len() <= index {
+            return Err(FsError::Corrupt);
+        }
+        Ok(())
+    }
+
+    fn grow_cursor_to(&mut self, handle: FatHandle, needed: usize) -> Result<(), FsError> {
+        loop {
+            self.walk_cursor(handle, needed)?;
+            let shortfall = {
+                let entry = self.live_entry(handle)?;
+                needed.saturating_sub(entry.chain.len())
+            };
+            if shortfall == 0 {
+                return Ok(());
+            }
+            self.reserve_clusters(shortfall as u32)?;
+            let tail = self.live_entry(handle)?.chain.last().copied();
+            let appended = match tail {
+                Some(tail) => fat::append_chain(&mut self.device, &self.boot, tail, shortfall as u32)?,
+                None => fat::allocate_chain(&mut self.device, &self.boot, shortfall as u32)?,
+            };
+            self.chain_epoch += 1;
+            let epoch = self.chain_epoch;
+            let entry = self.live_entry_mut(handle)?;
+            if tail.is_none() {
+                entry.first_cluster = *appended.first().ok_or(FsError::Corrupt)?;
+            }
+            entry.chain.extend(appended);
+            entry.tail = None;
+            entry.epoch = epoch;
+        }
     }
 
     fn resolve(&mut self, parts: &PathParts) -> Result<Resolved, FsError> {
@@ -276,6 +376,7 @@ impl<D: BlockDevice> FileSystem<D> {
                     let tail = *chain.last().ok_or(FsError::Corrupt)?;
                     self.reserve_clusters(1)?;
                     fat::append_chain(&mut self.device, &self.boot, tail, 1)?;
+                    self.chain_epoch += 1;
                 }
             }
         }
@@ -335,7 +436,8 @@ impl<D: BlockDevice> FileSystem<D> {
             first_cluster: 0,
             size: 0,
             chain: Vec::new(),
-            parent,
+            tail: None,
+            epoch: self.chain_epoch,
             slot_sector: sector,
             slot_offset: offset,
             slot_name,
@@ -363,40 +465,33 @@ impl<D: BlockDevice> FileSystem<D> {
         if end > u64::from(u32::MAX) {
             return Err(FsError::FileTooLarge);
         }
-        let snapshot = self.opens[handle.slot as usize]
-            .clone()
-            .ok_or(FsError::BadHandle)?;
+        let (slot_sector, slot_offset, slot_name, attrs, slot_first_cluster) = {
+            let entry = self.live_entry(handle)?;
+            (
+                entry.slot_sector,
+                entry.slot_offset,
+                entry.slot_name,
+                entry.attrs,
+                entry.first_cluster,
+            )
+        };
         if !dir::slot_still_holds(
             &mut self.device,
-            snapshot.slot_sector,
-            snapshot.slot_offset,
-            &snapshot.slot_name,
-            snapshot.first_cluster,
+            slot_sector,
+            slot_offset,
+            &slot_name,
+            slot_first_cluster,
         )? {
             return Err(FsError::BadHandle);
         }
         let cluster_bytes = self.cluster_bytes();
-        let needed = end.div_ceil(cluster_bytes) as usize;
-        let mut chain = snapshot.chain.clone();
-        let mut first_cluster = snapshot.first_cluster;
-        if needed > chain.len() {
-            let extra = (needed - chain.len()) as u32;
-            self.reserve_clusters(extra)?;
-            match chain.last() {
-                Some(tail) => {
-                    fat::append_chain(&mut self.device, &self.boot, *tail, extra)?;
-                }
-                None => {
-                    first_cluster = fat::allocate_chain(&mut self.device, &self.boot, extra)?;
-                }
-            }
-            chain = fat::cluster_chain(&mut self.device, &self.boot, first_cluster)?;
-        }
+        self.grow_cursor_to(handle, end.div_ceil(cluster_bytes) as usize)?;
+        let first_cluster = self.live_entry(handle)?.first_cluster;
         let mut written = 0usize;
         let mut block = [0u8; 512];
         while written < data.len() {
             let byte = offset + written as u64;
-            let cluster = chain[(byte / cluster_bytes) as usize];
+            let cluster = self.chain_cluster(handle, (byte / cluster_bytes) as usize)?;
             let in_cluster = (byte % cluster_bytes) as usize;
             let first_sector = self
                 .boot
@@ -417,17 +512,13 @@ impl<D: BlockDevice> FileSystem<D> {
                 .map_err(FsError::Io)?;
             written += chunk;
         }
-        let size = snapshot.size.max(end);
+        let size = self.live_entry(handle)?.size.max(end);
         let mut name_parts = ([0u8; 8], [0u8; 3]);
-        name_parts.0.copy_from_slice(&snapshot.slot_name[..8]);
-        name_parts.1.copy_from_slice(&snapshot.slot_name[8..11]);
-        let slot = dir::make_slot_bytes(name_parts, snapshot.attrs, first_cluster, size as u32);
-        dir::write_slot_bytes(&mut self.device, snapshot.slot_sector, snapshot.slot_offset, &slot)?;
-        if let Some(entry) = self.opens[handle.slot as usize].as_mut() {
-            entry.first_cluster = first_cluster;
-            entry.size = size;
-            entry.chain = chain;
-        }
+        name_parts.0.copy_from_slice(&slot_name[..8]);
+        name_parts.1.copy_from_slice(&slot_name[8..11]);
+        let slot = dir::make_slot_bytes(name_parts, attrs, first_cluster, size as u32);
+        dir::write_slot_bytes(&mut self.device, slot_sector, slot_offset, &slot)?;
+        self.live_entry_mut(handle)?.size = size;
         Ok(data.len())
     }
 
@@ -445,6 +536,7 @@ impl<D: BlockDevice> FileSystem<D> {
         let freed = self.data_chain(located.entry.first_cluster)?.len() as u32;
         dir::erase_slot(&mut self.device, located.sector, located.offset)?;
         fat::free_chain(&mut self.device, &self.boot, located.entry.first_cluster)?;
+        self.chain_epoch += 1;
         self.release_clusters(freed)
     }
 
@@ -461,7 +553,8 @@ impl<D: BlockDevice> FileSystem<D> {
         }
         let (sector, offset) = self.allocate_slot(parent)?;
         self.reserve_clusters(1)?;
-        let cluster = fat::allocate_chain(&mut self.device, &self.boot, 1)?;
+        let cluster = fat::allocate_chain(&mut self.device, &self.boot, 1)?.remove(0);
+        self.chain_epoch += 1;
         let slot = dir::make_slot_bytes(folded, ATTR_DIRECTORY, cluster, 0);
         dir::write_slot_bytes(&mut self.device, sector, offset, &slot)?;
         Ok(())
@@ -486,6 +579,7 @@ impl<D: BlockDevice> FileSystem<D> {
         }
         dir::erase_slot(&mut self.device, located.sector, located.offset)?;
         fat::free_chain(&mut self.device, &self.boot, located.entry.first_cluster)?;
+        self.chain_epoch += 1;
         self.release_clusters(chain.len() as u32)
     }
 }
