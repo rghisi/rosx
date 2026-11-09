@@ -1,6 +1,8 @@
-use crate::boot::BootSector;
+use crate::boot::{BootSector, SECTOR_BYTES};
 use crate::device::BlockDevice;
 use fs_core::error::FsError;
+
+const SECTOR: usize = SECTOR_BYTES as usize;
 
 pub fn read_file<D: BlockDevice>(
     device: &mut D,
@@ -14,38 +16,84 @@ pub fn read_file<D: BlockDevice>(
         return Ok(0);
     }
     let available = core::cmp::min(buf.len() as u64, size - offset) as usize;
-    let cluster_bytes = u64::from(boot.sectors_per_cluster) * u64::from(boot.bytes_per_sector);
-    let mut block = [0u8; 512];
+    let mut scratch = [0u8; SECTOR];
     let mut produced = 0usize;
     while produced < available {
         let absolute = offset + produced as u64;
-        let chain_index = (absolute / cluster_bytes) as usize;
-        let cluster = *chain.get(chain_index).ok_or(FsError::Corrupt)?;
-        let sector = boot
-            .first_sector_of_cluster(cluster)
-            .and_then(|first| {
-                let sector_index =
-                    (absolute % cluster_bytes) / u64::from(boot.bytes_per_sector);
-                first.checked_add(sector_index)
-            })
-            .ok_or(FsError::Corrupt)?;
-        device.read_block(sector, &mut block).map_err(FsError::Io)?;
-        let sector_offset =
-            (absolute % u64::from(boot.bytes_per_sector)) as usize;
-        let take = core::cmp::min(
-            block.len() - sector_offset,
-            available - produced,
-        );
-        buf[produced..produced + take].copy_from_slice(&block[sector_offset..sector_offset + take]);
-        produced += take;
+        let sector_offset = (absolute % SECTOR as u64) as usize;
+        let remaining = available - produced;
+        if sector_offset != 0 || remaining < SECTOR {
+            let sector = sector_of(boot, chain, absolute)?;
+            device
+                .read_block(sector, &mut scratch)
+                .map_err(FsError::Io)?;
+            let take = core::cmp::min(SECTOR - sector_offset, remaining);
+            buf[produced..produced + take]
+                .copy_from_slice(&scratch[sector_offset..sector_offset + take]);
+            produced += take;
+            continue;
+        }
+        let (first, run) = contiguous_run(boot, chain, absolute, remaining)?;
+        let span = run * SECTOR;
+        device
+            .read_blocks(first, run, &mut buf[produced..produced + span])
+            .map_err(FsError::Io)?;
+        produced += span;
     }
     Ok(produced)
+}
+
+fn sector_of(boot: &BootSector, chain: &[u32], absolute: u64) -> Result<u64, FsError> {
+    let cluster = cluster_at(boot, chain, absolute)?;
+    let first = boot.first_sector_of_cluster(cluster).ok_or(FsError::Corrupt)?;
+    let sector_index = (absolute % cluster_bytes(boot)) / SECTOR as u64;
+    first.checked_add(sector_index).ok_or(FsError::Corrupt)
+}
+
+fn cluster_at(boot: &BootSector, chain: &[u32], absolute: u64) -> Result<u32, FsError> {
+    let index = (absolute / cluster_bytes(boot)) as usize;
+    chain.get(index).copied().ok_or(FsError::Corrupt)
+}
+
+fn cluster_bytes(boot: &BootSector) -> u64 {
+    u64::from(boot.sectors_per_cluster) * SECTOR as u64
+}
+
+fn contiguous_run(
+    boot: &BootSector,
+    chain: &[u32],
+    absolute: u64,
+    remaining: usize,
+) -> Result<(u64, usize), FsError> {
+    let sectors_per_cluster = boot.sectors_per_cluster as usize;
+    let start_index = (absolute / cluster_bytes(boot)) as usize;
+    let mut cluster = *chain.get(start_index).ok_or(FsError::Corrupt)?;
+    let cluster_first = boot.first_sector_of_cluster(cluster).ok_or(FsError::Corrupt)?;
+    let used = ((absolute % cluster_bytes(boot)) / SECTOR as u64) as usize;
+    let budget = remaining / SECTOR;
+    let mut run = (sectors_per_cluster - used).min(budget);
+    let first = cluster_first + used as u64;
+    let mut index = start_index;
+    while run < budget {
+        let Some(next) = chain.get(index + 1).copied() else {
+            break;
+        };
+        if next != cluster + 1 {
+            break;
+        }
+        cluster = next;
+        index += 1;
+        run += sectors_per_cluster.min(budget - run);
+    }
+    Ok((first, run))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::fat::fixtures::{fat16_boot, fat16_entry_at, TestDevice};
+    use alloc::vec;
+    use alloc::vec::Vec;
     use fs_core::error::IoError;
 
     fn fill_sector(device: &mut TestDevice, sector: u64, start_byte: u8) {
@@ -221,5 +269,109 @@ mod tests {
         let mut device = TestDevice::new(boot.total_sectors);
         end_chain(&mut device, 2);
         assert_eq!(read_file(&mut device, &boot, &[2], 10, 0, &mut []).expect("nothing"), 0);
+    }
+
+    fn link_run(device: &mut TestDevice, clusters: &[u32]) {
+        for pair in clusters.windows(2) {
+            link(device, pair[0], pair[1]);
+        }
+        end_chain(device, *clusters.last().expect("non-empty run"));
+    }
+
+    #[test]
+    fn an_aligned_contiguous_chain_is_read_in_one_device_run() {
+        let boot = fat16_boot();
+        let mut device = TestDevice::new(boot.total_sectors);
+        let clusters: Vec<u32> = (2..18).collect();
+        link_run(&mut device, &clusters);
+        for cluster in &clusters {
+            fill_sector(&mut device, 49 + u64::from(cluster - 2), u8::try_from(*cluster).expect("u8"));
+        }
+        let mut buf = vec![0u8; 16 * 512];
+        assert_eq!(
+            read_file(&mut device, &boot, &clusters, 16 * 512, 0, &mut buf).expect("reads"),
+            16 * 512
+        );
+        assert_eq!(device.run_log, vec![(49, 16)]);
+        assert_eq!(device.read_log, (49..65).collect::<Vec<u64>>());
+        assert_eq!(buf[0], 2);
+        assert_eq!(buf[512], 3);
+    }
+
+    #[test]
+    fn a_scattered_chain_falls_back_to_one_run_per_cluster() {
+        let boot = fat16_boot();
+        let mut device = TestDevice::new(boot.total_sectors);
+        link(&mut device, 2, 9);
+        link(&mut device, 9, 16);
+        end_chain(&mut device, 16);
+        for cluster in [2u32, 9, 16] {
+            fill_sector(&mut device, 49 + u64::from(cluster - 2), u8::try_from(cluster).expect("u8"));
+        }
+        let mut buf = [0u8; 3 * 512];
+        assert_eq!(
+            read_file(&mut device, &boot, &[2, 9, 16], 3 * 512, 0, &mut buf).expect("reads"),
+            3 * 512
+        );
+        assert_eq!(device.run_log, vec![(49, 1), (56, 1), (63, 1)]);
+        assert_eq!(buf[0], 2);
+        assert_eq!(buf[512], 9);
+        assert_eq!(buf[1_024], 16);
+    }
+
+    #[test]
+    fn a_run_splits_at_the_first_cluster_hole() {
+        let boot = fat16_boot();
+        let mut device = TestDevice::new(boot.total_sectors);
+        link_run(&mut device, &[2, 3]);
+        link_run(&mut device, &[7, 8]);
+        let chain = [2u32, 3, 7, 8];
+        for cluster in chain {
+            fill_sector(&mut device, 49 + u64::from(cluster - 2), u8::try_from(cluster).expect("u8"));
+        }
+        let mut buf = vec![0u8; 4 * 512];
+        assert_eq!(read_file(&mut device, &boot, &chain, 4 * 512, 0, &mut buf).expect("reads"), 4 * 512);
+        assert_eq!(device.run_log, vec![(49, 2), (54, 2)]);
+    }
+
+    #[test]
+    fn misaligned_head_and_tail_stay_single_sector_reads_outside_the_run() {
+        let boot = fat16_boot();
+        let mut device = TestDevice::new(boot.total_sectors);
+        link_run(&mut device, &[2, 3, 4]);
+        for cluster in [2u32, 3, 4] {
+            fill_sector(&mut device, 49 + u64::from(cluster - 2), u8::try_from(cluster).expect("u8"));
+        }
+        let chain = [2u32, 3, 4];
+        let mut buf = [0u8; 1_200];
+        assert_eq!(
+            read_file(&mut device, &boot, &chain, 3 * 512, 100, &mut buf).expect("reads"),
+            1_200
+        );
+        assert_eq!(device.run_log, vec![(50, 1)]);
+        assert_eq!(device.read_log, vec![49, 50, 51]);
+    }
+
+    #[test]
+    fn a_multi_sector_cluster_yields_a_run_within_and_across_clusters() {
+        let boot = BootSector {
+            sectors_per_cluster: 4,
+            ..fat16_boot()
+        };
+        let mut device = TestDevice::new(boot.total_sectors);
+        link_run(&mut device, &[2, 3]);
+        let chain = [2u32, 3];
+        let mut buf = vec![0u8; 8 * 512];
+        assert_eq!(
+            read_file(&mut device, &boot, &chain, 8 * 512, 0, &mut buf).expect("reads"),
+            8 * 512
+        );
+        assert_eq!(device.run_log, vec![(49, 8)]);
+        let mut partial = vec![0u8; 8 * 512];
+        assert_eq!(
+            read_file(&mut device, &boot, &chain, 8 * 512, 1_536, &mut partial).expect("tail"),
+            5 * 512
+        );
+        assert_eq!(device.run_log, vec![(49, 8), (52, 5)]);
     }
 }

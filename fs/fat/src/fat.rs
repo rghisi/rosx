@@ -431,6 +431,7 @@ pub(crate) mod fixtures {
         pub flushes: usize,
         pub read_log: Vec<u64>,
         pub write_log: Vec<u64>,
+        pub run_log: Vec<(u64, usize)>,
     }
 
     impl TestDevice {
@@ -440,6 +441,7 @@ pub(crate) mod fixtures {
                 flushes: 0,
                 read_log: Vec::new(),
                 write_log: Vec::new(),
+                run_log: Vec::new(),
             }
         }
 
@@ -482,6 +484,16 @@ pub(crate) mod fixtures {
                 return Err(IoError::Device);
             };
             region.copy_from_slice(buf);
+            Ok(())
+        }
+
+        fn read_blocks(&mut self, first: u64, count: usize, dest: &mut [u8]) -> Result<(), IoError> {
+            self.run_log.push((first, count));
+            let unit = fs_core::device::run_unit(count, dest.len()).ok_or(IoError::Device)?;
+            for (index, chunk) in dest.chunks_exact_mut(unit).enumerate() {
+                let block = first.checked_add(index as u64).ok_or(IoError::Device)?;
+                self.read_block(block, chunk)?;
+            }
             Ok(())
         }
 
