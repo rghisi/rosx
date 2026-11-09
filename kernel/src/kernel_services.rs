@@ -142,7 +142,7 @@ mod tests {
         let handle = s.task_manager.borrow_mut().add_task(task).unwrap();
         assert_eq!(s.task_manager.borrow().get_state(handle), crate::task::TaskState::Created);
 
-        let future = alloc::boxed::Box::new(crate::future::TaskCompletionFuture::new(handle));
+        let future = alloc::boxed::Box::new(crate::future::TaskCompletionFuture::new());
         let fh = s.future_registry.borrow_mut().register(future);
         assert!(fh.is_some());
     }

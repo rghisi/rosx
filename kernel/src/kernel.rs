@@ -190,7 +190,7 @@ impl Kernel {
         let result = services().task_manager.borrow_mut().add_task(task);
         let paired = match result {
             Ok(task_handle) => {
-                let future = Box::new(TaskCompletionFuture::new(task_handle));
+                let future = Box::new(TaskCompletionFuture::new());
                 let future_handle = services().future_registry.borrow_mut().register(future);
                 if let Some(fh) = future_handle {
                     services().task_manager.borrow_mut().set_completion_future(task_handle, fh);
@@ -294,15 +294,16 @@ impl Kernel {
         self.execution_state.preemption_enabled = false;
         if let Some(task_handle) = self.execution_state.current_task.take() {
             let group = services().task_manager.borrow().get_group(task_handle);
+            if let Some(completion_handle) =
+                services().task_manager.borrow().get_completion_future(task_handle)
+            {
+                services().future_registry.borrow_mut().notify_with_status(completion_handle, status);
+            }
             services()
                 .task_manager
                 .borrow_mut()
                 .set_state(task_handle, Terminated);
             crate::platform::portio::revoke(task_handle);
-            if let Some(completion_handle) =
-                services().task_manager.borrow().get_completion_future(task_handle) {
-                    services().future_registry.borrow_mut().notify_with_status(completion_handle, status);
-                }
             if let Some(group) = group {
                 if !services().task_manager.borrow().group_has_live_members(group) {
                     unsafe { services().memory_manager.release_group_allocations(group.value()) };
@@ -457,7 +458,7 @@ mod tests {
         let scheduler = add_created_task("[T] wake-scheduler");
         let sleeper = add_created_task("[T] wake-sleeper");
         install_stub_kernel(scheduler, Some(sleeper), true, false);
-        let future = Box::new(TaskCompletionFuture::new(sleeper));
+        let future = Box::new(TaskCompletionFuture::new());
         let future_handle = services().future_registry.borrow_mut().register(future).expect("register");
         services().future_registry.borrow_mut().register_waiter(future_handle, sleeper);
         services().future_registry.borrow_mut().notify(future_handle);

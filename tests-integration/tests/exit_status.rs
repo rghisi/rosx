@@ -39,6 +39,25 @@ fn explicit_exit_reports_its_code_to_the_shell() {
 }
 
 #[test]
+fn a_waiting_parent_always_receives_the_clean_seven() {
+    let mut session = QemuSession::spawn();
+    session.expect_output("rose>", BOOT_TIMEOUT);
+
+    for round in 1..=10 {
+        let after = session.mark();
+        session.send_line("exiter 7");
+        session.expect_output_since(after, "exiter exited with code 7", EXIT_TIMEOUT);
+        session.expect_output_since(after, "rose>", EXIT_TIMEOUT);
+        let report = session.content_since(after);
+        assert_eq!(
+            report.matches("exited with").count(),
+            1,
+            "round {round}: the waiting parent must receive Clean(7) exactly once, got:\n{report}"
+        );
+    }
+}
+
+#[test]
 fn user_panic_reports_an_abnormal_exit_to_the_shell() {
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_TIMEOUT);
