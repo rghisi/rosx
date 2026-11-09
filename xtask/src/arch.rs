@@ -28,8 +28,8 @@ pub static X86_64: ArchSpec = ArchSpec {
     kernel_binary: "rosx",
     user_dir_name: "rosx-user",
     boot: x86_runner::Arch::X86_64,
-    fat_boot_disk: false,
-    rom_apps: &USER_APPS,
+    fat_boot_disk: true,
+    rom_apps: &BOOTSTRAP_APPS,
 };
 
 pub static X86_32: ArchSpec = ArchSpec {

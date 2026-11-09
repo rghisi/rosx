@@ -75,7 +75,7 @@ fn prepare_medium(debug: bool, spec: &ArchSpec) -> BootMedium {
 
 fn launch(medium: &BootMedium, spec: &ArchSpec) {
     let mut cmd = x86_runner::qemu_command(spec.boot, medium, LaunchMode::Interactive);
-    if let BootMedium::MultibootKernel(_) = medium {
+    if spec.fat_boot_disk {
         let disk = boot_disk::boot_disk_path(spec);
         cmd.arg("-drive")
             .arg(format!("if=ide,index=0,media=disk,format=raw,file={}", disk.display()));

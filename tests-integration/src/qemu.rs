@@ -92,7 +92,7 @@ impl QemuSession {
             ));
         let mut command =
             x86_runner::qemu_command(arch.boot(), &medium, x86_runner::LaunchMode::Headless);
-        attach_multiboot_master_disk(&mut command, &medium, temp_dir.path());
+        attach_fat_master_disk(&mut command, temp_dir.path());
         command
             .arg("-drive")
             .arg(format!(
@@ -114,7 +114,7 @@ impl QemuSession {
             ));
         let mut command =
             x86_runner::qemu_command(arch.boot(), &medium, x86_runner::LaunchMode::Headless);
-        attach_multiboot_master_disk(&mut command, &medium, temp_dir.path());
+        attach_fat_master_disk(&mut command, temp_dir.path());
         if let Some(bytes) = scratch_bytes {
             let scratch = temp_dir.path().join("scratch-disk.img");
             std::fs::write(&scratch, vec![0u8; bytes])
@@ -332,20 +332,14 @@ fn stamp_mbr_entry(image: &mut [u8], slot: usize, type_id: u8, start_lba: u32, s
     entry[12..16].copy_from_slice(&sector_count.to_le_bytes());
 }
 
-fn attach_multiboot_master_disk(
-    command: &mut Command,
-    medium: &x86_runner::BootMedium,
-    temp_dir: &Path,
-) {
-    if let x86_runner::BootMedium::MultibootKernel(_) = medium {
-        let disk = fat_disk::create_boot_disk(temp_dir);
-        command
-            .arg("-drive")
-            .arg(format!(
-                "if=ide,index=0,media=disk,format=raw,file={}",
-                disk.path().display()
-            ));
-    }
+fn attach_fat_master_disk(command: &mut Command, temp_dir: &Path) {
+    let disk = fat_disk::create_boot_disk(temp_dir);
+    command
+        .arg("-drive")
+        .arg(format!(
+            "if=ide,index=0,media=disk,format=raw,file={}",
+            disk.path().display()
+        ));
 }
 
 fn should_keep_temp_dir(value: Option<&OsStr>) -> bool {
