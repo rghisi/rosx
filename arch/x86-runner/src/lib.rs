@@ -196,7 +196,12 @@ pub fn qemu_command(arch: Arch, medium: &BootMedium, mode: LaunchMode) -> Comman
     }
     match medium {
         BootMedium::DiskImage(image) => {
-            command.arg("-drive").arg(format!("format=raw,file={}", image.display()));
+            command
+                .arg("-drive")
+                .arg(format!("if=none,id=rosxboot,format=raw,file={}", image.display()));
+            command
+                .arg("-device")
+                .arg("ide-hd,drive=rosxboot,bus=ide.1,unit=0,bootindex=1");
         }
         BootMedium::MultibootKernel(kernel) => {
             command.arg("-kernel").arg(kernel);
@@ -248,6 +253,32 @@ fn hdd_drive_arg(image: &Path) -> String {
         "if=ide,index=1,media=disk,format=raw,file={}",
         image.display()
     )
+}
+
+pub fn boot_disk_image(kernel_elf: &Path) -> Option<PathBuf> {
+    let kernel_dir = kernel_elf.parent()?.parent()?;
+    let target_dir = kernel_dir.parent()?;
+    let dir_name = kernel_dir.file_name()?;
+    Some(target_dir.join(format!("{}-boot-disk.img", dir_name.to_string_lossy())))
+}
+
+pub fn attach_fat_boot_disk(command: &mut Command, kernel_elf: &Path) {
+    match boot_disk_image(kernel_elf) {
+        Some(image) if image.is_file() => {
+            command.arg("-drive").arg(format!(
+                "if=ide,index=0,media=disk,format=raw,file={}",
+                image.display()
+            ));
+        }
+        Some(image) => eprintln!(
+            "note: FAT boot disk {} not found; run `cargo xtask build` first",
+            image.display()
+        ),
+        None => eprintln!(
+            "note: cannot derive the FAT boot disk path from {}",
+            kernel_elf.display()
+        ),
+    }
 }
 
 pub fn attach_persistent_hdd(command: &mut Command) {
@@ -359,6 +390,62 @@ mod tests {
         assert!(contains_pair(&args, "-cpu", "486"));
         let boot_at = args.iter().position(|arg| arg == "-boot").expect("missing -boot");
         assert_eq!(args[boot_at + 1], "order=d");
+    }
+
+    #[test]
+    fn disk_image_medium_boots_from_the_secondary_bus_with_a_bootindex() {
+        let image = BootMedium::DiskImage(PathBuf::from("/tmp/rosx-x86_64.img"));
+        let args = args_of(&qemu_command(Arch::X86_64, &image, LaunchMode::Headless));
+        assert!(contains_pair(
+            &args,
+            "-drive",
+            "if=none,id=rosxboot,format=raw,file=/tmp/rosx-x86_64.img"
+        ));
+        assert!(contains_pair(
+            &args,
+            "-device",
+            "ide-hd,drive=rosxboot,bus=ide.1,unit=0,bootindex=1"
+        ));
+    }
+
+    #[test]
+    fn boot_disk_image_lives_in_the_target_directory_beside_the_kernel_tree() {
+        let kernel = Path::new("/build/target/rosx/release/rosx");
+        assert_eq!(
+            boot_disk_image(kernel),
+            Some(PathBuf::from("/build/target/rosx-boot-disk.img"))
+        );
+        let kernel32 = Path::new("/build/target/rosx-i486/release/rosx-x86_32");
+        assert_eq!(
+            boot_disk_image(kernel32),
+            Some(PathBuf::from("/build/target/rosx-i486-boot-disk.img"))
+        );
+    }
+
+    #[test]
+    fn attach_fat_boot_disk_attaches_an_existing_image_at_the_primary_master() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let kernel = dir.path().join("target/rosx/release/rosx");
+        std::fs::create_dir_all(kernel.parent().unwrap()).expect("kernel tree");
+        let boot_disk = dir.path().join("target/rosx-boot-disk.img");
+        std::fs::write(&boot_disk, b"mbr").expect("boot disk");
+        let mut command = Command::new("qemu-system-x86_64");
+        attach_fat_boot_disk(&mut command, &kernel);
+        let args = args_of(&command);
+        assert!(contains_pair(
+            &args,
+            "-drive",
+            &format!("if=ide,index=0,media=disk,format=raw,file={}", boot_disk.display())
+        ));
+    }
+
+    #[test]
+    fn attach_fat_boot_disk_skips_a_missing_image() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let kernel = dir.path().join("target/rosx/release/rosx");
+        let mut command = Command::new("qemu-system-x86_64");
+        attach_fat_boot_disk(&mut command, &kernel);
+        assert!(args_of(&command).is_empty());
     }
 
     #[test]
