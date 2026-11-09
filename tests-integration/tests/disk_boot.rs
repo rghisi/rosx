@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tests_integration::arch::Arch;
 use tests_integration::fat_disk::{built_elf, tools_available, FatDisk};
@@ -80,6 +80,40 @@ fn boot_disk_mounts_the_root_and_hands_off_the_disk_shell() {
     assert!(
         listing.contains("data"),
         "the FAT root mount must be writable: {listing}"
+    );
+}
+
+fn built_boot_disk() -> Option<PathBuf> {
+    let image = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("target")
+        .join("rosx-i486-boot-disk.img");
+    image.is_file().then_some(image)
+}
+
+#[test]
+fn the_built_boot_disk_boots_to_the_disk_shell() {
+    if Arch::current() != Arch::X86_32 || !tools_available() {
+        eprintln!("skipped: the built boot disk belongs to the x86_32 flow with mtools");
+        return;
+    }
+    let Some(image) = built_boot_disk() else {
+        eprintln!("skipped: no target/rosx-i486-boot-disk.img, run `cargo xtask build x86_32` first");
+        return;
+    };
+    let mut session = QemuSession::spawn_with_master_disk(&image);
+    session.expect_output("mount ok device=ata0d0p0 dir=/", BOOT_BUDGET);
+    session.expect_output("[INIT] starting /randomd", BOOT_BUDGET);
+    session.expect_output("[INIT] RANDOM ready", BOOT_BUDGET);
+    session.expect_output("[INIT] starting /pong", BOOT_BUDGET);
+    session.expect_output("[INIT] PING ready", BOOT_BUDGET);
+    session.expect_output("[INIT] handing over to /shell", BOOT_BUDGET);
+    session.expect_output("rose>", BOOT_BUDGET);
+
+    let listing = run(&mut session, "ls");
+    assert!(
+        listing.contains("snake") && listing.contains("tetris"),
+        "the built disk carries every app through the root mount: {listing}"
     );
 }
 

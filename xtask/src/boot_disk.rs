@@ -97,7 +97,7 @@ fn mformat_volume(image: &Path, partition_sectors: u32) {
     let mut cmd = Command::new("mformat");
     cmd.arg(partition_index(image));
     cmd.args(["-h", HEADS, "-s", SECTORS_PER_TRACK, "-T", &partition_sectors.to_string()]);
-    cmd.args(["-F", "-v", VOLUME_LABEL]);
+    cmd.args(["-c", "2", "-v", VOLUME_LABEL]);
     run(&mut cmd, "mformat the boot disk FAT16 volume");
 }
 
