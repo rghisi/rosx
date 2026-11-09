@@ -62,6 +62,7 @@ pub struct FileSystem<D: BlockDevice> {
     next_generation: u32,
     free_clusters: Option<u32>,
     chain_epoch: u64,
+    alloc_hint: u32,
 }
 
 impl<D: BlockDevice> FileSystem<D> {
@@ -80,6 +81,7 @@ impl<D: BlockDevice> FileSystem<D> {
             next_generation: 1,
             free_clusters: None,
             chain_epoch: 0,
+            alloc_hint: 2,
         })
     }
 
@@ -294,9 +296,12 @@ impl<D: BlockDevice> FileSystem<D> {
             self.reserve_clusters(shortfall as u32)?;
             let tail = self.live_entry(handle)?.chain.last().copied();
             let appended = match tail {
-                Some(tail) => fat::append_chain(&mut self.device, &self.boot, tail, shortfall as u32)?,
-                None => fat::allocate_chain(&mut self.device, &self.boot, shortfall as u32)?,
+                Some(tail) => {
+                    fat::append_chain(&mut self.device, &self.boot, tail, shortfall as u32, self.alloc_hint)?
+                }
+                None => fat::allocate_chain(&mut self.device, &self.boot, shortfall as u32, self.alloc_hint)?,
             };
+            self.note_allocated(&appended);
             self.chain_epoch += 1;
             let epoch = self.chain_epoch;
             let entry = self.live_entry_mut(handle)?;
@@ -389,6 +394,18 @@ impl<D: BlockDevice> FileSystem<D> {
         u64::from(self.boot.sectors_per_cluster) * u64::from(self.boot.bytes_per_sector)
     }
 
+    fn note_allocated(&mut self, clusters: &[u32]) {
+        if let Some(&top) = clusters.last() {
+            self.alloc_hint = self.alloc_hint.max(top.saturating_add(1));
+        }
+    }
+
+    fn note_freed(&mut self, lowest: Option<u32>) {
+        if let Some(lowest) = lowest {
+            self.alloc_hint = self.alloc_hint.min(lowest);
+        }
+    }
+
     fn allocate_slot(&mut self, location: DirLocation) -> Result<(u64, usize), FsError> {
         loop {
             let sectors = dir::entry_sectors(&mut self.device, &self.boot, location)?;
@@ -408,8 +425,10 @@ impl<D: BlockDevice> FileSystem<D> {
                     let chain = fat::cluster_chain(&mut self.device, &self.boot, head)?;
                     let tail = *chain.last().ok_or(FsError::Corrupt)?;
                     self.reserve_clusters(1)?;
-                    let appended = fat::append_chain(&mut self.device, &self.boot, tail, 1)?;
+                    let appended =
+                        fat::append_chain(&mut self.device, &self.boot, tail, 1, self.alloc_hint)?;
                     fat::zero_clusters(&mut self.device, &self.boot, &appended)?;
+                    self.note_allocated(&appended);
                     self.chain_epoch += 1;
                 }
             }
@@ -573,7 +592,8 @@ impl<D: BlockDevice> FileSystem<D> {
         }
         let freed = self.data_chain(located.entry.first_cluster)?.len() as u32;
         dir::erase_slot(&mut self.device, located.sector, located.offset)?;
-        fat::free_chain(&mut self.device, &self.boot, located.entry.first_cluster)?;
+        let chain = fat::free_chain(&mut self.device, &self.boot, located.entry.first_cluster)?;
+        self.note_freed(chain.lowest);
         self.chain_epoch += 1;
         self.release_clusters(freed)
     }
@@ -591,8 +611,9 @@ impl<D: BlockDevice> FileSystem<D> {
         }
         let (sector, offset) = self.allocate_slot(parent)?;
         self.reserve_clusters(1)?;
-        let mut clusters = fat::allocate_chain(&mut self.device, &self.boot, 1)?;
+        let mut clusters = fat::allocate_chain(&mut self.device, &self.boot, 1, self.alloc_hint)?;
         fat::zero_clusters(&mut self.device, &self.boot, &clusters)?;
+        self.note_allocated(&clusters);
         let cluster = clusters.remove(0);
         self.chain_epoch += 1;
         let slot = dir::make_slot_bytes(folded, ATTR_DIRECTORY, cluster, 0);
@@ -618,7 +639,8 @@ impl<D: BlockDevice> FileSystem<D> {
             return Err(FsError::DirectoryNotEmpty);
         }
         dir::erase_slot(&mut self.device, located.sector, located.offset)?;
-        fat::free_chain(&mut self.device, &self.boot, located.entry.first_cluster)?;
+        let freed = fat::free_chain(&mut self.device, &self.boot, located.entry.first_cluster)?;
+        self.note_freed(freed.lowest);
         self.chain_epoch += 1;
         self.release_clusters(chain.len() as u32)
     }
@@ -977,6 +999,20 @@ mod tests {
         let mut tail = [0u8; 600];
         assert_eq!(Engine::read(&mut fs, handle, 600, &mut tail).expect("tail"), 600);
         assert!(tail.iter().all(|byte| *byte == 0x5A));
+    }
+
+    #[test]
+    fn freed_clusters_sink_back_below_the_watermark() {
+        let mut fs = engine();
+        let first = Engine::create(&mut fs, b"/first").expect("create");
+        Engine::write(&mut fs, first, 0, b"first").expect("write claims the first free cluster");
+        Engine::close(&mut fs, first).expect("close");
+        Engine::remove(&mut fs, b"/notes.txt").expect("remove frees cluster 2 below the watermark");
+        let next = Engine::create(&mut fs, b"/next").expect("create");
+        Engine::write(&mut fs, next, 0, b"reuse").expect("write");
+        Engine::close(&mut fs, next).expect("close");
+        let claimed = &fs.device.bytes[49 * 512..49 * 512 + 5];
+        assert_eq!(claimed, b"reuse");
     }
 
     #[test]
