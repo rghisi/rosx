@@ -61,9 +61,9 @@ fn negative_lines(content: &str) -> Vec<&str> {
 fn shell_waitset_or_composition_roundtrip() {
     let mut session = QemuSession::spawn();
 
-    let mark = session.mark();
     session.expect_output("rose>", READY_TIMEOUT);
 
+    let mark = session.mark();
     session.send_line("waitset");
 
     if let Err(output_tail) =
