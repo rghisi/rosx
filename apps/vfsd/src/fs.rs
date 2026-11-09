@@ -365,9 +365,22 @@ impl VfsStore<ActiveVolume, RemoteWindow> {
         {
             return Err(VfsError::Busy);
         }
-        let mount_point = self.engine.lookup(dir.as_bytes()).map_err(error_map::fs)?;
-        if mount_point.kind() != Kind::Directory {
-            return Err(VfsError::NotDirectory);
+        match self.route(dir)? {
+            Target::Root => {
+                let mount_point = self.engine.lookup(dir.as_bytes()).map_err(error_map::fs)?;
+                if mount_point.kind() != Kind::Directory {
+                    return Err(VfsError::NotDirectory);
+                }
+            }
+            Target::Volume(slot, path) => {
+                let mount_point = self
+                    .volume_mut(slot)?
+                    .lookup(path.as_bytes())
+                    .map_err(error_map::fs)?;
+                if mount_point.kind() != Kind::Directory {
+                    return Err(VfsError::NotDirectory);
+                }
+            }
         }
         let client = Manager::connect().map_err(error_map::block)?;
         let geometry = match client.probe(device) {
@@ -424,17 +437,20 @@ impl<E: Engine, D: BlockDevice> VfsStore<E, D> {
 
     fn route(&self, path: &str) -> Result<Target, VfsError> {
         let body = path.strip_prefix('/').unwrap_or(path);
-        if let Some(slot) = self.mounts.iter().position(|mount| mount.name.is_empty()) {
-            return Ok(Target::Volume(slot, format!("/{body}")));
-        }
         let (head, rest) = match body.split_once('/') {
             Some(split) => split,
             None => (body, ""),
         };
-        match self.mounts.iter().position(|mount| mount.name == head) {
-            Some(slot) => Ok(Target::Volume(slot, format!("/{rest}"))),
-            None if rest.is_empty() => Ok(Target::Root),
-            None => Err(VfsError::NotFound),
+        if let Some(slot) = self.mounts.iter().position(|mount| mount.name == head) {
+            return Ok(Target::Volume(slot, format!("/{rest}")));
+        }
+        if let Some(slot) = self.mounts.iter().position(|mount| mount.name.is_empty()) {
+            return Ok(Target::Volume(slot, format!("/{body}")));
+        }
+        if rest.is_empty() {
+            Ok(Target::Root)
+        } else {
+            Err(VfsError::NotFound)
         }
     }
 
@@ -1321,7 +1337,7 @@ mod tests {
     }
 
     #[test]
-    fn root_mount_captures_every_path_before_the_root_engine() {
+    fn a_root_mount_shadows_the_root_volume_for_unclaimed_paths() {
         let mut fs = fresh_store();
         let shadowed = create(&mut fs, OWNER, "/rom-era.txt");
         fs.write(OWNER, shadowed, 0, b"shadowed").unwrap();
@@ -1344,6 +1360,20 @@ mod tests {
         mount_root_fake(&mut fs);
         assert_eq!(fs.delete("/"), Err(VfsError::NotPermitted));
         assert_eq!(fs.rmdir("/"), Err(VfsError::NotPermitted));
+    }
+
+    #[test]
+    fn a_named_mount_stays_reachable_under_a_root_mount() {
+        let mut fs = fresh_store();
+        mount_root_fake(&mut fs);
+        mount_fake(&mut fs, "disk");
+        let handle = create(&mut fs, OWNER, "/disk/notes.txt");
+        fs.write(OWNER, handle, 0, b"named under root").unwrap();
+        fs.close(OWNER, handle).unwrap();
+        assert_eq!(fs.stat("/disk/notes.txt").unwrap(), (EntityKind::File, 16));
+        assert_eq!(fs.list("/disk").unwrap(), b"notes.txt".to_vec());
+        assert_eq!(fs.list("/").unwrap(), b"disk".to_vec());
+        assert_eq!(fs.stat("/unclaimed.txt"), Err(VfsError::NotFound));
     }
 
     #[test]

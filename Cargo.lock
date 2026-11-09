@@ -780,6 +780,7 @@ dependencies = [
 name = "tests-integration"
 version = "0.1.0"
 dependencies = [
+ "rxpart",
  "tempfile",
  "x86-runner",
 ]

@@ -8,6 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::arch::Arch;
+use crate::fat_disk;
 use crate::kernel_build;
 use crate::monitor::Monitor;
 use crate::output::{self, strip_ansi, SharedOutput};
@@ -20,7 +21,6 @@ const DROP_QUIT_CAP: Duration = Duration::from_secs(5);
 const DROP_REAP_CAP: Duration = Duration::from_secs(5);
 const DROP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SCRATCH_DISK_BYTES: usize = 1024 * 1024;
-const MASTER_DISK_BYTES: usize = 1024 * 1024;
 const MBR_SIGNATURE_OFFSET: usize = 510;
 const MBR_PARTITION_TABLE_OFFSET: usize = 446;
 const MBR_ENTRY_BYTES: usize = 16;
@@ -338,16 +338,12 @@ fn attach_multiboot_master_disk(
     temp_dir: &Path,
 ) {
     if let x86_runner::BootMedium::MultibootKernel(_) = medium {
-        let master = temp_dir.join("primary-master-disk.img");
-        let mut image = vec![0u8; MASTER_DISK_BYTES];
-        image[MBR_SIGNATURE_OFFSET] = 0x55;
-        image[MBR_SIGNATURE_OFFSET + 1] = 0xAA;
-        std::fs::write(&master, image).expect("failed to create primary master disk image");
+        let disk = fat_disk::create_boot_disk(temp_dir);
         command
             .arg("-drive")
             .arg(format!(
                 "if=ide,index=0,media=disk,format=raw,file={}",
-                master.display()
+                disk.path().display()
             ));
     }
 }
