@@ -11,6 +11,46 @@ pub const INIT_ARGV0: &str = "init";
 pub const MAX_PLAN_STEPS: usize = MAX_ARGUMENT_COUNT - 1;
 pub const MAX_PLAN_BYTES: usize = MAX_ARGUMENT_BYTES;
 
+pub const ROM_SOURCE_PREFIX: &str = "rom:";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Program<'a> {
+    Rom(&'a str),
+    Vfs(&'a str),
+    ImplicitRom(&'a str),
+}
+
+impl<'a> Program<'a> {
+    pub fn name(&self) -> &'a str {
+        match self {
+            Program::Rom(name) | Program::ImplicitRom(name) => name,
+            Program::Vfs(path) => path,
+        }
+    }
+}
+
+pub fn parse_program(token: &str) -> Option<Program<'_>> {
+    if token.is_empty() {
+        return None;
+    }
+    if let Some(name) = token.strip_prefix(ROM_SOURCE_PREFIX) {
+        if name.is_empty() || name.contains('/') || name.contains(':') {
+            return None;
+        }
+        return Some(Program::Rom(name));
+    }
+    if let Some(path) = token.strip_prefix('/') {
+        if path.is_empty() {
+            return None;
+        }
+        return Some(Program::Vfs(token));
+    }
+    if token.contains('/') || token.contains(':') {
+        return None;
+    }
+    Some(Program::ImplicitRom(token))
+}
+
 #[derive(Debug, Default)]
 pub struct BootPlan {
     steps: Vec<String>,
@@ -72,6 +112,11 @@ impl BootPlan {
                 "a boot plan token must not contain spaces: {token}"
             );
         }
+        let name = tokens[1];
+        assert!(
+            parse_program(name).is_some(),
+            "a boot plan program must name a source: rom:<name>, /<path>, or a bare name: {name}"
+        );
         assert!(
             self.steps.len() < MAX_PLAN_STEPS,
             "a boot plan must not exceed {MAX_PLAN_STEPS} steps"
@@ -102,10 +147,10 @@ pub fn parse_step(line: &str) -> Result<Step<'_>, PlanError> {
     let verb = tokens.next().unwrap_or("");
     match verb {
         VERB_SERVICE => {
-            let name = tokens.next().ok_or(PlanError::Malformed)?;
+            let name = parse_program_name(&mut tokens)?;
             let probe = tokens.next().ok_or(PlanError::Malformed)?;
             let rest = tokens.count();
-            if name.is_empty() || probe.is_empty() || rest != 0 {
+            if probe.is_empty() || rest != 0 {
                 return Err(PlanError::Malformed);
             }
             Ok(Step::Service { name, probe })
@@ -122,13 +167,20 @@ pub fn parse_step(line: &str) -> Result<Step<'_>, PlanError> {
     }
 }
 
+fn parse_program_name<'a>(
+    tokens: &mut core::str::Split<'a, char>,
+) -> Result<&'a str, PlanError> {
+    let name = tokens.next().ok_or(PlanError::Malformed)?;
+    if parse_program(name).is_none() {
+        return Err(PlanError::Malformed);
+    }
+    Ok(name)
+}
+
 fn parse_name_and_arguments<'a>(
     tokens: &mut core::str::Split<'a, char>,
 ) -> Result<(&'a str, Vec<&'a str>), PlanError> {
-    let name = tokens.next().ok_or(PlanError::Malformed)?;
-    if name.is_empty() {
-        return Err(PlanError::Malformed);
-    }
+    let name = parse_program_name(tokens)?;
     let mut arguments: Vec<&'a str> = Vec::new();
     for token in tokens {
         if token.is_empty() {
@@ -279,5 +331,77 @@ mod tests {
         assert_eq!(parse_step("exec"), Err(PlanError::Malformed));
         assert_eq!(parse_step("run mount "), Err(PlanError::Malformed));
         assert_eq!(parse_step("run mount  hdd"), Err(PlanError::Malformed));
+    }
+
+    #[test]
+    fn program_source_recognizes_all_three_forms() {
+        assert_eq!(parse_program("rom:vfsd"), Some(Program::Rom("vfsd")));
+        assert_eq!(parse_program("/shell"), Some(Program::Vfs("/shell")));
+        assert_eq!(parse_program("vfsd"), Some(Program::ImplicitRom("vfsd")));
+    }
+
+    #[test]
+    fn program_name_gives_the_source_stripped_identity() {
+        assert_eq!(parse_program("rom:vfsd").unwrap().name(), "vfsd");
+        assert_eq!(parse_program("/shell").unwrap().name(), "/shell");
+        assert_eq!(parse_program("shell").unwrap().name(), "shell");
+    }
+
+    #[test]
+    fn program_source_refuses_tokens_that_name_no_coherent_source() {
+        for token in [
+            "", "rom:", "rom:/vfsd", "rom:at/ad", "rom:disk:1", "/", "hdd/shell", "x:y",
+        ] {
+            assert_eq!(parse_program(token), None, "{token} names no program");
+        }
+    }
+
+    #[test]
+    fn sourced_program_names_survive_the_encode_parse_round_trip() {
+        let plan = BootPlan::new()
+            .service("rom:vfsd", "VFS")
+            .run("rom:mount", &["ata0d0p0", "/"])
+            .exec("/shell", &[]);
+        let blob = plan.encode();
+        let arguments = step_lines(&blob);
+        assert_eq!(
+            parse_step(arguments[1]),
+            Ok(Step::Service { name: "rom:vfsd", probe: "VFS" })
+        );
+        assert_eq!(
+            parse_step(arguments[2]),
+            Ok(Step::Run { name: "rom:mount", arguments: vec!["ata0d0p0", "/"] })
+        );
+        assert_eq!(
+            parse_step(arguments[3]),
+            Ok(Step::Exec { name: "/shell", arguments: vec![] })
+        );
+    }
+
+    #[test]
+    fn bare_names_decode_as_implicit_rom_programs() {
+        let Ok(Step::Exec { name, .. }) = parse_step("exec shell") else {
+            panic!("bare names stay valid implicit-rom steps");
+        };
+        assert_eq!(parse_program(name), Some(Program::ImplicitRom("shell")));
+    }
+
+    #[test]
+    fn parse_rejects_a_step_whose_program_token_names_no_source() {
+        assert_eq!(parse_step("run /"), Err(PlanError::Malformed));
+        assert_eq!(parse_step("service rom: VFS"), Err(PlanError::Malformed));
+        assert_eq!(parse_step("exec a/b"), Err(PlanError::Malformed));
+    }
+
+    #[test]
+    #[should_panic(expected = "must name a source")]
+    fn the_builder_refuses_a_rom_prefix_without_a_name() {
+        BootPlan::new().service("rom:", "VFS");
+    }
+
+    #[test]
+    #[should_panic(expected = "must name a source")]
+    fn the_builder_refuses_a_bare_slash_as_a_program() {
+        BootPlan::new().exec("/", &[]);
     }
 }

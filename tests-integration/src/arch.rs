@@ -63,6 +63,12 @@ impl Arch {
         }
     }
 
+    pub fn user_dir_name(self) -> &'static str {
+        match self {
+            Arch::X86_64 => "rosx-user",
+            Arch::X86_32 => "rosx-i486-user",
+        }
+    }
 }
 
 pub fn not_ported_to_x86_32() -> bool {

@@ -20,6 +20,7 @@ pub enum ClientError {
     NoConnection,
     Data(DataError),
     Protocol,
+    Truncated,
 }
 
 fn data_token(handle: &UserDataHandle) -> u32 {
@@ -118,6 +119,30 @@ impl Vfs {
             Reply::Err(error) => Err(ClientError::Vfs(error)),
             _ => Err(ClientError::Protocol),
         }
+    }
+
+    pub fn read_whole(&self, name: &str) -> Result<Vec<u8>, ClientError> {
+        let entity = self.stat(name)?;
+        let mut file = self.open(name, 0)?;
+        let mut image = Vec::new();
+        let mut staging = [0u8; DATA_READ_CHUNK_BYTES];
+        while (image.len() as u64) < entity.size {
+            let wanted =
+                (entity.size - image.len() as u64).min(DATA_READ_CHUNK_BYTES as u64) as usize;
+            match file.read(&mut staging[..wanted]) {
+                Ok(0) => {
+                    let _ = file.close();
+                    return Err(ClientError::Truncated);
+                }
+                Ok(count) => image.extend_from_slice(&staging[..count]),
+                Err(error) => {
+                    let _ = file.close();
+                    return Err(error);
+                }
+            }
+        }
+        file.close()?;
+        Ok(image)
     }
 
     pub fn list(&self, path: &str) -> Result<Vec<String>, ClientError> {

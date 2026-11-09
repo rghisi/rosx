@@ -11,6 +11,7 @@ pub struct ArchSpec {
     pub kernel_binary: &'static str,
     pub user_dir_name: &'static str,
     pub boot: x86_runner::Arch,
+    pub fat_boot_disk: bool,
 }
 
 pub static X86_64: ArchSpec = ArchSpec {
@@ -22,6 +23,7 @@ pub static X86_64: ArchSpec = ArchSpec {
     kernel_binary: "rosx",
     user_dir_name: "rosx-user",
     boot: x86_runner::Arch::X86_64,
+    fat_boot_disk: false,
 };
 
 pub static X86_32: ArchSpec = ArchSpec {
@@ -33,6 +35,7 @@ pub static X86_32: ArchSpec = ArchSpec {
     kernel_binary: "rosx-x86_32",
     user_dir_name: "rosx-i486-user",
     boot: x86_runner::Arch::X86_32,
+    fat_boot_disk: true,
 };
 
 pub static ALL: [&ArchSpec; 2] = [&X86_64, &X86_32];

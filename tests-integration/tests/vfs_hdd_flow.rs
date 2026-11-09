@@ -1,4 +1,5 @@
 use std::time::Duration;
+use tests_integration::arch::Arch;
 use tests_integration::qemu::QemuSession;
 
 const BOOT_BUDGET: Duration = Duration::from_secs(90);
@@ -36,10 +37,18 @@ fn register_format_and_carve_directories_on_the_hard_disk_volume() {
 
         run(&mut session, "mkdir /hdd", "mkdir ok /hdd");
 
-        run(&mut session, "attach", "no block devices");
+        if Arch::current() == Arch::X86_64 {
+            run(&mut session, "attach", "no block devices");
 
-        let reply = run(&mut session, "mount ata0d1 /hdd", "mount failed: Vfs(NotFound)");
-        assert!(reply.contains("NotFound"), "no provider registered yet: {reply}");
+            let reply = run(&mut session, "mount ata0d1 /hdd", "mount failed: Vfs(NotFound)");
+            assert!(reply.contains("NotFound"), "no provider registered yet: {reply}");
+        } else {
+            let listing = run(&mut session, "attach", "ata0d1");
+            assert!(
+                listing.contains("ata0d1") && listing.contains("102400x512"),
+                "the x86_32 boot plan registers both drives before the shell: {listing}"
+            );
+        }
 
         let listing = run(&mut session, "attach ATA", "attach registered ATA");
         assert!(listing.contains("ata0d1"), "the drive must appear: {listing}");
