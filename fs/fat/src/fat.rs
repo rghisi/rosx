@@ -258,6 +258,23 @@ fn scan_free_clusters<D: BlockDevice>(
     Err(FsError::NoSpace)
 }
 
+pub fn zero_clusters<D: BlockDevice>(
+    device: &mut D,
+    boot: &BootSector,
+    clusters: &[u32],
+) -> Result<(), FsError> {
+    let zero_block = [0u8; SECTOR_BYTES as usize];
+    for cluster in clusters {
+        let first = boot
+            .first_sector_of_cluster(*cluster)
+            .ok_or(FsError::Corrupt)?;
+        for sector in first..first + u64::from(boot.sectors_per_cluster) {
+            device.write_block(sector, &zero_block).map_err(FsError::Io)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn allocate_chain<D: BlockDevice>(
     device: &mut D,
     boot: &BootSector,
@@ -267,15 +284,6 @@ pub fn allocate_chain<D: BlockDevice>(
         return Err(FsError::InvalidPath);
     }
     let free = scan_free_clusters(device, boot, count)?;
-    let zero_block = [0u8; SECTOR_BYTES as usize];
-    for cluster in &free {
-        let first = boot
-            .first_sector_of_cluster(*cluster)
-            .ok_or(FsError::Corrupt)?;
-        for sector in first..first + u64::from(boot.sectors_per_cluster) {
-            device.write_block(sector, &zero_block).map_err(FsError::Io)?;
-        }
-    }
     let end = chain_end(boot);
     for index in 0..free.len() {
         let next = if index + 1 == free.len() {
@@ -295,15 +303,6 @@ pub fn append_chain<D: BlockDevice>(
     count: u32,
 ) -> Result<Vec<u32>, FsError> {
     let free = scan_free_clusters(device, boot, count)?;
-    let zero_block = [0u8; SECTOR_BYTES as usize];
-    for cluster in &free {
-        let first = boot
-            .first_sector_of_cluster(*cluster)
-            .ok_or(FsError::Corrupt)?;
-        for sector in first..first + u64::from(boot.sectors_per_cluster) {
-            device.write_block(sector, &zero_block).map_err(FsError::Io)?;
-        }
-    }
     write_fat_entry(device, boot, tail_cluster, free[0])?;
     let end = chain_end(boot);
     for index in 0..free.len() {
@@ -769,12 +768,9 @@ mod tests {
     }
 
     #[test]
-    fn allocate_chain_links_zeroes_and_refuses_exhaustion() {
+    fn allocate_chain_links_and_refuses_exhaustion() {
         let boot = fat16_boot();
         let mut device = TestDevice::new(boot.total_sectors);
-        for byte in device.bytes[49 * 512..52 * 512].iter_mut() {
-            *byte = 0xAA;
-        }
         assert_eq!(allocate_chain(&mut device, &boot, 3).expect("chain"), vec![2, 3, 4]);
         assert_eq!(fat_entry_value(&device, 2), 3);
         assert_eq!(fat_entry_value(&device, 3), 4);
@@ -785,11 +781,21 @@ mod tests {
             u16::from_le_bytes([device.bytes[mirror], device.bytes[mirror + 1]]),
             0xFFF8
         );
-        assert!(device.bytes[49 * 512..52 * 512].iter().all(|byte| *byte == 0));
 
         let fat_before = device.bytes[512..512 + 8 * 512].to_vec();
         assert_eq!(allocate_chain(&mut device, &boot, 3_000), Err(FsError::NoSpace));
         assert_eq!(device.bytes[512..512 + 8 * 512], fat_before[..]);
+    }
+
+    #[test]
+    fn zero_clusters_clears_every_sector_of_each() {
+        let boot = fat16_boot();
+        let mut device = TestDevice::new(boot.total_sectors);
+        for byte in device.bytes[49 * 512..52 * 512].iter_mut() {
+            *byte = 0xAA;
+        }
+        zero_clusters(&mut device, &boot, &[2, 3, 4]).expect("zeroed");
+        assert!(device.bytes[49 * 512..52 * 512].iter().all(|byte| *byte == 0));
     }
 
     #[test]

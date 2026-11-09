@@ -203,6 +203,39 @@ impl<D: BlockDevice> FileSystem<D> {
         Ok(cluster)
     }
 
+    fn zero_gap(&mut self, handle: FatHandle, from: u64, to: u64) -> Result<(), FsError> {
+        let cluster_bytes = self.cluster_bytes();
+        let zero_block = [0u8; 512];
+        let mut byte = from;
+        while byte < to {
+            let cluster = self.chain_cluster(handle, (byte / cluster_bytes) as usize)?;
+            let first_sector = self
+                .boot
+                .first_sector_of_cluster(cluster)
+                .ok_or(FsError::Corrupt)?;
+            let in_cluster = (byte % cluster_bytes) as usize;
+            let sector = first_sector + (in_cluster / 512) as u64;
+            let sector_offset = in_cluster % 512;
+            let chunk = (512 - sector_offset).min((to - byte) as usize);
+            if sector_offset != 0 || chunk != 512 {
+                let mut block = [0u8; 512];
+                self.device
+                    .read_block(sector, &mut block)
+                    .map_err(FsError::Io)?;
+                block[sector_offset..sector_offset + chunk].fill(0);
+                self.device
+                    .write_block(sector, &block)
+                    .map_err(FsError::Io)?;
+            } else {
+                self.device
+                    .write_block(sector, &zero_block)
+                    .map_err(FsError::Io)?;
+            }
+            byte += chunk as u64;
+        }
+        Ok(())
+    }
+
     fn reseed_cursor(&mut self, handle: FatHandle) -> Result<(), FsError> {
         let epoch = self.chain_epoch;
         let entry = self.live_entry_mut(handle)?;
@@ -375,7 +408,8 @@ impl<D: BlockDevice> FileSystem<D> {
                     let chain = fat::cluster_chain(&mut self.device, &self.boot, head)?;
                     let tail = *chain.last().ok_or(FsError::Corrupt)?;
                     self.reserve_clusters(1)?;
-                    fat::append_chain(&mut self.device, &self.boot, tail, 1)?;
+                    let appended = fat::append_chain(&mut self.device, &self.boot, tail, 1)?;
+                    fat::zero_clusters(&mut self.device, &self.boot, &appended)?;
                     self.chain_epoch += 1;
                 }
             }
@@ -465,7 +499,7 @@ impl<D: BlockDevice> FileSystem<D> {
         if end > u64::from(u32::MAX) {
             return Err(FsError::FileTooLarge);
         }
-        let (slot_sector, slot_offset, slot_name, attrs, slot_first_cluster) = {
+        let (slot_sector, slot_offset, slot_name, attrs, slot_first_cluster, old_size) = {
             let entry = self.live_entry(handle)?;
             (
                 entry.slot_sector,
@@ -473,6 +507,7 @@ impl<D: BlockDevice> FileSystem<D> {
                 entry.slot_name,
                 entry.attrs,
                 entry.first_cluster,
+                entry.size,
             )
         };
         if !dir::slot_still_holds(
@@ -486,6 +521,9 @@ impl<D: BlockDevice> FileSystem<D> {
         }
         let cluster_bytes = self.cluster_bytes();
         self.grow_cursor_to(handle, end.div_ceil(cluster_bytes) as usize)?;
+        if offset > old_size {
+            self.zero_gap(handle, old_size, offset)?;
+        }
         let first_cluster = self.live_entry(handle)?.first_cluster;
         let mut written = 0usize;
         let mut block = [0u8; 512];
@@ -512,7 +550,7 @@ impl<D: BlockDevice> FileSystem<D> {
                 .map_err(FsError::Io)?;
             written += chunk;
         }
-        let size = self.live_entry(handle)?.size.max(end);
+        let size = old_size.max(end);
         let mut name_parts = ([0u8; 8], [0u8; 3]);
         name_parts.0.copy_from_slice(&slot_name[..8]);
         name_parts.1.copy_from_slice(&slot_name[8..11]);
@@ -553,7 +591,9 @@ impl<D: BlockDevice> FileSystem<D> {
         }
         let (sector, offset) = self.allocate_slot(parent)?;
         self.reserve_clusters(1)?;
-        let cluster = fat::allocate_chain(&mut self.device, &self.boot, 1)?.remove(0);
+        let mut clusters = fat::allocate_chain(&mut self.device, &self.boot, 1)?;
+        fat::zero_clusters(&mut self.device, &self.boot, &clusters)?;
+        let cluster = clusters.remove(0);
         self.chain_epoch += 1;
         let slot = dir::make_slot_bytes(folded, ATTR_DIRECTORY, cluster, 0);
         dir::write_slot_bytes(&mut self.device, sector, offset, &slot)?;
@@ -937,6 +977,17 @@ mod tests {
         let mut tail = [0u8; 600];
         assert_eq!(Engine::read(&mut fs, handle, 600, &mut tail).expect("tail"), 600);
         assert!(tail.iter().all(|byte| *byte == 0x5A));
+    }
+
+    #[test]
+    fn a_gap_inside_one_sector_zero_fills_on_write() {
+        let mut fs = engine();
+        let handle = Engine::create(&mut fs, b"/stitch").expect("create");
+        Engine::write(&mut fs, handle, 0, b"ab").expect("write head");
+        Engine::write(&mut fs, handle, 500, b"cd").expect("write stitch");
+        let mut gap = [0xEEu8; 498];
+        assert_eq!(Engine::read(&mut fs, handle, 2, &mut gap).expect("gap"), 498);
+        assert!(gap.iter().all(|byte| *byte == 0));
     }
 
     #[test]
