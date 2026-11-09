@@ -1,6 +1,7 @@
 # rxfat cluster-chain read path — fixing the #149 integration-time regression
 
-> **Status:** Proposed. Written 2026-11-09 at worktree `curious-tiger`, HEAD `1df0dca`.
+> **Status:** Implemented on this branch (`aded5cc..faab9bb`, four commits) as Steps 1–5 below.
+> Written 2026-11-09 at worktree `curious-tiger`, HEAD `1df0dca`.
 > **Goal:** remove the quadratic cluster-chain walk in `rxfat`'s read path so the x86_32
 > integration suite returns to (and stays under) its pre-#147 runtime, while keeping every
 > session disk-booting from the FAT volume — i.e. fix the engine, not the scenario.
@@ -171,8 +172,10 @@ cursors. No counter exists on read-only mounts' paths — reads alone never re-s
 `cargo test -p rxfat` · `cargo test -p kernel -- --test-threads=1` (untouched, cheap) ·
 `cargo xtask build x86_32` + `cargo xtask build` · boot trace
 (`ROSX_ARCH=x86_32 … cargo test -p tests-integration --test measure_boot -- --ignored`) ·
-both integration suites `-- --test-threads=1` · `cargo xtask check-isa x86_32` (rxfat rides
-into user ELFs).
+both integration suites `-- --test-threads=1` with `ROSX_KERNEL_ELF` pointed at the
+release kernel (unsetting it makes `kernel_build` fall back to a **dev-profile** kernel and
+inflates the totals ~3x - a measured trap, not a regression) · `cargo xtask check-isa
+x86_32` (rxfat rides into user ELFs).
 
 **Expected landing point** (prototype-measured): boot ≈2.5–3.0 s vs shipped 9.7 s;
 `boot_and_shell` ≈8.6–11.9 s vs 48.5; `exit_status` ≈19.7–28.4 s vs 108.7; CI x86_32 suite
@@ -203,24 +206,53 @@ disk-boot design, paid once per session at ~2.5 s instead of ~9.7 s.
    link anywhere; lazy fails the read that reaches it. Rationale: errors surface where they
    matter; `stat` and partial reads of long files no longer pay for (or trip on) untouched
    tails. The `check`-style full validation belongs to fsck territory, and `rxfat` has none
-   today either way.
-2. **Chain freshness across handles becomes explicit** (the epoch) instead of implicit (the
-   per-read re-walk). The risk of *forgetting* a bump site is real — mitigated by making
-   `write_fat_entry` the only FAT-entry writer (it already is; grep-verified) and by the
-   two-handle test in Step 5.
+   today either way. **[O verified]** `a_chain_hole_surfaces_on_the_read_that_touches_it`.
+2. **Chain freshness becomes the epoch's, and it means *resolve against the current FAT*.**
+   The old per-read re-walk observed the FAT as it is now on every read; the re-seeded cursor
+   matches that exactly. One correction to the intuition in this plan's first draft: for a
+   remove-plus-realloc under an open handle, "faithful to the current FAT" is *not*
+   `Corrupt` - if the successor's chain is valid at the offsets the stale reader asks for,
+   both the old engine and the epoch re-seed serve the successor's bytes (the file the
+   handle opened no longer exists; there is no correct answer at that boundary). The epoch's
+   job is refusing to follow *dead links* the old walk would have refused - diverging from a
+   hypothetical epoch-less cache in both directions. **[O verified]**
+   `a_stale_cursor_resolves_against_the_current_fat`.
 3. **`OpenEntry.size`/`first_cluster` remain open-time snapshots** (unchanged hazard today);
    the epoch does not pretend to fix snapshot staleness of the dir entry, only of the chain.
-4. The prototype's interim Step 2 (clone-and-read cached chain) has a stale-second-handle gap
-   the epoch closes; do not ship Step 2 without Step 4 unless accepted as a documented
-   interim in one release — it is exactly the trade the old re-walk-per-read avoided.
+4. Step 2 was landed as its own commit but is transient by design - the cursor (Step 3) and
+   the epoch (Step 4) ship in the same branch, so the interim stale-second-handle gap of the
+   clone-and-read shape never reaches `main`.
 
-## 6. Prototype evidence (this investigation)
+## 6. Implementation record (this branch)
 
-Interim Steps 1–2 + memo, uncommitted, 54 lines across `fs/fat/src/{file,fat,volume}.rs`:
-boot to prompt 2.5 s; `boot_and_shell` 8.55 s; `exit_status` 19.68 s; x86_32 suite 176.0 s
-and x86_64 suite 182.1 s, 0 failures. One unit test (`chain_corruption_surfaces_from_reads`)
-fails by the §5.1 semantics change and is reshaped in Step 5. Reproduction recipe: boot
-`target/rosx-i486/release/rosx-x86_32` with `target/rosx-i486-boot-disk.img` at
-`if=ide,index=0`, `-cpu 486`, timestamped `-debugcon stdio`; model check:
-`shell` 58,064 B → 114 clusters × 16 chain-walking calls + 114 data ≈ 1,938 sector fetches
-≈ 4.9 s at 2.5 ms/fetch.
+Four commits, all measured on this machine (QEMU/KVM, `-cpu 486`) after the final tree:
+
+| metric | shipped #149 | implemented |
+|---|---|---|
+| boot to `rose>` | 9.7 s | **2.6 s** **[O]** |
+| `cargo test -p rxfat` | 121 + 5 | 125 + 5, 0 failed **[O]** |
+| `cargo xtask test --skip-integration` | - | 47/47 binaries green **[O]** |
+| x86_32 integration suite (local, release kernel) | - | 183.2 s, 69 passed, 0 failed **[O]** |
+| x86_64 integration suite (local, release kernel) | - | 184.7 s, 69 passed, 0 failed **[O]** |
+
+- `aded5cc` Step 1: `next_cluster` takes a call-scoped `FatSectorMemo`; `cluster_chain`
+  walks with it; `TestDevice` gains `read_log`; `a_long_chain_walk_reads_each_fat_sector_once`
+  pins 300 links to 2 sector reads.
+- `09708be` Step 2 (transient): `read_file` takes `chain: &[u32]`; `read` passes the
+  open-cached chain; `chain_corruption_surfaces_from_reads` becomes
+  `a_chain_shorter_than_the_size_is_corrupt` (hole-in-FAT is no longer `read_file`'s view).
+- `9626d4d` Steps 3-4: `OpenEntry { chain: prefix, tail, epoch }`, `chain_epoch` on
+  `FileSystem` bumped at the five FAT-link mutation sites (`allocate_slot` append, `write`
+  grow, `mkdir` allocate, `remove`/`rmdir` free), `open` walks nothing, `write` extends the
+  cursor from the vectors `allocate_chain`/`append_chain` now return (their full re-walk is
+  gone), `OpenEntry.parent` dropped (dead once `write` stopped cloning the entry).
+- `faab9bb` Step 5: `a_chain_hole_surfaces_on_the_read_that_touches_it`,
+  `opening_and_reading_reach_the_fat_only_for_the_clusters_served` (open: 0 FAT reads;
+  whole-file read: 1 FAT sector + 2 data sectors; cached-prefix read: 0 FAT reads),
+  `a_stale_cursor_resolves_against_the_current_fat`.
+
+Reproduction recipe: boot `target/rosx-i486/release/rosx-x86_32` with
+`target/rosx-i486-boot-disk.img` at `if=ide,index=0`, `-cpu 486`, timestamped
+`-debugcon stdio`; model check: `shell` 58,064 B gives 114 clusters x 16 chain-walking calls
++ 114 data = 1,938 sector fetches (4.9 s at 2.5 ms/fetch), against 115 fetches after this
+branch.
