@@ -1,6 +1,7 @@
 # x86_64 Boot-from-Disk Parity — FAT main volume, slim ROM, identical init plan
 
-> **Status:** Proposed. Written 2026-11-09 at worktree `quiet-cactus`, HEAD `1df0dca`.
+> **Status:** Executed 2026-11-09 on branch `x86_64-boot-from-disk` (milestones M1–M5 below,
+> execution ledger in §6). Written 2026-11-09 at worktree `quiet-cactus`, HEAD `1df0dca`.
 > **Goal:** make x86_64 boot and use the disk volume the way x86_32 does, as close as the two
 > kernel-loading mechanisms allow: the main disk is a FAT volume carrying every user app at `/`
 > plus `/boot/kernel.elf` + `/boot/rom.img`; the x86_64 ROM roster shrinks to the same
@@ -121,16 +122,14 @@
   the carrier disk does not depend on it being drive 0x80 (consistent with F7).
 - **O4 [O]** The current x86_64 stack builds clean on this tree (`cargo xtask build x86_64`).
 
-### Unverified — routed to milestones
+### Unverified — resolved during execution
 
-- **U1** Every x86_64 integration suite passes root-mounted on the FAT master (the x86_32
-  suite already runs this exact posture; per-suite confirmation is M4's job). → M4
-- **U2** `mformat` of the 64 MiB x86_64 recipe behaves identically (same `boot_disk.rs` code
-  path x86_32 runs daily; expected, but M2 measures it). → M2
-- **U3** The no-disk fallback: booting x86_64 with no disk at index 0 (plain `cargo run -p rosx`
-  without a prior `cargo xtask build`) logs the mount/services failures and still lands on
-  `rom:shell` (x86_32 semantics F2 + the documented log-and-continue policy; must be observed
-  on x86_64). → M3 verification
+- **U1** RESOLVED (M4): every x86_64 integration suite passes root-mounted on the FAT master
+  (28/28 green; the only change was retiring a stale arch-fork in `vfs_hdd_flow` — see §6). → §6
+- **U2** RESOLVED (M2): `mformat` of the x86_64 64 MiB recipe produced the exact layout
+  (`mdir` shows the 31 apps at root, `kernel.elf` + `rom.img` under `/boot`). → §6
+- **U3** RESOLVED (M3): no-disk boot logs the mount/service failures and lands on the ROM shell
+  with the bootstrap-eight `ls /`. → §6
 
 ---
 
@@ -285,3 +284,49 @@ services log-and-continue and the plan's final `exec rom:shell` lands on the ROM
 - **The carrier becoming OS-invisible** (F6) is a feature for the namespace but removes any
   diagnostic path to the carrier from inside the guest. Accepted: nobody reads the carrier from
   the guest today except through the footgun slices this plan removes.
+
+---
+
+## 6. Execution ledger (2026-11-09, branch `x86_64-boot-from-disk`, QEMU 10.2.1)
+
+Commits, in milestone order:
+
+| Commit | Milestone | Change |
+|--------|-----------|--------|
+| `42b2086` | M1 | Carrier on `bus=ide.1,unit=0,bootindex=1`; `boot_disk_image` + `attach_fat_boot_disk`; runner `main.rs` wires it; 4 new unit tests (17 green) |
+| `d073ba2` | M2 | x86_64 `fat_boot_disk: true`, `rom_apps: &BOOTSTRAP_APPS`; `launch()` attaches at `index=0` on the flag |
+| `d50f1a7` | M3 | x86_64 boot plan mirrors x86_32 token-for-token |
+| `3d985b3` | M4 | Harness attaches the full-apps FAT master for both media (`attach_fat_master_disk`); retires a stale `vfs_hdd_flow` arch-fork |
+| `2d7bca6` | M5 | CI mtools + `target/rosx-boot-disk.img` upload; AGENTS.md; `debug-qemu.sh` aligned |
+
+Verification results (the §4 ledger):
+
+- **V1** `cargo test -p x86-runner` → 17 passed, 0 failed.
+- **V2** `cargo test` on the shared crates (kernel, rxfs, rxfat, rxpart, fs-core, x86-runner) →
+  402 + 121 + … passed, 0 failed.
+- **V3** `cargo xtask build x86_64` → `target/rosx-boot-disk.img`; `mdir ::/` lists the 31 app
+  ELFs, `mdir ::/boot` lists `kernel.elf` + `rom.img` (**U2**).
+- **V4** Headless boot: `[INIT] boot plan of 12 steps` → atad/blockd up, `mount ok
+  device=ata0d0p0 dir=/`, `/randomd` `/echo` `/pong` `[INIT] … ready` from disk, `rose>`.
+- **V5** Shell `attach` → `ata0d0p0` (type 06, clean) + `ata0d1`; **no** `ata0d0p1/p2` — the
+  footgun is gone.
+- **V6** `ls /` lists every app ELF; `ls /boot` → `kernel.elf  rom.img`; the disk shell runs.
+- **V7** No-disk boot → falls through to the ROM shell; `ls /` shows the bootstrap eight
+  (**U3**).
+- **V8** `cargo test -p tests-integration -- --test-threads=1` (x86_64) → all suites green after
+  M4 (**U1**). One test, `vfs_hdd_flow`, carried an x86_64-only branch asserting an *empty*
+  namespace before registration (the old all-ROM plan's world); its x86_32 branch already
+  documented the unified truth ("the boot plan registers both drives before the shell"), so the
+  fork collapsed to the x86_32 behavior. Green after the change.
+- **V9** `ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1` → 30 `test
+  result: ok`, exit 0 — no x86_32 regression.
+- **V10** `cargo xtask build x86_32` → clean, writes its own FAT boot disk.
+
+Not covered by the original milestones but changed for consistency (both in `2d7bca6`):
+
+- `arch/x86_64/debug-qemu.sh` (and the `start-qemu-background.sh` / `ensure-qemu-running.sh`
+  family) launched the old primary-master, no-FAT-disk topology; updated to the secondary-bus
+  carrier + attach-if-present FAT disk so debugging matches the shipping launch.
+- Both CI **Build Kernel (x86_64)** jobs gained the mtools install (`create_boot_disk` now runs
+  there) and upload `target/rosx-boot-disk.img` alongside the carrier image.
+
