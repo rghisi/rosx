@@ -92,47 +92,111 @@ fn classify_entry(fat_type: FatType, value: u32) -> Result<ClusterNext, FsError>
 pub const FSINFO_FREE_COUNT_OFFSET: usize = 0x1E8;
 const FSINFO_BACKUP_DISTANCE: u64 = 13;
 
+struct CopyCache {
+    sector: Option<u64>,
+    block: [u8; SECTOR_BYTES as usize],
+}
+
+pub struct FatEditor<'a, D: BlockDevice> {
+    device: &'a mut D,
+    boot: &'a BootSector,
+    caches: Vec<CopyCache>,
+}
+
+impl<'a, D: BlockDevice> FatEditor<'a, D> {
+    pub fn new(device: &'a mut D, boot: &'a BootSector) -> Self {
+        Self {
+            device,
+            boot,
+            caches: (0..boot.fat_count)
+                .map(|_| CopyCache {
+                    sector: None,
+                    block: [0u8; SECTOR_BYTES as usize],
+                })
+                .collect(),
+        }
+    }
+
+    pub fn patch(&mut self, cluster: u32, value: u32) -> Result<(), FsError> {
+        if cluster < 2 || cluster > self.boot.cluster_count + 1 {
+            return Err(FsError::Corrupt);
+        }
+        let width = match self.boot.fat_type {
+            FatType::Fat12 => return Err(FsError::Unsupported),
+            FatType::Fat16 => 2u64,
+            FatType::Fat32 => 4u64,
+        };
+        let entry_bytes = u64::from(cluster) * width;
+        let fat_sector = entry_bytes / u64::from(SECTOR_BYTES);
+        let offset = (entry_bytes % u64::from(SECTOR_BYTES)) as usize;
+        for (index, copy) in (0..self.boot.fat_count).enumerate() {
+            let sector =
+                self.boot.reserved_sectors + u64::from(copy) * self.boot.fat_sectors + fat_sector;
+            self.patch_copy(index, sector, offset, value, self.boot.fat_type)?;
+        }
+        Ok(())
+    }
+
+    fn patch_copy(
+        &mut self,
+        cache_index: usize,
+        sector: u64,
+        offset: usize,
+        value: u32,
+        fat_type: FatType,
+    ) -> Result<(), FsError> {
+        let Self { device, caches, .. } = self;
+        let cache = &mut caches[cache_index];
+        if cache.sector != Some(sector) {
+            if let Some(dirty) = cache.sector.take() {
+                device.write_block(dirty, &cache.block).map_err(FsError::Io)?;
+            }
+            device.read_block(sector, &mut cache.block).map_err(FsError::Io)?;
+            cache.sector = Some(sector);
+        }
+        match fat_type {
+            FatType::Fat12 => return Err(FsError::Unsupported),
+            FatType::Fat16 => {
+                cache.block[offset..offset + 2].copy_from_slice(&(value as u16).to_le_bytes());
+            }
+            FatType::Fat32 => {
+                let existing = u32::from_le_bytes([
+                    cache.block[offset],
+                    cache.block[offset + 1],
+                    cache.block[offset + 2],
+                    cache.block[offset + 3],
+                ]);
+                let merged = (existing & !FAT32_VALUE_MASK) | (value & FAT32_VALUE_MASK);
+                cache.block[offset..offset + 4].copy_from_slice(&merged.to_le_bytes());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn flush(self) -> Result<(), FsError> {
+        let Self {
+            device,
+            mut caches,
+            ..
+        } = self;
+        for cache in caches.iter_mut() {
+            if let Some(sector) = cache.sector.take() {
+                device.write_block(sector, &cache.block).map_err(FsError::Io)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 pub fn write_fat_entry<D: BlockDevice>(
     device: &mut D,
     boot: &BootSector,
     cluster: u32,
     value: u32,
 ) -> Result<(), FsError> {
-    if cluster < 2 || cluster > boot.cluster_count + 1 {
-        return Err(FsError::Corrupt);
-    }
-    let width = match boot.fat_type {
-        FatType::Fat12 => return Err(FsError::Unsupported),
-        FatType::Fat16 => 2usize,
-        FatType::Fat32 => 4usize,
-    };
-    let entry_bytes = u64::from(cluster) * width as u64;
-    let fat_sector = entry_bytes / u64::from(SECTOR_BYTES);
-    let offset = (entry_bytes % u64::from(SECTOR_BYTES)) as usize;
-    for copy in 0..boot.fat_count {
-        let sector =
-            boot.reserved_sectors + u64::from(copy) * boot.fat_sectors + fat_sector;
-        let mut block = [0u8; SECTOR_BYTES as usize];
-        device.read_block(sector, &mut block).map_err(FsError::Io)?;
-        match boot.fat_type {
-            FatType::Fat12 => return Err(FsError::Unsupported),
-            FatType::Fat16 => {
-                block[offset..offset + 2].copy_from_slice(&(value as u16).to_le_bytes());
-            }
-            FatType::Fat32 => {
-                let existing = u32::from_le_bytes([
-                    block[offset],
-                    block[offset + 1],
-                    block[offset + 2],
-                    block[offset + 3],
-                ]);
-                let merged = (existing & !FAT32_VALUE_MASK) | (value & FAT32_VALUE_MASK);
-                block[offset..offset + 4].copy_from_slice(&merged.to_le_bytes());
-            }
-        }
-        device.write_block(sector, &block).map_err(FsError::Io)?;
-    }
-    Ok(())
+    let mut editor = FatEditor::new(device, boot);
+    editor.patch(cluster, value)?;
+    editor.flush()
 }
 
 pub fn count_free_clusters<D: BlockDevice>(
@@ -285,14 +349,16 @@ pub fn allocate_chain<D: BlockDevice>(
     }
     let free = scan_free_clusters(device, boot, count)?;
     let end = chain_end(boot);
+    let mut editor = FatEditor::new(device, boot);
     for index in 0..free.len() {
         let next = if index + 1 == free.len() {
             end
         } else {
             free[index + 1]
         };
-        write_fat_entry(device, boot, free[index], next)?;
+        editor.patch(free[index], next)?;
     }
+    editor.flush()?;
     Ok(free)
 }
 
@@ -303,16 +369,18 @@ pub fn append_chain<D: BlockDevice>(
     count: u32,
 ) -> Result<Vec<u32>, FsError> {
     let free = scan_free_clusters(device, boot, count)?;
-    write_fat_entry(device, boot, tail_cluster, free[0])?;
     let end = chain_end(boot);
+    let mut editor = FatEditor::new(device, boot);
+    editor.patch(tail_cluster, free[0])?;
     for index in 0..free.len() {
         let next = if index + 1 == free.len() {
             end
         } else {
             free[index + 1]
         };
-        write_fat_entry(device, boot, free[index], next)?;
+        editor.patch(free[index], next)?;
     }
+    editor.flush()?;
     Ok(free)
 }
 
@@ -325,9 +393,11 @@ pub fn free_chain<D: BlockDevice>(
         return Ok(());
     }
     let chain = cluster_chain(device, boot, head)?;
+    let mut editor = FatEditor::new(device, boot);
     for cluster in chain {
-        write_fat_entry(device, boot, cluster, 0)?;
+        editor.patch(cluster, 0)?;
     }
+    editor.flush()?;
     Ok(())
 }
 
@@ -342,6 +412,7 @@ pub(crate) mod fixtures {
         pub bytes: Vec<u8>,
         pub flushes: usize,
         pub read_log: Vec<u64>,
+        pub write_log: Vec<u64>,
     }
 
     impl TestDevice {
@@ -350,6 +421,7 @@ pub(crate) mod fixtures {
                 bytes: vec![0u8; sectors as usize * SECTOR_BYTES as usize],
                 flushes: 0,
                 read_log: Vec::new(),
+                write_log: Vec::new(),
             }
         }
 
@@ -383,6 +455,7 @@ pub(crate) mod fixtures {
         }
 
         fn write_block(&mut self, block: u64, buf: &[u8]) -> Result<(), IoError> {
+            self.write_log.push(block);
             let at = block as usize * SECTOR_BYTES as usize;
             if buf.len() != SECTOR_BYTES as usize {
                 return Err(IoError::Device);
@@ -665,6 +738,21 @@ mod tests {
         let chain = cluster_chain(&mut device, &boot, 2).expect("walk");
         assert_eq!(chain, (2..302u32).collect::<Vec<u32>>());
         assert_eq!(device.read_log, vec![1, 2]);
+    }
+
+    #[test]
+    fn an_editor_pass_touches_each_fat_sector_once_per_copy() {
+        let boot = fat16_boot();
+        let mut device = TestDevice::new(boot.total_sectors);
+        let mut editor = FatEditor::new(&mut device, &boot);
+        for cluster in 2..302u32 {
+            editor.patch(cluster, cluster + 1).expect("patch");
+        }
+        editor.flush().expect("flush");
+        assert_eq!(device.read_log, vec![1, 9, 2, 10]);
+        assert_eq!(device.write_log, vec![1, 9, 2, 10]);
+        assert_eq!(fat_entry_value(&device, 2), 3);
+        assert_eq!(fat_entry_value(&device, 301), 302);
     }
 
     #[test]
