@@ -132,9 +132,9 @@ impl<D: BlockDevice> FileSystem<D> {
         buf: &mut [u8],
     ) -> Result<usize, FsError> {
         let entry = self.live_entry(handle)?;
-        let first_cluster = entry.first_cluster;
         let size = entry.size;
-        file::read_file(&mut self.device, &self.boot, first_cluster, size, offset, buf)
+        let chain = entry.chain.clone();
+        file::read_file(&mut self.device, &self.boot, &chain, size, offset, buf)
     }
 
     pub fn stat(&mut self, handle: FatHandle) -> Result<FatMetadata, FsError> {
