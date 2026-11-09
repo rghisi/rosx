@@ -814,6 +814,56 @@ mod tests {
     }
 
     #[test]
+    fn a_chain_hole_surfaces_on_the_read_that_touches_it() {
+        let mut device = volume_device();
+        let (sector, offset) = fat16_entry_at(9);
+        device.put16(sector, offset, 0);
+        let mut fs = FileSystem::new(device).expect("volume opens");
+        let handle = Engine::open(&mut fs, b"/notes.txt").expect("open does not walk the chain");
+        let mut buf = [0u8; 16];
+        assert_eq!(Engine::read(&mut fs, handle, 0, &mut buf).expect("healthy prefix"), 16);
+        assert_eq!(Engine::read(&mut fs, handle, 600, &mut buf), Err(FsError::Corrupt));
+    }
+
+    #[test]
+    fn opening_and_reading_reach_the_fat_only_for_the_clusters_served() {
+        let mut fs = engine();
+        let fat_start = fs.boot.reserved_sectors;
+        let fat_end =
+            fat_start + u64::from(fs.boot.fat_count) * u64::from(fs.boot.fat_sectors);
+        let fat_reads = |fs: &FileSystem<TestDevice>| {
+            fs.device.read_log.iter().filter(|sector| **sector >= fat_start && **sector < fat_end).count()
+        };
+        fs.device.read_log.clear();
+        let handle = Engine::open(&mut fs, b"/notes.txt").expect("open");
+        assert_eq!(fat_reads(&fs), 0, "open does not walk the chain");
+        fs.device.read_log.clear();
+        let mut buf = [0u8; 700];
+        assert_eq!(Engine::read(&mut fs, handle, 0, &mut buf).expect("whole file"), 700);
+        assert_eq!(fat_reads(&fs), 1, "one fat sector serves both links");
+        assert_eq!(fs.device.read_log.len(), 3, "one fat sector plus two data sectors");
+        fs.device.read_log.clear();
+        let mut tail = [0u8; 100];
+        assert_eq!(Engine::read(&mut fs, handle, 600, &mut tail).expect("cached tail"), 100);
+        assert_eq!(fs.device.read_log.len(), 1, "the cached prefix costs one data read");
+    }
+
+    #[test]
+    fn a_stale_cursor_resolves_against_the_current_fat() {
+        let mut fs = engine();
+        let reader = Engine::open(&mut fs, b"/notes.txt").expect("reader");
+        let mut buf = [0u8; 8];
+        assert_eq!(Engine::read(&mut fs, reader, 0, &mut buf).expect("first cluster"), 8);
+        Engine::remove(&mut fs, b"/notes.txt").expect("remove underneath the reader");
+        let payload: Vec<u8> = (0..1_024u32).map(|byte| byte as u8).collect();
+        let successor = Engine::create(&mut fs, b"/new").expect("create");
+        Engine::write(&mut fs, successor, 0, &payload).expect("successor claims the head cluster");
+        let mut moved = [0u8; 8];
+        assert_eq!(Engine::read(&mut fs, reader, 600, &mut moved).expect("current fat wins"), 8);
+        assert_eq!(moved, [88, 89, 90, 91, 92, 93, 94, 95]);
+    }
+
+    #[test]
     fn readdir_lists_kinds_in_slot_order() {
         let mut fs = engine();
         assert_eq!(
