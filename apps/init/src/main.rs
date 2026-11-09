@@ -72,7 +72,7 @@ fn start_service(rom: &RomImage<'_>, token: &str, probe: &str) {
         return;
     };
     println!("[INIT] starting {token}");
-    if Syscall::load(&image).is_none() {
+    if Syscall::load_with_args(&image, &argv(token, &[])).is_none() {
         println!("[INIT] {token} cannot launch");
         return;
     }

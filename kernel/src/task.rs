@@ -50,6 +50,29 @@ impl Display for TaskState {
         }
     }
 }
+pub const TASK_NAME_BYTES: usize = 32;
+
+pub struct TaskName {
+    bytes: [u8; TASK_NAME_BYTES],
+    length: usize,
+}
+
+impl TaskName {
+    fn new(name: &str) -> TaskName {
+        let mut length = name.len().min(TASK_NAME_BYTES);
+        while length > 0 && !name.is_char_boundary(length) {
+            length -= 1;
+        }
+        let mut bytes = [0u8; TASK_NAME_BYTES];
+        bytes[..length].copy_from_slice(&name.as_bytes()[..length]);
+        TaskName { bytes, length }
+    }
+
+    fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.bytes[..self.length]).unwrap()
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct GroupId(usize);
 
@@ -65,7 +88,7 @@ impl GroupId {
 }
 
 pub struct Task {
-    name: &'static str,
+    name: TaskName,
     state: TaskState,
     yield_reason: Option<YieldReason>,
     stack_pointer: usize,
@@ -77,15 +100,15 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new<'a>(
-        name: &'static str,
+    pub fn new(
+        name: &str,
         entry_point: usize,
         entry_param: usize,
     ) -> SharedTask {
         let stack = TaskStack::new();
         let stack_pointer = stack.top();
         Box::new(Task {
-            name,
+            name: TaskName::new(name),
             state: Created,
             yield_reason: None,
             stack_pointer,
@@ -96,8 +119,8 @@ impl Task {
             group: GroupId::allocate(),
         })
     }
-    pub fn name(&self) -> &'static str {
-        self.name
+    pub fn name(&self) -> &str {
+        self.name.as_str()
     }
     pub fn stack_pointer(&self) -> usize {
         self.stack_pointer
@@ -219,15 +242,6 @@ pub struct ElfTaskContext {
 }
 
 impl ElfTaskContext {
-    fn new(elf_bytes: &[u8], arguments: &[&str]) -> Box<ElfTaskContext> {
-        let mut argument_strings: Vec<u8> = Vec::new();
-        for argument in arguments {
-            argument_strings.extend_from_slice(argument.as_bytes());
-            argument_strings.push(0);
-        }
-        ElfTaskContext::with_blob(elf_bytes, argument_strings)
-    }
-
     fn with_blob(elf_bytes: &[u8], argument_strings: Vec<u8>) -> Box<ElfTaskContext> {
         let mut context = Box::new(ElfTaskContext {
             elf_bytes: elf_bytes.to_vec(),
@@ -277,12 +291,12 @@ pub fn validate_arguments_blob(blob: &[u8]) -> Result<(), ErrorCode> {
     Ok(())
 }
 
-pub fn new_elf_task(name: &'static str, elf: &[u8]) -> SharedTask {
-    let context = ElfTaskContext::new(elf, &[name]);
-    Task::new(name, elf_task_wrapper as *const () as usize, Box::into_raw(context) as usize)
+pub fn first_argument(blob: &[u8]) -> Option<&str> {
+    let end = blob.iter().position(|byte| *byte == 0)?;
+    core::str::from_utf8(&blob[..end]).ok()
 }
 
-pub fn new_elf_task_with_arguments(name: &'static str, elf: &[u8], arguments_blob: Vec<u8>) -> SharedTask {
+pub fn new_elf_task_with_arguments(name: &str, elf: &[u8], arguments_blob: Vec<u8>) -> SharedTask {
     let context = ElfTaskContext::with_blob(elf, arguments_blob);
     Task::new(name, elf_task_wrapper as *const () as usize, Box::into_raw(context) as usize)
 }
@@ -348,13 +362,13 @@ mod tests {
 
     #[test]
     fn elf_task_context_stores_arguments_as_nul_terminated_strings() {
-        let context = ElfTaskContext::new(&[], &["hello", "world"]);
+        let context = ElfTaskContext::with_blob(&[], b"hello\0world\0".to_vec());
         assert_eq!(context.argument_strings, b"hello\0world\0");
     }
 
     #[test]
     fn elf_task_context_without_arguments_holds_no_strings() {
-        let context = ElfTaskContext::new(&[], &[]);
+        let context = ElfTaskContext::with_blob(&[], Vec::new());
         assert!(context.argument_strings.is_empty());
         assert_eq!(context.argc(), 0);
         assert!(unsafe { context.argv().read().is_null() });
@@ -362,7 +376,7 @@ mod tests {
 
     #[test]
     fn elf_task_context_argument_pointers_address_their_own_strings() {
-        let context = ElfTaskContext::new(&[], &["hello", "", "x86_64"]);
+        let context = ElfTaskContext::with_blob(&[], b"hello\0\0x86_64\0".to_vec());
         let argv = context.argv();
         assert_eq!(context.argc(), 3);
         assert_eq!(unsafe { argv.read() }, context.argument_strings.as_ptr());
@@ -374,7 +388,7 @@ mod tests {
 
     #[test]
     fn elf_task_context_keeps_strings_beyond_pointer_installation() {
-        let context = ElfTaskContext::new(&[1, 2, 3], &["pi"]);
+        let context = ElfTaskContext::with_blob(&[1, 2, 3], b"pi\0".to_vec());
         let moved = context;
         assert_eq!(read_c_string(unsafe { moved.argv().read() }), b"pi");
         assert_eq!(moved.elf_bytes, &[1, 2, 3]);
@@ -463,13 +477,45 @@ mod tests {
     }
 
     #[test]
-    fn new_elf_task_names_the_task_and_its_argv_zero() {
-        let task = new_elf_task("vfsd", &[7]);
+    fn first_argument_yields_the_blobs_leading_string() {
+        assert_eq!(first_argument(b"vfsd\0"), Some("vfsd"));
+        assert_eq!(first_argument(b"pi\0alpha\0"), Some("pi"));
+    }
+
+    #[test]
+    fn first_argument_without_a_terminator_is_none() {
+        assert_eq!(first_argument(b"pi"), None);
+        assert_eq!(first_argument(b""), None);
+    }
+
+    #[test]
+    fn first_argument_rejects_a_non_utf8_name() {
+        assert_eq!(first_argument(&[0xff, 0x00]), None);
+    }
+
+    #[test]
+    fn elf_task_takes_its_name_from_the_argument_blob() {
+        let name = first_argument(b"vfsd\0").unwrap();
+        let task = new_elf_task_with_arguments(name, &[7], b"vfsd\0".to_vec());
         assert_eq!(task.name(), "vfsd");
         let context = unsafe { Box::from_raw(task.entry_param() as *mut ElfTaskContext) };
         assert_eq!(context.argc(), 1);
         assert_eq!(read_c_string(unsafe { context.argv().read() }), b"vfsd");
         assert!(unsafe { context.argv().add(1).read().is_null() });
+    }
+
+    #[test]
+    fn task_name_truncates_at_the_capacity() {
+        let name = "x".repeat(TASK_NAME_BYTES + 8);
+        let task = Task::new(&name, 0, 0);
+        assert_eq!(task.name(), "x".repeat(TASK_NAME_BYTES));
+    }
+
+    #[test]
+    fn task_name_truncation_stays_on_a_char_boundary() {
+        let name = "a".repeat(TASK_NAME_BYTES - 1) + "é";
+        let task = Task::new(&name, 0, 0);
+        assert_eq!(task.name(), "a".repeat(TASK_NAME_BYTES - 1));
     }
 
     #[test]
@@ -486,30 +532,16 @@ mod tests {
 
     #[test]
     fn freshly_loaded_images_get_distinct_groups() {
-        let first = new_elf_task("app", &[7]);
-        let second = new_elf_task("app", &[7]);
+        let first = Task::new("app", 0, 0);
+        let second = Task::new("app", 0, 0);
         assert_ne!(first.group(), second.group());
     }
 
     #[test]
     fn entrypoint_task_carries_the_caller_group() {
-        let caller = new_elf_task("app", &[7]);
+        let caller = Task::new("app", 0, 0);
         let spawned = new_entrypoint_task(0x1000, caller.group());
         assert_eq!(spawned.group(), caller.group());
-    }
-
-    #[test]
-    fn new_and_with_blob_produce_equal_contexts_for_joined_arguments() {
-        let arguments = ["alpha", "beta", "gamma"];
-        let joined = ElfTaskContext::new(&[], &arguments);
-        let mut blob = Vec::new();
-        for argument in arguments {
-            blob.extend_from_slice(argument.as_bytes());
-            blob.push(0);
-        }
-        let moved = ElfTaskContext::with_blob(&[], blob);
-        assert_eq!(joined.argument_strings, moved.argument_strings);
-        assert_eq!(joined.argc(), moved.argc());
     }
 
     #[test]
