@@ -1,6 +1,6 @@
 # rxfat cluster-chain read path — fixing the #149 integration-time regression
 
-> **Status:** Implemented on this branch (`aded5cc..faab9bb`, four commits) as Steps 1–5 below.
+> **Status:** Implemented on this branch (Steps 1–5, then Round 2 §7: write-path follow-ups, 2026-11-09).
 > Written 2026-11-09 at worktree `curious-tiger`, HEAD `1df0dca`.
 > **Goal:** remove the quadratic cluster-chain walk in `rxfat`'s read path so the x86_32
 > integration suite returns to (and stays under) its pre-#147 runtime, while keeping every
@@ -256,3 +256,43 @@ Reproduction recipe: boot `target/rosx-i486/release/rosx-x86_32` with
 `-debugcon stdio`; model check: `shell` 58,064 B gives 114 clusters x 16 chain-walking calls
 + 114 data = 1,938 sector fetches (4.9 s at 2.5 ms/fetch), against 115 fetches after this
 branch.
+
+## 7. Round 2 — write-path follow-ups (same branch)
+
+Steps 1–5 fixed the *read* path; the same investigation ranked four write/allocation
+follow-ups and all four landed, one commit each, benchmarked (x86_32 integration suite +
+boot trace) after each to make the cumulative curve visible:
+
+| commit | change | mechanism |
+|---|---|---|
+| `3d9ec6e` | zero only gap sectors | allocation stopped pre-zeroing every cluster (every created byte was written twice across the IPC+PIO path); `write` zero-fills `[old_eof, offset)` gaps and read-modify-write keeps the below-EOF-valid / above-EOF-zero invariant; directory allocations (`mkdir`, dir-chain append) still take clean clusters via `fat::zero_clusters` |
+| `6eb48d8` | `FatEditor` sector-caching writer | `allocate_chain`/`append_chain`/`free_chain` patch FAT entries through one dirty-sector buffer per copy: a 300-link path is 4 reads + 4 writes instead of 600 + 600 (pinned by test) |
+| `4f30679` | allocation watermark | `scan_free_clusters` starts at `alloc_hint` (advanced to `top+1` on allocate, lowered to the lowest freed cluster on free - max-allocate/min-free keeps "nothing free below the hint" provably true, so a full volume never reports a false `NoSpace`) |
+| `35acc3d` | one-walk unlink | `free_chain` returns `FreedChain { clusters, lowest }`; `remove`/`rmdir` dropped their pre-count `data_chain` walk (helper deleted - no callers left) |
+
+Measured **[O]** (x86_32 suite, release kernel, per-binary extraction; boot flat each step -
+this round targets writes and the boot path is reads):
+
+| step | suite total (s) | `fat_partition_flow` (s) |
+|---|---|---|
+| after §6 | 179.9 | 18.65 |
+| gap-sector zeroing | 179.3 | 18.35 |
+| `FatEditor` coalescing | 178.3 | **17.01** |
+| allocation watermark | 177.7 | 16.70 |
+| one-walk unlink | 177.8 | 16.82 |
+
+The suite is boot/read-dominated, so the total moves ~1%; the honest summary is that the
+**only binary exercising the FAT write path (`fat_partition_flow`) drops ~10%**, and the
+gaps not visible here (creation double-write, per-entry FAT traffic, allocation rescans)
+are pinned by unit tests on counting devices (`read_log`/`write_log`), not by suite timing.
+
+Semantics notes: allocation leaving dirty clusters is internal (the below-EOF-valid
+invariant is preserved by `write`); `remove`/`rmdir` of a *corrupt-chain* file now erase
+the slot first and report `Corrupt` from `free_chain` (freeing nothing, leaking the
+clusters - leak-safe, same crash posture as before, no pre-walk guard).
+
+Gates after Round 2: rxfat 130 + 5 mtools; `cargo xtask test --skip-integration` 47/47;
+x86_32 suite 0 failed; x86_64 suite 0 failed (181.5 s); `check-isa x86_32` clean; boot
+2.63 s. B1 (multi-sector `BlockDevice`) remains the next big lever; B3 is weakened by the
+finding that root scans terminate at the first free slot (~3 sectors on the boot disk, not
+32).
