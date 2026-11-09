@@ -1,12 +1,11 @@
 use crate::boot::BootSector;
 use crate::device::BlockDevice;
-use crate::fat;
 use fs_core::error::FsError;
 
 pub fn read_file<D: BlockDevice>(
     device: &mut D,
     boot: &BootSector,
-    start_cluster: u32,
+    chain: &[u32],
     size: u64,
     offset: u64,
     buf: &mut [u8],
@@ -15,7 +14,6 @@ pub fn read_file<D: BlockDevice>(
         return Ok(0);
     }
     let available = core::cmp::min(buf.len() as u64, size - offset) as usize;
-    let chain = fat::cluster_chain(device, boot, start_cluster)?;
     let cluster_bytes = u64::from(boot.sectors_per_cluster) * u64::from(boot.bytes_per_sector);
     let mut block = [0u8; 512];
     let mut produced = 0usize;
@@ -74,7 +72,7 @@ mod tests {
         end_chain(&mut device, 2);
         fill_sector(&mut device, 49, 0xA0);
         let mut buf = [0u8; 10];
-        assert_eq!(read_file(&mut device, &boot, 2, 10, 0, &mut buf).expect("reads"), 10);
+        assert_eq!(read_file(&mut device, &boot, &[2], 10, 0, &mut buf).expect("reads"), 10);
         assert_eq!(buf[0], 0xA0);
         assert_eq!(buf[9], 0xA9);
     }
@@ -86,7 +84,7 @@ mod tests {
         end_chain(&mut device, 2);
         fill_sector(&mut device, 49, 0x00);
         let mut buf = [0u8; 4];
-        assert_eq!(read_file(&mut device, &boot, 2, 512, 500, &mut buf).expect("reads"), 4);
+        assert_eq!(read_file(&mut device, &boot, &[2], 512, 500, &mut buf).expect("reads"), 4);
         assert_eq!(buf, [244, 245, 246, 247]);
     }
 
@@ -99,7 +97,7 @@ mod tests {
         fill_sector(&mut device, 49, 0x10);
         fill_sector(&mut device, 50, 0x20);
         let mut buf = [0u8; 1_024];
-        assert_eq!(read_file(&mut device, &boot, 2, 1_024, 0, &mut buf).expect("reads"), 1_024);
+        assert_eq!(read_file(&mut device, &boot, &[2, 3], 1_024, 0, &mut buf).expect("reads"), 1_024);
         assert_eq!(buf[511], 0x0F);
         assert_eq!(buf[512], 0x20);
     }
@@ -113,7 +111,7 @@ mod tests {
         fill_sector(&mut device, 49, 0x00);
         fill_sector(&mut device, 50, 0x40);
         let mut buf = [0u8; 24];
-        assert_eq!(read_file(&mut device, &boot, 2, 1_024, 500, &mut buf).expect("reads"), 24);
+        assert_eq!(read_file(&mut device, &boot, &[2, 3], 1_024, 500, &mut buf).expect("reads"), 24);
         assert_eq!(buf[0], 244);
         assert_eq!(buf[11], 0xFF);
         assert_eq!(buf[12], 0x40);
@@ -140,7 +138,7 @@ mod tests {
             }
         }
         let mut buf = [0u8; 16];
-        let read = read_file(&mut device, &boot, 2, 2_048, 1_020, &mut buf).expect("reads");
+        let read = read_file(&mut device, &boot, &[2, 3], 2_048, 1_020, &mut buf).expect("reads");
         assert_eq!(read, 16);
         assert_eq!(buf[0], (50 * 512 + 508) as u8);
         assert_eq!(buf[3], (50 * 512 + 511) as u8);
@@ -155,17 +153,17 @@ mod tests {
         end_chain(&mut device, 2);
         fill_sector(&mut device, 49, 0x00);
         let mut buf = [0u8; 100];
-        assert_eq!(read_file(&mut device, &boot, 2, 60, 0, &mut buf).expect("reads"), 60);
-        assert_eq!(read_file(&mut device, &boot, 2, 60, 55, &mut buf).expect("reads"), 5);
-        assert_eq!(read_file(&mut device, &boot, 2, 60, 60, &mut buf).expect("at eof"), 0);
-        assert_eq!(read_file(&mut device, &boot, 2, 60, 61, &mut buf).expect("past eof"), 0);
+        assert_eq!(read_file(&mut device, &boot, &[2], 60, 0, &mut buf).expect("reads"), 60);
+        assert_eq!(read_file(&mut device, &boot, &[2], 60, 55, &mut buf).expect("reads"), 5);
+        assert_eq!(read_file(&mut device, &boot, &[2], 60, 60, &mut buf).expect("at eof"), 0);
+        assert_eq!(read_file(&mut device, &boot, &[2], 60, 61, &mut buf).expect("past eof"), 0);
     }
 
     #[test]
     fn empty_files_need_no_clusters() {
         let boot = fat16_boot();
         let mut device = TestDevice::new(1);
-        assert_eq!(read_file(&mut device, &boot, 0, 0, 0, &mut [0u8; 16]).expect("empty"), 0);
+        assert_eq!(read_file(&mut device, &boot, &[], 0, 0, &mut [0u8; 16]).expect("empty"), 0);
     }
 
     #[test]
@@ -174,17 +172,15 @@ mod tests {
         let mut device = TestDevice::new(boot.total_sectors);
         end_chain(&mut device, 2);
         let mut buf = [0u8; 600];
-        assert_eq!(read_file(&mut device, &boot, 2, 600, 0, &mut buf), Err(FsError::Corrupt));
+        assert_eq!(read_file(&mut device, &boot, &[2], 600, 0, &mut buf), Err(FsError::Corrupt));
     }
 
     #[test]
-    fn chain_corruption_surfaces_from_reads() {
+    fn a_chain_shorter_than_the_size_is_corrupt() {
         let boot = fat16_boot();
         let mut device = TestDevice::new(boot.total_sectors);
-        let (sector, offset) = fat16_entry_at(2);
-        device.put16(sector, offset, 0);
         let mut buf = [0u8; 8];
-        assert_eq!(read_file(&mut device, &boot, 2, 8, 0, &mut buf), Err(FsError::Corrupt));
+        assert_eq!(read_file(&mut device, &boot, &[], 8, 0, &mut buf), Err(FsError::Corrupt));
     }
 
     #[test]
@@ -192,7 +188,7 @@ mod tests {
         let boot = fat16_boot();
         let mut stub = TinyDevice;
         assert_eq!(
-            read_file(&mut stub, &boot, 2, 8, 0, &mut [0u8; 8]),
+            read_file(&mut stub, &boot, &[2], 8, 0, &mut [0u8; 8]),
             Err(FsError::Io(IoError::Device))
         );
     }
@@ -224,6 +220,6 @@ mod tests {
         let boot = fat16_boot();
         let mut device = TestDevice::new(boot.total_sectors);
         end_chain(&mut device, 2);
-        assert_eq!(read_file(&mut device, &boot, 2, 10, 0, &mut []).expect("nothing"), 0);
+        assert_eq!(read_file(&mut device, &boot, &[2], 10, 0, &mut []).expect("nothing"), 0);
     }
 }

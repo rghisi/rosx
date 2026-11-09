@@ -1,7 +1,7 @@
 use crate::boot::{BootSector, FatType};
 use crate::device::BlockDevice;
 use crate::dir::{self, DirEntry, DirLocation};
-use crate::fat;
+use crate::fat::{self, ClusterNext};
 use crate::file;
 use crate::path::{self, PathParts};
 use alloc::vec::Vec;
@@ -30,13 +30,14 @@ impl MetadataView for FatMetadata {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 struct OpenEntry {
     generation: u32,
     first_cluster: u32,
     size: u64,
     chain: Vec<u32>,
-    parent: DirLocation,
+    tail: Option<u32>,
+    epoch: u64,
     slot_sector: u64,
     slot_offset: usize,
     slot_name: [u8; 11],
@@ -60,6 +61,8 @@ pub struct FileSystem<D: BlockDevice> {
     opens: Vec<Option<OpenEntry>>,
     next_generation: u32,
     free_clusters: Option<u32>,
+    chain_epoch: u64,
+    alloc_hint: u32,
 }
 
 impl<D: BlockDevice> FileSystem<D> {
@@ -77,6 +80,8 @@ impl<D: BlockDevice> FileSystem<D> {
             opens: Vec::new(),
             next_generation: 1,
             free_clusters: None,
+            chain_epoch: 0,
+            alloc_hint: 2,
         })
     }
 
@@ -104,7 +109,6 @@ impl<D: BlockDevice> FileSystem<D> {
         if located.entry.is_directory {
             return Err(FsError::IsADirectory);
         }
-        let chain = self.data_chain(located.entry.first_cluster)?;
         let generation = self.next_generation;
         self.next_generation = self.next_generation.wrapping_add(1);
         let slot = self.reserve_open_slot();
@@ -112,8 +116,9 @@ impl<D: BlockDevice> FileSystem<D> {
             generation,
             first_cluster: located.entry.first_cluster,
             size: located.entry.size,
-            chain,
-            parent,
+            chain: Vec::new(),
+            tail: (located.entry.first_cluster >= 2).then_some(located.entry.first_cluster),
+            epoch: self.chain_epoch,
             slot_sector: located.sector,
             slot_offset: located.offset,
             slot_name: located.slot_name,
@@ -131,10 +136,20 @@ impl<D: BlockDevice> FileSystem<D> {
         offset: u64,
         buf: &mut [u8],
     ) -> Result<usize, FsError> {
-        let entry = self.live_entry(handle)?;
-        let first_cluster = entry.first_cluster;
-        let size = entry.size;
-        file::read_file(&mut self.device, &self.boot, first_cluster, size, offset, buf)
+        let size = self.live_entry(handle)?.size;
+        if offset >= size || buf.is_empty() {
+            return Ok(0);
+        }
+        let cluster_bytes = self.cluster_bytes();
+        let available = core::cmp::min(buf.len() as u64, size - offset);
+        self.materialize(handle, ((offset + available - 1) / cluster_bytes) as usize)?;
+        let Self { boot, device, opens, .. } = self;
+        let entry = opens
+            .get(handle.slot as usize)
+            .and_then(Option::as_ref)
+            .filter(|entry| entry.generation == handle.generation)
+            .ok_or(FsError::BadHandle)?;
+        file::read_file(device, boot, &entry.chain, size, offset, buf)
     }
 
     pub fn stat(&mut self, handle: FatHandle) -> Result<FatMetadata, FsError> {
@@ -174,6 +189,129 @@ impl<D: BlockDevice> FileSystem<D> {
             .and_then(|slot| slot.as_ref())
             .filter(|entry| entry.generation == handle.generation)
             .ok_or(FsError::BadHandle)
+    }
+
+    fn live_entry_mut(&mut self, handle: FatHandle) -> Result<&mut OpenEntry, FsError> {
+        self.opens
+            .get_mut(handle.slot as usize)
+            .and_then(|slot| slot.as_mut())
+            .filter(|entry| entry.generation == handle.generation)
+            .ok_or(FsError::BadHandle)
+    }
+
+    fn chain_cluster(&self, handle: FatHandle, index: usize) -> Result<u32, FsError> {
+        let entry = self.live_entry(handle)?;
+        let cluster = *entry.chain.get(index).ok_or(FsError::Corrupt)?;
+        Ok(cluster)
+    }
+
+    fn zero_gap(&mut self, handle: FatHandle, from: u64, to: u64) -> Result<(), FsError> {
+        let cluster_bytes = self.cluster_bytes();
+        let zero_block = [0u8; 512];
+        let mut byte = from;
+        while byte < to {
+            let cluster = self.chain_cluster(handle, (byte / cluster_bytes) as usize)?;
+            let first_sector = self
+                .boot
+                .first_sector_of_cluster(cluster)
+                .ok_or(FsError::Corrupt)?;
+            let in_cluster = (byte % cluster_bytes) as usize;
+            let sector = first_sector + (in_cluster / 512) as u64;
+            let sector_offset = in_cluster % 512;
+            let chunk = (512 - sector_offset).min((to - byte) as usize);
+            if sector_offset != 0 || chunk != 512 {
+                let mut block = [0u8; 512];
+                self.device
+                    .read_block(sector, &mut block)
+                    .map_err(FsError::Io)?;
+                block[sector_offset..sector_offset + chunk].fill(0);
+                self.device
+                    .write_block(sector, &block)
+                    .map_err(FsError::Io)?;
+            } else {
+                self.device
+                    .write_block(sector, &zero_block)
+                    .map_err(FsError::Io)?;
+            }
+            byte += chunk as u64;
+        }
+        Ok(())
+    }
+
+    fn reseed_cursor(&mut self, handle: FatHandle) -> Result<(), FsError> {
+        let epoch = self.chain_epoch;
+        let entry = self.live_entry_mut(handle)?;
+        if entry.epoch == epoch {
+            return Ok(());
+        }
+        entry.chain.clear();
+        entry.tail = (entry.first_cluster >= 2).then_some(entry.first_cluster);
+        entry.epoch = epoch;
+        Ok(())
+    }
+
+    fn walk_cursor(&mut self, handle: FatHandle, limit: usize) -> Result<(), FsError> {
+        self.reseed_cursor(handle)?;
+        let mut memo = None;
+        let Self { boot, device, opens, .. } = self;
+        let entry = opens
+            .get_mut(handle.slot as usize)
+            .and_then(|slot| slot.as_mut())
+            .ok_or(FsError::BadHandle)?;
+        while entry.chain.len() < limit {
+            let Some(cluster) = entry.tail else {
+                return Ok(());
+            };
+            if entry.chain.len() >= boot.cluster_count as usize {
+                return Err(FsError::Corrupt);
+            }
+            entry.chain.push(cluster);
+            entry.tail = match fat::next_cluster(device, boot, cluster, &mut memo)? {
+                ClusterNext::End => None,
+                ClusterNext::Next(next) => Some(next),
+            };
+        }
+        Ok(())
+    }
+
+    fn materialize(&mut self, handle: FatHandle, index: usize) -> Result<(), FsError> {
+        self.walk_cursor(handle, index + 1)?;
+        let entry = self.live_entry(handle)?;
+        if entry.chain.len() <= index {
+            return Err(FsError::Corrupt);
+        }
+        Ok(())
+    }
+
+    fn grow_cursor_to(&mut self, handle: FatHandle, needed: usize) -> Result<(), FsError> {
+        loop {
+            self.walk_cursor(handle, needed)?;
+            let shortfall = {
+                let entry = self.live_entry(handle)?;
+                needed.saturating_sub(entry.chain.len())
+            };
+            if shortfall == 0 {
+                return Ok(());
+            }
+            self.reserve_clusters(shortfall as u32)?;
+            let tail = self.live_entry(handle)?.chain.last().copied();
+            let appended = match tail {
+                Some(tail) => {
+                    fat::append_chain(&mut self.device, &self.boot, tail, shortfall as u32, self.alloc_hint)?
+                }
+                None => fat::allocate_chain(&mut self.device, &self.boot, shortfall as u32, self.alloc_hint)?,
+            };
+            self.note_allocated(&appended);
+            self.chain_epoch += 1;
+            let epoch = self.chain_epoch;
+            let entry = self.live_entry_mut(handle)?;
+            if tail.is_none() {
+                entry.first_cluster = *appended.first().ok_or(FsError::Corrupt)?;
+            }
+            entry.chain.extend(appended);
+            entry.tail = None;
+            entry.epoch = epoch;
+        }
     }
 
     fn resolve(&mut self, parts: &PathParts) -> Result<Resolved, FsError> {
@@ -245,15 +383,20 @@ impl<D: BlockDevice> FileSystem<D> {
         }
     }
 
-    fn data_chain(&mut self, first_cluster: u32) -> Result<Vec<u32>, FsError> {
-        if first_cluster < 2 {
-            return Ok(Vec::new());
-        }
-        fat::cluster_chain(&mut self.device, &self.boot, first_cluster)
-    }
-
     fn cluster_bytes(&self) -> u64 {
         u64::from(self.boot.sectors_per_cluster) * u64::from(self.boot.bytes_per_sector)
+    }
+
+    fn note_allocated(&mut self, clusters: &[u32]) {
+        if let Some(&top) = clusters.last() {
+            self.alloc_hint = self.alloc_hint.max(top.saturating_add(1));
+        }
+    }
+
+    fn note_freed(&mut self, lowest: Option<u32>) {
+        if let Some(lowest) = lowest {
+            self.alloc_hint = self.alloc_hint.min(lowest);
+        }
     }
 
     fn allocate_slot(&mut self, location: DirLocation) -> Result<(u64, usize), FsError> {
@@ -275,7 +418,11 @@ impl<D: BlockDevice> FileSystem<D> {
                     let chain = fat::cluster_chain(&mut self.device, &self.boot, head)?;
                     let tail = *chain.last().ok_or(FsError::Corrupt)?;
                     self.reserve_clusters(1)?;
-                    fat::append_chain(&mut self.device, &self.boot, tail, 1)?;
+                    let appended =
+                        fat::append_chain(&mut self.device, &self.boot, tail, 1, self.alloc_hint)?;
+                    fat::zero_clusters(&mut self.device, &self.boot, &appended)?;
+                    self.note_allocated(&appended);
+                    self.chain_epoch += 1;
                 }
             }
         }
@@ -335,7 +482,8 @@ impl<D: BlockDevice> FileSystem<D> {
             first_cluster: 0,
             size: 0,
             chain: Vec::new(),
-            parent,
+            tail: None,
+            epoch: self.chain_epoch,
             slot_sector: sector,
             slot_offset: offset,
             slot_name,
@@ -363,40 +511,37 @@ impl<D: BlockDevice> FileSystem<D> {
         if end > u64::from(u32::MAX) {
             return Err(FsError::FileTooLarge);
         }
-        let snapshot = self.opens[handle.slot as usize]
-            .clone()
-            .ok_or(FsError::BadHandle)?;
+        let (slot_sector, slot_offset, slot_name, attrs, slot_first_cluster, old_size) = {
+            let entry = self.live_entry(handle)?;
+            (
+                entry.slot_sector,
+                entry.slot_offset,
+                entry.slot_name,
+                entry.attrs,
+                entry.first_cluster,
+                entry.size,
+            )
+        };
         if !dir::slot_still_holds(
             &mut self.device,
-            snapshot.slot_sector,
-            snapshot.slot_offset,
-            &snapshot.slot_name,
-            snapshot.first_cluster,
+            slot_sector,
+            slot_offset,
+            &slot_name,
+            slot_first_cluster,
         )? {
             return Err(FsError::BadHandle);
         }
         let cluster_bytes = self.cluster_bytes();
-        let needed = end.div_ceil(cluster_bytes) as usize;
-        let mut chain = snapshot.chain.clone();
-        let mut first_cluster = snapshot.first_cluster;
-        if needed > chain.len() {
-            let extra = (needed - chain.len()) as u32;
-            self.reserve_clusters(extra)?;
-            match chain.last() {
-                Some(tail) => {
-                    fat::append_chain(&mut self.device, &self.boot, *tail, extra)?;
-                }
-                None => {
-                    first_cluster = fat::allocate_chain(&mut self.device, &self.boot, extra)?;
-                }
-            }
-            chain = fat::cluster_chain(&mut self.device, &self.boot, first_cluster)?;
+        self.grow_cursor_to(handle, end.div_ceil(cluster_bytes) as usize)?;
+        if offset > old_size {
+            self.zero_gap(handle, old_size, offset)?;
         }
+        let first_cluster = self.live_entry(handle)?.first_cluster;
         let mut written = 0usize;
         let mut block = [0u8; 512];
         while written < data.len() {
             let byte = offset + written as u64;
-            let cluster = chain[(byte / cluster_bytes) as usize];
+            let cluster = self.chain_cluster(handle, (byte / cluster_bytes) as usize)?;
             let in_cluster = (byte % cluster_bytes) as usize;
             let first_sector = self
                 .boot
@@ -417,17 +562,13 @@ impl<D: BlockDevice> FileSystem<D> {
                 .map_err(FsError::Io)?;
             written += chunk;
         }
-        let size = snapshot.size.max(end);
+        let size = old_size.max(end);
         let mut name_parts = ([0u8; 8], [0u8; 3]);
-        name_parts.0.copy_from_slice(&snapshot.slot_name[..8]);
-        name_parts.1.copy_from_slice(&snapshot.slot_name[8..11]);
-        let slot = dir::make_slot_bytes(name_parts, snapshot.attrs, first_cluster, size as u32);
-        dir::write_slot_bytes(&mut self.device, snapshot.slot_sector, snapshot.slot_offset, &slot)?;
-        if let Some(entry) = self.opens[handle.slot as usize].as_mut() {
-            entry.first_cluster = first_cluster;
-            entry.size = size;
-            entry.chain = chain;
-        }
+        name_parts.0.copy_from_slice(&slot_name[..8]);
+        name_parts.1.copy_from_slice(&slot_name[8..11]);
+        let slot = dir::make_slot_bytes(name_parts, attrs, first_cluster, size as u32);
+        dir::write_slot_bytes(&mut self.device, slot_sector, slot_offset, &slot)?;
+        self.live_entry_mut(handle)?.size = size;
         Ok(data.len())
     }
 
@@ -442,10 +583,11 @@ impl<D: BlockDevice> FileSystem<D> {
         if located.entry.is_directory {
             return Err(FsError::IsADirectory);
         }
-        let freed = self.data_chain(located.entry.first_cluster)?.len() as u32;
         dir::erase_slot(&mut self.device, located.sector, located.offset)?;
-        fat::free_chain(&mut self.device, &self.boot, located.entry.first_cluster)?;
-        self.release_clusters(freed)
+        let freed = fat::free_chain(&mut self.device, &self.boot, located.entry.first_cluster)?;
+        self.note_freed(freed.lowest);
+        self.chain_epoch += 1;
+        self.release_clusters(freed.clusters)
     }
 
     pub fn mkdir(&mut self, path_bytes: &[u8]) -> Result<(), FsError> {
@@ -461,7 +603,11 @@ impl<D: BlockDevice> FileSystem<D> {
         }
         let (sector, offset) = self.allocate_slot(parent)?;
         self.reserve_clusters(1)?;
-        let cluster = fat::allocate_chain(&mut self.device, &self.boot, 1)?;
+        let mut clusters = fat::allocate_chain(&mut self.device, &self.boot, 1, self.alloc_hint)?;
+        fat::zero_clusters(&mut self.device, &self.boot, &clusters)?;
+        self.note_allocated(&clusters);
+        let cluster = clusters.remove(0);
+        self.chain_epoch += 1;
         let slot = dir::make_slot_bytes(folded, ATTR_DIRECTORY, cluster, 0);
         dir::write_slot_bytes(&mut self.device, sector, offset, &slot)?;
         Ok(())
@@ -478,15 +624,16 @@ impl<D: BlockDevice> FileSystem<D> {
         if !located.entry.is_directory {
             return Err(FsError::NotADirectory);
         }
-        let chain = self.data_chain(located.entry.first_cluster)?;
         let entries =
             dir::read_directory(&mut self.device, &self.boot, DirLocation::Chain(located.entry.first_cluster))?;
         if !entries.is_empty() {
             return Err(FsError::DirectoryNotEmpty);
         }
         dir::erase_slot(&mut self.device, located.sector, located.offset)?;
-        fat::free_chain(&mut self.device, &self.boot, located.entry.first_cluster)?;
-        self.release_clusters(chain.len() as u32)
+        let freed = fat::free_chain(&mut self.device, &self.boot, located.entry.first_cluster)?;
+        self.note_freed(freed.lowest);
+        self.chain_epoch += 1;
+        self.release_clusters(freed.clusters)
     }
 }
 
@@ -720,6 +867,56 @@ mod tests {
     }
 
     #[test]
+    fn a_chain_hole_surfaces_on_the_read_that_touches_it() {
+        let mut device = volume_device();
+        let (sector, offset) = fat16_entry_at(9);
+        device.put16(sector, offset, 0);
+        let mut fs = FileSystem::new(device).expect("volume opens");
+        let handle = Engine::open(&mut fs, b"/notes.txt").expect("open does not walk the chain");
+        let mut buf = [0u8; 16];
+        assert_eq!(Engine::read(&mut fs, handle, 0, &mut buf).expect("healthy prefix"), 16);
+        assert_eq!(Engine::read(&mut fs, handle, 600, &mut buf), Err(FsError::Corrupt));
+    }
+
+    #[test]
+    fn opening_and_reading_reach_the_fat_only_for_the_clusters_served() {
+        let mut fs = engine();
+        let fat_start = fs.boot.reserved_sectors;
+        let fat_end =
+            fat_start + u64::from(fs.boot.fat_count) * u64::from(fs.boot.fat_sectors);
+        let fat_reads = |fs: &FileSystem<TestDevice>| {
+            fs.device.read_log.iter().filter(|sector| **sector >= fat_start && **sector < fat_end).count()
+        };
+        fs.device.read_log.clear();
+        let handle = Engine::open(&mut fs, b"/notes.txt").expect("open");
+        assert_eq!(fat_reads(&fs), 0, "open does not walk the chain");
+        fs.device.read_log.clear();
+        let mut buf = [0u8; 700];
+        assert_eq!(Engine::read(&mut fs, handle, 0, &mut buf).expect("whole file"), 700);
+        assert_eq!(fat_reads(&fs), 1, "one fat sector serves both links");
+        assert_eq!(fs.device.read_log.len(), 3, "one fat sector plus two data sectors");
+        fs.device.read_log.clear();
+        let mut tail = [0u8; 100];
+        assert_eq!(Engine::read(&mut fs, handle, 600, &mut tail).expect("cached tail"), 100);
+        assert_eq!(fs.device.read_log.len(), 1, "the cached prefix costs one data read");
+    }
+
+    #[test]
+    fn a_stale_cursor_resolves_against_the_current_fat() {
+        let mut fs = engine();
+        let reader = Engine::open(&mut fs, b"/notes.txt").expect("reader");
+        let mut buf = [0u8; 8];
+        assert_eq!(Engine::read(&mut fs, reader, 0, &mut buf).expect("first cluster"), 8);
+        Engine::remove(&mut fs, b"/notes.txt").expect("remove underneath the reader");
+        let payload: Vec<u8> = (0..1_024u32).map(|byte| byte as u8).collect();
+        let successor = Engine::create(&mut fs, b"/new").expect("create");
+        Engine::write(&mut fs, successor, 0, &payload).expect("successor claims the head cluster");
+        let mut moved = [0u8; 8];
+        assert_eq!(Engine::read(&mut fs, reader, 600, &mut moved).expect("current fat wins"), 8);
+        assert_eq!(moved, [88, 89, 90, 91, 92, 93, 94, 95]);
+    }
+
+    #[test]
     fn readdir_lists_kinds_in_slot_order() {
         let mut fs = engine();
         assert_eq!(
@@ -793,6 +990,31 @@ mod tests {
         let mut tail = [0u8; 600];
         assert_eq!(Engine::read(&mut fs, handle, 600, &mut tail).expect("tail"), 600);
         assert!(tail.iter().all(|byte| *byte == 0x5A));
+    }
+
+    #[test]
+    fn freed_clusters_sink_back_below_the_watermark() {
+        let mut fs = engine();
+        let first = Engine::create(&mut fs, b"/first").expect("create");
+        Engine::write(&mut fs, first, 0, b"first").expect("write claims the first free cluster");
+        Engine::close(&mut fs, first).expect("close");
+        Engine::remove(&mut fs, b"/notes.txt").expect("remove frees cluster 2 below the watermark");
+        let next = Engine::create(&mut fs, b"/next").expect("create");
+        Engine::write(&mut fs, next, 0, b"reuse").expect("write");
+        Engine::close(&mut fs, next).expect("close");
+        let claimed = &fs.device.bytes[49 * 512..49 * 512 + 5];
+        assert_eq!(claimed, b"reuse");
+    }
+
+    #[test]
+    fn a_gap_inside_one_sector_zero_fills_on_write() {
+        let mut fs = engine();
+        let handle = Engine::create(&mut fs, b"/stitch").expect("create");
+        Engine::write(&mut fs, handle, 0, b"ab").expect("write head");
+        Engine::write(&mut fs, handle, 500, b"cd").expect("write stitch");
+        let mut gap = [0xEEu8; 498];
+        assert_eq!(Engine::read(&mut fs, handle, 2, &mut gap).expect("gap"), 498);
+        assert!(gap.iter().all(|byte| *byte == 0));
     }
 
     #[test]

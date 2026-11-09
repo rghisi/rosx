@@ -118,6 +118,7 @@ cargo test -p ramfs            # in-memory filesystem engine (rxfs-shaped path-k
 cargo test -p tests-integration -- --test-threads=1                      # x86_64
 ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1      # x86_32
 ```
+- **Always set `ROSX_KERNEL_ELF` to a prebuilt release kernel** (CI does: `target/rosx/release/rosx`, `target/rosx-i486/release/rosx-x86_32`). Unset, the harness builds one itself in the **dev profile** (`ROSX_QEMU_PROFILE` defaults to `dev`), silently inflating suite wall times ~3x and making runs look like a guest regression when the guest is fine (`tests-integration/src/kernel_build.rs`).
 
 ### xtask commands
 ```bash
