@@ -33,15 +33,6 @@ impl Syscall {
         UserFutureHandle::from_token(raw)
     }
 
-    pub fn load(elf: &[u8]) -> Option<UserFutureHandle> {
-        let elf_cell = kernel_box(elf);
-        if elf_cell.is_null() {
-            return None;
-        }
-        let raw = arch::raw_syscall(SyscallNum::LoadElf as usize, elf_cell as usize, 0, 0);
-        UserFutureHandle::from_token(raw)
-    }
-
     pub fn load_with_args(elf: &[u8], args: &[String]) -> Option<UserFutureHandle> {
         let elf_cell = kernel_box(elf);
         if elf_cell.is_null() {

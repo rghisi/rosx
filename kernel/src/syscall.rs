@@ -27,7 +27,7 @@ use crate::future::TaskCompletionFuture;
 #[cfg(not(test))]
 use crate::ipc::message_future::IpcMessageFuture;
 #[cfg(not(test))]
-use crate::task::{new_elf_task, new_elf_task_with_arguments, new_entrypoint_task, validate_arguments_blob};
+use crate::task::{first_argument, new_elf_task_with_arguments, new_entrypoint_task, validate_arguments_blob};
 #[cfg(not(test))]
 use system::waitset::WaitEvent;
 
@@ -110,17 +110,14 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         Ok(SyscallNum::LoadElf) => {
             if arg1 == 0 { return u64::MAX as usize; }
             let elf_bytes: &[u8] = unsafe { *Box::from_raw(arg1 as *mut &[u8]) };
-            if arg2 == 0 && arg3 == 0 {
-                return match kernel().schedule(new_elf_task("ELF", elf_bytes)).ok() {
-                    Some(handle) => handle.pack(),
-                    None => u64::MAX as usize,
-                };
-            }
             if arg3 > system::args::MAX_ARGUMENT_BYTES { return ErrorCode::ElfArgumentLimitExceeded.to_reg(); }
             if arg2 == 0 || arg3 == 0 { return ErrorCode::ElfArgumentBlobMalformed.to_reg(); }
             let blob = unsafe { core::slice::from_raw_parts(arg2 as *const u8, arg3) };
             if let Err(code) = validate_arguments_blob(blob) { return code.to_reg(); }
-            match kernel().schedule(new_elf_task_with_arguments("ELF", elf_bytes, Vec::from(blob))).ok() {
+            let Some(name) = first_argument(blob) else {
+                return ErrorCode::ElfArgumentBlobMalformed.to_reg();
+            };
+            match kernel().schedule(new_elf_task_with_arguments(name, elf_bytes, Vec::from(blob))).ok() {
                 Some(handle) => handle.pack(),
                 None => u64::MAX as usize,
             }
