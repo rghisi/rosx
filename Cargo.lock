@@ -879,7 +879,6 @@ dependencies = [
  "fs-core",
  "rxfat",
  "rxfs",
- "system",
  "usrlib",
  "vfs-protocol",
 ]
