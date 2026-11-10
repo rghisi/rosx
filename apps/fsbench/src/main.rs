@@ -6,6 +6,8 @@ use usrlib::println;
 use vfs_protocol::client::Vfs;
 
 mod control;
+mod reads;
+mod seed;
 mod windows;
 
 const DEFAULT_RUN_DIR: &str = "/fsbrun";
@@ -18,7 +20,12 @@ fn main() {
         return;
     };
     prepare_run_dir(&vfs, &dir);
+    let big_path = alloc::format!("{dir}/big.bin");
+    let seeded = seed::ensure_big_file(&vfs, &big_path);
     control::run();
+    if seeded {
+        reads::run(&vfs, &big_path);
+    }
     println!("bench.done suite=fsbench");
 }
 

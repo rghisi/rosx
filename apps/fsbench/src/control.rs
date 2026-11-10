@@ -1,12 +1,12 @@
+use crate::seed::lcg_fill;
 use crate::windows;
-use alloc::vec::Vec;
 use usrlib::println;
 
 const CONTROL_BYTES: usize = 64 * 1024;
 
 pub fn run() {
     println!("bench.start suite=fsbench.phase=control shape=cpu");
-    let buffer = control_pattern(CONTROL_BYTES);
+    let buffer = lcg_fill(CONTROL_BYTES);
     let mut rounds: u64 = 0;
     let mut digest: u64 = 0;
     windows::run_phase(
@@ -19,18 +19,6 @@ pub fn run() {
         },
     );
     println!("bench.control.sink rounds={rounds} digest={digest}");
-}
-
-fn control_pattern(len: usize) -> Vec<u8> {
-    let mut state: u32 = 0x9E3779B9;
-    (0..len)
-        .map(|_| {
-            state ^= state << 13;
-            state ^= state >> 17;
-            state ^= state << 5;
-            (state & 0xFF) as u8
-        })
-        .collect()
 }
 
 pub(crate) fn fletcher32(data: &[u8]) -> u64 {

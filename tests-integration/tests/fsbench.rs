@@ -24,5 +24,11 @@ fn fsbench_control_runs_and_reports_a_best_line() {
         output.contains("bench.control.sink"),
         "control digest sink missing:\n{output}"
     );
+    for phase in ["read_full", "read_small", "elf_load"] {
+        assert!(
+            output.contains(&format!("bench.fsbench_{phase}.best")),
+            "{phase} best line missing:\n{output}"
+        );
+    }
     println!("{output}");
 }
