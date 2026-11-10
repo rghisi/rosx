@@ -5,6 +5,7 @@ const BOOT_BUDGET: Duration = Duration::from_secs(120);
 const BENCH_BUDGET: Duration = Duration::from_secs(150);
 
 #[test]
+#[ignore = "benchmark workload, not a per-run correctness gate; run with -- --ignored"]
 fn fsbench_control_runs_and_reports_a_best_line() {
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);

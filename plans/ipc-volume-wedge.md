@@ -79,10 +79,10 @@ same binaries. Window indicators: `fsbench` control phase ~2,450 vs
 
 ## Consequences today
 
-- The `fsbench` integration test runs the gated `fsbench /fsbrun 1`
-  (control only) so CI stays deterministic; the read and directory phases
-  remain available manually (`fsbench [dir] [phases]`, phases: 1 control,
-  2 reads, 3 dirs).
+- The `fsbench` integration test is `#[ignore]`d (CI never runs benchmarks — the
+  bench-family convention), and it runs the gated `fsbench /fsbrun 1` (control only)
+  even when invoked manually with `-- --ignored`; the read and directory phases
+  remain app-only (`fsbench [dir] [phases]`, phases: 1 control, 2 reads, 3 dirs).
 - The fsbench-based before/after measurement of the block-run batching
   (B0′ vs F′) is deferred behind this fix; see
   `plans/block-read-batching-plan.md` §7.
