@@ -266,28 +266,41 @@ pub fn read_directory<D: BlockDevice>(
         }
         DirLocation::Chain(start) => (directory_sectors(device, boot, start)?, u64::MAX),
     };
+    let bytes = read_dir_bytes(device, &sectors)?;
     let mut visited = 0u64;
-    let mut block = [0u8; 512];
-    for sector in sectors {
-        device.read_block(sector, &mut block).map_err(FsError::Io)?;
-        for slot_index in 0..ENTRIES_PER_SECTOR {
-            if visited == limit {
-                return Ok(entries);
-            }
-            let slot = &block[slot_index * ENTRY_BYTES..slot_index * ENTRY_BYTES + ENTRY_BYTES];
-            if slot[0] == 0x00 {
-                return Ok(entries);
-            }
-            visited += 1;
-            if slot[0] == 0xE5 || slot[OFFSET_ATTRS] == ATTR_LFN || slot[OFFSET_ATTRS] & ATTR_VOLUME_LABEL != 0 {
-                continue;
-            }
-            if let Some(entry) = decode_entry(boot, slot)? {
-                entries.push(entry);
-            }
+    for slot in bytes.chunks_exact(ENTRY_BYTES) {
+        if visited == limit {
+            return Ok(entries);
+        }
+        if slot[0] == 0x00 {
+            return Ok(entries);
+        }
+        visited += 1;
+        if slot[0] == 0xE5 || slot[OFFSET_ATTRS] == ATTR_LFN || slot[OFFSET_ATTRS] & ATTR_VOLUME_LABEL != 0 {
+            continue;
+        }
+        if let Some(entry) = decode_entry(boot, slot)? {
+            entries.push(entry);
         }
     }
     Ok(entries)
+}
+
+fn read_dir_bytes<D: BlockDevice>(device: &mut D, sectors: &[u64]) -> Result<Vec<u8>, FsError> {
+    let mut bytes = alloc::vec![0u8; sectors.len() * 512];
+    let mut start = 0usize;
+    while start < sectors.len() {
+        let mut end = start + 1;
+        while end < sectors.len() && sectors[end] == sectors[end - 1] + 1 {
+            end += 1;
+        }
+        let at = start * 512;
+        device
+            .read_blocks(sectors[start], end - start, &mut bytes[at..at + (end - start) * 512])
+            .map_err(FsError::Io)?;
+        start = end;
+    }
+    Ok(bytes)
 }
 
 fn directory_sectors<D: BlockDevice>(
@@ -531,6 +544,34 @@ mod tests {
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].first_cluster, 2);
         assert_eq!(entries[2].first_cluster, 4);
+    }
+
+    #[test]
+    fn a_root_readdir_is_one_batched_device_call() {
+        let boot = fat16_boot();
+        let mut device = TestDevice::new(boot.total_sectors);
+        let live = slot_bytes(b"LIVE    ", b"EXE", 0x20, 2, 4);
+        put_slot(&mut device, 17, 0, &live);
+        let entries =
+            read_directory(&mut device, &boot, DirLocation::Sectors { first: 17, entry_count: 512 })
+                .expect("reads");
+        assert_eq!(entries, vec![file_entry(b"live.exe", false, 2, 4)]);
+        assert_eq!(device.run_log, vec![(17, 32)]);
+    }
+
+    #[test]
+    fn a_holey_chain_directory_reads_one_run_per_contiguous_span() {
+        let boot = fat16_boot();
+        let mut device = TestDevice::new(boot.total_sectors);
+        let (fat_sector, fat_offset) = crate::fat::fixtures::fat16_entry_at(5);
+        device.put16(fat_sector, fat_offset, 7);
+        let (fat_sector, fat_offset) = crate::fat::fixtures::fat16_entry_at(7);
+        device.put16(fat_sector, fat_offset, 0xFFF8);
+        let first = slot_bytes(b"FIRST   ", b"   ", 0x20, 7, 1);
+        put_slot(&mut device, 52, 0, &first);
+        let entries = read_directory(&mut device, &boot, DirLocation::Chain(5)).expect("reads");
+        assert_eq!(entries, vec![file_entry(b"first", false, 7, 1)]);
+        assert_eq!(device.run_log, vec![(52, 1), (54, 1)]);
     }
 
     #[test]

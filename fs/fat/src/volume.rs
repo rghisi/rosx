@@ -199,43 +199,10 @@ impl<D: BlockDevice> FileSystem<D> {
             .ok_or(FsError::BadHandle)
     }
 
-    fn chain_cluster(&self, handle: FatHandle, index: usize) -> Result<u32, FsError> {
-        let entry = self.live_entry(handle)?;
-        let cluster = *entry.chain.get(index).ok_or(FsError::Corrupt)?;
-        Ok(cluster)
-    }
-
     fn zero_gap(&mut self, handle: FatHandle, from: u64, to: u64) -> Result<(), FsError> {
-        let cluster_bytes = self.cluster_bytes();
-        let zero_block = [0u8; 512];
-        let mut byte = from;
-        while byte < to {
-            let cluster = self.chain_cluster(handle, (byte / cluster_bytes) as usize)?;
-            let first_sector = self
-                .boot
-                .first_sector_of_cluster(cluster)
-                .ok_or(FsError::Corrupt)?;
-            let in_cluster = (byte % cluster_bytes) as usize;
-            let sector = first_sector + (in_cluster / 512) as u64;
-            let sector_offset = in_cluster % 512;
-            let chunk = (512 - sector_offset).min((to - byte) as usize);
-            if sector_offset != 0 || chunk != 512 {
-                let mut block = [0u8; 512];
-                self.device
-                    .read_block(sector, &mut block)
-                    .map_err(FsError::Io)?;
-                block[sector_offset..sector_offset + chunk].fill(0);
-                self.device
-                    .write_block(sector, &block)
-                    .map_err(FsError::Io)?;
-            } else {
-                self.device
-                    .write_block(sector, &zero_block)
-                    .map_err(FsError::Io)?;
-            }
-            byte += chunk as u64;
-        }
-        Ok(())
+        let Self { boot, device, opens, .. } = self;
+        let entry = open_slot(opens, handle)?;
+        file::zero_region(device, boot, &entry.chain, from, to)
     }
 
     fn reseed_cursor(&mut self, handle: FatHandle) -> Result<(), FsError> {
@@ -537,30 +504,10 @@ impl<D: BlockDevice> FileSystem<D> {
             self.zero_gap(handle, old_size, offset)?;
         }
         let first_cluster = self.live_entry(handle)?.first_cluster;
-        let mut written = 0usize;
-        let mut block = [0u8; 512];
-        while written < data.len() {
-            let byte = offset + written as u64;
-            let cluster = self.chain_cluster(handle, (byte / cluster_bytes) as usize)?;
-            let in_cluster = (byte % cluster_bytes) as usize;
-            let first_sector = self
-                .boot
-                .first_sector_of_cluster(cluster)
-                .ok_or(FsError::Corrupt)?;
-            let sector = first_sector + (in_cluster / 512) as u64;
-            let sector_offset = in_cluster % 512;
-            let chunk = (512 - sector_offset).min(data.len() - written);
-            if sector_offset != 0 || chunk != 512 {
-                self.device
-                    .read_block(sector, &mut block)
-                    .map_err(FsError::Io)?;
-            }
-            block[sector_offset..sector_offset + chunk]
-                .copy_from_slice(&data[written..written + chunk]);
-            self.device
-                .write_block(sector, &block)
-                .map_err(FsError::Io)?;
-            written += chunk;
+        {
+            let Self { boot, device, opens, .. } = self;
+            let entry = open_slot(opens, handle)?;
+            file::write_file(device, boot, &entry.chain, offset, data)?;
         }
         let size = old_size.max(end);
         let mut name_parts = ([0u8; 8], [0u8; 3]);
@@ -698,6 +645,14 @@ impl<D: BlockDevice> Engine for FileSystem<D> {
     fn sync(&mut self) -> Result<(), FsError> {
         self.device.flush().map_err(FsError::Io)
     }
+}
+
+fn open_slot(opens: &mut [Option<OpenEntry>], handle: FatHandle) -> Result<&mut OpenEntry, FsError> {
+    opens
+        .get_mut(handle.slot as usize)
+        .and_then(|slot| slot.as_mut())
+        .filter(|entry| entry.generation == handle.generation)
+        .ok_or(FsError::BadHandle)
 }
 
 #[cfg(test)]

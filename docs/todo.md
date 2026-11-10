@@ -25,6 +25,12 @@ Evaluate [`rust_arkitect`](https://crates.io/crates/rust_arkitect) (ArchUnit/php
 
 **Zero-dependency middle path (possibly sufficient).** A `cargo xtask check-arch` subcommand: `cargo metadata` allow-list of deps per crate (catches `system` ever gaining a dependency) + the R2/R5 absence greps. The RosX crate graph is ~5 edges and Cargo itself already refuses illegal arrows; the ArchUnit DSL earns its dev-dep only if module-level accretion *inside* `kernel/` becomes a real decay mode — that is the trigger condition to revisit this.
 
+## 3. benchkit: share the benchmark window mechanism
+
+`apps/bench/src/windows.rs` (calibrate + warm-up + best-of-N measurement windows, `bench.<phase>.best` line convention) is duplicated verbatim-in-spirit in `apps/fsbench/src/windows.rs` (constants retuned for slow filesystem ops: fs ops are seconds-slow, so calibration floors at 1 iteration). Two consumers justify living together.
+
+**Trigger.** Extract a small `benchkit` crate (workspace path dep, `no_std`) when a third consumer appears or when the two copies need a shared behavior change. `bench` keeps `ns_per_op`; `fsbench` will likely want `bytes_per_sec` — the divergence itself is the signal for what the shared shape should be.
+
 ## Related open gap (decided, not yet done)
 
 Neither idea is wired in today, so `checks/compile_fail.sh` remains a manual gate; at minimum it deserves a CI invocation and an AGENTS.md mention until idea 1 lands.
