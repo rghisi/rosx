@@ -1,11 +1,29 @@
+use crate::handle::{IpcConnectionHandle};
 use crate::ipc::message_future::IpcMessageFuture;
+use crate::irq_guard::IrqCell;
 use crate::kernel::kernel;
 use crate::kernel_services::services;
 use crate::memory::memory_manager::MemoryStats;
-use system::ipc::{MESSAGE_PAYLOAD_BYTES, Message};
+use crate::task::{TaskHandle, TaskState};
+use alloc::vec;
+use alloc::vec::Vec;
+use system::ipc::{MESSAGE_PAYLOAD_BYTES, Message, encode_data_token};
 use system::kstats::{
-    KSTATSD_SERVICE_NAME, KstatsRequest, MemorySnapshot, decode_request, encode_memory_snapshot,
+    KSTATSD_SERVICE_NAME, KstatsRequest, MemorySnapshot, ProcessRecord, decode_request,
+    encode_memory_snapshot, encode_process_table, process_table_bytes_for,
+    PROCESS_STATE_BLOCKED, PROCESS_STATE_CREATED, PROCESS_STATE_READY, PROCESS_STATE_RUNNING,
 };
+
+static PROCESS_TABLE_SECTION: IrqCell = IrqCell::new("kstatsd_process_table");
+
+fn wire_state(state: TaskState) -> u8 {
+    match state {
+        TaskState::Running => PROCESS_STATE_RUNNING,
+        TaskState::Ready => PROCESS_STATE_READY,
+        TaskState::Blocked => PROCESS_STATE_BLOCKED,
+        _ => PROCESS_STATE_CREATED,
+    }
+}
 
 pub fn main() {
     let Ok(binding) = services()
@@ -26,17 +44,65 @@ pub fn main() {
         let Ok(request) = received.result() else {
             continue;
         };
+        let self_task = kernel().execution_state.current_task();
+        if let Some(KstatsRequest::ProcessTable) = decode_request(request.data()) {
+            reply_process_table(request.conn(), self_task);
+            continue;
+        }
         let stats = services().memory_manager.stats();
         let uptime_ms = kernel().get_system_time();
         let Some(payload) = reply_payload(request.data(), stats, uptime_ms) else {
             continue;
         };
-        let caller = kernel().execution_state.current_task();
         let _ = services()
             .ipc_manager
             .borrow_mut()
-            .send_message(caller, &Message::new(request.conn(), &payload));
+            .send_message(self_task, &Message::new(request.conn(), &payload));
     }
+}
+
+fn reply_process_table(conn: u32, writer: TaskHandle) {
+    let Some(connection) = IpcConnectionHandle::from_packed(conn as usize) else {
+        return;
+    };
+    let (rows, mem_bytes) = {
+        let _section = PROCESS_TABLE_SECTION.acquire();
+        let rows = services().task_manager.borrow().snapshot_processes();
+        let mem_bytes: Vec<usize> = rows
+            .iter()
+            .map(|row| services().memory_manager.group_bytes(row.group))
+            .collect();
+        (rows, mem_bytes)
+    };
+    let records: Vec<ProcessRecord> = rows
+        .iter()
+        .zip(mem_bytes.iter())
+        .map(|(row, bytes)| ProcessRecord {
+            pid: row.group as u32,
+            state: wire_state(row.state),
+            thread_count: row.thread_count,
+            mem_bytes: *bytes as u64,
+            name: &row.name[..row.name_len],
+        })
+        .collect();
+    let mut blob = vec![0u8; process_table_bytes_for(records.len())];
+    let Some(encoded_len) = encode_process_table(&records, &mut blob) else {
+        return;
+    };
+    blob.truncate(encoded_len);
+    let Ok(token) = services()
+        .ipc_manager
+        .borrow_mut()
+        .write_data(writer, connection, &blob)
+    else {
+        return;
+    };
+    let mut payload = [0u8; MESSAGE_PAYLOAD_BYTES];
+    encode_data_token(&mut payload, token.pack() as u32);
+    let _ = services()
+        .ipc_manager
+        .borrow_mut()
+        .send_message(writer, &Message::new(conn, &payload));
 }
 
 fn reply_payload(
@@ -46,6 +112,7 @@ fn reply_payload(
 ) -> Option<[u8; MESSAGE_PAYLOAD_BYTES]> {
     match decode_request(request_data)? {
         KstatsRequest::MemorySnapshot => Some(encode_memory_snapshot(&snapshot(stats, uptime_ms))),
+        KstatsRequest::ProcessTable => None,
     }
 }
 

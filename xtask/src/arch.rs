@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::workspace_root;
 
-pub const USER_APPS: [&str; 31] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "bench", "atad", "blockd", "ata", "format", "mount", "attach", "rm", "cp", "mkdir", "rmdir", "init", "shell", "exiter"];
+pub const USER_APPS: [&str; 32] = ["pi", "randomd", "echo", "bulk", "pong", "ping", "mem", "ps", "vfsd", "vfs", "snake", "tetris", "conway", "threads", "waitset", "inputd", "ps2d", "stress", "bench", "atad", "blockd", "ata", "format", "mount", "attach", "rm", "cp", "mkdir", "rmdir", "init", "shell", "exiter"];
 
 pub const BOOTSTRAP_APPS: [&str; 8] = ["atad", "blockd", "attach", "mount", "vfsd", "inputd", "ps2d", "shell"];
 

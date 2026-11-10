@@ -79,6 +79,42 @@ impl<T, const S: usize> GenerationalArena<T, S> {
     pub(crate) fn any<F: Fn(&T) -> bool>(&self, predicate: F) -> bool {
         self.items.iter().flatten().any(|item| predicate(item))
     }
+
+    pub(crate) fn visit<F: FnMut(&T)>(&self, mut visitor: F) {
+        for item in self.items.iter().flatten() {
+            visitor(item);
+        }
+    }
+}
+
+#[cfg(test)]
+mod visit_tests {
+    use crate::collections::arena::GenerationalArena;
+
+    #[test]
+    fn visit_yields_every_live_item_once() {
+        let mut arena: GenerationalArena<i32, 6> = GenerationalArena::new();
+        arena.add(1).unwrap();
+        arena.add(2).unwrap();
+        arena.add(3).unwrap();
+        let (mut sum, mut count) = (0i32, 0usize);
+        arena.visit(|item| {
+            sum += *item;
+            count += 1;
+        });
+        assert_eq!((sum, count), (6, 3));
+    }
+
+    #[test]
+    fn visit_skips_removed_slots() {
+        let mut arena: GenerationalArena<i32, 4> = GenerationalArena::new();
+        let first = arena.add(10).unwrap();
+        arena.add(20).unwrap();
+        arena.remove(first).unwrap();
+        let mut seen = 0usize;
+        arena.visit(|_| seen += 1);
+        assert_eq!(seen, 1);
+    }
 }
 
 #[cfg(test)]

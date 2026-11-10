@@ -24,7 +24,7 @@ impl<'a> Program<'a> {
     pub fn name(&self) -> &'a str {
         match self {
             Program::Rom(name) | Program::ImplicitRom(name) => name,
-            Program::Vfs(path) => path,
+            Program::Vfs(path) => path.rsplit_once('/').map_or(*path, |(_, name)| name),
         }
     }
 }
@@ -343,7 +343,7 @@ mod tests {
     #[test]
     fn program_name_gives_the_source_stripped_identity() {
         assert_eq!(parse_program("rom:vfsd").unwrap().name(), "vfsd");
-        assert_eq!(parse_program("/shell").unwrap().name(), "/shell");
+        assert_eq!(parse_program("/shell").unwrap().name(), "shell");
         assert_eq!(parse_program("shell").unwrap().name(), "shell");
     }
 

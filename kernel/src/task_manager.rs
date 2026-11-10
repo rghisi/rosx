@@ -1,9 +1,27 @@
 use crate::collections::arena::GenerationalArena;
 use crate::task::TaskState::Terminated;
-use crate::task::{GroupId, SharedTask, Task, TaskHandle, TaskState, YieldReason};
+use crate::task::{GroupId, SharedTask, Task, TaskHandle, TaskState, YieldReason, TASK_NAME_BYTES};
 use crate::task_stack::{StackObservation, STACK_WORDS};
+use alloc::vec::Vec;
 use core::ptr::null_mut;
 use crate::handle::FutureHandle;
+
+pub(crate) struct ProcessSnapshot {
+    pub group: usize,
+    pub state: TaskState,
+    pub thread_count: u16,
+    pub name: [u8; TASK_NAME_BYTES],
+    pub name_len: usize,
+}
+
+fn liveness(state: TaskState) -> u8 {
+    match state {
+        TaskState::Running => 3,
+        TaskState::Ready => 2,
+        TaskState::Blocked => 1,
+        _ => 0,
+    }
+}
 
 pub(crate) struct TaskManager {
     tasks: GenerationalArena<SharedTask, 256>,
@@ -61,6 +79,31 @@ impl TaskManager {
     pub(crate) fn group_has_live_members(&self, group: GroupId) -> bool {
         self.tasks
             .any(|task| task.group() == group && task.state() != Terminated)
+    }
+
+    pub(crate) fn snapshot_processes(&self) -> Vec<ProcessSnapshot> {
+        let mut rows: Vec<ProcessSnapshot> = Vec::new();
+        self.tasks.visit(|task| {
+            let state = task.state();
+            if state == Terminated {
+                return;
+            }
+            let group = task.group().value();
+            if let Some(row) = rows.iter_mut().find(|row| row.group == group) {
+                row.thread_count = row.thread_count.saturating_add(1);
+                if liveness(state) > liveness(row.state) {
+                    row.state = state;
+                }
+            } else {
+                let name = task.name().as_bytes();
+                let name_len = name.len().min(TASK_NAME_BYTES);
+                let mut buffer = [0u8; TASK_NAME_BYTES];
+                buffer[..name_len].copy_from_slice(&name[..name_len]);
+                rows.push(ProcessSnapshot { group, state, thread_count: 1, name: buffer, name_len });
+            }
+        });
+        rows.sort_by_key(|row| row.group);
+        rows
     }
 
     pub(crate) fn set_yield_reason(&mut self, handle: TaskHandle, reason: YieldReason) {
@@ -220,5 +263,56 @@ mod tests {
         let base = manager.borrow_task_mut(handle).unwrap().stack_base();
         manager.borrow_task_mut(handle).unwrap().set_stack_pointer(base + 8);
         manager.observe_task_stack(handle);
+    }
+
+    fn row_name(row: &ProcessSnapshot) -> &str {
+        core::str::from_utf8(&row.name[..row.name_len]).unwrap()
+    }
+
+    #[test]
+    fn snapshot_lists_one_row_per_group_with_its_name() {
+        let mut manager = TaskManager::new();
+        manager.add_task(Task::new("alpha", 0, 0)).unwrap();
+        manager.add_task(Task::new("beta", 0, 0)).unwrap();
+        let rows = manager.snapshot_processes();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.iter().filter(|r| r.thread_count == 1).count(), 2);
+        let mut names: [&str; 2] = [row_name(&rows[0]), row_name(&rows[1])];
+        names.sort_unstable();
+        assert_eq!(names, ["alpha", "beta"]);
+    }
+
+    #[test]
+    fn snapshot_collapses_threads_into_one_process_row() {
+        let mut manager = TaskManager::new();
+        let leader = manager.add_task(Task::new("alpha", 0, 0)).unwrap();
+        let group = manager.get_group(leader).unwrap();
+        manager.add_task(new_entrypoint_task(0x1000, group)).unwrap();
+        manager.add_task(new_entrypoint_task(0x2000, group)).unwrap();
+        let rows = manager.snapshot_processes();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].thread_count, 3);
+        assert_eq!(row_name(&rows[0]), "alpha");
+    }
+
+    #[test]
+    fn snapshot_excludes_groups_with_no_live_members() {
+        let mut manager = TaskManager::new();
+        let handle = manager.add_task(Task::new("gone", 0, 0)).unwrap();
+        manager.set_state(handle, Terminated);
+        assert!(manager.snapshot_processes().is_empty());
+    }
+
+    #[test]
+    fn snapshot_reports_the_most_active_thread_state() {
+        let mut manager = TaskManager::new();
+        let leader = manager.add_task(Task::new("mixed", 0, 0)).unwrap();
+        let group = manager.get_group(leader).unwrap();
+        let thread = manager.add_task(new_entrypoint_task(0x1000, group)).unwrap();
+        manager.set_state(leader, TaskState::Blocked);
+        manager.set_state(thread, TaskState::Running);
+        let rows = manager.snapshot_processes();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].state, TaskState::Running);
     }
 }

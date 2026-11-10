@@ -238,6 +238,21 @@ impl FreeListAllocator {
         }
     }
 
+    pub(crate) fn group_bytes(&self, group_id: usize) -> usize {
+        let heap = BlockOwner::Group(group_id);
+        let stack = BlockOwner::Stack(group_id);
+        let mut total = 0usize;
+        let mut current = self.alloc_head;
+        while !current.is_null() {
+            let owner = unsafe { (*current).owner };
+            if owner == heap || owner == stack {
+                total += unsafe { (*current).size };
+            }
+            current = unsafe { (*current).next };
+        }
+        total
+    }
+
     pub unsafe fn deallocate_by_owner(&mut self, group_id: usize) {
         let target = BlockOwner::Group(group_id);
         let mut prev_next: *mut *mut AllocHeader = &mut self.alloc_head;
@@ -612,6 +627,29 @@ mod tests {
         ));
         unsafe { alloc.deallocate(stack, 8) };
         assert!(unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_ok());
+    }
+
+    #[test]
+    fn group_bytes_sums_heap_and_stack_blocks_of_one_group() {
+        let region_size = 4 * needed_for(64);
+        let mut memory = vec![0u8; region_size];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = make_allocator(&[(base, region_size)]);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let heap = unsafe { alloc.allocate(layout, BlockOwner::Group(7)) }.unwrap();
+        let after_heap = alloc.group_bytes(7);
+        assert!(after_heap > 0);
+        let stack = unsafe { alloc.allocate(layout, BlockOwner::Stack(7)) }.unwrap();
+        let after_stack = alloc.group_bytes(7);
+        assert!(after_stack > after_heap, "stack block must count toward the group");
+        unsafe { alloc.allocate(layout, BlockOwner::Group(8)) }.unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        assert_eq!(alloc.group_bytes(7), after_stack, "other owners must not count");
+        unsafe { alloc.deallocate(stack, 8) };
+        assert_eq!(alloc.group_bytes(7), after_heap);
+        unsafe { alloc.deallocate(heap, 8) };
+        assert_eq!(alloc.group_bytes(7), 0);
+        assert_eq!(alloc.group_bytes(99), 0, "never-allocated group has no usage");
     }
 
     #[test]
