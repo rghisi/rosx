@@ -77,7 +77,7 @@ impl TaskName {
 pub struct GroupId(usize);
 
 impl GroupId {
-    fn allocate() -> GroupId {
+    pub(crate) fn allocate() -> GroupId {
         static NEXT_GROUP_ID: AtomicUsize = AtomicUsize::new(1);
         GroupId(NEXT_GROUP_ID.fetch_add(1, Ordering::Relaxed))
     }
@@ -105,7 +105,16 @@ impl Task {
         entry_point: usize,
         entry_param: usize,
     ) -> SharedTask {
-        let stack = TaskStack::new();
+        Task::in_group(name, entry_point, entry_param, GroupId::allocate())
+    }
+
+    fn in_group(
+        name: &str,
+        entry_point: usize,
+        entry_param: usize,
+        group: GroupId,
+    ) -> SharedTask {
+        let stack = TaskStack::new(group);
         let stack_pointer = stack.top();
         Box::new(Task {
             name: TaskName::new(name),
@@ -116,7 +125,7 @@ impl Task {
             entry_param,
             stack,
             completion_future: None,
-            group: GroupId::allocate(),
+            group,
         })
     }
     pub fn name(&self) -> &str {
@@ -230,9 +239,7 @@ extern "C" fn idle_entry(cpu_ptr: usize) {
 }
 
 pub fn new_entrypoint_task(entrypoint: usize, group: GroupId) -> SharedTask {
-    let mut task = Task::new("EPT", task_wrapper as *const () as usize, entrypoint);
-    task.group = group;
-    task
+    Task::in_group("EPT", task_wrapper as *const () as usize, entrypoint, group)
 }
 
 pub struct ElfTaskContext {

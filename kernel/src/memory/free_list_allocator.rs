@@ -19,6 +19,7 @@ struct AllocHeader {
 pub(crate) enum BlockOwner {
     Kernel,
     Group(usize),
+    Stack(usize),
 }
 
 const BLOCK_HDR: usize = core::mem::size_of::<FreeBlock>();
@@ -586,6 +587,31 @@ mod tests {
             unsafe { alloc.allocate(layout, BlockOwner::Kernel) },
             Err(AllocError::OutOfMemory)
         ));
+    }
+
+    #[test]
+    fn deallocate_by_owner_leaves_stack_blocks_of_the_same_group() {
+        let region_size = 3 * needed_for(64);
+        let mut memory = vec![0u8; region_size];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = make_allocator(&[(base, region_size)]);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let stack = unsafe { alloc.allocate(layout, BlockOwner::Stack(42)) }.unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Group(42)) }.unwrap();
+        unsafe { alloc.allocate(layout, BlockOwner::Group(42)) }.unwrap();
+        assert!(matches!(
+            unsafe { alloc.allocate(layout, BlockOwner::Kernel) },
+            Err(AllocError::OutOfMemory)
+        ));
+        unsafe { alloc.deallocate_by_owner(42) };
+        assert!(unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_ok());
+        assert!(unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_ok());
+        assert!(matches!(
+            unsafe { alloc.allocate(layout, BlockOwner::Kernel) },
+            Err(AllocError::OutOfMemory)
+        ));
+        unsafe { alloc.deallocate(stack, 8) };
+        assert!(unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.is_ok());
     }
 
     #[test]
