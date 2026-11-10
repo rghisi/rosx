@@ -50,6 +50,26 @@ impl MemoryManager {
         self.is_setup.store(true, Ordering::SeqCst);
     }
 
+    #[cfg(test)]
+    pub(crate) fn ensure_test_memory() {
+        static BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
+        if BOOTSTRAPPED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let region = alloc::vec![0u8; 64 * 1024 * 1024].leak();
+        let blocks = crate::memory::MemoryBlocks {
+            blocks: core::array::from_fn(|i| {
+                if i == 0 {
+                    crate::memory::MemoryBlock { start: region.as_mut_ptr() as usize, size: region.len() }
+                } else {
+                    crate::memory::MemoryBlock { start: 0, size: 0 }
+                }
+            }),
+            count: 1,
+        };
+        MEMORY_MANAGER.bootstrap(&blocks);
+    }
+
     pub(crate) fn stats(&self) -> MemoryStats {
         let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
             && self.cpu.borrow().unwrap().are_interrupts_enabled();
