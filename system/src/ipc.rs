@@ -2,6 +2,18 @@ pub const MESSAGE_BYTES: usize = 64;
 pub const MESSAGE_PAYLOAD_BYTES: usize = 60;
 pub const KERNEL_EVENT_CONN: u32 = 0x8000_0000;
 
+pub const DATA_TOKEN_BYTES: usize = core::mem::size_of::<u32>();
+
+pub fn encode_data_token(data: &mut [u8; MESSAGE_PAYLOAD_BYTES], token: u32) {
+    data[..DATA_TOKEN_BYTES].copy_from_slice(&token.to_ne_bytes());
+}
+
+pub fn decode_data_token(data: &[u8; MESSAGE_PAYLOAD_BYTES]) -> u32 {
+    let mut bytes = [0u8; DATA_TOKEN_BYTES];
+    bytes.copy_from_slice(&data[..DATA_TOKEN_BYTES]);
+    u32::from_ne_bytes(bytes)
+}
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Message {
@@ -48,6 +60,15 @@ mod tests {
         let message = Message::new(0x7FFF_FFFF, &pattern);
         assert_eq!(message.conn(), 0x7FFF_FFFF);
         assert_eq!(*message.data(), pattern);
+    }
+
+    #[test]
+    fn data_token_roundtrips_through_the_payload_prefix() {
+        let mut data = [0u8; MESSAGE_PAYLOAD_BYTES];
+        encode_data_token(&mut data, 0xABCD_1234);
+        assert_eq!(decode_data_token(&data), 0xABCD_1234);
+        assert_eq!(&data[..DATA_TOKEN_BYTES], &0xABCD_1234u32.to_ne_bytes());
+        assert!(data[DATA_TOKEN_BYTES..].iter().all(|byte| *byte == 0));
     }
 
     #[test]

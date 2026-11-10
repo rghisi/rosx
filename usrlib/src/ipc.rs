@@ -61,18 +61,9 @@ pub fn ipc_receive_value(connection: UserConnectionHandle) -> Result<usize, Rece
     Ok(usize::from_ne_bytes(bytes))
 }
 
-const DATA_TOKEN_BYTES: usize = core::mem::size_of::<u32>();
 const RECEIVE_CHUNK_BYTES: usize = 4096;
 
-pub(crate) fn encode_data_token(data: &mut [u8; MESSAGE_PAYLOAD_BYTES], token: u32) {
-    data[..DATA_TOKEN_BYTES].copy_from_slice(&token.to_ne_bytes());
-}
-
-pub(crate) fn decode_data_token(data: &[u8; MESSAGE_PAYLOAD_BYTES]) -> u32 {
-    let mut bytes = [0u8; DATA_TOKEN_BYTES];
-    bytes.copy_from_slice(&data[..DATA_TOKEN_BYTES]);
-    u32::from_ne_bytes(bytes)
-}
+pub(crate) use system::ipc::{decode_data_token, encode_data_token};
 
 pub enum SendDataError {
     Data(DataError),
@@ -127,6 +118,7 @@ pub fn receive_data(message: &ReceivedMessage) -> Result<Vec<u8>, DataError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use system::ipc::DATA_TOKEN_BYTES;
 
     #[test]
     fn data_token_codec_roundtrips_at_payload_offset_zero() {

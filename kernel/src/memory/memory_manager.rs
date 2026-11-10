@@ -120,6 +120,24 @@ impl MemoryManager {
         }
     }
 
+    pub(crate) fn group_bytes(&self, group_id: usize) -> usize {
+        let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
+            && self.cpu.borrow().unwrap().are_interrupts_enabled();
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().disable_interrupts();
+        }
+        let bytes = self
+            .allocator
+            .borrow()
+            .as_ref()
+            .expect("MemoryManager not bootstrapped")
+            .group_bytes(group_id);
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().enable_interrupts();
+        }
+        bytes
+    }
+
     pub(crate) unsafe fn release_group_allocations(&self, group_id: usize) {
         let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
             && self.cpu.borrow().unwrap().are_interrupts_enabled();

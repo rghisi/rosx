@@ -24,6 +24,7 @@ members = [
     "apps/pong",
     "apps/ping",
     "apps/mem",
+    "apps/ps",
     "apps/vfsd",
     "apps/vfs",
     "apps/snake",
