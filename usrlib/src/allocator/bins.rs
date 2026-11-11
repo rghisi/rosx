@@ -1,6 +1,6 @@
 use core::alloc::Layout;
 
-pub const SLAB_BYTES: usize = 65_536;
+pub const SLAB_BYTES: usize = 8_192;
 pub const SMALL_MAX: usize = 4_096;
 const MIN_CHUNK_BYTES: usize = 16;
 const CLASS_COUNT: usize = 9;
