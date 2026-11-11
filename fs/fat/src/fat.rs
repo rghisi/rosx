@@ -325,19 +325,46 @@ fn scan_free_clusters<D: BlockDevice>(
     Err(FsError::NoSpace)
 }
 
+const ZERO_RUN_SECTORS: usize = 128;
+
+pub(crate) fn zero_sectors<D: BlockDevice>(
+    device: &mut D,
+    first: u64,
+    sectors: usize,
+) -> Result<(), FsError> {
+    let buffer = alloc::vec![0u8; core::cmp::min(sectors, ZERO_RUN_SECTORS) * SECTOR_BYTES as usize];
+    let mut done = 0usize;
+    while done < sectors {
+        let run = core::cmp::min(sectors - done, ZERO_RUN_SECTORS);
+        device
+            .write_blocks(
+                first + done as u64,
+                run,
+                &buffer[..run * SECTOR_BYTES as usize],
+            )
+            .map_err(FsError::Io)?;
+        done += run;
+    }
+    Ok(())
+}
+
 pub fn zero_clusters<D: BlockDevice>(
     device: &mut D,
     boot: &BootSector,
     clusters: &[u32],
 ) -> Result<(), FsError> {
-    let zero_block = [0u8; SECTOR_BYTES as usize];
-    for cluster in clusters {
+    let sectors_per_cluster = boot.sectors_per_cluster as usize;
+    let mut start = 0usize;
+    while start < clusters.len() {
         let first = boot
-            .first_sector_of_cluster(*cluster)
+            .first_sector_of_cluster(clusters[start])
             .ok_or(FsError::Corrupt)?;
-        for sector in first..first + u64::from(boot.sectors_per_cluster) {
-            device.write_block(sector, &zero_block).map_err(FsError::Io)?;
+        let mut end = start + 1;
+        while end < clusters.len() && clusters[end] == clusters[end - 1] + 1 {
+            end += 1;
         }
+        zero_sectors(device, first, (end - start) * sectors_per_cluster)?;
+        start = end;
     }
     Ok(())
 }
@@ -431,6 +458,8 @@ pub(crate) mod fixtures {
         pub flushes: usize,
         pub read_log: Vec<u64>,
         pub write_log: Vec<u64>,
+        pub run_log: Vec<(u64, usize)>,
+        pub write_run_log: Vec<(u64, usize)>,
     }
 
     impl TestDevice {
@@ -440,6 +469,8 @@ pub(crate) mod fixtures {
                 flushes: 0,
                 read_log: Vec::new(),
                 write_log: Vec::new(),
+                run_log: Vec::new(),
+                write_run_log: Vec::new(),
             }
         }
 
@@ -482,6 +513,26 @@ pub(crate) mod fixtures {
                 return Err(IoError::Device);
             };
             region.copy_from_slice(buf);
+            Ok(())
+        }
+
+        fn read_blocks(&mut self, first: u64, count: usize, dest: &mut [u8]) -> Result<(), IoError> {
+            self.run_log.push((first, count));
+            let unit = fs_core::device::run_unit(count, dest.len()).ok_or(IoError::Device)?;
+            for (index, chunk) in dest.chunks_exact_mut(unit).enumerate() {
+                let block = first.checked_add(index as u64).ok_or(IoError::Device)?;
+                self.read_block(block, chunk)?;
+            }
+            Ok(())
+        }
+
+        fn write_blocks(&mut self, first: u64, count: usize, data: &[u8]) -> Result<(), IoError> {
+            self.write_run_log.push((first, count));
+            let unit = fs_core::device::run_unit(count, data.len()).ok_or(IoError::Device)?;
+            for (index, chunk) in data.chunks_exact(unit).enumerate() {
+                let block = first.checked_add(index as u64).ok_or(IoError::Device)?;
+                self.write_block(block, chunk)?;
+            }
             Ok(())
         }
 

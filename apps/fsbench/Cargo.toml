@@ -1,0 +1,22 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "fsbench"
+publish = false
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "fsbench"
+bench = false
+test = false
+
+[dependencies]
+system = { path = "../../system" }
+usrlib = { path = "../../usrlib" }
+vfs-protocol = { path = "../../protocol/vfs" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+usrlib = { path = "../../usrlib", features = ["runtime"] }
+
+[lints]
+workspace = true

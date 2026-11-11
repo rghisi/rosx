@@ -195,16 +195,98 @@ ROSX_ARCH=x86_32 ROSX_KERNEL_ELF=$PWD/target/rosx-i486/release/rosx-x86_32 \
 #   not just the total; run-to-run noise on the total is ±1–2 s)
 ```
 
-**Run record** (this machine, QEMU/KVM, `-cpu 486`, release kernels):
+**Timing windows.** This machine is itself a KVM guest (`systemd-detect-virt` → `kvm`)
+and the suite's QEMU sessions run under TCG, so wall time tracks raw CPU throughput as
+granted by the outer hypervisor. That throughput arrives in windows: on 2026-11-09 the
+machine ran ~1.43x slower for ~75-minute stretches, uniformly across every binary —
+including ones a filesystem change cannot touch — while every in-guest indicator
+(loadavg, CPU/IO PSI, steal, iostat) read quiet. Discipline that survived this:
+(1) compare **per binary**, never only totals; (2) a uniform multiplier across binaries
+is the machine — confirm by **re-measuring the same commit** (the original B0 rerun
+landed within ±0.2 s on 19/20 binaries across a fast/slow/fast sequence, while the
+optimized head measured fast and slow in different windows; a mechanism story told
+mid-confusion — eager readdir blamed — was disproved only by a same-window head-to-head);
+(3) headline claims are **pair-wise inside one window**: B0′ and F′ back-to-back, each
+gated on a fast-window `ata_identify` probe before the suite starts.
+
+**Run record — original base (`#152` branch head + plan, pre-#154), 2026-11-09.** The
+step curve was measured inside one fast window; totals from the throttled windows that
+sandwich it (188.68 / 189.19 for the same optimized tree) are kept only as window evidence:
 
 | run | commit | boot to prompt | x86_32 suite total | `fat_partition_flow` | `vfs_hdd_flow` | notes |
 |---|---|---|---|---|---|---|
 | **B0** | `c4339a1`+plan (pre-change) | **2.62 s** | **181.12 s** | 16.71 s | 29.52 s | 0 failed; **[O]** 2026-11-09 |
-| step 1 | | | | | | |
-| step 2 | | | | | | |
-| step 3 | | | | | | |
-| step 4 | | | | | | |
-| step 5 | | | | | | |
-| **F** | | | | | | |
+| step 1 | `0fa61a7` | 2.66 s | 180.83 s | 16.74 s | 29.65 s | flat as predicted (defaults unused); one `exit_status` session flaked, green on rerun |
+| step 2 | `ef16bf2` | — | — | — | — | not re-run: the override was unreachable until step 3 — flat by construction |
+| step 3 | `086b9d1` | **1.77 s** | **132.97 s** | **11.87 s** | **20.45 s** | the hop collapse; 0 failed |
+| step 4a | `ac09f09` | 1.78 s | 132.20 s | 11.64 s | 20.60 s | write/zero runs; 0 failed |
+| steps 4b+5 | `8fbbf70`+`8a0877f` | 1.75 s | — | 11.75 s | — | head-to-head vs step 4a in one window (`ata_identify` 1.90 = 1.90, `ipc_ping` 2.23 ≈ 2.20, `boot_and_shell` 6.36 ≈ 6.30): the readdir + rxfs-run additions cost ≤2 %, inside noise |
 
-Expected deltas are stated per step in §3; F vs B0 is the PR's headline number.
+**Run record — merged base (`main` = #152 + #154).** The six commits re-applied onto
+`d93353a` are content-identical to the step curve above (engine files byte-identical
+to the tested tip `8a0877f`), so the original-base numbers carry the performance
+claim. Suite wall-clock on the merged base is **retired as the evidence channel** —
+see the timing-window findings; the instrument that replaces it is `apps/fsbench`
+(in-guest phases, best-of-N, CPU-control self-normalization).
+
+| run | commit | x86_32 suite | notes |
+|---|---|---|---|
+| **F′** correctness gate | `eb3e0eb` | 0 failed, 190.92 s | recorded in a slow window — wall time noted, not compared |
+| **B0′** / **F′** fsbench head-to-head | `d93353a` vs `eb3e0eb` | deferred | **blocked behind `plans/ipc-volume-wedge.md`**: the first full-volume run of `fsbench` on this branch exposed a latent silent machine death at sustained IPC volume (see that plan for the full forensic record) |
+
+Per-step expected deltas are stated in §3 and were measured on the original base:
+boot to prompt 2.62 → ~1.77 s, suite −27 %, steps 4b+5 ≤ 2 % in one window.
+
+## 8. Implementation record
+
+Commits (branch `block-read-batching-v2`, on top of `d93353a`; identical content to
+the original `block-read-batching` branch on the #152 base):
+
+| commit | step | content |
+|---|---|---|
+| `e431212` | 1 | `BlockDevice::read_blocks`/`write_blocks` with looping defaults + `run_unit` contract helper (unit = `dest.len()/count` exactly, `count 0`/uneven/overflow refused); six device-level unit tests pinning the loop, mid-run failure and pre-access refusal |
+| `63e1915` | 2 | `RemoteWindow` overrides: pure `device_range` geometry (bounds/overflow before dialing) + one `blockd` request per run; four geometry tests |
+| `8d2300d` | 3 | `rxfat::read_file` head/run/tail restructure — `contiguous_run` walks the materialized chain (`chain[i+1] == chain[i]+1`) and the aligned run lands directly in `buf`; five run-shape tests + a read differential sweep (10 offsets × 9 lengths over a holed chain vs the per-sector reference, byte- and error-identical) |
+| `76f6d44` | 4a | `rxfat::write_file`/`zero_region` (gap) + `fat::zero_clusters` cluster-run batching with one 128-sector clamped zero buffer; `zero_sectors` shared helper; write differential sweep (8×9), zero differential sweep (6×6), one-run pin |
+| `8350edc` | 4b | `read_directory` batched scan (`read_dir_bytes` splits the sector list into contiguous runs); `locate_slot`/`find_slot_spot` kept early-exit single reads; readdir run-pins (whole root = one call, holey chain = one run per span) |
+| `eb3e0eb` | 5 | `rxfs::read` extent runs (`dev_read_run`, run = `min(extent.length − inner, remaining blocks)`); three counting tests (packed extent = one run, aligned middle only, one run per extent); `fs/core` `run_unit` reused by the test device |
+
+### Findings
+
+- **The read collapse lands entirely in Step 3.** One FAT file load goes from one hop per
+  512 B to one hop per contiguous cluster span; boot-to-prompt 2.62 → ~1.77 s, suite
+  −27 %. Steps 4–5 are polish on paths the boot does not walk (writes, readdir, rxfs).
+- **Point lookups stay early-exit by principle, full scans batch by measurement.** The
+  first 4b draft also batched `locate_slot`/`find_slot_spot`; they were reverted (the
+  initial ~7 % boot attribution turned out window-contaminated, see the benchmark
+  finding), and the keep/kill decision was re-taken in one clean head-to-head: eager
+  whole-directory reads (name resolution reads directories through `find_entry`) measure
+  ≤2 % — the root's 0x00 terminator lets the early-exit loop stop after 1–2 sectors,
+  while `read_directory` must see every slot anyway, so batching pays there and not for
+  point lookups.
+- **The machine has timing windows and code cannot invent them.** Every suite run is
+  TCG-under-nested-KVM wall time; the outer hypervisor delivered ~1.43x less throughput
+  for stretches, invisible from inside (steal stayed 0, iostat quiet, no competing
+  processes). The failure modes this produced, recorded so they are not repeated:
+  a contaminated attribution (the eager-scan boot delta was measured across a window
+  flip), a mis-diagnosis (uniform inflation was blamed on the host *before* the
+  same-commit rerun proved the host constant), and a rescue (the same head-to-head that
+  killed the mis-diagnosis is what validated 4b+5 as ≤2 %). Detection kit: fast-window
+  gate probe before every suite (`ata_identify` ≤ 2.3 s optimized / ≤ 3.2 s baseline),
+  per-binary tables, and re-measure-don't-rationalize.
+- **Semantics held.** The §4.1 promise paid for itself: the differential sweeps caught the
+  one real bug of the rewrite (a mid-cluster-aligned run returning the cluster head
+  instead of `cluster_first + used`) before any device-level test could.
+- **Default-loop discipline verified:** Steps 1 and 2 measured flat (180.83 vs 181.12 B0),
+  exactly as behavior-freedom predicts.
+- **Session-timeout flakes are the suite's standing weather**: one 60 s "waiting for
+  rose>" stall per handful of full runs (observed once each on `exit_status`,
+  `fat_partition_flow`, `vfs_hdd_flow` across the day, on both optimized and baseline
+  code), green on isolated rerun. Not attributed to this branch — and `fsbench` later
+  caught the severe sibling of that silent-death family (next bullet).
+- **`fsbench` earned its keep on day one**: the new in-guest benchmark (`apps/fsbench`;
+  run dir `/fsbrun`, phase-gated `fsbench [dir] [phases]`, `bench.<phase>.best` line
+  convention, CPU-control normalization) crossed every previous single-connection
+  transaction depth and died the machine silently at sustained IPC volume — forensic
+  record and next-probe recipe in `plans/ipc-volume-wedge.md`. The integration test
+  runs the gated `fsbench /fsbrun 1` (control only) until that latent bug is fixed.

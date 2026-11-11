@@ -362,14 +362,26 @@ impl<D: BlockDevice> FileSystem<D> {
             let file_offset = offset + done;
             let file_block = file_offset / BLOCK_BYTES as u64;
             let (extent, inner) = extent::locate(&extents, file_block).ok_or(FsError::Corrupt)?;
-            let physical = extent.start as u64 + inner;
             let block_off = (file_offset % BLOCK_BYTES as u64) as usize;
-            let chunk = (BLOCK_BYTES - block_off).min((available - done) as usize);
-            dev_read(&mut self.dev, physical, &mut block)?;
-            let src = block_off..block_off + chunk;
-            let dst = done as usize..done as usize + chunk;
-            buf[dst].copy_from_slice(&block[src]);
-            done += chunk as u64;
+            let remaining = (available - done) as usize;
+            if block_off != 0 || remaining < BLOCK_BYTES {
+                let physical = extent.start as u64 + inner;
+                dev_read(&mut self.dev, physical, &mut block)?;
+                let chunk = (BLOCK_BYTES - block_off).min(remaining);
+                buf[done as usize..done as usize + chunk]
+                    .copy_from_slice(&block[block_off..block_off + chunk]);
+                done += chunk as u64;
+                continue;
+            }
+            let run = (extent.length as u64 - inner).min(remaining as u64 / BLOCK_BYTES as u64);
+            let span = run as usize * BLOCK_BYTES;
+            dev_read_run(
+                &mut self.dev,
+                extent.start as u64 + inner,
+                run as usize,
+                &mut buf[done as usize..done as usize + span],
+            )?;
+            done += span as u64;
         }
         Ok(available as usize)
     }
@@ -1284,6 +1296,15 @@ fn dev_read<D: BlockDevice>(dev: &mut D, block: u64, buf: &mut [u8; BLOCK_BYTES]
     dev.read_block(block, buf).map_err(FsError::Io)
 }
 
+fn dev_read_run<D: BlockDevice>(
+    dev: &mut D,
+    first: u64,
+    count: usize,
+    dest: &mut [u8],
+) -> Result<(), FsError> {
+    dev.read_blocks(first, count, dest).map_err(FsError::Io)
+}
+
 fn dev_write<D: BlockDevice>(dev: &mut D, block: u64, buf: &[u8; BLOCK_BYTES]) -> Result<(), FsError> {
     dev.write_block(block, buf).map_err(FsError::Io)
 }
@@ -1335,6 +1356,7 @@ mod tests {
     struct SharedDisk {
         bytes: Rc<RefCell<Vec<u8>>>,
         writes: Rc<RefCell<usize>>,
+        runs: Rc<RefCell<Vec<(u64, usize)>>>,
     }
 
     impl SharedDisk {
@@ -1342,11 +1364,16 @@ mod tests {
             SharedDisk {
                 bytes: Rc::new(RefCell::new(vec![0u8; blocks as usize * BLOCK_BYTES])),
                 writes: Rc::new(RefCell::new(0)),
+                runs: Rc::new(RefCell::new(Vec::new())),
             }
         }
 
         fn write_count(&self) -> usize {
             *self.writes.borrow()
+        }
+
+        fn taken_runs(&self) -> Vec<(u64, usize)> {
+            std::mem::take(&mut *self.runs.borrow_mut())
         }
 
         fn poke(&mut self, block: u64, data: &[u8; BLOCK_BYTES]) {
@@ -1380,6 +1407,18 @@ mod tests {
                 return Err(crate::error::IoError::Device);
             }
             buf.copy_from_slice(&bytes[start..end]);
+            Ok(())
+        }
+
+        fn read_blocks(&mut self, first: u64, count: usize, dest: &mut [u8]) -> Result<(), crate::error::IoError> {
+            self.runs.borrow_mut().push((first, count));
+            let unit = fs_core::device::run_unit(count, dest.len()).ok_or(crate::error::IoError::Device)?;
+            for (index, chunk) in dest.chunks_exact_mut(unit).enumerate() {
+                let block = first
+                    .checked_add(index as u64)
+                    .ok_or(crate::error::IoError::Device)?;
+                self.read_block(block, chunk)?;
+            }
             Ok(())
         }
 
@@ -1737,6 +1776,67 @@ mod tests {
         assert_eq!(inode.blocks_used, 10);
         assert_eq!(extent::total_blocks(&extents), 10);
         assert!(extents.len() <= 2);
+    }
+
+    #[test]
+    fn an_aligned_read_of_a_packed_extent_lands_in_one_device_run() {
+        let disk = SharedDisk::new(SMALL_BLOCKS);
+        let witness = disk.clone();
+        let mut fs = format_shared(disk);
+        let h = fs.create(b"/packed.bin").unwrap();
+        let data = pattern_bytes(6 * BLOCK_BYTES, 5);
+        fs.write(h, 0, &data).unwrap();
+        fs.close(h).unwrap();
+        let h = fs.open(b"/packed.bin").unwrap();
+        witness.taken_runs();
+        let mut buf = vec![0u8; 6 * BLOCK_BYTES];
+        assert_eq!(fs.read(h, 0, &mut buf).unwrap(), 6 * BLOCK_BYTES);
+        assert_eq!(buf, data);
+        assert_eq!(witness.taken_runs().len(), 1);
+    }
+
+    #[test]
+    fn a_partial_read_batches_only_the_aligned_middle() {
+        let disk = SharedDisk::new(SMALL_BLOCKS);
+        let witness = disk.clone();
+        let mut fs = format_shared(disk);
+        let h = fs.create(b"/packed.bin").unwrap();
+        let data = pattern_bytes(6 * BLOCK_BYTES, 5);
+        fs.write(h, 0, &data).unwrap();
+        fs.close(h).unwrap();
+        let h = fs.open(b"/packed.bin").unwrap();
+        witness.taken_runs();
+        let mut buf = vec![0u8; 6 * BLOCK_BYTES - 200];
+        let n = fs.read(h, 100, &mut buf).unwrap();
+        assert_eq!(n, 6 * BLOCK_BYTES - 200);
+        assert_eq!(buf[..n], data[100..100 + n]);
+        let runs = witness.taken_runs();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].1, 4);
+    }
+
+    #[test]
+    fn each_extent_of_a_fragmented_file_reads_as_its_own_run() {
+        let disk = SharedDisk::new(SMALL_BLOCKS);
+        let witness = disk.clone();
+        let mut fs = format_shared(disk);
+        let first = fs.create(b"/frag").unwrap();
+        fs.write(first, 0, &pattern_bytes(2 * BLOCK_BYTES, 1)).unwrap();
+        let between = fs.create(b"/between").unwrap();
+        fs.write(between, 0, &pattern_bytes(2 * BLOCK_BYTES, 2)).unwrap();
+        fs.write(first, 2 * BLOCK_BYTES as u64, &pattern_bytes(2 * BLOCK_BYTES, 3)).unwrap();
+        let st = fs.stat(first).unwrap();
+        let (_, extents) = fs.load_inode(st.inode).unwrap();
+        assert_eq!(extents.len(), 2);
+        witness.taken_runs();
+        let mut buf = vec![0u8; 4 * BLOCK_BYTES];
+        fs.read(first, 0, &mut buf).unwrap();
+        let runs = witness.taken_runs();
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].1, 2);
+        assert_eq!(runs[1].1, 2);
+        assert_eq!(&buf[..2 * BLOCK_BYTES], &pattern_bytes(2 * BLOCK_BYTES, 1)[..]);
+        assert_eq!(&buf[2 * BLOCK_BYTES..], &pattern_bytes(2 * BLOCK_BYTES, 3)[..]);
     }
 
     #[test]
