@@ -35,9 +35,9 @@ fn run(vfs: &Vfs) -> bool {
 
     match vfs.stat("/randomd") {
         Ok(entity) if entity.kind == EntityKind::File && entity.size > 0 => {}
-        _ => return failed("stat randomd rom intact"),
+        _ => return failed("stat randomd present"),
     }
-    println!("vfs ok: stat randomd rom intact");
+    println!("vfs ok: stat randomd present");
 
     let Ok(mut notes) = vfs.open("/notes.txt", MODE_WRITE | MODE_CREATE) else {
         return failed("create notes.txt");

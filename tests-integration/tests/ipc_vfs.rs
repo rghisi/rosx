@@ -14,7 +14,7 @@ const FORBIDDEN_STRINGS: [&str; 2] = ["fail", "Panic"];
 
 const EXPECTED_OK: [&str; 24] = [
     "vfs ok: stat ghost denied",
-    "vfs ok: stat randomd rom intact",
+    "vfs ok: stat randomd present",
     "vfs ok: create notes.txt",
     "vfs ok: write 4096 at 0",
     "vfs ok: write 1024 at 8192",

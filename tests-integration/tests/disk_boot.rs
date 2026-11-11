@@ -66,7 +66,7 @@ fn boot_disk_mounts_the_root_and_hands_off_the_disk_shell() {
     );
     assert!(
         !listing.contains("vfsd"),
-        "the root mount must shadow the ROM roster: {listing}"
+        "the namespace answers from the mounted volume alone: {listing}"
     );
 
     let boot_listing = run(&mut session, "ls /boot");

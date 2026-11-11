@@ -46,6 +46,19 @@ fn ps_lists_live_processes_by_their_program_names() {
 }
 
 #[test]
+fn ps_reports_vfsd_as_a_thin_mount_table_daemon() {
+    let mut session = QemuSession::spawn();
+    session.expect_output("rose>", BOOT_BUDGET);
+
+    let report = run_ps(&mut session);
+    let (_, vfsd_mem_kib) = process_row(&report, "vfsd").expect("ps must list vfsd");
+    assert!(
+        vfsd_mem_kib < 1024,
+        "vfsd holds no block storage, so it must stay under a MiB, got {vfsd_mem_kib} KiB\n{report}"
+    );
+}
+
+#[test]
 fn ps_accounts_each_process_stack_to_its_own_group() {
     let mut session = QemuSession::spawn();
     session.expect_output("rose>", BOOT_BUDGET);

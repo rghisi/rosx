@@ -26,16 +26,6 @@ impl VfsServer {
         }
     }
 
-    fn mount_rom(&mut self) {
-        let image = usrlib::rom::read_image();
-        if image.is_empty() {
-            return;
-        }
-        if let Err(err) = self.fs.attach_rom(&image) {
-            panic!("VFS rom mount error: {err:?}");
-        }
-    }
-
     fn run(&mut self) {
         if let Ok(binding) = Syscall::ipc_bind(wire::SERVICE_NAME) {
             loop {
@@ -204,6 +194,5 @@ impl VfsServer {
 fn main() {
     println!("[IPC Server] VFS");
     let mut server = VfsServer::new();
-    server.mount_rom();
     server.run();
 }
