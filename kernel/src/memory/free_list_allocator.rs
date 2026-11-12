@@ -22,7 +22,7 @@ pub(crate) enum BlockOwner {
     Stack(usize),
 }
 
-const BLOCK_HDR: usize = core::mem::size_of::<FreeBlock>();
+pub(crate) const BLOCK_HDR: usize = core::mem::size_of::<FreeBlock>();
 const BLOCK_ALIGN: usize = core::mem::align_of::<FreeBlock>();
 pub(crate) const ALLOC_HDR: usize = core::mem::size_of::<AllocHeader>();
 pub(crate) const BACKREF_BYTES: usize = core::mem::size_of::<usize>();
@@ -47,6 +47,41 @@ pub struct FreeListAllocator {
 
 fn align_up(addr: usize, align: usize) -> usize {
     (addr + align - 1) & !(align - 1)
+}
+
+fn align_up_checked(addr: usize, align: usize) -> Option<usize> {
+    addr.checked_add(align - 1).map(|padded| padded & !(align - 1))
+}
+
+struct Carve {
+    header_at: usize,
+    block_end: usize,
+    aligned: usize,
+}
+
+fn plan_carve(start: usize, block_size: usize, align: usize, usable: usize) -> Option<Carve> {
+    let (header_at, aligned, block_end) = if align <= BLOCK_ALIGN {
+        let block_end = start.checked_add((ALLOC_HDR + usable).max(BLOCK_HDR))?;
+        (start, start + ALLOC_HDR, block_end)
+    } else {
+        let aligned = align_up_checked(start + ALLOC_HDR + BACKREF_BYTES, align)?;
+        let header_slot = aligned - ALLOC_HDR - BACKREF_BYTES;
+        let header_at = if header_slot - start >= BLOCK_HDR { header_slot } else { start };
+        (header_at, aligned, aligned.checked_add(usable)?)
+    };
+    if block_end - start > block_size {
+        return None;
+    }
+    let block_end = if start + block_size - block_end < BLOCK_HDR {
+        start + block_size
+    } else {
+        block_end
+    };
+    Some(Carve {
+        header_at,
+        block_end,
+        aligned,
+    })
 }
 
 static BAD_FREE_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -94,51 +129,43 @@ impl FreeListAllocator {
 
         let align = layout.align();
         let usable = align_up(layout.size(), BLOCK_ALIGN);
-        let slack = if align > BLOCK_ALIGN {
-            align + BACKREF_BYTES
-        } else {
-            0
-        };
-        let needed = (ALLOC_HDR + usable + slack).max(BLOCK_HDR);
 
         let mut prev_next: *mut *mut FreeBlock = &mut self.head;
         let mut current = self.head;
         while !current.is_null() {
             let block_size = unsafe { (*current).size };
-            if block_size >= needed {
-                let start = current as usize;
-                let remaining = block_size - needed;
-                let used_size;
-                if remaining >= BLOCK_HDR {
-                    let split = (start + needed) as *mut FreeBlock;
+            let start = current as usize;
+            if let Some(carve) = plan_carve(start, block_size, align, usable) {
+                let mut replacement = unsafe { (*current).next };
+                if carve.block_end < start + block_size {
+                    let tail = carve.block_end as *mut FreeBlock;
                     unsafe {
-                        (*split).size = remaining;
-                        (*split).next = (*current).next;
-                        *prev_next = split;
+                        (*tail).size = start + block_size - carve.block_end;
+                        (*tail).next = replacement;
                     }
-                    used_size = needed;
-                } else {
-                    unsafe {
-                        *prev_next = (*current).next;
-                    }
-                    used_size = block_size;
+                    replacement = tail;
                 }
-                let header = start as *mut AllocHeader;
+                if carve.header_at != start {
+                    let front = start as *mut FreeBlock;
+                    unsafe {
+                        (*front).size = carve.header_at - start;
+                        (*front).next = replacement;
+                    }
+                    replacement = front;
+                }
+                unsafe { *prev_next = replacement };
+                let header = carve.header_at as *mut AllocHeader;
                 unsafe {
-                    (*header).size = used_size;
+                    (*header).size = carve.block_end - carve.header_at;
                     (*header).owner = owner;
                     (*header).next = self.alloc_head;
                 }
                 self.alloc_head = header;
-                if align <= BLOCK_ALIGN {
-                    return Ok((start + ALLOC_HDR) as *mut u8);
+                if align > BLOCK_ALIGN {
+                    let backref = carve.aligned - BACKREF_BYTES;
+                    unsafe { (backref as *mut usize).write(backref - carve.header_at) };
                 }
-                let aligned = align_up(start + ALLOC_HDR + BACKREF_BYTES, align);
-                let backref = aligned - BACKREF_BYTES;
-                unsafe {
-                    (backref as *mut usize).write(backref - start);
-                }
-                return Ok(aligned as *mut u8);
+                return Ok(carve.aligned as *mut u8);
             }
             prev_next = unsafe { &mut (*current).next };
             current = unsafe { (*current).next };
@@ -459,6 +486,60 @@ mod tests {
         let entries = free_entries(&alloc);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].1, 4096);
+    }
+
+    #[repr(align(4096))]
+    struct PageAlignedMemory([u8; 16 * 1024]);
+
+    #[test]
+    fn overaligned_allocation_hands_the_alignment_gaps_back_to_the_free_list() {
+        let mut memory = PageAlignedMemory([0u8; 16 * 1024]);
+        let base = memory.0.as_mut_ptr() as usize;
+        assert_eq!(base % 4096, 0);
+        let mut alloc = make_allocator(&[(base, 16 * 1024)]);
+        let layout = Layout::from_size_align(1024, 4096).unwrap();
+        let ptr = unsafe { alloc.allocate(layout, BlockOwner::Kernel) }.unwrap();
+        assert_eq!(ptr as usize, base + 4096);
+        let stats = alloc.stats();
+        assert_eq!(stats.free_bytes, 16 * 1024 - (ALLOC_HDR + BACKREF_BYTES + 1024));
+        assert!(stats.largest_free_block >= 11 * 1024);
+        unsafe { alloc.deallocate(ptr, 4096) };
+        let entries = free_entries(&alloc);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].1, 16 * 1024);
+    }
+
+    #[test]
+    fn alignment_gaps_serve_later_allocations() {
+        let mut memory = PageAlignedMemory([0u8; 16 * 1024]);
+        let base = memory.0.as_mut_ptr() as usize;
+        let mut alloc = make_allocator(&[(base, 16 * 1024)]);
+        let wide = Layout::from_size_align(2048, 4096).unwrap();
+        let first = unsafe { alloc.allocate(wide, BlockOwner::Kernel) }.unwrap();
+        assert_eq!(first as usize, base + 4096);
+        let gap = Layout::from_size_align(4016, 8).unwrap();
+        let filler = unsafe { alloc.allocate(gap, BlockOwner::Kernel) }.unwrap();
+        assert_eq!(filler as usize, base + ALLOC_HDR);
+        assert!(filler < first);
+        let stats = alloc.stats();
+        assert_eq!(stats.free_bytes, 10 * 1024);
+        assert_eq!(stats.free_block_count, 1);
+    }
+
+    #[test]
+    fn huge_alignment_attempts_leave_the_free_list_untouched() {
+        let mut memory = vec![0u8; 4096];
+        let base = memory.as_mut_ptr() as usize;
+        let mut alloc = make_allocator(&[(base, 4096)]);
+        for align in [1usize << 40, 1usize << 62] {
+            let layout = Layout::from_size_align(16, align).unwrap();
+            assert!(matches!(
+                unsafe { alloc.allocate(layout, BlockOwner::Kernel) },
+                Err(AllocError::OutOfMemory)
+            ));
+        }
+        let untouched = make_allocator(&[(base, 4096)]);
+        assert_eq!(alloc.stats().free_bytes, untouched.stats().free_bytes);
     }
 
     #[test]
