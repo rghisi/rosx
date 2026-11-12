@@ -16,7 +16,7 @@ static KCONFIG: kernel::kconfig::KConfig = kernel::kconfig::KConfig {
     cpu: &CPU,
     elf_arch: &ELF_ARCH,
     port_io: &PORT_IO,
-    port_pool: x86_generic::port::ATA_PORT_POOL,
+    port_pool: x86_generic::port::X86_PORT_POOL,
     scheduler_factory: kernel::scheduler::mfq_scheduler,
 };
 
