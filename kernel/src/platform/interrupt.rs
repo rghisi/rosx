@@ -48,9 +48,15 @@ fn reject_irq(_irq: u32) -> Result {
     Err(InterruptError::InvalidIrq)
 }
 
+fn reject_configure(_irq: u32, _trigger: TriggerMode, _polarity: Polarity) -> Result {
+    Err(InterruptError::InvalidIrq)
+}
+
 static CONTROLLER_ADDRESS: KernelCell<Option<usize>> = KernelCell::new(None);
 static DISPATCH: KernelCell<fn(irq: u32)> = KernelCell::new(ignore_irq);
 static UNMASK: KernelCell<fn(irq: u32) -> Result> = KernelCell::new(reject_irq);
+static CONFIGURE: KernelCell<fn(irq: u32, trigger: TriggerMode, polarity: Polarity) -> Result> =
+    KernelCell::new(reject_configure);
 static HANDLERS: KernelCell<[Option<HwHandler>; HANDLED_IRQS]> =
     KernelCell::new([None; HANDLED_IRQS]);
 
@@ -67,10 +73,30 @@ pub fn install<C: InterruptController + 'static>() {
     CONTROLLER_ADDRESS.replace(Some(controller as *const KernelCell<C> as usize));
     DISPATCH.replace(dispatch_via::<C>);
     UNMASK.replace(unmask_via::<C>);
+    CONFIGURE.replace(configure_via::<C>);
 }
 
 pub fn unmask(irq: u32) -> Result {
     (UNMASK.borrow())(irq)
+}
+
+pub fn configure(irq: u32, trigger: TriggerMode, polarity: Polarity) -> Result {
+    (CONFIGURE.borrow())(irq, trigger, polarity)
+}
+
+pub fn subscribe(irq: u32) -> Result {
+    if !system::irq::is_subscribable(irq) {
+        return Err(InterruptError::InvalidIrq);
+    }
+    configure(irq, TriggerMode::Level, Polarity::High)?;
+    register_handler(irq, deliver_irq_event)?;
+    unmask(irq)
+}
+
+fn deliver_irq_event(irq: u32) {
+    let frame = system::irq::encode_irq_event(irq);
+    let message = system::ipc::Message::new(system::ipc::KERNEL_EVENT_CONN, &frame);
+    crate::ipc::deliver_to_service(system::irq::SOURCE_NAMES[irq as usize], message);
 }
 
 pub fn register_handler(irq: u32, handler: HwHandler) -> Result {
@@ -111,6 +137,20 @@ fn unmask_via<C: InterruptController + 'static>(irq: u32) -> Result {
     }
 }
 
+fn configure_via<C: InterruptController + 'static>(
+    irq: u32,
+    trigger: TriggerMode,
+    polarity: Polarity,
+) -> Result {
+    let Some(controller) = controller::<C>() else {
+        return Err(InterruptError::InvalidIrq);
+    };
+    let Some(vector) = C::VECTOR_BASE.checked_add(irq as u8) else {
+        return Err(InterruptError::InvalidIrq);
+    };
+    C::configure(controller.borrow_mut(), irq, vector, trigger, polarity)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +170,9 @@ mod tests {
     const UNMASK_OP: u8 = 3;
     const EOI_OP: u8 = 4;
     const HANDLER_OP: u8 = 5;
+    const CONFIGURE_OP: u8 = 6;
+
+    static CONFIGURED_VECTOR: KernelCell<u8> = KernelCell::new(0);
 
     struct MockController;
 
@@ -144,11 +187,14 @@ mod tests {
 
         fn configure(
             &mut self,
-            _irq: u32,
-            _vector: u8,
+            irq: u32,
+            vector: u8,
             _trigger: TriggerMode,
             _polarity: Polarity,
         ) -> Result {
+            check_irq(irq)?;
+            CONFIGURED_VECTOR.replace(vector);
+            record(CONFIGURE_OP);
             Ok(())
         }
 
@@ -205,6 +251,8 @@ mod tests {
         CONTROLLER_ADDRESS.replace(None);
         DISPATCH.replace(ignore_irq);
         UNMASK.replace(reject_irq);
+        CONFIGURE.replace(reject_configure);
+        CONFIGURED_VECTOR.replace(0);
     }
 
     #[test]
@@ -290,5 +338,45 @@ mod tests {
 
         assert_eq!(unmask(SECOND_IRQ), Ok(()));
         assert_eq!(recorded_ops(), alloc::vec![NEW_OP, UNMASK_OP]);
+    }
+
+    const SUBSCRIBABLE_IRQ: u32 = 9;
+
+    #[test]
+    fn subscribe_configures_then_registers_then_unmasks() {
+        reset_state();
+        install::<MockController>();
+
+        assert_eq!(subscribe(SUBSCRIBABLE_IRQ), Ok(()));
+
+        assert_eq!(
+            recorded_ops(),
+            alloc::vec![NEW_OP, CONFIGURE_OP, UNMASK_OP]
+        );
+        assert_eq!(
+            *CONFIGURED_VECTOR.borrow(),
+            MockController::VECTOR_BASE + SUBSCRIBABLE_IRQ as u8
+        );
+        assert!(HANDLERS.borrow()[SUBSCRIBABLE_IRQ as usize].is_some());
+    }
+
+    #[test]
+    fn subscribe_refuses_reserved_and_out_of_range_lines() {
+        reset_state();
+        install::<MockController>();
+
+        for irq in [0, 1, 2, 8, 16, 99] {
+            assert_eq!(subscribe(irq), Err(InterruptError::InvalidIrq));
+            assert!(HANDLERS.borrow()[..].iter().all(|slot| slot.is_none()));
+        }
+        assert_eq!(recorded_ops(), alloc::vec![NEW_OP]);
+    }
+
+    #[test]
+    fn subscribe_before_install_registers_nothing() {
+        reset_state();
+
+        assert_eq!(subscribe(SUBSCRIBABLE_IRQ), Err(InterruptError::InvalidIrq));
+        assert!(HANDLERS.borrow()[SUBSCRIBABLE_IRQ as usize].is_none());
     }
 }

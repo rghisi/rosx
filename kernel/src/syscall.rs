@@ -290,6 +290,15 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
                 Err(code) => code.to_reg(),
             }
         }
+        Ok(SyscallNum::IrqSubscribe) => match crate::platform::interrupt::subscribe(arg1 as u32) {
+            Ok(()) => 0,
+            Err(crate::platform::interrupt::InterruptError::InvalidIrq) => {
+                ErrorCode::IrqRequestInvalid.to_reg()
+            }
+            Err(crate::platform::interrupt::InterruptError::Unsupported) => {
+                ErrorCode::IrqControllerUnavailable.to_reg()
+            }
+        },
         Err(_) => 0,
     }
 }

@@ -1,7 +1,7 @@
 use crate::arch;
 use crate::error::{
-    DataError, IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError, PortError,
-    TaskExitError, WaitsetError,
+    DataError, IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError, IrqError,
+    PortError, TaskExitError, WaitsetError,
 };
 use crate::exit::ExitStatus;
 use crate::handle::{UserBindingHandle, UserConnectionHandle, UserDataHandle, UserFutureHandle};
@@ -343,6 +343,15 @@ impl Syscall {
             Ok(())
         } else {
             Err(PortError::from(ErrorCode::from_code(raw)))
+        }
+    }
+
+    pub fn irq_subscribe(irq: u32) -> Result<(), IrqError> {
+        let raw = arch::raw_syscall(SyscallNum::IrqSubscribe as usize, irq as usize, 0, 0);
+        if is_token(raw) {
+            Ok(())
+        } else {
+            Err(IrqError::from(ErrorCode::from_code(raw)))
         }
     }
 

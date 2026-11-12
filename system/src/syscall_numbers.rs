@@ -33,6 +33,7 @@ pub enum SyscallNum {
     Now = 37,
     PortAcquire = 38,
     PortRelease = 39,
+    IrqSubscribe = 40,
 }
 
 impl TryFrom<usize> for SyscallNum {
@@ -72,6 +73,7 @@ impl TryFrom<usize> for SyscallNum {
             37 => Ok(Self::Now),
             38 => Ok(Self::PortAcquire),
             39 => Ok(Self::PortRelease),
+            40 => Ok(Self::IrqSubscribe),
             _ => Err(()),
         }
     }
@@ -121,6 +123,7 @@ mod tests {
             SyscallNum::Now,
             SyscallNum::PortAcquire,
             SyscallNum::PortRelease,
+            SyscallNum::IrqSubscribe,
         ];
         for number in live {
             assert_eq!(SyscallNum::try_from(number as usize).unwrap(), number);
