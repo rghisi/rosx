@@ -299,6 +299,15 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
                 ErrorCode::IrqControllerUnavailable.to_reg()
             }
         },
+        Ok(SyscallNum::IrqClear) => match crate::platform::interrupt::clear(arg1 as u32) {
+            Ok(()) => 0,
+            Err(crate::platform::interrupt::InterruptError::InvalidIrq) => {
+                ErrorCode::IrqRequestInvalid.to_reg()
+            }
+            Err(crate::platform::interrupt::InterruptError::Unsupported) => {
+                ErrorCode::IrqControllerUnavailable.to_reg()
+            }
+        },
         Err(_) => 0,
     }
 }

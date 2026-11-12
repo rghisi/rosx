@@ -355,6 +355,15 @@ impl Syscall {
         }
     }
 
+    pub fn irq_clear(irq: u32) -> Result<(), IrqError> {
+        let raw = arch::raw_syscall(SyscallNum::IrqClear as usize, irq as usize, 0, 0);
+        if is_token(raw) {
+            Ok(())
+        } else {
+            Err(IrqError::from(ErrorCode::from_code(raw)))
+        }
+    }
+
     pub fn port_in_words(port: u16, destination: &mut [u16]) -> Result<(), PortError> {
         let raw = arch::raw_syscall(
             SyscallNum::PortInBlock as usize,

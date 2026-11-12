@@ -40,6 +40,12 @@ pub trait InterruptController {
 
 type HwHandler = fn(irq: u32);
 
+#[derive(Clone, Copy)]
+struct HandlerEntry {
+    handler: HwHandler,
+    auto_unmask: bool,
+}
+
 const HANDLED_IRQS: usize = 16;
 
 fn ignore_irq(_irq: u32) {}
@@ -57,7 +63,7 @@ static DISPATCH: KernelCell<fn(irq: u32)> = KernelCell::new(ignore_irq);
 static UNMASK: KernelCell<fn(irq: u32) -> Result> = KernelCell::new(reject_irq);
 static CONFIGURE: KernelCell<fn(irq: u32, trigger: TriggerMode, polarity: Polarity) -> Result> =
     KernelCell::new(reject_configure);
-static HANDLERS: KernelCell<[Option<HwHandler>; HANDLED_IRQS]> =
+static HANDLERS: KernelCell<[Option<HandlerEntry>; HANDLED_IRQS]> =
     KernelCell::new([None; HANDLED_IRQS]);
 
 /// Binds the kernel dispatch core to the concrete controller type `C`.
@@ -89,7 +95,17 @@ pub fn subscribe(irq: u32) -> Result {
         return Err(InterruptError::InvalidIrq);
     }
     configure(irq, TriggerMode::Level, Polarity::High)?;
-    register_handler(irq, deliver_irq_event)?;
+    register_entry(irq, deliver_irq_event, false)?;
+    unmask(irq)
+}
+
+pub fn clear(irq: u32) -> Result {
+    if !system::irq::is_subscribable(irq) {
+        return Err(InterruptError::InvalidIrq);
+    }
+    if !HANDLERS.borrow()[irq as usize].is_some() {
+        return Err(InterruptError::InvalidIrq);
+    }
     unmask(irq)
 }
 
@@ -100,10 +116,17 @@ fn deliver_irq_event(irq: u32) {
 }
 
 pub fn register_handler(irq: u32, handler: HwHandler) -> Result {
+    register_entry(irq, handler, true)
+}
+
+fn register_entry(irq: u32, handler: HwHandler, auto_unmask: bool) -> Result {
     if irq as usize >= HANDLED_IRQS {
         return Err(InterruptError::InvalidIrq);
     }
-    HANDLERS.borrow_mut()[irq as usize] = Some(handler);
+    HANDLERS.borrow_mut()[irq as usize] = Some(HandlerEntry {
+        handler,
+        auto_unmask,
+    });
     Ok(())
 }
 
@@ -124,9 +147,15 @@ fn dispatch_via<C: InterruptController + 'static>(irq: u32) {
     };
     let _ = C::mask(controller.borrow_mut(), irq);
     C::eoi(controller.borrow_mut(), irq);
-    if let Some(handler) = HANDLERS.borrow().get(irq as usize).copied().flatten() {
-        handler(irq);
-        let _ = C::unmask(controller.borrow_mut(), irq);
+    let entry = HANDLERS.borrow().get(irq as usize).copied().flatten();
+    match entry {
+        Some(entry) => {
+            (entry.handler)(irq);
+            if entry.auto_unmask {
+                let _ = C::unmask(controller.borrow_mut(), irq);
+            }
+        }
+        None => {}
     }
 }
 
@@ -358,6 +387,34 @@ mod tests {
             MockController::VECTOR_BASE + SUBSCRIBABLE_IRQ as u8
         );
         assert!(HANDLERS.borrow()[SUBSCRIBABLE_IRQ as usize].is_some());
+    }
+
+    #[test]
+    fn dispatch_of_subscribed_irq_stays_masked_for_the_driver() {
+        reset_state();
+        install::<MockController>();
+        subscribe(SUBSCRIBABLE_IRQ).unwrap();
+
+        dispatch_irq(SUBSCRIBABLE_IRQ);
+
+        assert_eq!(
+            recorded_ops(),
+            alloc::vec![NEW_OP, CONFIGURE_OP, UNMASK_OP, MASK_OP, EOI_OP]
+        );
+    }
+
+    #[test]
+    fn clear_rearms_a_subscribed_line_and_refuses_the_unsubscribed() {
+        reset_state();
+        install::<MockController>();
+        subscribe(SUBSCRIBABLE_IRQ).unwrap();
+
+        assert_eq!(clear(SUBSCRIBABLE_IRQ), Ok(()));
+        assert_eq!(clear(SECOND_IRQ), Err(InterruptError::InvalidIrq));
+        assert_eq!(
+            recorded_ops(),
+            alloc::vec![NEW_OP, CONFIGURE_OP, UNMASK_OP, UNMASK_OP]
+        );
     }
 
     #[test]
