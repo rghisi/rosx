@@ -8,6 +8,7 @@ pub const MAX_FUNCTIONS: u8 = 8;
 
 pub const FIND: u8 = 0x01;
 pub const LIST: u8 = 0x02;
+pub const ENABLE: u8 = 0x03;
 
 pub const REPLY_SLOT: u8 = 0x10;
 pub const REPLY_MISSING: u8 = 0x11;
@@ -57,14 +58,19 @@ impl Slot {
     }
 }
 
+fn valid_location(_bus: u8, device: u8, function: u8) -> bool {
+    device <= 31 && function < MAX_FUNCTIONS
+}
+
 fn valid_slot(slot: &Slot) -> bool {
-    slot.device <= 31 && slot.function < MAX_FUNCTIONS
+    valid_location(slot.bus, slot.device, slot.function)
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Request {
     Find { vendor_id: u16, device_id: u16 },
     List { bus: u8 },
+    Enable { bus: u8, device: u8, function: u8 },
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -148,6 +154,19 @@ impl Request {
                 frame[0] = LIST;
                 frame[1] = *bus;
             }
+            Request::Enable {
+                bus,
+                device,
+                function,
+            } => {
+                if !valid_location(*bus, *device, *function) {
+                    return Err(PciError::Protocol);
+                }
+                frame[0] = ENABLE;
+                frame[1] = *bus;
+                frame[2] = *device;
+                frame[3] = *function;
+            }
         }
         Ok(frame)
     }
@@ -164,6 +183,17 @@ impl Request {
             LIST => {
                 zero_tail(frame, 2)?;
                 Ok(Request::List { bus: frame[1] })
+            }
+            ENABLE => {
+                zero_tail(frame, 4)?;
+                if !valid_location(frame[1], frame[2], frame[3]) {
+                    return Err(PciError::Protocol);
+                }
+                Ok(Request::Enable {
+                    bus: frame[1],
+                    device: frame[2],
+                    function: frame[3],
+                })
             }
             _ => Err(PciError::Protocol),
         }
@@ -259,6 +289,7 @@ mod tests {
     fn tag_constants_are_pinned_and_disjoint() {
         assert_eq!(FIND, 0x01);
         assert_eq!(LIST, 0x02);
+        assert_eq!(ENABLE, 0x03);
         assert_eq!(REPLY_SLOT, 0x10);
         assert_eq!(REPLY_MISSING, 0x11);
         assert_eq!(REPLY_ERROR, 0x12);
@@ -280,6 +311,40 @@ mod tests {
     }
 
     #[test]
+    fn enable_frame_pins_the_slot_location_offsets() {
+        let frame = Request::Enable {
+            bus: 0,
+            device: 4,
+            function: 1,
+        }
+        .encode()
+        .unwrap();
+        assert_eq!(frame[0], ENABLE);
+        assert_eq!(&frame[1..4], &[0, 4, 1]);
+        assert!(frame[4..].iter().all(|byte| *byte == 0));
+
+        let mut dirty = frame;
+        dirty[4] = 1;
+        assert_eq!(Request::decode(&dirty), Err(PciError::Protocol));
+
+        for location in [(0u8, 32u8, 0u8), (0, 4, 8)] {
+            assert_eq!(
+                Request::Enable {
+                    bus: location.0,
+                    device: location.1,
+                    function: location.2,
+                }
+                .encode(),
+                Err(PciError::Protocol)
+            );
+            let mut smuggled = frame;
+            smuggled[2] = location.1;
+            smuggled[3] = location.2;
+            assert_eq!(Request::decode(&smuggled), Err(PciError::Protocol));
+        }
+    }
+
+    #[test]
     fn request_roundtrips_and_rejects_dirty_frames() {
         for request in [
             Request::Find {
@@ -292,10 +357,15 @@ mod tests {
             },
             Request::List { bus: 0 },
             Request::List { bus: 255 },
+            Request::Enable {
+                bus: 0,
+                device: 4,
+                function: 0,
+            },
         ] {
             assert_eq!(Request::decode(&request.encode().unwrap()), Ok(request));
         }
-        for op in [0u8, 3, 0x10, 0xFF] {
+        for op in [0u8, 4, 0x10, 0xFF] {
             let mut frame = Request::List { bus: 0 }.encode().unwrap();
             frame[0] = op;
             assert_eq!(Request::decode(&frame), Err(PciError::Protocol));
@@ -439,6 +509,11 @@ mod tests {
                 device_id: 0x8029,
             },
             Request::List { bus: 0 },
+            Request::Enable {
+                bus: 0,
+                device: 4,
+                function: 0,
+            },
         ] {
             frames.push(request.encode().expect("seed request encodes"));
         }

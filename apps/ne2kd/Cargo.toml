@@ -9,12 +9,18 @@ edition.workspace = true
 name = "ne2kd"
 path = "src/lib.rs"
 
+[[bin]]
+name = "ne2kd"
+bench = false
+test = false
+
 [dependencies]
 system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 usrlib = { path = "../../usrlib", features = ["runtime"] }
+net-protocol = { path = "../../protocol/net" }
 pci-protocol = { path = "../../protocol/pci" }
 
 [lints]

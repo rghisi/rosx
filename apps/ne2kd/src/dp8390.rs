@@ -56,6 +56,7 @@ const CR_TRANSMIT_COMMAND_BIT: u8 = 0x04;
 
 const ISR_TX_COMPLETE: u8 = 0x02;
 const ISR_TX_ERROR: u8 = 0x08;
+pub const ISR_OVERRUN: u8 = 0x10;
 const ISR_REMOTE_DMA_COMPLETE: u8 = 0x40;
 const ISR_RESET: u8 = 0x80;
 const ISR_CLEAR_ALL: u8 = 0xFF;

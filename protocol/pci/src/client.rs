@@ -1,4 +1,5 @@
 use crate::wire::{self, PciError, Reply, Request, Slot};
+use alloc::string::String;
 use alloc::vec::Vec;
 use usrlib::error::DataError;
 use usrlib::handle::{UserConnectionHandle, UserDataHandle};
@@ -13,6 +14,7 @@ pub enum ClientError {
     Pci(PciError),
     Transport,
     NoConnection,
+    NoDevice(String),
     Data(DataError),
     Protocol,
 }
@@ -67,6 +69,21 @@ impl Pci {
         match Reply::decode(&frame).map_err(ClientError::Pci)? {
             Reply::Slot(slot) => Ok(Some(slot)),
             Reply::Missing => Ok(None),
+            Reply::Err { error } => Err(ClientError::Pci(error)),
+            _ => Err(ClientError::Protocol),
+        }
+    }
+
+    pub fn enable(&self, slot: &Slot) -> Result<Slot, ClientError> {
+        let request = Request::Enable {
+            bus: slot.bus,
+            device: slot.device,
+            function: slot.function,
+        };
+        let frame = transact_frame(self.connection, request)?;
+        match Reply::decode(&frame).map_err(ClientError::Pci)? {
+            Reply::Slot(updated) => Ok(updated),
+            Reply::Missing => Err(ClientError::NoDevice(slot.location().unwrap_or_default())),
             Reply::Err { error } => Err(ClientError::Pci(error)),
             _ => Err(ClientError::Protocol),
         }

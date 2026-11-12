@@ -458,9 +458,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ne2k"
+version = "0.1.0"
+dependencies = [
+ "net-protocol",
+ "pci-protocol",
+ "usrlib",
+ "vfs-protocol",
+]
+
+[[package]]
 name = "ne2kd"
 version = "0.1.0"
 dependencies = [
+ "net-protocol",
  "pci-protocol",
  "system",
  "usrlib",
@@ -481,9 +492,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "pci"
+version = "0.1.0"
+dependencies = [
+ "pci-protocol",
+ "usrlib",
+]
+
+[[package]]
 name = "pci-protocol"
 version = "0.1.0"
 dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
+name = "pcid"
+version = "0.1.0"
+dependencies = [
+ "pci-protocol",
  "system",
  "usrlib",
 ]
