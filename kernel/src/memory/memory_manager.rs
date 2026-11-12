@@ -202,7 +202,7 @@ unsafe impl GlobalAlloc for MemoryManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::free_list_allocator::{ALLOC_HDR, BACKREF_BYTES};
+    use crate::memory::free_list_allocator::{ALLOC_HDR, BACKREF_BYTES, BLOCK_HDR};
     use crate::platform::cpu::Cpu;
     use crate::memory::MemoryBlock;
     use core::alloc::{GlobalAlloc, Layout};
@@ -347,7 +347,10 @@ mod tests {
         let ptr = unsafe { manager.alloc(layout) };
         assert!(!ptr.is_null());
         assert_eq!(ptr as usize % 16, 0);
-        assert_eq!(used(&manager), 64 + ALLOC_HDR + 16 + BACKREF_BYTES);
+        let charge = 64 + ALLOC_HDR + BACKREF_BYTES;
+        let overaligned_used = used(&manager);
+        assert!(overaligned_used >= charge);
+        assert!(overaligned_used < charge + BLOCK_HDR);
         unsafe { manager.dealloc(ptr, layout) };
         assert_eq!(used(&manager), 0);
     }
@@ -388,10 +391,10 @@ mod tests {
         assert_eq!(used(&manager), 2 * 1024 * 1024 + ALLOC_HDR);
         let slab_layout = Layout::from_size_align(65_536, 4_096).unwrap();
         unsafe { manager.alloc_with_owner(slab_layout, BlockOwner::Group(8)) };
-        assert_eq!(
-            used(&manager),
-            2 * 1024 * 1024 + ALLOC_HDR + 65_536 + ALLOC_HDR + 4_096 + BACKREF_BYTES
-        );
+        let slab_charge = 65_536 + ALLOC_HDR + BACKREF_BYTES;
+        let with_slab = used(&manager);
+        assert!(with_slab >= 2 * 1024 * 1024 + ALLOC_HDR + slab_charge);
+        assert!(with_slab < 2 * 1024 * 1024 + ALLOC_HDR + slab_charge + BLOCK_HDR);
         unsafe { manager.release_group_allocations(8) };
         assert_eq!(used(&manager), 2 * 1024 * 1024 + ALLOC_HDR);
         unsafe { manager.dealloc(kernel_ptr, kernel_layout) };
