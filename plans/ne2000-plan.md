@@ -32,9 +32,11 @@
 - **TCP/IP stack**: none. The daemon moves Ethernet frames; `system`/`kernel` never see them.
 - **Full PCI bus scan / resource arbitration**: `pcid` v1 scans bus 0 only and reads
   vendor/device/BAR0/Interrupt Line/revision; no bridge walking, no BAR sizing, no assignment.
-- **IRQ release/sharing table**: `IrqSubscribe` is idempotent per task; v1 never masks (an
-  unmasked IRQ with no listener delivers into a dead mailbox and is dropped). Sharing policy,
-  masked-on-exit, and APIC pin introspection are v2.
+- **IRQ release/sharing table**: `IrqSubscribe` is idempotent per task. A subscribed line is
+  masked when its event is dispatched and stays masked until the driver re-arms it through the
+  `IrqClear` syscall after servicing the device — the level-triggered-safe discipline (the NIC
+  keeps asserting until its ISR is cleared, so a dispatch-time unmask livelocks the CPU).
+  Sharing policy, masked-on-exit, and APIC pin introspection are v2.
 - **Boot plan / ROM**: `ne2kd`, `pcid` and the CLIs are NOT in `BOOTSTRAP_APPS` and NOT plan
   steps; they launch from the disk shell like `ata`. ROM stays lean.
 - **DMA (bus master)**, full-duplex multi-TX buffering, `ioctl`-style flow control, VLANs, jumbo frames.
@@ -113,6 +115,12 @@
   through the dispatch core already).
 - Gates: `cargo test -p kernel -- --test-threads=1`, `cargo test -p system`, both arch builds,
   `cargo xtask check-isa x86_32`, no `[IRQGUARD]` noise at boot.
+- **M8 field correction**: the original dispatch tail (`mask → eoi → handler → unmask`) livelocks
+  any level-triggered line — the device keeps asserting, so unmasking before the device is
+  serviced re-fires forever at `iret`. The IRQ9 NIC was the first real level IRQ the OS met.
+  Handler entries now carry a re-arm policy: edge registrations (timer, keyboard) keep the
+  auto-unmask; `subscribe()` (event lines) stays masked after dispatch and the driver re-arms
+  through `Syscall::irq_clear(irq)` (`SyscallNum::IrqClear = 41`) once the device ISR is clean.
 
 **M3 — `protocol/net` crate** (`package net-protocol`, modeled on `protocol/ata`):
 `SERVICE_NAME = "NE2K"`, 60-byte frames; ops `Mac` → `Mac[6]`, `Send { token }` → `Ack`,
