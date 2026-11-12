@@ -68,12 +68,12 @@ impl Binner {
     }
 
     pub unsafe fn adopt(&mut self, class: usize, slab_start: usize) {
-        if slab_start == 0 || slab_start % SMALL_MAX != 0 {
-            return;
-        }
         let Some(chunk) = chunk_size_of_class(class) else {
             return;
         };
+        if slab_start == 0 || slab_start % chunk != 0 {
+            return;
+        }
         let Some(slot) = self.heads.get_mut(class) else {
             return;
         };
@@ -104,7 +104,7 @@ mod tests {
 
     impl FakeSlab {
         fn new() -> Self {
-            let backing = vec![0u8; SLAB_BYTES + SMALL_MAX];
+            let backing = vec![0u8; SLAB_BYTES + SMALL_MAX + SMALL_MAX];
             let start = (backing.as_ptr() as usize + SMALL_MAX - 1) & !(SMALL_MAX - 1);
             FakeSlab {
                 _backing: backing,
@@ -306,14 +306,36 @@ mod tests {
     }
 
     #[test]
-    fn adopt_ignores_null_and_misaligned_slabs() {
+    fn adopt_ignores_null_and_slabs_misaligned_for_their_class() {
         let mut binner = Binner::new();
         unsafe { binner.adopt(0, 0) };
-        unsafe { binner.adopt(0, 4096 + 8) };
-        assert_eq!(unsafe { binner.take(0) }, None);
-        let slab = FakeSlab::new();
-        unsafe { binner.adopt(0, slab.start + MIN_CHUNK_BYTES) };
-        assert_eq!(unsafe { binner.take(0) }, None);
+        for class in 0..CLASS_COUNT {
+            let chunk = chunk_size_of_class(class).unwrap();
+            let slab = FakeSlab::new();
+            unsafe { binner.adopt(class, slab.start + chunk / 2) };
+            assert_eq!(unsafe { binner.take(class) }, None, "class {class}");
+        }
+    }
+
+    #[test]
+    fn adopt_accepts_a_slab_aligned_to_the_chunk_but_not_to_small_max() {
+        for class in 0..CLASS_COUNT - 1 {
+            let chunk = chunk_size_of_class(class).unwrap();
+            let slab = FakeSlab::new();
+            let start = slab.start + SMALL_MAX - chunk;
+            assert_eq!(start % chunk, 0);
+            assert_ne!(start % SMALL_MAX, 0);
+            let mut binner = Binner::new();
+            unsafe { binner.adopt(class, start) };
+            let taken = drain(&mut binner, class);
+            assert_eq!(taken.len(), SLAB_BYTES / chunk, "class {class}");
+            let mut unique = HashSet::new();
+            for address in taken {
+                assert!(address >= start && address < start + SLAB_BYTES);
+                assert_eq!(address % chunk, 0, "class {class}");
+                assert!(unique.insert(address), "double handout in class {class}");
+            }
+        }
     }
 
     #[test]

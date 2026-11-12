@@ -2,7 +2,9 @@ pub mod bins;
 
 #[cfg(all(feature = "runtime", not(test)))]
 mod shim {
-    use super::bins::{Binner, SLAB_BYTES, SMALL_MAX, realloc_same_class, small_class_of};
+    use super::bins::{
+        Binner, SLAB_BYTES, chunk_size_of_class, realloc_same_class, small_class_of,
+    };
     use crate::syscall::Syscall;
     use core::alloc::{GlobalAlloc, Layout};
     use core::cell::UnsafeCell;
@@ -36,7 +38,10 @@ mod shim {
     pub struct UsrAllocator;
 
     unsafe fn fill_bin_from_slab(binner: &mut Binner, class: usize) -> Option<usize> {
-        let slab = Syscall::alloc(SLAB_BYTES, SMALL_MAX) as usize;
+        let Some(chunk) = chunk_size_of_class(class) else {
+            return None;
+        };
+        let slab = Syscall::alloc(SLAB_BYTES, chunk) as usize;
         if slab != 0 {
             unsafe { binner.adopt(class, slab) };
         }
