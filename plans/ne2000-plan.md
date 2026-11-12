@@ -82,9 +82,10 @@
 |---|---|
 | Ring 0, IRQ handler calls `receive_packet()` | Userspace `ne2kd` daemon; the kernel IRQ handler delivers an opaque *IRQ event frame* to binding `"IRQ<n>"` (keyboard precedent); the daemon drains the ring on that event |
 | `inb/outb/inw/outw` directly | `Syscall::port_*` behind a `NicBus` trait (mockable), mirroring `atad::taskfile::Bus` |
-| No MAC handling | **Gap fixed**: RDMA 16 B from SRAM page 0 (93C46 image), PAR programmed (page 0 offsets 0x01–0x08), RCR gains the AR bit (`0x0D` = AR+AM+AB, not `0x0C`) — without this the card accepts no unicast, ever. A read-back verify guards an empty PROM with a locally-administered fallback MAC |
+| No MAC handling | **Gap fixed**: RDMA 16 B from SRAM 0x0000 (93C46 image, every byte duplicated), MAC taken as the low byte of words 0–5; PAR programmed on **page 1** (CR `0x61`, offsets `0x01–0x06` — page 2 is the multicast MAR); RCR gets the AR bit (`0x70` = AR+AM+AB, not `0x0C`) — without this the card accepts no unicast, ever. A read-back verify guards an empty PROM with a locally-administered fallback MAC |
 | `outw` loop over `data` | **Gap fixed**: odd-length frames zero-pad the final `outw`; `TBCR` carries the true length |
-| RX header status ignored | **Gap fixed**: header status ≠ 0 drops the frame (still advances BNRY); length is sanity-checked (≥ 64, ≤ ring span) |
+| RX header status ignored | **Gap fixed**: header must carry PRX (`0x01`) with the CRC/alignment/FIFO-overrun/missed bits (`0x1C`) clear, else the frame is dropped (still advances BNRY); length is sanity-checked (total 64–1518) |
+| ISR bit claims (prompt: reset bit 6, RDC bit 7) | **Prompt wrong, datasheet right**: ISR reset-complete is bit 7 (`0x80`), remote-DMA-complete bit 6 (`0x40`), TX error bit 3 (`0x08`); QEMU `ne2000.c` (`ENISR_RDC 0x40`, `ENISR_RESET 0x80`) confirms; unit-test simulators pin these |
 | No overrun path | **Gap fixed**: ISR OVW re-programs BNRY/CURR (re-init RX ring) and reports via stats line |
 | TX with no busy guard | **Gap fixed**: refuse TX while `CR.TX` is still set; read `TSR` after completion and surface `TCR.Undo` retransmit-free success honestly |
 | Inline comments | Project rule "no comments, ever" → self-documenting constants (`CR_START`, `ISR_PACKET_RECEIVED`, `PSTART_PAGE`, …); this document carries the prose |

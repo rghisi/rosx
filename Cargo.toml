@@ -38,6 +38,7 @@ members = [
     "apps/inputd",
     "apps/ps2d",
     "apps/atad",
+    "apps/ne2kd",
     "apps/blockd",
     "apps/ata",
     "apps/format",

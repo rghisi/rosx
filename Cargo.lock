@@ -458,6 +458,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ne2kd"
+version = "0.1.0"
+dependencies = [
+ "pci-protocol",
+ "system",
+ "usrlib",
+]
+
+[[package]]
 name = "net-protocol"
 version = "0.1.0"
 dependencies = [
