@@ -226,6 +226,15 @@ pub fn qemu_command(arch: Arch, medium: &BootMedium, mode: LaunchMode) -> Comman
     command
 }
 
+pub fn attach_ne2k_isa(command: &mut Command, multicast: &str) {
+    command
+        .arg("-netdev")
+        .arg(format!("socket,id=rosxnet,mcast={multicast}"));
+    command.arg("-device").arg(format!(
+        "ne2k_isa,netdev=rosxnet,iobase=0x300,irq=9"
+    ));
+}
+
 pub fn persistent_hdd_image() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     ensure_hdd_image(&PathBuf::from(home).join("tmp"))

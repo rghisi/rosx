@@ -191,6 +191,30 @@ impl Display for PortError {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum IrqError {
+    RequestInvalid,
+    ControllerUnavailable,
+}
+
+impl From<ErrorCode> for IrqError {
+    fn from(code: ErrorCode) -> Self {
+        match code {
+            ErrorCode::IrqControllerUnavailable => Self::ControllerUnavailable,
+            _ => Self::RequestInvalid,
+        }
+    }
+}
+
+impl Display for IrqError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            IrqError::RequestInvalid => write!(f, "IRQ line reserved or out of range"),
+            IrqError::ControllerUnavailable => write!(f, "Interrupt controller unavailable"),
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum TaskExitError {
     AlreadyConsumed,
     NotFound,
