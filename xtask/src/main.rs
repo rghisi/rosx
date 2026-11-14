@@ -233,6 +233,9 @@ fn run_tests(skip_integration: bool) {
     };
     cmd.arg("--").arg("--test-threads=1");
     run(&mut cmd, description);
+    if !skip_integration {
+        boot_test::run_boot_test();
+    }
 }
 
 fn check_isa_command(spec: &ArchSpec) {
