@@ -83,7 +83,7 @@ bootloader artifacts, run the §6 audits from `00-overview.md`, run `boot-test`.
 
 ## 5. Checkpoints (phase 1)
 
-1. Workspace wiring: `ros-boot-common` crate (16550 init/put string/hex, CRC32 table-less,
+1. Workspace wiring: `rosx-boot-common` crate (16550 init/put string/hex, CRC32 table-less,
    `debug_exit(code)` helper centralizing the port `0xF4` law) compiles for both bare-metal
    targets; `xtask boot-test` with an empty checkpoint table exits 0.
 2. Harness self-test: a trivial `.code16` stub that prints `BOOTLOADER-HARNESS OK` and writes

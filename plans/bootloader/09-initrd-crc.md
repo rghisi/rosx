@@ -10,7 +10,7 @@ right after the kernel, stage2 CRCs it, and the number is cross-checked against 
   `0x100000`; `initrd_phys_end` aligned up to 4 KiB; refuse (`[ERR] mem` exit 3) if the span
   would run past detected usable memory (the phase-6 map is consulted — stage2 never writes
   where the BIOS said it can't).
-- **CRC32** (IEEE 802.3, reflected, table-less bitwise loop from `ros-boot-common` — 8 KiB
+- **CRC32** (IEEE 802.3, reflected, table-less bitwise loop from `rosx-boot-common` — 8 KiB
   tables would be fine but the loop is, matches the era's byte-count, and keeps the shared crate
   dependency-light) computed over the **in-memory** bytes, so it attests what the machine
   actually holds, not what the file claimed.
@@ -31,7 +31,7 @@ right after the kernel, stage2 CRCs it, and the number is cross-checked against 
 3. `initrd-too-big`: packager variant with an initrd that would overrun the `-m 32M` map →
    `[ERR] mem` + exit 3 (the refusal is a feature, tested).
 4. Host unit tests: CRC32 known-vectors (`""`, `"123456789"` → `0xCBF43926`) in
-   `ros-boot-common`; placement arithmetic (alignment, refusal bound) as pure-module tests.
+   `rosx-boot-common`; placement arithmetic (alignment, refusal bound) as pure-module tests.
 5. All prior rows + audits green.
 
 **Pass criteria:** rows 1–5 green; commit.
