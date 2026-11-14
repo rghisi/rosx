@@ -11,6 +11,7 @@ use crate::workspace_root;
 
 pub const STUB_SOURCE: &str = "arch/x86-bootloader/scripts/harness_stub.s";
 pub const STAGE1_SOURCE: &str = "arch/x86-bootloader/stage1/boot.s";
+pub const STAGE2_STUB_SOURCE: &str = "arch/x86-bootloader/stage1/stub2.s";
 pub const BOOT_SECTOR_BYTES: usize = SECTOR_BYTES;
 
 pub const BOOT_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
@@ -19,6 +20,8 @@ pub const FLOPPY_IMAGE_BYTES: u64 = 1440 * 1024;
 pub const PARTITION_START_LBA: u32 = 2048;
 pub const STAGE2_IMAGE_LBA: u32 = 8;
 pub const STAGE2_HEADER_MAGIC: &[u8; 4] = b"ROS2";
+pub const STAGE2_HEADER_BYTES: usize = SECTOR_BYTES;
+pub const STAGE2_MAX_BIN_BYTES: usize = 160 * 1024;
 
 const BOOTABLE: u8 = 0x80;
 const FAT16_TYPE: u8 = 0x06;
@@ -109,23 +112,16 @@ pub fn require_boot_image_tools() {
     }
 }
 
-fn link_flat_boot_sector(object: &Path, flat: &Path, flavor: &str) -> Vec<u8> {
+fn link_flat(object: &Path, flat: &Path, text: &str, flavor: &str) -> Vec<u8> {
     let mut linker = Command::new("ld");
-    linker.args([
-        "-m",
-        "elf_i386",
-        "-Ttext",
-        "0x7C00",
-        "-e",
-        "_start",
-        "--oformat",
-        "binary",
-        "-o",
-    ]);
+    linker.args(["-m", "elf_i386", "-Ttext", text, "-e", "_start", "--oformat", "binary", "-o"]);
     linker.arg(flat).arg(object);
-    run(&mut linker, &format!("link the {flavor} into a flat boot sector"));
+    run(&mut linker, &format!("link the {flavor} into a flat binary"));
+    fs::read(flat).expect("cannot read the linked flat binary")
+}
 
-    let sector = fs::read(flat).expect("cannot read the linked boot sector");
+fn link_flat_boot_sector(object: &Path, flat: &Path, flavor: &str) -> Vec<u8> {
+    let sector = link_flat(object, flat, "0x7C00", flavor);
     assert_eq!(
         sector.len(),
         BOOT_SECTOR_BYTES,
@@ -137,6 +133,31 @@ fn link_flat_boot_sector(object: &Path, flat: &Path, flavor: &str) -> Vec<u8> {
         "the {flavor} must carry the boot signature"
     );
     sector
+}
+
+pub fn build_stage2_stub(object_dir: &Path) -> Vec<u8> {
+    let object = object_dir.join("stub2.o");
+    let flat = object_dir.join("stub2.bin");
+    let mut assembler = Command::new("as");
+    assembler
+        .arg("--32")
+        .arg(workspace_root().join(STAGE2_STUB_SOURCE))
+        .arg("-o")
+        .arg(&object);
+    run(&mut assembler, "assemble the stage2 entry stub");
+    let stub = link_flat(&object, &flat, "0x7E00", "stage2 entry stub");
+    assert!(
+        !stub.is_empty() && stub.len() <= STAGE2_MAX_BIN_BYTES,
+        "the stage2 stub is {} bytes; the 0x7E00..0x2FFFF budget is {STAGE2_MAX_BIN_BYTES}",
+        stub.len()
+    );
+    let offenders = crate::check_isa::audit_stage_binary(&flat).expect("stage2 stub ISA audit");
+    assert!(
+        offenders.is_empty(),
+        "the stage2 stub fails the 486 stage deny-list audit: {}",
+        offenders.join(", ")
+    );
+    stub
 }
 
 pub fn build_stage1(object_dir: &Path) -> Vec<u8> {
@@ -204,7 +225,8 @@ fn pack_partitioned(image: PathBuf) {
 
     create_sparse(&image, BOOT_IMAGE_BYTES);
     write_at(&image, 0, &mbr);
-    write_at(&image, u64::from(STAGE2_IMAGE_LBA) * SECTOR_BYTES as u64, &stage2_placeholder());
+    let stub = build_stage2_stub(&scratch_dir());
+    write_at(&image, u64::from(STAGE2_IMAGE_LBA) * SECTOR_BYTES as u64, &stage2_blob(&stub));
 
     let partition_sectors = (BOOT_IMAGE_BYTES / SECTOR_BYTES as u64) as u32 - PARTITION_START_LBA;
     mformat_volume(&image, partition_sectors);
@@ -216,15 +238,20 @@ fn pack_floppy(image: PathBuf) {
     let stage1 = build_stage1(&scratch_dir());
     create_sparse(&image, FLOPPY_IMAGE_BYTES);
     write_at(&image, 0, &stage1);
-    write_at(&image, u64::from(STAGE2_IMAGE_LBA) * SECTOR_BYTES as u64, &stage2_placeholder());
+    let stub = build_stage2_stub(&scratch_dir());
+    write_at(&image, u64::from(STAGE2_IMAGE_LBA) * SECTOR_BYTES as u64, &stage2_blob(&stub));
 }
 
-fn stage2_placeholder() -> Vec<u8> {
-    let total_bytes = (2 * SECTOR_BYTES) as u32;
-    let mut blob = vec![0u8; 2 * SECTOR_BYTES];
+fn stage2_blob(bin: &[u8]) -> Vec<u8> {
+    assert!(!bin.is_empty() && bin.len() <= STAGE2_MAX_BIN_BYTES, "stage2 bin size {}/{}", bin.len(), STAGE2_MAX_BIN_BYTES);
+    let padded_bin = bin.len().div_ceil(SECTOR_BYTES) * SECTOR_BYTES;
+    let total_bytes = (STAGE2_HEADER_BYTES + padded_bin) as u32;
+    let mut blob = vec![0u8; total_bytes as usize];
     blob[0..4].copy_from_slice(STAGE2_HEADER_MAGIC);
     blob[4..8].copy_from_slice(&0u32.to_le_bytes());
     blob[8..12].copy_from_slice(&total_bytes.to_le_bytes());
+    blob[12..16].copy_from_slice(&0u32.to_le_bytes());
+    blob[STAGE2_HEADER_BYTES..STAGE2_HEADER_BYTES + bin.len()].copy_from_slice(bin);
     blob
 }
 
