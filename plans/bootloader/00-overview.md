@@ -125,10 +125,12 @@ CI gains a `bootloader` job (build all artifacts, run audits, run `cargo xtask b
 
 - Success: guest writes `0x10` to port `0xF4` → QEMU exit code **33**.
 - Failure: guest writes `0x01` to port `0xF4` → QEMU exit code **3**.
-- **Never `0x00`.** Measured: writing `0x00` exits with code `1`, and a triple fault / guest reset
-  under `-no-reboot` also exits with code `1` — the success signal must not alias the crash
-  signal. Exit `1` is therefore *defined* as "crashed before reaching a verdict".
-- Timeout (default 10 s wall) → failure; any other exit code → failure.
+- **Never `0x00`.** Measured: writing `0x00` exits with code `1` — the same code a guest
+  **reset** under `-no-reboot` produces; the success signal must not alias crash paths.
+- Crash-before-verdict (measured on QEMU 10.2.1): a **triple fault / guest shutdown** exits with
+  code **0** (the `cpu_x86_shutdown` path), a **reset** under `-no-reboot` with code **1**. The
+  harness defines exit `0` or `1` as "crashed before reaching a verdict".
+- Timeout (per-checkpoint, 5 s default) → failure; any other exit code → failure.
 - The harness logs the QEMU version line with every run (upstream behavior around debug-exit and
   boot ROMs has shifted across releases).
 
