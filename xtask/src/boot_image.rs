@@ -10,6 +10,7 @@ use crate::run;
 use crate::workspace_root;
 
 pub const STUB_SOURCE: &str = "arch/x86-bootloader/scripts/harness_stub.s";
+pub const STAGE1_SOURCE: &str = "arch/x86-bootloader/stage1/boot.s";
 pub const BOOT_SECTOR_BYTES: usize = SECTOR_BYTES;
 
 pub const BOOT_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
@@ -95,7 +96,7 @@ pub fn boot_image_command(token: &str) {
 }
 
 pub fn require_boot_image_tools() {
-    let missing: Vec<&str> = ["as", "ld", "mformat", "mcopy", "mdir"]
+    let missing: Vec<&str> = ["as", "ld", "objdump", "mformat", "mcopy", "mdir"]
         .into_iter()
         .filter(|tool| on_path(tool).is_none())
         .collect();
@@ -108,10 +109,66 @@ pub fn require_boot_image_tools() {
     }
 }
 
-pub fn build_flat_stub(variant: StubVariant, object_dir: &Path) -> Vec<u8> {
-    let object = object_dir.join(format!("harness-{}.o", variant.name()));
-    let flat = object_dir.join(format!("harness-{}.bin", variant.name()));
+fn link_flat_boot_sector(object: &Path, flat: &Path, flavor: &str) -> Vec<u8> {
+    let mut linker = Command::new("ld");
+    linker.args([
+        "-m",
+        "elf_i386",
+        "-Ttext",
+        "0x7C00",
+        "-e",
+        "_start",
+        "--oformat",
+        "binary",
+        "-o",
+    ]);
+    linker.arg(flat).arg(object);
+    run(&mut linker, &format!("link the {flavor} into a flat boot sector"));
 
+    let sector = fs::read(flat).expect("cannot read the linked boot sector");
+    assert_eq!(
+        sector.len(),
+        BOOT_SECTOR_BYTES,
+        "the {flavor} must be exactly one boot sector"
+    );
+    assert_eq!(
+        &sector[BOOT_SECTOR_BYTES - 2..],
+        &[0x55, 0xAA],
+        "the {flavor} must carry the boot signature"
+    );
+    sector
+}
+
+pub fn build_stage1(object_dir: &Path) -> Vec<u8> {
+    let object = object_dir.join("stage1.o");
+    let flat = object_dir.join("stage1.bin");
+    let mut assembler = Command::new("as");
+    assembler
+        .arg("--32")
+        .arg(workspace_root().join(STAGE1_SOURCE))
+        .arg("-o")
+        .arg(&object);
+    run(&mut assembler, "assemble the stage1 boot sector");
+    let stage1 = link_flat_boot_sector(&object, &flat, "stage1");
+    assert!(
+        stage1[TABLE_OFFSET..BOOT_SECTOR_BYTES - 2]
+            .iter()
+            .all(|&byte| byte == 0),
+        "stage1 code or data reaches the partition table zone of its sector"
+    );
+    let offenders = crate::check_isa::audit_stage_binary(&flat).expect("stage1 ISA audit");
+    assert!(
+        offenders.is_empty(),
+        "stage1 fails the 486 stage deny-list audit: {}",
+        offenders.join(", ")
+    );
+    stage1
+}
+
+pub fn build_flat_stub(variant: StubVariant, object_dir: &Path) -> Vec<u8> {
+    let name = variant.name();
+    let object = object_dir.join(format!("harness-{name}.o"));
+    let flat = object_dir.join(format!("harness-{name}.bin"));
     let mut assembler = Command::new("as");
     assembler
         .arg("--32")
@@ -119,43 +176,8 @@ pub fn build_flat_stub(variant: StubVariant, object_dir: &Path) -> Vec<u8> {
         .arg(workspace_root().join(STUB_SOURCE))
         .arg("-o")
         .arg(&object);
-    run(
-        &mut assembler,
-        &format!("assemble the {} harness stub", variant.name()),
-    );
-
-    let mut linker = Command::new("ld");
-    linker
-        .arg("-m")
-        .arg("elf_i386")
-        .arg("-Ttext")
-        .arg("0x7C00")
-        .arg("-e")
-        .arg("_start")
-        .arg("--oformat")
-        .arg("binary")
-        .arg("-o")
-        .arg(&flat)
-        .arg(&object);
-    run(
-        &mut linker,
-        &format!("link the {} harness stub into a flat boot sector", variant.name()),
-    );
-
-    let stub = fs::read(&flat).expect("cannot read the linked harness stub");
-    assert_eq!(
-        stub.len(),
-        BOOT_SECTOR_BYTES,
-        "the {} harness stub must be exactly one boot sector",
-        variant.name()
-    );
-    assert_eq!(
-        &stub[BOOT_SECTOR_BYTES - 2..],
-        &[0x55, 0xAA],
-        "the {} harness stub must carry the boot signature",
-        variant.name(),
-    );
-    stub
+    run(&mut assembler, &format!("assemble the {name} harness stub"));
+    link_flat_boot_sector(&object, &flat, &format!("{name} harness stub"))
 }
 
 pub fn pack(kind: BootImage) -> PathBuf {
@@ -168,13 +190,7 @@ pub fn pack(kind: BootImage) -> PathBuf {
 }
 
 fn pack_partitioned(image: PathBuf) {
-    let stub = build_flat_stub(StubVariant::Pass, &scratch_dir());
-    assert!(
-        stub[TABLE_OFFSET..BOOT_SECTOR_BYTES - 2]
-            .iter()
-            .all(|&byte| byte == 0),
-        "the placeholder stage1 reaches the partition table zone of its sector"
-    );
+    let stage1 = build_stage1(&scratch_dir());
 
     let mut entries: [Option<Entry>; ENTRY_COUNT] = [None; ENTRY_COUNT];
     entries[0] = Some(Entry {
@@ -184,7 +200,7 @@ fn pack_partitioned(image: PathBuf) {
         sector_count: (BOOT_IMAGE_BYTES / SECTOR_BYTES as u64) as u32 - PARTITION_START_LBA,
     });
     let mut mbr = encode_mbr(&entries).to_vec();
-    mbr[..TABLE_OFFSET].copy_from_slice(&stub[..TABLE_OFFSET]);
+    mbr[..TABLE_OFFSET].copy_from_slice(&stage1[..TABLE_OFFSET]);
 
     create_sparse(&image, BOOT_IMAGE_BYTES);
     write_at(&image, 0, &mbr);
@@ -197,9 +213,9 @@ fn pack_partitioned(image: PathBuf) {
 }
 
 fn pack_floppy(image: PathBuf) {
-    let stub = build_flat_stub(StubVariant::Pass, &scratch_dir());
+    let stage1 = build_stage1(&scratch_dir());
     create_sparse(&image, FLOPPY_IMAGE_BYTES);
-    write_at(&image, 0, &stub);
+    write_at(&image, 0, &stage1);
     write_at(&image, u64::from(STAGE2_IMAGE_LBA) * SECTOR_BYTES as u64, &stage2_placeholder());
 }
 

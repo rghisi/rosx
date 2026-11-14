@@ -167,10 +167,25 @@ fn is_post_486(mnemonic: &str) -> bool {
         )
 }
 
-pub fn run_check_stages(stages_dir: &Path) -> Result<Vec<String>, String> {
+pub fn audit_stage_binary(path: &Path) -> Result<Vec<String>, String> {
     let objdump = on_path("objdump").ok_or_else(|| {
         "objdump not found on PATH; install binutils (sudo apt install binutils)".to_string()
     })?;
+    let output = Command::new(&objdump)
+        .args(["-D", "-b", "binary", "-m", "i386"])
+        .arg(path)
+        .output()
+        .map_err(|err| format!("failed to run objdump on {}: {err}", path.display()))?;
+    if !output.status.success() {
+        return Err(format!("objdump failed on {}", path.display()));
+    }
+    Ok(audit_stage_disassembly(&String::from_utf8_lossy(&output.stdout))
+        .iter()
+        .map(|v| format!("{} x{}", v.mnemonic, v.occurrences))
+        .collect())
+}
+
+pub fn run_check_stages(stages_dir: &Path) -> Result<Vec<String>, String> {
     if !stages_dir.is_dir() {
         return Err(format!(
             "no stage directory at {}; run arch/x86-86box/scripts/fetch-grub-legacy.sh first",
@@ -183,22 +198,9 @@ pub fn run_check_stages(stages_dir: &Path) -> Result<Vec<String>, String> {
         if !stage.is_file() {
             return Err(format!("missing stage binary {}", stage.display()));
         }
-        let output = Command::new(&objdump)
-            .args(["-D", "-b", "binary", "-m", "i386"])
-            .arg(&stage)
-            .output()
-            .map_err(|err| format!("failed to run objdump on {}: {err}", stage.display()))?;
-        if !output.status.success() {
-            return Err(format!("objdump failed on {}", stage.display()));
-        }
-        let violations = audit_stage_disassembly(&String::from_utf8_lossy(&output.stdout));
-        if !violations.is_empty() {
-            let detail = violations
-                .iter()
-                .map(|v| format!("{} x{}", v.mnemonic, v.occurrences))
-                .collect::<Vec<_>>()
-                .join(", ");
-            failures.push(format!("{}: {detail}", stage.display()));
+        let offenders = audit_stage_binary(&stage)?;
+        if !offenders.is_empty() {
+            failures.push(format!("{}: {}", stage.display(), offenders.join(", ")));
         }
     }
     Ok(failures)
