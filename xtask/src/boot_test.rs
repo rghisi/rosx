@@ -4,40 +4,42 @@ use std::process::{self, Command, ExitStatus, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use crate::boot_image::{
+    self, BootImage, StubVariant, build_flat_stub, require_boot_image_tools,
+};
 use crate::check_isa::on_path;
-use crate::run;
 use crate::workspace_root;
 
-const STUB_SOURCE: &str = "arch/x86-bootloader/scripts/harness_stub.s";
-const BOOT_SECTOR_BYTES: usize = 512;
-const HARNESS_IMAGE_BYTES: usize = 2 * 1024 * 1024;
+const HARNESS_IMAGE_BYTES: u64 = 2 * 1024 * 1024;
 
-#[derive(Copy, Clone)]
-enum StubVariant {
-    Pass,
-    Fail,
-    Crash,
-    Hang,
+struct BootMachine {
+    binary: &'static str,
+    cpu: &'static str,
+    ram: &'static str,
 }
 
-impl StubVariant {
-    fn name(self) -> &'static str {
-        match self {
-            StubVariant::Pass => "pass",
-            StubVariant::Fail => "fail",
-            StubVariant::Crash => "crash",
-            StubVariant::Hang => "hang",
-        }
-    }
+const BIOS_32: BootMachine = BootMachine {
+    binary: "qemu-system-i386",
+    cpu: "486",
+    ram: "32M",
+};
 
-    fn defsym_value(self) -> u8 {
-        match self {
-            StubVariant::Pass => 0,
-            StubVariant::Fail => 1,
-            StubVariant::Crash => 2,
-            StubVariant::Hang => 3,
-        }
-    }
+const BIOS_64: BootMachine = BootMachine {
+    binary: "qemu-system-x86_64",
+    cpu: "qemu64",
+    ram: "128M",
+};
+
+#[derive(Copy, Clone)]
+enum BootMedia {
+    Disk,
+    Floppy,
+}
+
+#[derive(Copy, Clone)]
+enum ImageSource {
+    HarnessStub(StubVariant),
+    BootImage(BootImage),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -63,17 +65,21 @@ impl ExitVerdict {
 
 struct BootCheckpoint {
     name: &'static str,
-    variant: StubVariant,
+    machine: &'static BootMachine,
+    media: BootMedia,
+    source: ImageSource,
     expected: ExitVerdict,
     serial_contains: &'static [&'static str],
     serial_absent: &'static [&'static str],
     timeout_seconds: u64,
 }
 
-const CHECKPOINTS: [BootCheckpoint; 4] = [
+const CHECKPOINTS: [BootCheckpoint; 7] = [
     BootCheckpoint {
         name: "harness-pass",
-        variant: StubVariant::Pass,
+        machine: &BIOS_32,
+        media: BootMedia::Disk,
+        source: ImageSource::HarnessStub(StubVariant::Pass),
         expected: ExitVerdict::Success,
         serial_contains: &["BOOTLOADER-HARNESS OK"],
         serial_absent: &["BOOTLOADER-HARNESS FAIL"],
@@ -81,7 +87,9 @@ const CHECKPOINTS: [BootCheckpoint; 4] = [
     },
     BootCheckpoint {
         name: "harness-fail",
-        variant: StubVariant::Fail,
+        machine: &BIOS_32,
+        media: BootMedia::Disk,
+        source: ImageSource::HarnessStub(StubVariant::Fail),
         expected: ExitVerdict::Failure,
         serial_contains: &["BOOTLOADER-HARNESS FAIL"],
         serial_absent: &["BOOTLOADER-HARNESS OK"],
@@ -89,7 +97,9 @@ const CHECKPOINTS: [BootCheckpoint; 4] = [
     },
     BootCheckpoint {
         name: "harness-crash",
-        variant: StubVariant::Crash,
+        machine: &BIOS_32,
+        media: BootMedia::Disk,
+        source: ImageSource::HarnessStub(StubVariant::Crash),
         expected: ExitVerdict::CrashedBeforeVerdict,
         serial_contains: &[],
         serial_absent: &["BOOTLOADER-HARNESS OK", "BOOTLOADER-HARNESS FAIL"],
@@ -97,11 +107,43 @@ const CHECKPOINTS: [BootCheckpoint; 4] = [
     },
     BootCheckpoint {
         name: "harness-hang",
-        variant: StubVariant::Hang,
+        machine: &BIOS_32,
+        media: BootMedia::Disk,
+        source: ImageSource::HarnessStub(StubVariant::Hang),
         expected: ExitVerdict::TimedOut,
         serial_contains: &[],
         serial_absent: &["BOOTLOADER-HARNESS OK", "BOOTLOADER-HARNESS FAIL"],
         timeout_seconds: 2,
+    },
+    BootCheckpoint {
+        name: "image-boot32",
+        machine: &BIOS_32,
+        media: BootMedia::Disk,
+        source: ImageSource::BootImage(BootImage::Boot32),
+        expected: ExitVerdict::Success,
+        serial_contains: &["BOOTLOADER-HARNESS OK"],
+        serial_absent: &["BOOTLOADER-HARNESS FAIL"],
+        timeout_seconds: 5,
+    },
+    BootCheckpoint {
+        name: "image-boot64",
+        machine: &BIOS_64,
+        media: BootMedia::Disk,
+        source: ImageSource::BootImage(BootImage::Boot64),
+        expected: ExitVerdict::Success,
+        serial_contains: &["BOOTLOADER-HARNESS OK"],
+        serial_absent: &["BOOTLOADER-HARNESS FAIL"],
+        timeout_seconds: 5,
+    },
+    BootCheckpoint {
+        name: "image-floppy",
+        machine: &BIOS_32,
+        media: BootMedia::Floppy,
+        source: ImageSource::BootImage(BootImage::Floppy),
+        expected: ExitVerdict::Success,
+        serial_contains: &["BOOTLOADER-HARNESS OK"],
+        serial_absent: &["BOOTLOADER-HARNESS FAIL"],
+        timeout_seconds: 5,
     },
 ];
 
@@ -112,13 +154,10 @@ struct BootOutcome {
 
 pub fn run_boot_test() {
     require_host_tools();
-    let run_dir = workspace_root().join("target").join("boot-test");
-    fs::create_dir_all(&run_dir).expect("cannot create target/boot-test");
-
     let mut failures = 0;
     for checkpoint in &CHECKPOINTS {
-        let image = pack_stub_image(checkpoint.variant, &run_dir);
-        let outcome = boot(&image, checkpoint.timeout_seconds);
+        let image = prepare_image(&checkpoint.source);
+        let outcome = boot(checkpoint.machine, checkpoint.media, &image, checkpoint.timeout_seconds);
         match verdict_mismatch(checkpoint, &outcome) {
             None => println!("PASS {} — {}", checkpoint.name, outcome.verdict.describe()),
             Some(reason) => {
@@ -140,7 +179,8 @@ pub fn run_boot_test() {
 }
 
 fn require_host_tools() {
-    let missing: Vec<&str> = ["as", "ld", "qemu-system-i386"]
+    require_boot_image_tools();
+    let missing: Vec<&str> = ["qemu-system-i386", "qemu-system-x86_64"]
         .into_iter()
         .filter(|tool| on_path(tool).is_none())
         .collect();
@@ -153,68 +193,42 @@ fn require_host_tools() {
     }
 }
 
-fn pack_stub_image(variant: StubVariant, run_dir: &Path) -> PathBuf {
-    let object = run_dir.join(format!("harness-{}.o", variant.name()));
-    let flat = run_dir.join(format!("harness-{}.bin", variant.name()));
+fn prepare_image(source: &ImageSource) -> PathBuf {
+    match source {
+        ImageSource::HarnessStub(variant) => pack_harness_stub_image(*variant),
+        ImageSource::BootImage(kind) => boot_image::pack(*kind),
+    }
+}
 
-    let mut assembler = Command::new("as");
-    assembler
-        .arg("--32")
-        .arg(format!("--defsym=VARIANT={}", variant.defsym_value()))
-        .arg(workspace_root().join(STUB_SOURCE))
-        .arg("-o")
-        .arg(&object);
-    run(&mut assembler, &format!("assemble the {} harness stub", variant.name()));
-
-    let mut linker = Command::new("ld");
-    linker
-        .arg("-m")
-        .arg("elf_i386")
-        .arg("-Ttext")
-        .arg("0x7C00")
-        .arg("-e")
-        .arg("_start")
-        .arg("--oformat")
-        .arg("binary")
-        .arg("-o")
-        .arg(&flat)
-        .arg(&object);
-    run(
-        &mut linker,
-        &format!("link the {} harness stub into a flat boot sector", variant.name()),
-    );
-
-    let mut sector = fs::read(&flat).expect("cannot read the linked harness stub");
-    assert_eq!(
-        sector.len(),
-        BOOT_SECTOR_BYTES,
-        "the {} harness stub must be exactly one boot sector",
-        variant.name()
-    );
-    assert_eq!(
-        &sector[BOOT_SECTOR_BYTES - 2..],
-        &[0x55, 0xAA],
-        "the {} harness stub must carry the boot signature",
-        variant.name()
-    );
-
-    let image = run_dir.join(format!("harness-{}.img", variant.name()));
-    sector.resize(HARNESS_IMAGE_BYTES, 0);
-    fs::write(&image, &sector).expect("cannot write the harness image");
+fn pack_harness_stub_image(variant: StubVariant) -> PathBuf {
+    let dir = workspace_root().join("target").join("boot-test");
+    fs::create_dir_all(&dir).expect("cannot create target/boot-test");
+    let mut blob = build_flat_stub(variant, &dir);
+    blob.resize(HARNESS_IMAGE_BYTES as usize, 0);
+    let image = dir.join(format!("harness-{}.img", variant.name()));
+    fs::write(&image, &blob).expect("cannot write the harness image");
     image
 }
 
-fn boot(image: &Path, timeout_seconds: u64) -> BootOutcome {
+fn boot(
+    machine: &BootMachine,
+    media: BootMedia,
+    image: &Path,
+    timeout_seconds: u64,
+) -> BootOutcome {
     let serial_path = image.with_extension("serial");
     let _ = fs::remove_file(&serial_path);
-    let drive = format!("format=raw,file={}", image.display());
+    let drive = match media {
+        BootMedia::Disk => format!("format=raw,file={}", image.display()),
+        BootMedia::Floppy => format!("format=raw,if=floppy,file={}", image.display()),
+    };
     let serial = format!("file:{}", serial_path.display());
-    let mut child = Command::new("qemu-system-i386")
+    let mut child = Command::new(machine.binary)
         .args([
             "-cpu",
-            "486",
+            machine.cpu,
             "-m",
-            "32M",
+            machine.ram,
             "-drive",
             &drive,
             "-serial",
@@ -230,7 +244,7 @@ fn boot(image: &Path, timeout_seconds: u64) -> BootOutcome {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .expect("failed to spawn qemu-system-i386");
+        .expect("failed to spawn qemu");
 
     let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
     let verdict = loop {

@@ -4,6 +4,7 @@ use std::process::{self, Command};
 
 mod arch;
 mod boot_disk;
+mod boot_image;
 mod boot_test;
 mod check_isa;
 
@@ -302,7 +303,7 @@ fn parse_stages_option(extras: &[String]) -> Result<Option<std::path::PathBuf>, 
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | test [--skip-integration] | boot-test>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | test [--skip-integration] | boot-image [32|64|floppy] | boot-test>"
     );
 }
 
@@ -412,6 +413,14 @@ fn main() {
         "test" => {
             let skip_integration = parse_optional_flag(extras, "--skip-integration");
             run_tests(skip_integration);
+        }
+        "boot-image" => {
+            if extras.len() != 1 {
+                eprintln!("boot-image expects exactly one of: 32, 64, floppy");
+                usage();
+                process::exit(2);
+            }
+            boot_image::boot_image_command(&extras[0]);
         }
         "boot-test" => {
             require_no_extras(extras);
