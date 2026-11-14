@@ -599,6 +599,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rosx-boot-common"
+version = "0.1.0"
+
+[[package]]
 name = "rosx-x86_32"
 version = "0.1.0"
 dependencies = [

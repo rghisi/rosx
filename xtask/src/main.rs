@@ -4,6 +4,7 @@ use std::process::{self, Command};
 
 mod arch;
 mod boot_disk;
+mod boot_test;
 mod check_isa;
 
 use arch::{ArchSpec, X86_64, USER_APPS};
@@ -300,7 +301,7 @@ fn parse_stages_option(extras: &[String]) -> Result<Option<std::path::PathBuf>, 
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | test [--skip-integration]>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | test [--skip-integration] | boot-test>"
     );
 }
 
@@ -410,6 +411,10 @@ fn main() {
         "test" => {
             let skip_integration = parse_optional_flag(extras, "--skip-integration");
             run_tests(skip_integration);
+        }
+        "boot-test" => {
+            require_no_extras(extras);
+            boot_test::run_boot_test();
         }
         "help" | "--help" | "-h" => usage(),
         other => {

@@ -70,7 +70,7 @@ arch/x86-bootloader/
 ├── stage2/                   # crate; features stage-32 / stage-64 select the boot path
 │   ├── linker.ld             # .text.entry at 0x7E00, BSS bounds exported
 │   └── src/ ...
-├── common/                   # ros-boot-common: 16550 serial writer, hex formatting, CRC32
+├── common/                   # rosx-boot-common: 16550 serial writer, hex formatting, CRC32
 ├── fake-kernel-32/           # crate, rosx-boot-i486, linked at 0x0010_0000
 │   └── linker.ld
 ├── fake-kernel-64/           # crate, x86_64-unknown-none, VA 0xFFFF_8000_0010_0000 AT 0x0010_0000
@@ -78,7 +78,7 @@ arch/x86-bootloader/
 └── scripts/                  # gas/ld/objcopy wrappers used by xtask
 ```
 
-Workspace members: `stage2`, `ros-boot-common`, `fake-kernel-32`, `fake-kernel-64` (bare-metal,
+Workspace members: `stage2`, `rosx-boot-common`, `fake-kernel-32`, `fake-kernel-64` (bare-metal,
 like the other arch bins — `cargo build --workspace` remains unsupported and each builds with its
 explicit `--target`). `stage1` and `stub2.s` are built by the `xtask` boot recipes through
 `as`/`ld`/`objcopy` (binutils, already a CI prerequisite via `objdump`), with an existence check

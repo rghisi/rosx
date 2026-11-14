@@ -24,7 +24,7 @@ Read through `rxfat` in chunks into the bounce window; validate, then place:
 ## 2. `fake-kernel-32` (crate, smoke form)
 
 - Workspace member on `rosx-boot-i486`; `linker.ld` places everything at `0x0010_0000`,
-  `static` relocation model, no paging assumptions; links `ros-boot-common` for serial +
+  `static` relocation model, no paging assumptions; links `rosx-boot-common` for serial +
   debug-exit; `_start` is `extern "C" fn(eax_magic: u32, ebx_ptr: u32) -> !` — at this phase it
   just prints `[FK32] alive`, writes `0x10` to `0xF4`, halts. (Full form takes over in phase 10;
   the parameters are already ABI-shaped so its signature never lies.)
