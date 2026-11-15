@@ -253,7 +253,12 @@ fn pack_floppy(image: PathBuf) {
 }
 
 fn stage2_blob(bin: &[u8]) -> Vec<u8> {
-    assert!(!bin.is_empty() && bin.len() <= STAGE2_MAX_BIN_BYTES, "stage2 bin size {}/{}", bin.len(), STAGE2_MAX_BIN_BYTES);
+    assert!(
+        !bin.is_empty() && bin.len() <= STAGE2_MAX_BIN_BYTES,
+        "stage2 bin size {}/{}",
+        bin.len(),
+        STAGE2_MAX_BIN_BYTES
+    );
     let padded_bin = bin.len().div_ceil(SECTOR_BYTES) * SECTOR_BYTES;
     let total_bytes = (STAGE2_HEADER_BYTES + padded_bin) as u32;
     let mut blob = vec![0u8; total_bytes as usize];
@@ -338,4 +343,55 @@ fn write_at(path: &Path, offset: u64, bytes: &[u8]) {
         .expect("failed to seek the boot image");
     file.write_all(bytes)
         .expect("failed to write a region of the boot image");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header_field(blob: &[u8], offset: usize) -> u32 {
+        u32::from_le_bytes(blob[offset..offset + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn stage2_blob_encodes_the_ros2_header() {
+        let bin = vec![0xFAu8; 102];
+        let blob = stage2_blob(&bin);
+        assert_eq!(&blob[0..4], b"ROS2");
+        assert_eq!(header_field(&blob, 4), 0);
+        assert_eq!(header_field(&blob, 8), 1024);
+        assert_eq!(header_field(&blob, 12), 0);
+        assert_eq!(blob.len(), 1024);
+        assert_eq!(&blob[STAGE2_HEADER_BYTES..STAGE2_HEADER_BYTES + 102], &bin[..]);
+        assert!(blob[STAGE2_HEADER_BYTES + 102..].iter().all(|&byte| byte == 0));
+    }
+
+    #[test]
+    fn stage2_blob_rounds_the_image_up_to_sector_multiples() {
+        let blob = stage2_blob(&[0u8; 1]);
+        assert_eq!(blob.len(), STAGE2_HEADER_BYTES + SECTOR_BYTES);
+        assert_eq!(header_field(&blob, 8), 1024);
+    }
+
+    #[test]
+    fn stage2_blob_accepts_the_budget_boundary() {
+        let blob = stage2_blob(&vec![0x90u8; STAGE2_MAX_BIN_BYTES]);
+        assert_eq!(blob.len(), STAGE2_HEADER_BYTES + STAGE2_MAX_BIN_BYTES);
+        assert_eq!(
+            header_field(&blob, 8),
+            (STAGE2_HEADER_BYTES + STAGE2_MAX_BIN_BYTES) as u32
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn stage2_blob_refuses_an_oversized_bin() {
+        stage2_blob(&vec![0u8; STAGE2_MAX_BIN_BYTES + 1]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn stage2_blob_refuses_an_empty_bin() {
+        stage2_blob(&[]);
+    }
 }
