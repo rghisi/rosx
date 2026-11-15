@@ -55,7 +55,7 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
     kernel.setup();
     static ROM_IMAGE: &[u8] = include_bytes!("../../../target/rosx-i486-user/rom.img");
     kernel::rom::init(ROM_IMAGE);
-    let _ = kernel.schedule(kernel::task::FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main));
+    let _ = kernel.schedule(kernel::task::FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main), kernel::future::FutureOwner::Kernel);
     static INIT_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/init");
     let boot_plan = system::boot_plan::BootPlan::new()
         .service("rom:atad", ata_protocol::wire::SERVICE_NAME)
@@ -70,7 +70,7 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
         .service("/pong", "PING")
         .exec("/shell", &[])
         .exec("rom:shell", &[]);
-    let _ = kernel.schedule(kernel::task::new_elf_task_with_arguments("init", INIT_ELF, boot_plan.encode()));
+    let _ = kernel.schedule(kernel::task::new_elf_task_with_arguments("init", INIT_ELF, boot_plan.encode()), kernel::future::FutureOwner::Kernel);
     kernel::kprintln!("[KERNEL] Starting");
     kernel.start();
     panic!("[KERNEL] Crashed spectacularly, should never reached here.");

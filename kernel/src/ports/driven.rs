@@ -1,6 +1,6 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use crate::future::Future;
+use crate::future::{Future, FutureOwner};
 use crate::handle::FutureHandle;
 use system::ipc::Message;
 use crate::task::{TaskHandle, TaskState, YieldReason};
@@ -10,7 +10,7 @@ pub(crate) trait ForWakingTasks: Send + Sync {
 }
 
 pub(crate) trait ForNotifyingFutures: Send + Sync {
-    fn register(&self, future: Box<dyn Future + Send + Sync>) -> Option<FutureHandle>;
+    fn register(&self, future: Box<dyn Future + Send + Sync>, owner: FutureOwner) -> Option<FutureHandle>;
     fn notify(&self, handle: FutureHandle);
     fn complete_ipc_message(&self, handle: FutureHandle, message: Message);
     fn is_live(&self, handle: FutureHandle) -> bool;

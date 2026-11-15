@@ -20,6 +20,7 @@ use core::panic::PanicInfo;
 use kernel::memory::{MemoryBlock, MemoryBlocks};
 use kernel::platform::output::MultiplexOutput;
 use kernel::kconfig::KConfig;
+use kernel::future::FutureOwner;
 use kernel::kernel::Kernel;
 use kernel::scheduler;
 use kernel::kprintln;
@@ -75,7 +76,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     kernel.setup();
     static ROM_IMAGE: &[u8] = include_bytes!("../../../target/rosx-user/rom.img");
     kernel::rom::init(ROM_IMAGE);
-    let _ = kernel.schedule(FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main));
+    let _ = kernel.schedule(FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main), FutureOwner::Kernel);
     static INIT_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/init");
     let boot_plan = BootPlan::new()
         .service("rom:atad", ata_protocol::wire::SERVICE_NAME)
@@ -90,7 +91,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         .service("/pong", "PING")
         .exec("/shell", &[])
         .exec("rom:shell", &[]);
-    let _ = kernel.schedule(new_elf_task_with_arguments("init", INIT_ELF, boot_plan.encode()));
+    let _ = kernel.schedule(new_elf_task_with_arguments("init", INIT_ELF, boot_plan.encode()), FutureOwner::Kernel);
 
     kprintln!("[KERNEL] Starting");
     kernel.start();

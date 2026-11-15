@@ -2,7 +2,7 @@ use crate::platform::cpu::Cpu;
 #[cfg(not(test))]
 use crate::platform::output::{KernelOutput, setup_default_output};
 use crate::platform::elf::ElfArch;
-use crate::future::{TaskCompletionFuture, TimeFuture};
+use crate::future::{FutureOwner, TaskCompletionFuture, TimeFuture};
 use crate::future::waitset::WaitsetTake;
 use system::waitset::WaitEvent;
 use crate::kconfig::KConfig;
@@ -180,15 +180,23 @@ impl Kernel {
             .swap_context(state_pointer, null_mut(), scheduler_thread_stack_pointer);
     }
 
-    pub fn schedule(&mut self, task: SharedTask) -> Result<FutureHandle, ()> {
-        self.schedule_with_task_handle(task).map(|(_task_handle, future_handle)| future_handle)
+    pub fn schedule(
+        &mut self,
+        task: SharedTask,
+        owner: FutureOwner,
+    ) -> Result<FutureHandle, ()> {
+        self.schedule_with_task_handle(task, owner).map(|(_task_handle, future_handle)| future_handle)
     }
 
-    pub(crate) fn schedule_with_task_handle(&mut self, task: SharedTask) -> Result<(TaskHandle, FutureHandle), ()> {
+    pub(crate) fn schedule_with_task_handle(
+        &mut self,
+        task: SharedTask,
+        owner: FutureOwner,
+    ) -> Result<(TaskHandle, FutureHandle), ()> {
         let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
         let future = Box::new(TaskCompletionFuture::new());
-        let future_handle = services().future_registry.borrow_mut().register(future);
+        let future_handle = services().future_registry.borrow_mut().register(future, owner);
         let paired = match future_handle {
             Some(future_handle) => {
                 let task_handle = match services().task_manager.borrow_mut().add_task(task) {
@@ -205,9 +213,9 @@ impl Kernel {
         paired
     }
 
-    pub fn sleep(&mut self, millis: u64) -> Result<(), ()> {
+    pub fn sleep(&mut self, millis: u64, owner: FutureOwner) -> Result<(), ()> {
         let future = Box::new(TimeFuture::new());
-        let Some(handle) = services().future_registry.borrow_mut().register(future) else {
+        let Some(handle) = services().future_registry.borrow_mut().register(future, owner) else {
             return Err(());
         };
         services().timer_manager.borrow_mut().add_sleep(
@@ -458,7 +466,7 @@ mod tests {
         let sleeper = add_created_task("[T] wake-sleeper");
         install_stub_kernel(scheduler, Some(sleeper), true, false);
         let future = Box::new(TaskCompletionFuture::new());
-        let future_handle = services().future_registry.borrow_mut().register(future).expect("register");
+        let future_handle = services().future_registry.borrow_mut().register(future, FutureOwner::Kernel).expect("register");
         services().future_registry.borrow_mut().register_waiter(future_handle, sleeper);
         services().future_registry.borrow_mut().notify(future_handle);
         assert!(kernel().execution_state.need_resched);
@@ -470,7 +478,7 @@ mod tests {
         while let Some(handle) = services()
             .future_registry
             .borrow_mut()
-            .register(Box::new(TimeFuture::new()))
+            .register(Box::new(TimeFuture::new()), FutureOwner::Kernel)
         {
             fillers.push(handle);
         }
@@ -489,7 +497,7 @@ mod tests {
         let scheduler = add_created_task("[T] exhausted-sleep-scheduler");
         install_stub_kernel(scheduler, None, false, false);
         let fillers = exhaust_future_registry();
-        assert_eq!(kernel().sleep(1), Err(()));
+        assert_eq!(kernel().sleep(1, FutureOwner::Kernel), Err(()));
         release_future_registry(fillers);
         *KERNEL_PTR.borrow_mut() = null_mut();
     }
@@ -502,7 +510,10 @@ mod tests {
         let fillers = exhaust_future_registry();
         let live_before = services().task_manager.borrow().snapshot_processes().len();
         let task = Task::new("[T] ghost-attempt", 0x1000, 0);
-        assert_eq!(kernel().schedule_with_task_handle(task), Err(()));
+        assert_eq!(
+            kernel().schedule_with_task_handle(task, FutureOwner::Kernel),
+            Err(())
+        );
         assert_eq!(
             services().task_manager.borrow().snapshot_processes().len(),
             live_before
