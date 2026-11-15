@@ -1,28 +1,125 @@
 #![no_std]
 #![no_main]
 
+use rosx_boot_common::bios::BOOT_DRIVE_MEMORY;
+use rosx_boot_common::bios::Regs16;
 use rosx_boot_common::serial::Serial;
 use rosx_boot_common::DEBUG_EXIT_FAILURE;
 use rosx_boot_common::DEBUG_EXIT_SUCCESS;
 use rosx_boot_common::debug_exit;
 
 mod entry;
+mod thunk;
+
+use thunk::BiosThunk;
 
 const WRAP_BASE: usize = 0x0010_0000;
 const PROBE_ADDRESS: usize = 0x0000_0500;
 const PROBE_PATTERN_LOW: u8 = 0xC0;
 const PROBE_PATTERN_HIGH: u8 = 0x5A;
 
+const INT13: u8 = 0x13;
+const INT15: u8 = 0x15;
+const INT13_PARAM_TABLE: usize = 0x0580;
+const MEM88_REPEAT_CALLS: usize = 20;
+
 #[unsafe(no_mangle)]
 extern "C" fn stage2_main() -> ! {
     let console = Serial::COM1;
     console.init();
-    if a20_is_visible() {
-        console.write_line("[STAGE2_32] A20=OK");
-        debug_exit(DEBUG_EXIT_SUCCESS)
+    if !a20_is_visible() {
+        console.write_line("[ERR] a20");
+        debug_exit(DEBUG_EXIT_FAILURE);
     }
-    console.write_line("[ERR] a20");
-    debug_exit(DEBUG_EXIT_FAILURE)
+    let Some(thunk) = BiosThunk::install() else {
+        console.write_line("[ERR] thunk");
+        debug_exit(DEBUG_EXIT_FAILURE);
+    };
+    let Some(kib) = contiguous_high_memory_kib(&thunk) else {
+        console.write_line("[ERR] mem88");
+        debug_exit(DEBUG_EXIT_FAILURE);
+    };
+    console.write_str("[MEM88] ");
+    console.write_dec(u64::from(kib));
+    console.write_line(" KiB");
+    if !thunk.intact() {
+        console.write_line("[ERR] trampoline");
+        debug_exit(DEBUG_EXIT_FAILURE);
+    }
+    if !a20_is_visible() {
+        console.write_line("[ERR] a20");
+        debug_exit(DEBUG_EXIT_FAILURE);
+    }
+    report_boot_drive_geometry(&console, &thunk);
+    console.write_line("[STAGE2_32] A20=OK THUNK=OK");
+    debug_exit(DEBUG_EXIT_SUCCESS)
+}
+
+fn contiguous_high_memory_kib(thunk: &BiosThunk) -> Option<u32> {
+    let mut answer = 0u32;
+    for _ in 0..MEM88_REPEAT_CALLS {
+        let mut regs = Regs16::new(0x8800, 0, 0, 0);
+        thunk.call(INT15, &mut regs);
+        if regs.carry() {
+            return None;
+        }
+        answer = u32::from(regs.ax);
+    }
+    (1024..=0xFFFF).contains(&answer).then_some(answer)
+}
+
+fn report_boot_drive_geometry(console: &Serial, thunk: &BiosThunk) {
+    let mut regs = Regs16::new(0x0800, 0, 0, boot_drive());
+    regs.di = INT13_PARAM_TABLE as u16;
+    thunk.call(INT13, &mut regs);
+    if regs.carry() {
+        console.write_line("[INT13] no geometry");
+        return;
+    }
+    let (cylinders, heads, sectors) = if regs.ax >> 8 >= 0x30 {
+        extended_geometry()
+    } else {
+        classic_geometry(&regs)
+    };
+    console.write_str("[INT13] ");
+    console.write_dec(u64::from(cylinders));
+    console.write_str("c ");
+    console.write_dec(u64::from(heads));
+    console.write_str("h ");
+    console.write_dec(u64::from(sectors));
+    console.write_line("s");
+}
+
+fn extended_geometry() -> (u32, u32, u32) {
+    let sectors = read_u16(INT13_PARAM_TABLE + 2);
+    let heads = read_u16(INT13_PARAM_TABLE + 4);
+    let blocks = read_u32(INT13_PARAM_TABLE + 8);
+    let cylinders = match sectors.checked_mul(heads) {
+        Some(tracks) if tracks != 0 => blocks / tracks,
+        _ => 0,
+    };
+    (cylinders, heads, sectors)
+}
+
+fn classic_geometry(regs: &Regs16) -> (u32, u32, u32) {
+    let cylinders = u32::from(regs.cx >> 8 & 0xFF) | (u32::from(regs.cx >> 14 & 3) << 8);
+    (cylinders + 1, u32::from(regs.dx >> 8) + 1, u32::from(regs.cx & 0x3F))
+}
+
+fn boot_drive() -> u16 {
+    u16::from(read_byte(BOOT_DRIVE_MEMORY))
+}
+
+fn read_byte(address: usize) -> u8 {
+    unsafe { core::ptr::read_volatile(address as *const u8) }
+}
+
+fn read_u16(address: usize) -> u32 {
+    u32::from(read_byte(address)) | (u32::from(read_byte(address + 1)) << 8)
+}
+
+fn read_u32(address: usize) -> u32 {
+    read_u16(address) | (read_u16(address + 2) << 16)
 }
 
 fn a20_is_visible() -> bool {

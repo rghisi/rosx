@@ -1,3 +1,4 @@
+use rosx_boot_common::bios::BOOT_DRIVE_MEMORY;
 use rosx_boot_common::gdt;
 
 core::arch::global_asm!(
@@ -7,6 +8,7 @@ core::arch::global_asm!(
     .globl _start
 _start:
     cli
+    mov byte ptr [{boot_drive_memory}], dl
     xor ax, ax
     mov ds, ax
     mov es, ax
@@ -155,6 +157,7 @@ a20_saved_high:
     .skip 2
     "#,
     pe_bit = const 1u32,
+    boot_drive_memory = const BOOT_DRIVE_MEMORY as u32,
     code32_selector = const 0x08u32,
     data_selector = const 0x10u32,
     pm_stack_top = const 0x0007_F000u32,

@@ -1,5 +1,6 @@
 #![cfg_attr(not(test), no_std)]
 
+pub mod bios;
 pub mod crc32;
 pub mod gdt;
 pub mod serial;
