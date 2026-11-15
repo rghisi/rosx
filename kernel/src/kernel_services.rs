@@ -49,6 +49,10 @@ impl ForNotifyingFutures for FutureRegistryNotifierUseCase {
             }
         }
     }
+
+    fn is_live(&self, handle: FutureHandle) -> bool {
+        self.future_registry.borrow_mut().is_live(handle)
+    }
 }
 
 struct FutureRegistryTimerUseCase {

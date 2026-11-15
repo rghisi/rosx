@@ -22,6 +22,9 @@ impl ForNotifyingFutures for NoopIpcNotifier {
     }
     fn notify(&self, _handle: FutureHandle) {}
     fn complete_ipc_message(&self, _handle: FutureHandle, _message: Message) {}
+    fn is_live(&self, _handle: FutureHandle) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

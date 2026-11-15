@@ -323,7 +323,7 @@ impl FutureRegistry {
         let _ = self.consume_inner(set);
     }
 
-    fn is_live(&mut self, handle: FutureHandle) -> bool {
+    pub(crate) fn is_live(&mut self, handle: FutureHandle) -> bool {
         self.arena.borrow(handle.into()).is_ok()
     }
 

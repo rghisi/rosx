@@ -21,6 +21,9 @@ impl ForNotifyingFutures for NoopNotifier {
     }
     fn notify(&self, _handle: FutureHandle) {}
     fn complete_ipc_message(&self, _handle: FutureHandle, _message: Message) {}
+    fn is_live(&self, _handle: FutureHandle) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -101,20 +104,25 @@ impl MailboxManager {
     }
 
     fn notify_waiters(&mut self, handle: MailboxHandle) {
-        if let Some(waiters) = self.waiters.get_mut(&handle) {
-            while !waiters.is_empty() {
-                if let Ok(mailbox) = self.mailboxes.borrow_mut(handle) {
-                    if let Some(msg) = mailbox.pop_front() {
-                        let fh = waiters.remove(0);
-                        self.notifier.complete_ipc_message(fh, msg);
-                        self.notifier.notify(fh);
-                    } else {
-                        break;
-                    }
-                } else {
-                    break;
-                }
+        let Some(waiters) = self.waiters.get_mut(&handle) else {
+            return;
+        };
+        while let Some(&front) = waiters.first() {
+            if !self.notifier.is_live(front) {
+                waiters.remove(0);
+                continue;
             }
+            let Some(msg) = self
+                .mailboxes
+                .borrow_mut(handle)
+                .ok()
+                .and_then(|mailbox| mailbox.pop_front())
+            else {
+                break;
+            };
+            waiters.remove(0);
+            self.notifier.complete_ipc_message(front, msg);
+            self.notifier.notify(front);
         }
     }
 }
@@ -214,6 +222,33 @@ mod tests {
         assert_eq!(manager.push_back(handle, msg), Ok(()));
 
         assert_eq!(services().task_manager.borrow().get_state(task_handle), crate::task::TaskState::Ready);
+    }
+
+    #[test]
+    fn test_dead_waiter_is_skipped_and_the_message_reaches_the_live_one() {
+        use system::ipc::MESSAGE_PAYLOAD_BYTES;
+        init_services();
+        let notifier: &'static dyn ForNotifyingFutures =
+            Box::leak(Box::new(FutureRegistryNotifierUseCase {
+                future_registry: services().future_registry,
+            })) as &'static dyn ForNotifyingFutures;
+        let mut manager = MailboxManager::new_with_notifier(notifier);
+        let handle = manager.create();
+
+        let abandoned = manager.pop_front_async(handle);
+        services().future_registry.borrow_mut().consume(abandoned).unwrap();
+        let live = manager.pop_front_async(handle);
+
+        let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = [0x5C; MESSAGE_PAYLOAD_BYTES];
+        let msg = Message::new(Handle::new(1, 1).pack() as u32, &pattern);
+        assert_eq!(manager.push_back(handle, msg), Ok(()));
+
+        let registry = services().future_registry.borrow_mut();
+        let future_box = registry.borrow_mut(live).unwrap();
+        let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
+        let delivered = ipc_future.result().expect("the live waiter must receive the message");
+        assert_eq!(delivered.conn(), Handle::new(1, 1).pack() as u32);
+        assert_eq!(delivered.data(), &pattern);
     }
 
     #[test]
