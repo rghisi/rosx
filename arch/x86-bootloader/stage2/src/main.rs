@@ -3,6 +3,7 @@
 
 use rosx_boot_common::bios::BOOT_DRIVE_MEMORY;
 use rosx_boot_common::bios::Regs16;
+use rosx_boot_common::bios::Regs32;
 use rosx_boot_common::serial::Serial;
 use rosx_boot_common::DEBUG_EXIT_FAILURE;
 use rosx_boot_common::DEBUG_EXIT_SUCCESS;
@@ -19,7 +20,6 @@ const PROBE_PATTERN_LOW: u8 = 0xC0;
 const PROBE_PATTERN_HIGH: u8 = 0x5A;
 
 const INT13: u8 = 0x13;
-const INT15: u8 = 0x15;
 const INT13_PARAM_TABLE: usize = 0x0580;
 const MEM88_REPEAT_CALLS: usize = 20;
 
@@ -58,12 +58,12 @@ extern "C" fn stage2_main() -> ! {
 fn contiguous_high_memory_kib(thunk: &BiosThunk) -> Option<u32> {
     let mut answer = 0u32;
     for _ in 0..MEM88_REPEAT_CALLS {
-        let mut regs = Regs16::new(0x8800, 0, 0, 0);
-        thunk.call(INT15, &mut regs);
+        let mut regs = Regs32::new(0x8800, 0, 0, 0);
+        thunk.call32(&mut regs);
         if regs.carry() {
             return None;
         }
-        answer = u32::from(regs.ax);
+        answer = u32::from(regs.eax as u16);
     }
     (1024..=0xFFFF).contains(&answer).then_some(answer)
 }
