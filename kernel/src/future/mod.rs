@@ -348,6 +348,25 @@ impl FutureRegistry {
         let _ = self.consume_inner(set);
     }
 
+    pub(crate) fn reclaim_group(&mut self, group: GroupId) {
+        let _section = FUTURE_SECTION.acquire();
+        let owner = FutureOwner::Group(group);
+        let mut abandoned = Vec::new();
+        for (index, slot_owner) in self.owners.iter().enumerate() {
+            if *slot_owner == owner {
+                abandoned.push(index as u16);
+            }
+        }
+        for index in abandoned {
+            if let Some(generation) = self.arena.live_generation(index) {
+                let handle = FutureHandle::new(index, generation);
+                self.notify_inner(handle);
+                let _ = self.consume_inner(handle);
+            }
+            self.owners[index as usize] = FutureOwner::Free;
+        }
+    }
+
     pub(crate) fn is_live(&mut self, handle: FutureHandle) -> bool {
         self.arena.borrow(handle.into()).is_ok()
     }
@@ -614,6 +633,146 @@ mod tests {
             .unwrap();
         assert_eq!(recycled.index(), kernel_slot.index());
         assert_eq!(owner_of(&registry, recycled), FutureOwner::Group(group));
+    }
+
+    // === Reclaim tests ===
+
+    #[test]
+    fn reclaim_group_frees_only_the_owners_slots() {
+        let mut registry = FutureRegistry::new();
+        let doomed = GroupId::allocate();
+        let neighbor = GroupId::allocate();
+        let owned = registry
+            .register(Box::new(DummyFuture), FutureOwner::Group(doomed))
+            .unwrap();
+        let other = registry
+            .register(Box::new(DummyFuture), FutureOwner::Group(neighbor))
+            .unwrap();
+        let kernel_slot = registry
+            .register(Box::new(DummyFuture), FutureOwner::Kernel)
+            .unwrap();
+
+        registry.reclaim_group(doomed);
+
+        assert_eq!(registry.get(owned), None);
+        assert_eq!(owner_of(&registry, owned), FutureOwner::Free);
+        assert_eq!(registry.get(other), Some(false));
+        assert_eq!(registry.get(kernel_slot), Some(false));
+
+        registry.reclaim_group(GroupId::allocate());
+        assert_eq!(registry.get(other), Some(false));
+        assert_eq!(registry.get(kernel_slot), Some(false));
+    }
+
+    #[test]
+    fn reclaim_wakes_a_parked_cross_group_waiter_which_consumes_to_an_honest_error() {
+        setup();
+        let doomed = GroupId::allocate();
+
+        let task = Task::new("T", 0x1000, 0);
+        let handle = services().task_manager.borrow_mut().add_task(task).unwrap();
+        services().task_manager.borrow_mut().set_state(handle, TaskState::Blocked);
+
+        let future_handle = services()
+            .future_registry
+            .borrow_mut()
+            .register(Box::new(DummyFuture), FutureOwner::Group(doomed))
+            .unwrap();
+        services().future_registry.borrow_mut().register_waiter(future_handle, handle);
+
+        services().future_registry.borrow_mut().reclaim_group(doomed);
+
+        assert_eq!(services().task_manager.borrow().get_state(handle), TaskState::Ready);
+        let consumed = services().future_registry.borrow_mut().consume(future_handle);
+        assert!(matches!(consumed, Err(Error::NotFound)));
+    }
+
+    #[test]
+    fn reclaim_purges_parents_of_rows_and_leaves_the_waitset_alive() {
+        let mut registry = FutureRegistry::new();
+        let doomed = GroupId::allocate();
+        let set_owner = GroupId::allocate();
+        let set = registry
+            .register(Box::new(WaitsetFuture::new()), FutureOwner::Group(set_owner))
+            .unwrap();
+        let child = registry
+            .register(Box::new(DummyFuture), FutureOwner::Group(doomed))
+            .unwrap();
+        registry.attach(set, child, 1).unwrap();
+
+        registry.reclaim_group(doomed);
+
+        assert_eq!(registry.get(child), None);
+        assert!(registry.parents_of[child.index() as usize].is_empty());
+        assert!(registry.is_waitset(set));
+        assert!(matches!(registry.take_pending(set), WaitsetTake::Empty));
+    }
+
+    #[test]
+    fn a_reclaimed_slot_recycled_by_the_kernel_is_immune_to_the_dead_groups_handles() {
+        let mut registry = FutureRegistry::new();
+        let doomed = GroupId::allocate();
+        let doomed_handle = registry
+            .register(Box::new(TaskCompletionFuture::new()), FutureOwner::Group(doomed))
+            .unwrap();
+
+        registry.reclaim_group(doomed);
+
+        for _ in 1..FUTURE_SLOTS {
+            registry
+                .register(Box::new(DummyFuture), FutureOwner::Kernel)
+                .unwrap();
+        }
+        let recycled = registry
+            .register(Box::new(TaskCompletionFuture::new()), FutureOwner::Kernel)
+            .unwrap();
+        assert_eq!(recycled.index(), doomed_handle.index());
+
+        registry.notify_with_status(doomed_handle, system::exit::clean_status(9).unwrap());
+
+        assert_eq!(registry.get(recycled), Some(false));
+        assert!(registry.consume(doomed_handle).is_err());
+        assert_eq!(owner_of(&registry, recycled), FutureOwner::Kernel);
+    }
+
+    #[test]
+    fn kernel_owned_slots_survive_every_sweep() {
+        let mut registry = FutureRegistry::new();
+        let kernel_slot = registry
+            .register(Box::new(DummyFuture), FutureOwner::Kernel)
+            .unwrap();
+        for _ in 0..5 {
+            let group = GroupId::allocate();
+            let slot = registry
+                .register(Box::new(DummyFuture), FutureOwner::Group(group))
+                .unwrap();
+            registry.reclaim_group(group);
+            assert_eq!(registry.get(slot), None);
+            assert_eq!(registry.get(kernel_slot), Some(false));
+        }
+    }
+
+    #[test]
+    fn a_child_group_sweep_spares_the_parents_completion_future() {
+        let mut registry = FutureRegistry::new();
+        let parent_group = GroupId::allocate();
+        let child_group = GroupId::allocate();
+        let completion = registry
+            .register(Box::new(TaskCompletionFuture::new()), FutureOwner::Group(parent_group))
+            .unwrap();
+        let child_slot = registry
+            .register(Box::new(TimeFuture::new()), FutureOwner::Group(child_group))
+            .unwrap();
+
+        registry.reclaim_group(child_group);
+
+        assert_eq!(registry.get(child_slot), None);
+        assert_eq!(registry.get(completion), Some(false));
+        let status = system::exit::clean_status(3).unwrap();
+        registry.notify_with_status(completion, status);
+        let taken = registry.consume(completion).unwrap();
+        let completion = taken.into_any().downcast::<TaskCompletionFuture>().unwrap();
+        assert_eq!(completion.status(), status);
     }
 
     // === TimeFuture tests ===

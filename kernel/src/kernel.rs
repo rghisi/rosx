@@ -313,6 +313,7 @@ impl Kernel {
             crate::platform::portio::revoke(task_handle);
             if let Some(group) = group {
                 if !services().task_manager.borrow().group_has_live_members(group) {
+                    services().future_registry.borrow_mut().reclaim_group(group);
                     unsafe { services().memory_manager.release_group_allocations(group.value()) };
                 }
             }
@@ -519,6 +520,40 @@ mod tests {
             live_before
         );
         release_future_registry(fillers);
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn termination_of_the_last_group_member_reclaims_the_groups_futures() {
+        crate::kernel_services::init();
+        let scheduler = add_created_task("[T] reclaim-hook-scheduler");
+        let dying = add_created_task("[T] reclaim-hook-dying");
+        install_stub_kernel(scheduler, Some(dying), false, false);
+        let dying_group = services().task_manager.borrow().get_group(dying).unwrap();
+        let parent_group = services().task_manager.borrow().get_group(scheduler).unwrap();
+
+        let abandoned = services()
+            .future_registry
+            .borrow_mut()
+            .register(Box::new(TimeFuture::new()), FutureOwner::Group(dying_group))
+            .unwrap();
+        let report_to_parent = services()
+            .future_registry
+            .borrow_mut()
+            .register(Box::new(TaskCompletionFuture::new()), FutureOwner::Group(parent_group))
+            .unwrap();
+        services().task_manager.borrow_mut().set_completion_future(dying, report_to_parent);
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            kernel().terminate_with_status(system::exit::clean_status(5).unwrap())
+        }));
+        assert!(outcome.is_err());
+
+        assert_eq!(services().future_registry.borrow_mut().get(abandoned), None);
+        let report = services().future_registry.borrow_mut().consume(report_to_parent).unwrap();
+        let report = report.into_any().downcast::<TaskCompletionFuture>().unwrap();
+        assert!(report.is_completed());
+        assert_eq!(report.status(), system::exit::clean_status(5).unwrap());
         *KERNEL_PTR.borrow_mut() = null_mut();
     }
 }
