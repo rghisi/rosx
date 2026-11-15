@@ -31,6 +31,7 @@ pub fn main() {
     rose(&Command {
         name: String::new(),
         args: Vec::new(),
+        background: false,
     });
     prompt();
     
