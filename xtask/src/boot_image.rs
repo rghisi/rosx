@@ -11,7 +11,7 @@ use crate::workspace_root;
 
 pub const STUB_SOURCE: &str = "arch/x86-bootloader/scripts/harness_stub.s";
 pub const STAGE1_SOURCE: &str = "arch/x86-bootloader/stage1/boot.s";
-pub const STAGE2_STUB_SOURCE: &str = "arch/x86-bootloader/stage1/stub2.s";
+pub const STAGE2_TARGET_SPEC: &str = "arch/x86-bootloader/rosx-boot-i486.json";
 pub const BOOT_SECTOR_BYTES: usize = SECTOR_BYTES;
 
 pub const BOOT_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
@@ -99,7 +99,7 @@ pub fn boot_image_command(token: &str) {
 }
 
 pub fn require_boot_image_tools() {
-    let missing: Vec<&str> = ["as", "ld", "objdump", "mformat", "mcopy", "mdir"]
+    let missing: Vec<&str> = ["as", "ld", "objdump", "objcopy", "mformat", "mcopy", "mdir"]
         .into_iter()
         .filter(|tool| on_path(tool).is_none())
         .collect();
@@ -135,29 +135,39 @@ fn link_flat_boot_sector(object: &Path, flat: &Path, flavor: &str) -> Vec<u8> {
     sector
 }
 
-pub fn build_stage2_stub(object_dir: &Path) -> Vec<u8> {
-    let object = object_dir.join("stub2.o");
-    let flat = object_dir.join("stub2.bin");
-    let mut assembler = Command::new("as");
-    assembler
-        .arg("--32")
-        .arg(workspace_root().join(STAGE2_STUB_SOURCE))
-        .arg("-o")
-        .arg(&object);
-    run(&mut assembler, "assemble the stage2 entry stub");
-    let stub = link_flat(&object, &flat, "0x7E00", "stage2 entry stub");
+pub fn build_stage2(object_dir: &Path) -> Vec<u8> {
+    let mut builder = crate::cargo();
+    builder
+        .arg("build")
+        .arg("--release")
+        .arg("-p")
+        .arg("rosx-stage2")
+        .arg("--target")
+        .arg(STAGE2_TARGET_SPEC)
+        .args(crate::UNSTABLE);
+    run(&mut builder, "build the stage2 image crate");
+    let elf = workspace_root()
+        .join("target")
+        .join("rosx-boot-i486")
+        .join("release")
+        .join("rosx-stage2");
+    let flat = object_dir.join("stage2.bin");
+    let mut objcopy = Command::new("objcopy");
+    objcopy.args(["-O", "binary"]).arg(&elf).arg(&flat);
+    run(&mut objcopy, "objcopy the stage2 ELF into a flat binary");
+    let bin = fs::read(&flat).expect("cannot read the flat stage2 binary");
     assert!(
-        !stub.is_empty() && stub.len() <= STAGE2_MAX_BIN_BYTES,
-        "the stage2 stub is {} bytes; the 0x7E00..0x2FFFF budget is {STAGE2_MAX_BIN_BYTES}",
-        stub.len()
+        !bin.is_empty() && bin.len() <= STAGE2_MAX_BIN_BYTES,
+        "the stage2 image is {} bytes; the 0x7E00..0x2FFFF budget is {STAGE2_MAX_BIN_BYTES}",
+        bin.len()
     );
-    let offenders = crate::check_isa::audit_stage_binary(&flat).expect("stage2 stub ISA audit");
+    let offenders = crate::check_isa::audit_stage_binary(&flat).expect("stage2 ISA audit");
     assert!(
         offenders.is_empty(),
-        "the stage2 stub fails the 486 stage deny-list audit: {}",
+        "the stage2 image fails the 486 stage deny-list audit: {}",
         offenders.join(", ")
     );
-    stub
+    bin
 }
 
 pub fn build_stage1(object_dir: &Path) -> Vec<u8> {
@@ -225,8 +235,8 @@ fn pack_partitioned(image: PathBuf) {
 
     create_sparse(&image, BOOT_IMAGE_BYTES);
     write_at(&image, 0, &mbr);
-    let stub = build_stage2_stub(&scratch_dir());
-    write_at(&image, u64::from(STAGE2_IMAGE_LBA) * SECTOR_BYTES as u64, &stage2_blob(&stub));
+    let stage2 = build_stage2(&scratch_dir());
+    write_at(&image, u64::from(STAGE2_IMAGE_LBA) * SECTOR_BYTES as u64, &stage2_blob(&stage2));
 
     let partition_sectors = (BOOT_IMAGE_BYTES / SECTOR_BYTES as u64) as u32 - PARTITION_START_LBA;
     mformat_volume(&image, partition_sectors);
@@ -238,8 +248,8 @@ fn pack_floppy(image: PathBuf) {
     let stage1 = build_stage1(&scratch_dir());
     create_sparse(&image, FLOPPY_IMAGE_BYTES);
     write_at(&image, 0, &stage1);
-    let stub = build_stage2_stub(&scratch_dir());
-    write_at(&image, u64::from(STAGE2_IMAGE_LBA) * SECTOR_BYTES as u64, &stage2_blob(&stub));
+    let stage2 = build_stage2(&scratch_dir());
+    write_at(&image, u64::from(STAGE2_IMAGE_LBA) * SECTOR_BYTES as u64, &stage2_blob(&stage2));
 }
 
 fn stage2_blob(bin: &[u8]) -> Vec<u8> {

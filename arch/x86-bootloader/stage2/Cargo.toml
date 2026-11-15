@@ -1,0 +1,17 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "rosx-stage2"
+publish = false
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "rosx-stage2"
+bench = false
+test = false
+
+[dependencies]
+rosx-boot-common = { path = "../common" }
+
+[lints]
+workspace = true

@@ -91,3 +91,12 @@ impl Serial {
         }
     }
 }
+
+impl core::fmt::Write for Serial {
+    fn write_str(&mut self, text: &str) -> core::fmt::Result {
+        for byte in text.bytes() {
+            self.write_byte(byte);
+        }
+        Ok(())
+    }
+}

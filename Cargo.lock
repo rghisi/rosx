@@ -657,6 +657,13 @@ name = "rosx-boot-common"
 version = "0.1.0"
 
 [[package]]
+name = "rosx-stage2"
+version = "0.1.0"
+dependencies = [
+ "rosx-boot-common",
+]
+
+[[package]]
 name = "rosx-x86_32"
 version = "0.1.0"
 dependencies = [
