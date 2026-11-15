@@ -61,6 +61,7 @@ pub fn token_for(c: char) -> Option<&'static str> {
         '\\' => Some("backslash"),
         '[' => Some("bracket_left"),
         ']' => Some("bracket_right"),
+        '&' => Some("shift-7"),
         _ => None,
     }
 }
@@ -109,6 +110,7 @@ mod tests {
         assert_eq!(token_for('\\'), Some("backslash"));
         assert_eq!(token_for('['), Some("bracket_left"));
         assert_eq!(token_for(']'), Some("bracket_right"));
+        assert_eq!(token_for('&'), Some("shift-7"));
     }
 
     #[test]
