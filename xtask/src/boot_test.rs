@@ -1,4 +1,5 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, ExitStatus, Stdio};
 use std::thread::sleep;
@@ -40,6 +41,7 @@ enum BootMedia {
 enum ImageSource {
     HarnessStub(StubVariant),
     BootImage(BootImage),
+    CorruptStage2Header,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -74,7 +76,7 @@ struct BootCheckpoint {
     timeout_seconds: u64,
 }
 
-const CHECKPOINTS: [BootCheckpoint; 7] = [
+const CHECKPOINTS: [BootCheckpoint; 8] = [
     BootCheckpoint {
         name: "harness-pass",
         machine: &BIOS_32,
@@ -116,33 +118,43 @@ const CHECKPOINTS: [BootCheckpoint; 7] = [
         timeout_seconds: 2,
     },
     BootCheckpoint {
-        name: "image-boot32",
+        name: "stage2-hdd-lba",
         machine: &BIOS_32,
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot32),
-        expected: ExitVerdict::TimedOut,
-        serial_contains: &["[STAGE1] OK"],
-        serial_absent: &["BOOTLOADER-HARNESS"],
+        expected: ExitVerdict::Success,
+        serial_contains: &["[STAGE1] OK", "[STAGE2_16] OK"],
+        serial_absent: &["BOOTLOADER-HARNESS", "[ERR] disk"],
         timeout_seconds: 2,
     },
     BootCheckpoint {
-        name: "image-boot64",
+        name: "stage2-hdd-lba-x86_64",
         machine: &BIOS_64,
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot64),
-        expected: ExitVerdict::TimedOut,
-        serial_contains: &["[STAGE1] OK"],
-        serial_absent: &["BOOTLOADER-HARNESS"],
+        expected: ExitVerdict::Success,
+        serial_contains: &["[STAGE1] OK", "[STAGE2_16] OK"],
+        serial_absent: &["BOOTLOADER-HARNESS", "[ERR] disk"],
         timeout_seconds: 2,
     },
     BootCheckpoint {
-        name: "image-floppy",
+        name: "stage2-floppy-chs",
         machine: &BIOS_32,
         media: BootMedia::Floppy,
         source: ImageSource::BootImage(BootImage::Floppy),
+        expected: ExitVerdict::Success,
+        serial_contains: &["[STAGE1] OK", "[STAGE2_16] OK"],
+        serial_absent: &["BOOTLOADER-HARNESS", "[ERR] disk"],
+        timeout_seconds: 2,
+    },
+    BootCheckpoint {
+        name: "stage2-corrupt-header",
+        machine: &BIOS_32,
+        media: BootMedia::Disk,
+        source: ImageSource::CorruptStage2Header,
         expected: ExitVerdict::TimedOut,
-        serial_contains: &["[STAGE1] OK"],
-        serial_absent: &["BOOTLOADER-HARNESS"],
+        serial_contains: &["[STAGE1] OK", "[ERR] disk"],
+        serial_absent: &["[STAGE2_16] OK", "BOOTLOADER-HARNESS"],
         timeout_seconds: 2,
     },
 ];
@@ -197,7 +209,28 @@ fn prepare_image(source: &ImageSource) -> PathBuf {
     match source {
         ImageSource::HarnessStub(variant) => pack_harness_stub_image(*variant),
         ImageSource::BootImage(kind) => boot_image::pack(*kind),
+        ImageSource::CorruptStage2Header => pack_corrupt_header_image(),
     }
+}
+
+fn pack_corrupt_header_image() -> PathBuf {
+    let image = workspace_root()
+        .join("target")
+        .join("boot-test")
+        .join("stage2-corrupt-header.img");
+    fs::copy(boot_image::pack(BootImage::Boot32), &image)
+        .expect("cannot copy the boot32 image for header corruption");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .open(&image)
+        .expect("cannot open the corrupt-header image");
+    file.seek(SeekFrom::Start(
+        u64::from(boot_image::STAGE2_IMAGE_LBA) * boot_image::BOOT_SECTOR_BYTES as u64,
+    ))
+    .expect("cannot seek to the stage2 header");
+    file.write_all(b"NOPE")
+        .expect("cannot scribble the stage2 header magic");
+    image
 }
 
 fn pack_harness_stub_image(variant: StubVariant) -> PathBuf {
