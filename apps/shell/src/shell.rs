@@ -1,5 +1,6 @@
 use usrlib::{print, println};
-use usrlib::handle::UserConnectionHandle;
+use usrlib::exit::ExitStatus;
+use usrlib::handle::{UserConnectionHandle, UserFutureHandle};
 use usrlib::ipc::{ipc_receive_value, ipc_send_value};
 use usrlib::syscall::Syscall;
 use alloc::string::String;
@@ -9,6 +10,11 @@ use crate::launcher;
 use vfs_protocol::client::{ClientError, Vfs};
 
 static PROMPT: &str = "\x1B[32mrose>\x1B[m ";
+
+struct BackgroundJob {
+    name: String,
+    future: UserFutureHandle,
+}
 
 static COMMANDS: [(&str, fn(&Command)); 5] = [
     ("ls", ls),
@@ -36,6 +42,7 @@ pub fn main() {
     prompt();
     
     let mut buffer = String::new();
+    let mut jobs: Vec<BackgroundJob> = Vec::new();
     
     loop {
         let c = Syscall::read_char();
@@ -45,14 +52,23 @@ pub fn main() {
 
             if let Some(cmd) = Command::parse(&buffer) {
                 match lookup_command(&cmd.name) {
-                    Some(command) => command(&cmd),
+                    Some(command) => {
+                        if cmd.background {
+                            println!("Built-in runs in the foreground: {}", cmd.name);
+                        }
+                        command(&cmd);
+                    }
                     None => {
-                        launcher::run(&cmd);
+                        if let Some(future) = launcher::run(&cmd) {
+                            println!("{} started", cmd.name);
+                            jobs.push(BackgroundJob { name: cmd.name.clone(), future });
+                        }
                     }
                 }
             }
             
             buffer.clear();
+            reap_jobs(&mut jobs);
             prompt();
         } else if c == '\x08' {
             if !buffer.is_empty() {
@@ -62,6 +78,32 @@ pub fn main() {
         } else {
             print!("{}", c);
             buffer.push(c);
+        }
+    }
+}
+
+fn reap_jobs(jobs: &mut Vec<BackgroundJob>) {
+    let mut index = 0;
+    while index < jobs.len() {
+        if Syscall::is_future_completed(jobs[index].future) {
+            let job = jobs.remove(index);
+            match Syscall::wait_for_exit_status(job.future) {
+                Ok(status) => report_finished(&job.name, status),
+                Err(error) => println!("Cannot watch {}: {}", job.name, error),
+            }
+        } else {
+            index += 1;
+        }
+    }
+}
+
+fn report_finished(name: &str, status: ExitStatus) {
+    match status {
+        ExitStatus::Clean(0) => println!("{} finished", name),
+        ExitStatus::Clean(code) => println!("{} exited with code {}", name, code),
+        ExitStatus::Panicked => println!("{} panicked", name),
+        ExitStatus::Unknown { reason, code } => {
+            println!("{} exited with reason {} code {}", name, reason, code)
         }
     }
 }
