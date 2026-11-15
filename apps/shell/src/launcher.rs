@@ -3,6 +3,7 @@ use alloc::format;
 use alloc::vec::Vec;
 use system::args::{MAX_ARGUMENT_BYTES, MAX_ARGUMENT_COUNT};
 use usrlib::exit::ExitStatus;
+use usrlib::handle::UserFutureHandle;
 use usrlib::println;
 use usrlib::syscall::Syscall;
 use vfs_protocol::client::{ClientError, EntityKind, Vfs, VfsFile};
@@ -11,12 +12,12 @@ use vfs_protocol::wire::VfsError;
 const ELF_MAGIC: &[u8; 4] = b"\x7fELF";
 const READ_CHUNK_BYTES: usize = 4096;
 
-pub fn run(cmd: &Command) {
+pub fn run(cmd: &Command) -> Option<UserFutureHandle> {
     let vfs = match Vfs::connect() {
         Ok(vfs) => vfs,
         Err(error) => {
             println!("No filesystem: {:?}", error);
-            return;
+            return None;
         }
     };
     let program_path = format!("/{}", cmd.name);
@@ -25,41 +26,41 @@ pub fn run(cmd: &Command) {
         Err(ClientError::Vfs(VfsError::NotFound)) => {
             println!("Unknown command: {}", cmd.name);
             vfs.disconnect();
-            return;
+            return None;
         }
         Err(error) => {
             println!("Cannot stat {}: {:?}", cmd.name, error);
             vfs.disconnect();
-            return;
+            return None;
         }
     };
     if entity.kind == EntityKind::Directory {
         println!("Not an executable: {}", cmd.name);
         vfs.disconnect();
-        return;
+        return None;
     }
     let mut file = match vfs.open(program_path.as_str(), 0) {
         Ok(file) => file,
         Err(ClientError::Vfs(VfsError::NotFound)) => {
             println!("Unknown command: {}", cmd.name);
             vfs.disconnect();
-            return;
+            return None;
         }
         Err(error) => {
             println!("Cannot open {}: {:?}", cmd.name, error);
             vfs.disconnect();
-            return;
+            return None;
         }
     };
     let image = read_whole_file(&mut file, &cmd.name, entity.size);
     let _ = file.close();
     vfs.disconnect();
-    let Some(image) = image else { return };
+    let Some(image) = image else { return None };
     if !image.starts_with(ELF_MAGIC) {
         println!("Not an executable: {}", cmd.name);
-        return;
+        return None;
     }
-    launch(image, cmd);
+    launch(image, cmd)
 }
 
 fn read_whole_file(file: &mut VfsFile, name: &str, size: u64) -> Option<Vec<u8>> {
@@ -82,11 +83,11 @@ fn read_whole_file(file: &mut VfsFile, name: &str, size: u64) -> Option<Vec<u8>>
     Some(image)
 }
 
-fn launch(image: Vec<u8>, cmd: &Command) {
+fn launch(image: Vec<u8>, cmd: &Command) -> Option<UserFutureHandle> {
     let argument_count = cmd.args.len() + 1;
     if argument_count > MAX_ARGUMENT_COUNT {
         println!("Too many arguments: maximum is {}", MAX_ARGUMENT_COUNT);
-        return;
+        return None;
     }
     let encoded_size =
         cmd.name.len() + cmd.args.iter().map(|arg| arg.len()).sum::<usize>() + argument_count;
@@ -95,17 +96,24 @@ fn launch(image: Vec<u8>, cmd: &Command) {
             "Arguments too large: maximum is {} bytes",
             MAX_ARGUMENT_BYTES
         );
-        return;
+        return None;
     }
     let mut argv = Vec::with_capacity(argument_count);
     argv.push(cmd.name.clone());
     argv.extend(cmd.args.iter().cloned());
     match Syscall::load_with_args(&image, &argv) {
-        Some(handle) => match Syscall::wait_for_exit_status(handle) {
-            Ok(status) => report_exit(&cmd.name, status),
-            Err(error) => println!("Cannot watch {}: {}", cmd.name, error),
-        },
-        None => println!("Cannot launch: {}", cmd.name),
+        Some(handle) if cmd.background => Some(handle),
+        Some(handle) => {
+            match Syscall::wait_for_exit_status(handle) {
+                Ok(status) => report_exit(&cmd.name, status),
+                Err(error) => println!("Cannot watch {}: {}", cmd.name, error),
+            }
+            None
+        }
+        None => {
+            println!("Cannot launch: {}", cmd.name);
+            None
+        }
     }
 }
 

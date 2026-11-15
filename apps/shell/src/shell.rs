@@ -46,7 +46,9 @@ pub fn main() {
             if let Some(cmd) = Command::parse(&buffer) {
                 match lookup_command(&cmd.name) {
                     Some(command) => command(&cmd),
-                    None => launcher::run(&cmd),
+                    None => {
+                        launcher::run(&cmd);
+                    }
                 }
             }
             
