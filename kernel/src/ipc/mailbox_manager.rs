@@ -81,25 +81,27 @@ impl MailboxManager {
         }
     }
 
-    pub(crate) fn pop_front_async(&mut self, handle: MailboxHandle) -> FutureHandle {
+    pub(crate) fn pop_front_async(&mut self, handle: MailboxHandle) -> Option<FutureHandle> {
         let _section = MAILBOX_SECTION.acquire();
         if let Ok(mailbox) = self.mailboxes.borrow_mut(handle) {
-            if let Some(msg) = mailbox.pop_front() {
-                self.notifier
-                    .register(Box::new(IpcMessageFuture::with_message(msg)))
-                    .unwrap()
+            if let Some(msg) = mailbox.peek_front() {
+                let registered = self
+                    .notifier
+                    .register(Box::new(IpcMessageFuture::with_message(msg)));
+                if registered.is_some() {
+                    mailbox.pop_front();
+                }
+                registered
             } else {
                 let fh = self
                     .notifier
-                    .register(Box::new(IpcMessageFuture::new()))
-                    .unwrap();
+                    .register(Box::new(IpcMessageFuture::new()))?;
                 self.waiters.entry(handle).or_default().push(fh);
-                fh
+                Some(fh)
             }
         } else {
             self.notifier
                 .register(Box::new(IpcMessageFuture::with_error(IpcReceiveError::MailboxNotAvailable)))
-                .unwrap()
         }
     }
 
@@ -177,7 +179,7 @@ mod tests {
         let handle = manager.create();
         
         // Case 1: Empty mailbox -> Pending
-        let fh = manager.pop_front_async(handle);
+        let fh = manager.pop_front_async(handle).unwrap();
         
         // Case 2: Data pushed -> Waiter notified
         let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = core::array::from_fn(|i| (i ^ 0x5A) as u8);
@@ -211,7 +213,7 @@ mod tests {
         services().task_manager.borrow_mut().set_state(task_handle, crate::task::TaskState::Blocked);
         
         // 2. pop_front_async to get a future
-        let future_handle = manager.pop_front_async(handle);
+        let future_handle = manager.pop_front_async(handle).unwrap();
         
         // 3. Register task as waiter for that future
         services().future_registry.borrow_mut().register_waiter(future_handle, task_handle);
@@ -235,9 +237,9 @@ mod tests {
         let mut manager = MailboxManager::new_with_notifier(notifier);
         let handle = manager.create();
 
-        let abandoned = manager.pop_front_async(handle);
+        let abandoned = manager.pop_front_async(handle).unwrap();
         services().future_registry.borrow_mut().consume(abandoned).unwrap();
-        let live = manager.pop_front_async(handle);
+        let live = manager.pop_front_async(handle).unwrap();
 
         let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = [0x5C; MESSAGE_PAYLOAD_BYTES];
         let msg = Message::new(Handle::new(1, 1).pack() as u32, &pattern);
@@ -249,6 +251,18 @@ mod tests {
         let delivered = ipc_future.result().expect("the live waiter must receive the message");
         assert_eq!(delivered.conn(), Handle::new(1, 1).pack() as u32);
         assert_eq!(delivered.data(), &pattern);
+    }
+
+    #[test]
+    fn test_pop_front_without_capacity_fails_directly_and_keeps_the_message() {
+        let mut manager = MailboxManager::new();
+        let handle = manager.create();
+        assert_eq!(manager.pop_front_async(handle), None);
+
+        let msg = Message::new(Handle::new(1, 1).pack() as u32, &[0x11; system::ipc::MESSAGE_PAYLOAD_BYTES]);
+        assert_eq!(manager.push_back(handle, msg), Ok(()));
+        assert_eq!(manager.pop_front_async(handle), None);
+        assert!(manager.mailboxes.borrow(handle).unwrap().peek_front().is_some());
     }
 
     #[test]

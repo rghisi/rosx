@@ -147,24 +147,22 @@ impl IpcManager {
         self.mailbox_manager.push_back(destination, *envelope)
     }
 
-    pub(crate) fn accept_message_async(&mut self, server_binding_handle: IpcBindingHandle) -> FutureHandle {
+    pub(crate) fn accept_message_async(&mut self, server_binding_handle: IpcBindingHandle) -> Option<FutureHandle> {
         if let Ok(server_binding) = self.bindings.borrow(server_binding_handle.into()) {
             let server_mailbox_handle = server_binding.mailbox_handle;
             self.mailbox_manager.pop_front_async(server_mailbox_handle)
         } else {
             self.notifier
                 .register(Box::new(IpcMessageFuture::with_error(IpcReceiveError::ConnectionNotFound)))
-                .unwrap()
         }
     }
 
-    pub(crate) fn receive_message_async(&mut self, connection_handle: IpcConnectionHandle) -> FutureHandle {
+    pub(crate) fn receive_message_async(&mut self, connection_handle: IpcConnectionHandle) -> Option<FutureHandle> {
         if let Ok(connection) = self.connections.borrow(connection_handle.into()) {
             self.mailbox_manager.pop_front_async(connection.client_mailbox)
         } else {
             self.notifier
                 .register(Box::new(IpcMessageFuture::with_error(IpcReceiveError::ConnectionNotFound)))
-                .unwrap()
         }
     }
 
@@ -273,7 +271,7 @@ mod tests {
         let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = core::array::from_fn(|i| (i * 7 + 3) as u8);
         assert_eq!(manager.send_message(CLIENT_TASK, &Message::new(connection.pack() as u32, &pattern)), Ok(()));
 
-        let fh = manager.accept_message_async(binding);
+        let fh = manager.accept_message_async(binding).unwrap();
         let delivered = delivered_message(fh);
         assert_eq!(delivered.conn(), connection.pack() as u32);
         assert_eq!(delivered.data(), &pattern);
@@ -286,17 +284,30 @@ mod tests {
 
         let request_pattern = [0x11u8; MESSAGE_PAYLOAD_BYTES];
         assert_eq!(manager.send_message(CLIENT_TASK, &Message::new(connection.pack() as u32, &request_pattern)), Ok(()));
-        let fh = manager.accept_message_async(binding);
+        let fh = manager.accept_message_async(binding).unwrap();
         let delivered = delivered_message(fh);
         assert_eq!(delivered.conn(), connection.pack() as u32);
 
         let reply_pattern = [0x22u8; MESSAGE_PAYLOAD_BYTES];
         assert_eq!(manager.send_message(SERVER_TASK, &Message::new(delivered.conn(), &reply_pattern)), Ok(()));
 
-        let fh = manager.receive_message_async(connection);
+        let fh = manager.receive_message_async(connection).unwrap();
         let reply = delivered_message(fh);
         assert_eq!(reply.conn(), connection.pack() as u32);
         assert_eq!(reply.data(), &reply_pattern);
+    }
+
+    #[test]
+    fn receive_and_accept_on_exhausted_registry_answer_no_handle() {
+        let mut manager = IpcManager::new();
+        let binding = manager.bind_service("MSG-NOCAP").unwrap();
+        let connection = manager.connect("MSG-NOCAP", CLIENT_TASK).unwrap();
+        assert_eq!(manager.accept_message_async(binding), None);
+        assert_eq!(manager.receive_message_async(connection), None);
+        assert_eq!(
+            manager.accept_message_async(IpcBindingHandle::new(99, 1)),
+            None
+        );
     }
 
     #[test]
@@ -347,7 +358,7 @@ mod tests {
         }
         assert_eq!(manager.send_message(CLIENT_TASK, &envelope), Err(IpcSendError::ConnectionCongested));
 
-        let fh = manager.accept_message_async(binding);
+        let fh = manager.accept_message_async(binding).unwrap();
         let consumed = delivered_message(fh);
         assert_eq!(consumed.conn(), connection.pack() as u32);
         assert_eq!(consumed.data(), &[0u8; MESSAGE_PAYLOAD_BYTES]);
@@ -361,7 +372,7 @@ mod tests {
         let mut manager = manager_with_notifier();
         let binding = manager.bind_service("MSG-EARLY").unwrap();
 
-        let fh = manager.accept_message_async(binding);
+        let fh = manager.accept_message_async(binding).unwrap();
         {
             let registry = services().future_registry.borrow_mut();
             let future_box = registry.borrow_mut(fh).unwrap();
@@ -385,7 +396,7 @@ mod tests {
         let (_binding, connection) = bind_and_connect(&mut manager, "MSG-DEADRECV");
         manager.disconnect(connection);
 
-        let fh = manager.receive_message_async(connection);
+        let fh = manager.receive_message_async(connection).unwrap();
         let registry = services().future_registry.borrow_mut();
         let future_box = registry.borrow_mut(fh).unwrap();
         let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
@@ -401,7 +412,7 @@ mod tests {
         use crate::future::Future;
         let mut manager = manager_with_notifier();
 
-        let fh = manager.accept_message_async(IpcBindingHandle::new(99, 1));
+        let fh = manager.accept_message_async(IpcBindingHandle::new(99, 1)).unwrap();
         let registry = services().future_registry.borrow_mut();
         let future_box = registry.borrow_mut(fh).unwrap();
         let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
@@ -436,7 +447,7 @@ mod tests {
             .borrow_mut()
             .set_state(task_handle, crate::task::TaskState::Blocked);
 
-        let fh = manager.accept_message_async(binding);
+        let fh = manager.accept_message_async(binding).unwrap();
         services()
             .future_registry
             .borrow_mut()
@@ -476,7 +487,7 @@ mod tests {
             Ok(())
         );
 
-        let fh = manager.accept_message_async(binding);
+        let fh = manager.accept_message_async(binding).unwrap();
         let delivered = delivered_message(fh);
         assert_eq!(delivered.conn(), system::ipc::KERNEL_EVENT_CONN);
         assert_eq!(delivered.data(), &pattern);
@@ -495,7 +506,7 @@ mod tests {
             Err(DeliverError::Congested)
         );
 
-        let fh = manager.accept_message_async(binding);
+        let fh = manager.accept_message_async(binding).unwrap();
         assert_eq!(delivered_message(fh).conn(), system::ipc::KERNEL_EVENT_CONN);
         assert_eq!(manager.deliver_to_service("EVT-FLOOD", envelope), Ok(()));
     }
@@ -522,7 +533,7 @@ mod tests {
         );
         manager.disconnect(connection);
 
-        let fh = manager.receive_message_async(connection);
+        let fh = manager.receive_message_async(connection).unwrap();
         let registry = services().future_registry.borrow_mut();
         let future_box = registry.borrow_mut(fh).unwrap();
         let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();

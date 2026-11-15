@@ -41,8 +41,10 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::Sleep) => {
             let millis = arg1 as u64;
-            kernel().sleep(millis);
-            0
+            match kernel().sleep(millis) {
+                Ok(()) => 0,
+                Err(_) => ErrorCode::FutureCapacityExhausted.to_reg(),
+            }
         }
         Ok(SyscallNum::Now) => kernel().get_system_time() as usize,
         Ok(SyscallNum::Spawn) => {
@@ -150,11 +152,17 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             }
         }
         Ok(SyscallNum::IpcReceiveMessage) => match IpcConnectionHandle::from_packed(arg1) {
-            Some(connection_handle) => services().ipc_manager.borrow_mut().receive_message_async(connection_handle).pack(),
+            Some(connection_handle) => match services().ipc_manager.borrow_mut().receive_message_async(connection_handle) {
+                Some(handle) => handle.pack(),
+                None => ErrorCode::FutureCapacityExhausted.to_reg(),
+            },
             None => ErrorCode::Unknown.to_reg(),
         },
         Ok(SyscallNum::IpcAcceptMessage) => match IpcBindingHandle::from_packed(arg1) {
-            Some(binding_handle) => services().ipc_manager.borrow_mut().accept_message_async(binding_handle).pack(),
+            Some(binding_handle) => match services().ipc_manager.borrow_mut().accept_message_async(binding_handle) {
+                Some(handle) => handle.pack(),
+                None => ErrorCode::FutureCapacityExhausted.to_reg(),
+            },
             None => ErrorCode::Unknown.to_reg(),
         },
         Ok(SyscallNum::IpcDataWrite) => {

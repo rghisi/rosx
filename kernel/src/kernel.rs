@@ -187,37 +187,36 @@ impl Kernel {
     pub(crate) fn schedule_with_task_handle(&mut self, task: SharedTask) -> Result<(TaskHandle, FutureHandle), ()> {
         let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
-        let result = services().task_manager.borrow_mut().add_task(task);
-        let paired = match result {
-            Ok(task_handle) => {
-                let future = Box::new(TaskCompletionFuture::new());
-                let future_handle = services().future_registry.borrow_mut().register(future);
-                if let Some(fh) = future_handle {
-                    services().task_manager.borrow_mut().set_completion_future(task_handle, fh);
-                }
+        let future = Box::new(TaskCompletionFuture::new());
+        let future_handle = services().future_registry.borrow_mut().register(future);
+        let paired = match future_handle {
+            Some(future_handle) => {
+                let task_handle = match services().task_manager.borrow_mut().add_task(task) {
+                    Ok(task_handle) => task_handle,
+                    Err(_) => panic!("Not able to create new task"),
+                };
+                services().task_manager.borrow_mut().set_completion_future(task_handle, future_handle);
                 self.schedule_task(task_handle);
-                future_handle.map(|fh| (task_handle, fh))
+                Ok((task_handle, future_handle))
             }
-            Err(_) => {
-                panic!("Not able to create new task");
-            }
+            None => Err(()),
         };
         self.execution_state.preemption_enabled = prev;
-        paired.ok_or(())
+        paired
     }
 
-    pub fn sleep(&mut self, millis: u64) {
+    pub fn sleep(&mut self, millis: u64) -> Result<(), ()> {
         let future = Box::new(TimeFuture::new());
-        let handle = services().future_registry
-            .borrow_mut()
-            .register(future)
-            .expect("Failed to register sleep future");
+        let Some(handle) = services().future_registry.borrow_mut().register(future) else {
+            return Err(());
+        };
         services().timer_manager.borrow_mut().add_sleep(
             kernel().get_system_time(),
             millis,
             handle,
         );
         let _ = self.wait_future(handle);
+        Ok(())
     }
 
     pub fn wait_future(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
@@ -463,6 +462,52 @@ mod tests {
         services().future_registry.borrow_mut().register_waiter(future_handle, sleeper);
         services().future_registry.borrow_mut().notify(future_handle);
         assert!(kernel().execution_state.need_resched);
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    fn exhaust_future_registry() -> Vec<FutureHandle> {
+        let mut fillers = Vec::new();
+        while let Some(handle) = services()
+            .future_registry
+            .borrow_mut()
+            .register(Box::new(TimeFuture::new()))
+        {
+            fillers.push(handle);
+        }
+        fillers
+    }
+
+    fn release_future_registry(fillers: Vec<FutureHandle>) {
+        for handle in fillers {
+            services().future_registry.borrow_mut().consume(handle).unwrap();
+        }
+    }
+
+    #[test]
+    fn sleep_reports_exhaustion_instead_of_panicking() {
+        crate::kernel_services::init();
+        let scheduler = add_created_task("[T] exhausted-sleep-scheduler");
+        install_stub_kernel(scheduler, None, false, false);
+        let fillers = exhaust_future_registry();
+        assert_eq!(kernel().sleep(1), Err(()));
+        release_future_registry(fillers);
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn schedule_refuses_a_task_when_the_registry_is_exhausted() {
+        crate::kernel_services::init();
+        let scheduler = add_created_task("[T] ghost-scheduler");
+        install_stub_kernel(scheduler, None, false, false);
+        let fillers = exhaust_future_registry();
+        let live_before = services().task_manager.borrow().snapshot_processes().len();
+        let task = Task::new("[T] ghost-attempt", 0x1000, 0);
+        assert_eq!(kernel().schedule_with_task_handle(task), Err(()));
+        assert_eq!(
+            services().task_manager.borrow().snapshot_processes().len(),
+            live_before
+        );
+        release_future_registry(fillers);
         *KERNEL_PTR.borrow_mut() = null_mut();
     }
 }
