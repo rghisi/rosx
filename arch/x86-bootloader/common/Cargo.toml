@@ -6,7 +6,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-system = { path = "../../../system" }
+system = { path = "../../../system", default-features = false }
 
 [lints]
 workspace = true
