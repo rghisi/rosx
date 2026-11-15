@@ -34,6 +34,8 @@ pub enum ErrorCode {
     PortRangeBusy = 0x0504,
     PortGrantTableFull = 0x0505,
     ExitCodeOutOfRange = 0x0601,
+    IrqRequestInvalid = 0x0701,
+    IrqControllerUnavailable = 0x0702,
     Unknown = 0x7FFF_FFFF,
 }
 
@@ -71,6 +73,8 @@ impl ErrorCode {
             0x0504 => ErrorCode::PortRangeBusy,
             0x0505 => ErrorCode::PortGrantTableFull,
             0x0601 => ErrorCode::ExitCodeOutOfRange,
+            0x0701 => ErrorCode::IrqRequestInvalid,
+            0x0702 => ErrorCode::IrqControllerUnavailable,
             _ => ErrorCode::Unknown,
         }
     }
@@ -80,7 +84,7 @@ impl ErrorCode {
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 28] = [
+    const ALL_ERROR_CODES: [ErrorCode; 30] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -108,6 +112,8 @@ mod tests {
         ErrorCode::PortRangeBusy,
         ErrorCode::PortGrantTableFull,
         ErrorCode::ExitCodeOutOfRange,
+        ErrorCode::IrqRequestInvalid,
+        ErrorCode::IrqControllerUnavailable,
         ErrorCode::Unknown,
     ];
 

@@ -129,6 +129,22 @@ impl QemuSession {
         Self::spawn_capturing(command, temp_dir)
     }
 
+    pub fn spawn_ne2k_isa(multicast: &str) -> QemuSession {
+        let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
+        let kernel_elf = kernel_build::kernel_elf();
+        let arch = Arch::current();
+        let medium = x86_runner::prepare_run_medium_in(&kernel_elf, arch.boot(), temp_dir.path())
+            .unwrap_or_else(|err| panic!(
+                "failed to prepare boot medium for kernel '{}': {err}",
+                kernel_elf.display()
+            ));
+        let mut command =
+            x86_runner::qemu_command(arch.boot(), &medium, x86_runner::LaunchMode::Headless);
+        attach_fat_master_disk(&mut command, temp_dir.path());
+        x86_runner::attach_ne2k_isa(&mut command, multicast);
+        Self::spawn_capturing(command, temp_dir)
+    }
+
     pub fn spawn_cdrom(cdrom: &Path) -> QemuSession {
         let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
         let medium = x86_runner::BootMedium::CdImage(cdrom.to_path_buf());

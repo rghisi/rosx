@@ -7,6 +7,7 @@ pub mod syscall_numbers;
 pub mod ipc;
 pub mod error;
 pub mod exit;
+pub mod irq;
 pub mod kstats;
 pub mod rom;
 pub mod waitset;

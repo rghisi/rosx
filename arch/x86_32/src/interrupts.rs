@@ -2,6 +2,9 @@ use core::arch::asm;
 use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use kernel::kernel::{kernel, Kernel};
 use kernel::once::Once;
+use kernel::platform::interrupt::{
+    self, InterruptController, InterruptError, Polarity, Result, TriggerMode,
+};
 
 pub static SYSTEM_TIME_MS: AtomicU32 = AtomicU32::new(0);
 
@@ -14,6 +17,8 @@ const PIC_MASTER_DATA: u16 = 0x21;
 const PIC_SLAVE_CMD: u16 = 0xA0;
 const PIC_SLAVE_DATA: u16 = 0xA1;
 const PIC_EOI: u8 = 0x20;
+const PIC_SLAVE_IRQ_BASE: u32 = 8;
+const PIC_CASCADE_BIT: u8 = 1 << 2;
 
 // ── PIT (8253/8254) ───────────────────────────────────────────────────────────
 
@@ -81,10 +86,43 @@ unsafe extern "C" {
 
 static IDT: Once<Idt> = Once::new();
 
+macro_rules! irq_event_handlers {
+    ($($name:ident => $irq:expr;)*) => {
+        $(
+            extern "x86-interrupt" fn $name(_frame: InterruptStackFrame) {
+                interrupt::dispatch_irq($irq);
+            }
+        )*
+
+        fn install_irq_event_vectors(idt: &mut Idt) {
+            $(
+                idt.0[PIC_MASTER_OFFSET as usize + $irq] = IdtEntry::interrupt_gate($name);
+            )*
+        }
+    };
+}
+
+irq_event_handlers! {
+    irq3_interrupt_handler => 3;
+    irq4_interrupt_handler => 4;
+    irq5_interrupt_handler => 5;
+    irq6_interrupt_handler => 6;
+    irq7_interrupt_handler => 7;
+    irq8_interrupt_handler => 8;
+    irq9_interrupt_handler => 9;
+    irq10_interrupt_handler => 10;
+    irq11_interrupt_handler => 11;
+    irq12_interrupt_handler => 12;
+    irq13_interrupt_handler => 13;
+    irq14_interrupt_handler => 14;
+    irq15_interrupt_handler => 15;
+}
+
 fn build_idt() -> Idt {
     let mut idt = Idt([IdtEntry::absent(); 256]);
     idt.0[PIC_MASTER_OFFSET as usize]     = IdtEntry::interrupt_gate(timer_interrupt_handler);
     idt.0[PIC_MASTER_OFFSET as usize + 1] = IdtEntry::interrupt_gate(keyboard_interrupt_handler);
+    install_irq_event_vectors(&mut idt);
     idt.0[0x80] = IdtEntry::trap_gate_ring3(int80_handler as *const () as u32);
     idt
 }
@@ -101,6 +139,7 @@ pub fn init() {
              options(nostack, readonly, preserves_flags));
     }
     init_pic();
+    interrupt::install::<Pic8259>();
 }
 
 fn init_pic() {
@@ -142,6 +181,67 @@ pub fn enable_keyboard() {
         let mask = inb(PIC_MASTER_DATA);
         outb(PIC_MASTER_DATA, mask & !0x02);
     }
+}
+
+pub struct Pic8259;
+
+impl InterruptController for Pic8259 {
+    const MAX_IRQ: u32 = 15;
+    const VECTOR_BASE: u8 = PIC_MASTER_OFFSET;
+
+    fn new() -> Self {
+        Pic8259
+    }
+
+    fn configure(
+        &mut self,
+        irq: u32,
+        _vector: u8,
+        _trigger: TriggerMode,
+        _polarity: Polarity,
+    ) -> Result {
+        if irq > Self::MAX_IRQ {
+            return Err(InterruptError::InvalidIrq);
+        }
+        Ok(())
+    }
+
+    fn mask(&mut self, irq: u32) -> Result {
+        update_imr_bit(irq, true)
+    }
+
+    fn unmask(&mut self, irq: u32) -> Result {
+        update_imr_bit(irq, false)
+    }
+
+    fn eoi(&mut self, irq: u32) {
+        if irq >= PIC_SLAVE_IRQ_BASE {
+            unsafe { outb(PIC_SLAVE_CMD, PIC_EOI) };
+        }
+        unsafe { outb(PIC_MASTER_CMD, PIC_EOI) };
+    }
+}
+
+fn update_imr_bit(irq: u32, masked: bool) -> Result {
+    if irq > 15 {
+        return Err(InterruptError::InvalidIrq);
+    }
+    unsafe {
+        if irq < PIC_SLAVE_IRQ_BASE {
+            let bit = 1u8 << irq;
+            let mask = inb(PIC_MASTER_DATA);
+            outb(PIC_MASTER_DATA, if masked { mask | bit } else { mask & !bit });
+        } else {
+            let bit = 1u8 << (irq - PIC_SLAVE_IRQ_BASE);
+            let mask = inb(PIC_SLAVE_DATA);
+            outb(PIC_SLAVE_DATA, if masked { mask | bit } else { mask & !bit });
+            if !masked {
+                let cascade = inb(PIC_MASTER_DATA);
+                outb(PIC_MASTER_DATA, cascade & !PIC_CASCADE_BIT);
+            }
+        }
+    }
+    Ok(())
 }
 
 // ── Interrupt stack frame (same-privilege, no error code) ─────────────────────

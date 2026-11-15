@@ -62,15 +62,20 @@ fn update_imr_bit(irq: u32, masked: bool) -> Result {
     }
     unsafe {
         if irq < 8 {
-            let mut imr = Port::<u8>::new(PIC1_IMR_PORT);
+            let mut imr: Port<u8> = Port::new(PIC1_IMR_PORT);
             let current = imr.read();
             let bit = 1u8 << irq;
             imr.write(if masked { current | bit } else { current & !bit });
         } else {
-            let mut imr = Port::<u8>::new(PIC2_IMR_PORT);
+            let mut imr: Port<u8> = Port::new(PIC2_IMR_PORT);
             let current = imr.read();
             let bit = 1u8 << (irq - 8);
             imr.write(if masked { current | bit } else { current & !bit });
+            if !masked {
+                let mut cascade: Port<u8> = Port::new(PIC1_IMR_PORT);
+                let current = cascade.read();
+                cascade.write(current & !(1 << 2));
+            }
         }
     }
     Ok(())
