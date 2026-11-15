@@ -81,6 +81,7 @@ fn launch(medium: &BootMedium, spec: &ArchSpec) {
             .arg(format!("if=ide,index=0,media=disk,format=raw,file={}", disk.display()));
     }
     x86_runner::attach_persistent_hdd(&mut cmd);
+    x86_runner::attach_ne2k_pci(&mut cmd);
     run(&mut cmd, &format!("boot {} in qemu", spec.name));
 }
 
