@@ -1,6 +1,6 @@
 # RosX - Agent Context Document
 
-> **Last Updated:** 2026-11-09
+> **Last Updated:** 2026-11-15
 > **Purpose:** Compact, always-accurate context for AI coding agents working on RosX.
 
 ---
@@ -75,7 +75,7 @@ cargo run -p rosx              # run.sh -> arch/x86-runner -> BiosBoot image + F
 - Target spec: `arch/x86_64/rosx.json` — bare-metal `no_std`, `build-std` = core/alloc/compiler_builtins.
 - User-space ELF apps (pi, randomd, snake, tetris, conway) are workspace members; build with `cargo xtask apps` or `cargo xtask build`.
 - Boot is plan-driven: each arch port embeds only the ROM image, the `init` ELF, and `kstatsd`; `init` walks the arch's `BootPlan` (`system::boot_plan`, passed as init's argv) — services launch from ROM and wait their bind-name probe, `run` steps wait a tool's exit, `exec` hands the console over and init exits. Both ports boot the same 12-step plan (`rom:atad`, `rom:blockd`, `run rom:attach ATA`, `rom:vfsd`, `rom:inputd`, `rom:ps2d`, `run rom:mount ata0d0p0 /`, `service /randomd|/echo|/pong`, `exec /shell`, `exec rom:shell`); `bulk` is not in the plan (the `ipc_bulk` test launches it from the shell, and bulk exits when done).
-- The shell is a user ELF executed by init from the mounted FAT root, falling back to the ROM copy when the disk is missing. It keeps five built-ins (`ls clear rose sleep random`) and resolves every other prompt name through VFS, so disk/ROM files execute by name with arguments (`rose> snake fast`).
+- The shell is a user ELF executed by init from the mounted FAT root, falling back to the ROM copy when the disk is missing. It keeps five built-ins (`ls clear rose sleep random`) and resolves every other prompt name through VFS, so disk/ROM files execute by name with arguments (`rose> snake fast`). A trailing `&` token backgrounds a launched program: the shell loads the ELF without waiting on its completion future, announces `<name> started`, and reaps finished jobs at every prompt boundary — a non-consuming `IsFutureCompleted` scan, then a `WaitFuture` that consumes the future (returning its registry slot, the one leak guard a detached launch needs) and prints `finished` / `exited with code N` / `panicked`, so notices surface at the next prompt, never asynchronously. Built-ins execute inside the shell task and cannot detach; `&` on one is announced and run in the foreground. Background output interleaves with the prompt: there is no tty or job control.
 - `cargo build --workspace` is intentionally unsupported: bare-metal bins and PIE apps cannot compile for the host.
 
 ### x86_32
