@@ -10,6 +10,7 @@ use rosx_boot_common::DEBUG_EXIT_SUCCESS;
 use rosx_boot_common::debug_exit;
 
 mod entry;
+mod memory;
 mod thunk;
 
 use thunk::BiosThunk;
@@ -51,6 +52,11 @@ extern "C" fn stage2_main() -> ! {
         debug_exit(DEBUG_EXIT_FAILURE);
     }
     report_boot_drive_geometry(&console, &thunk);
+    memory::publish_memory_map(&thunk, &console, kib as u16);
+    if !thunk.intact() {
+        console.write_line("[ERR] trampoline");
+        debug_exit(DEBUG_EXIT_FAILURE);
+    }
     console.write_line("[STAGE2_32] A20=OK THUNK=OK");
     debug_exit(DEBUG_EXIT_SUCCESS)
 }

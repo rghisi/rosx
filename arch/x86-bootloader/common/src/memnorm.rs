@@ -207,9 +207,10 @@ pub fn usable_bytes(regions: &[MemoryRegion]) -> u64 {
         .sum()
 }
 
-pub fn top_of_detected_ram(regions: &[MemoryRegion]) -> u64 {
+pub fn top_of_usable(regions: &[MemoryRegion]) -> u64 {
     regions
         .iter()
+        .filter(|region| region.kind == MemoryKind::Usable)
         .map(|region| region.base + region.length)
         .max()
         .unwrap_or(0)
@@ -446,14 +447,14 @@ mod tests {
         let (raw, count) = synthesize_e801(E801_BLOCK_SENTINEL, 0);
         assert_eq!(raw[1].length, u64::from(E801_BLOCK_SENTINEL) * 64 * 1024);
         let map = run(&raw[..count]);
-        assert_eq!(top_of_detected_ram(&map), FIRST_MEGABYTE + 460_800 * 1024);
+        assert_eq!(top_of_usable(&map), FIRST_MEGABYTE + 460_800 * 1024);
     }
 
     #[test]
     fn e801_above_16_mebibytes_lands_beyond_the_gap() {
         let (raw, count) = synthesize_e801(15 * 1024, 63 * 1024);
         let map = run(&raw[..count]);
-        assert_eq!(top_of_detected_ram(&map), SIXTEEN_MEGABYTES + 63 * 1024 * 1024);
+        assert_eq!(top_of_usable(&map), SIXTEEN_MEGABYTES + 63 * 1024 * 1024);
     }
 
     #[test]
@@ -461,7 +462,7 @@ mod tests {
         let (raw, count) = synthesize_e88(0xFFFF);
         assert_eq!(raw[1].length, E88_CAP_BYTES);
         let map = run(&raw[..count]);
-        assert_eq!(top_of_detected_ram(&map), FIRST_MEGABYTE + E88_CAP_BYTES);
+        assert_eq!(top_of_usable(&map), FIRST_MEGABYTE + E88_CAP_BYTES);
     }
 
     #[test]
