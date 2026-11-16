@@ -64,6 +64,7 @@ enum ImageSource {
     ScribbledFatRoot,
     PatchedKernel(KernelPatch),
     OversizedInitrd,
+    NoInitrdVolume,
 }
 
 #[derive(Clone, Copy)]
@@ -104,7 +105,7 @@ struct BootCheckpoint {
     timeout_seconds: u64,
 }
 
-const CHECKPOINTS: [BootCheckpoint; 17] = [
+const CHECKPOINTS: [BootCheckpoint; 18] = [
     BootCheckpoint {
         name: "harness-pass",
         machine: &BIOS_32,
@@ -208,24 +209,44 @@ const CHECKPOINTS: [BootCheckpoint; 17] = [
         timeout_seconds: 3,
     },
     BootCheckpoint {
-        name: "initrd-crc",
+        name: "handoff32",
         machine: &BIOS_32,
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot32),
         expected: ExitVerdict::Success,
-        serial_contains: &["[INITRD] addr=", "[FK32] alive"],
-        serial_absent: &["[FAT-ERR]", "[ERR] mem"],
+        serial_contains: &[
+            "[INITRD] addr=",
+            "kernel loaded",
+            "arch: x86_32",
+            "initrd_crc32: 0x",
+        ],
+        serial_absent: &["[FAT-ERR]", "[ERR] mem", "[FK32] violation"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
-        name: "initrd-crc-512m",
+        name: "handoff32-512m",
         machine: &BIOS_32_512,
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot32),
         expected: ExitVerdict::Success,
-        serial_contains: &["[INITRD] addr=0x00101000", "[FK32] alive"],
-        serial_absent: &["[FAT-ERR]", "[ERR] mem"],
+        serial_contains: &["[INITRD] addr=0x00101000", "kernel loaded", "initrd_crc32: 0x"],
+        serial_absent: &["[FAT-ERR]", "[ERR] mem", "[FK32] violation"],
         timeout_seconds: 4,
+    },
+    BootCheckpoint {
+        name: "handoff32-no-initrd",
+        machine: &BIOS_32,
+        media: BootMedia::Disk,
+        source: ImageSource::NoInitrdVolume,
+        expected: ExitVerdict::Success,
+        serial_contains: &[
+            "[INITRD] addr=0x00000000 size=0",
+            "kernel loaded",
+            "arch: x86_32",
+            "initrd_crc32: 0x00000000",
+        ],
+        serial_absent: &["[FAT-ERR]", "[ERR] mem", "[FK32] violation"],
+        timeout_seconds: 3,
     },
     BootCheckpoint {
         name: "initrd-too-big",
@@ -234,7 +255,7 @@ const CHECKPOINTS: [BootCheckpoint; 17] = [
         source: ImageSource::OversizedInitrd,
         expected: ExitVerdict::Failure,
         serial_contains: &["[ELF]", "[ERR] mem"],
-        serial_absent: &["[ERR] memnorm", "[INITRD]", "[FK32]", "[STAGE2_32]"],
+        serial_absent: &["[ERR] memnorm", "[INITRD]", "kernel loaded", "[STAGE2_32]"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -265,7 +286,7 @@ const CHECKPOINTS: [BootCheckpoint; 17] = [
         expected: ExitVerdict::Success,
         serial_contains: &[
             "[ELF] arch=X86_32 entry=0x00100000 phys=0x00100000..",
-            "[FK32] alive",
+            "kernel loaded",
         ],
         serial_absent: &["[ERR] elf"],
         timeout_seconds: 3,
@@ -277,7 +298,7 @@ const CHECKPOINTS: [BootCheckpoint; 17] = [
         source: ImageSource::PatchedKernel(KernelPatch::Elf64Class),
         expected: ExitVerdict::Failure,
         serial_contains: &["[ERR] elf class"],
-        serial_absent: &["[ELF]", "[FK32]"],
+        serial_absent: &["[ELF]", "kernel loaded"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -287,7 +308,7 @@ const CHECKPOINTS: [BootCheckpoint; 17] = [
         source: ImageSource::PatchedKernel(KernelPatch::ZeroPhysicalAddress),
         expected: ExitVerdict::Failure,
         serial_contains: &["[ERR] elf layout"],
-        serial_absent: &["[FK32]"],
+        serial_absent: &["[INITRD]", "kernel loaded"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -335,7 +356,7 @@ pub fn run_boot_test() {
 
 fn require_host_tools() {
     require_boot_image_tools();
-    let missing: Vec<&str> = ["qemu-system-i386", "qemu-system-x86_64"]
+    let missing: Vec<&str> = ["qemu-system-i386", "qemu-system-x86_64", "mdel"]
         .into_iter()
         .filter(|tool| on_path(tool).is_none())
         .collect();
@@ -356,6 +377,7 @@ fn prepare_image(source: &ImageSource) -> PathBuf {
         ImageSource::ScribbledFatRoot => pack_scribbled_fat_root_image(),
         ImageSource::PatchedKernel(patch) => pack_patched_kernel_image(*patch),
         ImageSource::OversizedInitrd => pack_oversized_initrd_image(),
+        ImageSource::NoInitrdVolume => pack_no_initrd_image(),
     }
 }
 
@@ -485,6 +507,30 @@ fn pack_oversized_initrd_image() -> PathBuf {
     image
 }
 
+fn pack_no_initrd_image() -> PathBuf {
+    let image = workspace_root()
+        .join("target")
+        .join("boot-test")
+        .join("stage2-no-initrd.img");
+    fs::copy(boot_image::pack(BootImage::Boot32), &image)
+        .expect("cannot copy the boot32 image for the absent initrd");
+    mdelete_volume_file(&image, boot_image::INITRD_VOLUME_NAME);
+    image
+}
+
+fn mdelete_volume_file(image: &Path, volume_name: &str) {
+    let offset = u64::from(boot_image::PARTITION_START_LBA) * boot_image::BOOT_SECTOR_BYTES as u64;
+    let mut cmd = Command::new("mdel");
+    cmd.arg("-i")
+        .arg(format!("{}@@{}", image.display(), offset))
+        .arg(format!("::{volume_name}"));
+    let status = cmd.status().expect("failed to run mdel");
+    assert!(
+        status.success(),
+        "mdel cannot remove {volume_name} from the test image"
+    );
+}
+
 fn pack_harness_stub_image(variant: StubVariant) -> PathBuf {
     let dir = workspace_root().join("target").join("boot-test");
     fs::create_dir_all(&dir).expect("cannot create target/boot-test");
@@ -586,14 +632,14 @@ fn verdict_mismatch(checkpoint: &BootCheckpoint, outcome: &BootOutcome) -> Optio
         .serial
         .lines()
         .find(|line| line.starts_with("[INITRD]"))
-        && let Some(reason) = verify_initrd(line)
+        && let Some(reason) = verify_initrd(line, &outcome.serial)
     {
         return Some(reason);
     }
     None
 }
 
-fn verify_initrd(line: &str) -> Option<String> {
+fn verify_initrd(line: &str, serial: &str) -> Option<String> {
     let mut fields = line.split_whitespace();
     let (_, _) = (fields.next()?, fields.next()?);
     let (Some(addr), Some(size), Some(printed)) = (
@@ -603,22 +649,45 @@ fn verify_initrd(line: &str) -> Option<String> {
     ) else {
         return Some(format!("malformed [INITRD] line: {line}"));
     };
-    let expected_address = fake_kernel_phys_end();
-    if addr != expected_address {
+    let host = if size == 0 {
+        if addr != 0 {
+            return Some(format!(
+                "zero-size initrd carries address {addr:#010x}, the contract demands 0"
+            ));
+        }
+        0u64
+    } else {
+        let expected_address = fake_kernel_phys_end();
+        if addr != expected_address {
+            return Some(format!(
+                "initrd placed at {addr:#010x}, expected the kernel phys end {expected_address:#010x}"
+            ));
+        }
+        if size != boot_image::INITRD_BYTES as u64 {
+            return Some(format!(
+                "initrd read {size} bytes, expected {}",
+                boot_image::INITRD_BYTES
+            ));
+        }
+        u64::from(crc32_ieee(&boot_image::initrd_payload()))
+    };
+    if printed != host {
         return Some(format!(
-            "initrd placed at {addr:#010x}, expected the kernel phys end {expected_address:#010x}"
+            "stage2 crc32 {printed:#010x} differs from the host-seeded {host:#010x}"
         ));
     }
-    if size != boot_image::INITRD_BYTES as u64 {
+    let Some(kernel_printed) = serial
+        .lines()
+        .find_map(|candidate| candidate.strip_prefix("initrd_crc32: "))
+    else {
+        return Some(
+            "the fake kernel never reported its independently recomputed initrd crc32".to_string(),
+        );
+    };
+    let kernel_crc = u64::from_str_radix(kernel_printed.trim_start_matches("0x"), 16).ok()?;
+    if kernel_crc != printed {
         return Some(format!(
-            "initrd read {size} bytes, expected {}",
-            boot_image::INITRD_BYTES
-        ));
-    }
-    let expected = crc32_ieee(&boot_image::initrd_payload());
-    if printed != u64::from(expected) {
-        return Some(format!(
-            "guest crc32 {printed:#010x} differs from the seed-recomputed {expected:#08x}"
+            "kernel-recomputed crc32 {kernel_crc:#010x} differs from the stage2 {printed:#010x}"
         ));
     }
     None
