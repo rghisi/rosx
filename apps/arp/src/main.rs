@@ -4,7 +4,7 @@ extern crate alloc;
 
 use alloc::format;
 use alloc::string::{String, ToString};
-use arp::arp::{self as wire, ArpError, ArpPacket, MAC_BYTES};
+use arp::arp::{self as wire, ArpError, ArpPacket, IPV4_BYTES, MAC_BYTES};
 use net_protocol::client::Ne2k;
 use net_protocol::wire as net_wire;
 use pci_protocol::wire::SERVICE_NAME as PCI_SERVICE_NAME;
@@ -15,6 +15,7 @@ use vfs_protocol::client::Vfs;
 const LAUNCH_ATTEMPTS: usize = 100;
 const LAUNCH_RETRY_DELAY_MS: u64 = 100;
 const DEFAULT_WATCH_SECONDS: u64 = 10;
+const WHO_HAS_TIMEOUT_MS: u64 = 5_000;
 const POLL_INTERVAL_MS: u64 = 10;
 
 fn format_mac(mac: [u8; MAC_BYTES]) -> String {
@@ -119,6 +120,58 @@ fn service_is_live(binding: &str) -> bool {
     Syscall::ipc_connect(binding).is_ok()
 }
 
+fn is_arp_reply_from(packet_source: &wire::ArpPacket, target: [u8; IPV4_BYTES]) -> bool {
+    packet_source.operation == wire::Operation::Reply && packet_source.sender_ip == target
+}
+
+fn who_has(nic: &Ne2k, source_ip: [u8; IPV4_BYTES], target_ip: [u8; IPV4_BYTES]) {
+    let Ok(mac) = nic.mac() else {
+        println!("arp mac failed");
+        return;
+    };
+    if nic.send(&wire::request(mac, source_ip, target_ip)).is_err() {
+        println!("arp send failed");
+        return;
+    }
+    println!(
+        "arp who-has {} tell {}",
+        format_ipv4(target_ip),
+        format_ipv4(source_ip)
+    );
+    let deadline = Syscall::now() + WHO_HAS_TIMEOUT_MS;
+    loop {
+        match nic.poll() {
+            Ok(Some(frame)) => {
+                let answer = match wire::decode_ethernet(&frame) {
+                    Ok(header) if header.ethertype == wire::ETHERTYPE_ARP => wire::decode_arp(header.payload)
+                        .ok()
+                        .filter(|packet| is_arp_reply_from(packet, target_ip)),
+                    _ => None,
+                };
+                if let Some(packet) = answer {
+                    println!(
+                        "arp {} is at {}",
+                        format_ipv4(target_ip),
+                        format_mac(packet.sender_mac)
+                    );
+                    return;
+                }
+            }
+            Ok(None) => {
+                if Syscall::now() >= deadline {
+                    println!("arp no reply from {}", format_ipv4(target_ip));
+                    return;
+                }
+                Syscall::sleep(POLL_INTERVAL_MS);
+            }
+            Err(_) => {
+                println!("arp poll failed");
+                return;
+            }
+        }
+    }
+}
+
 fn launch_detached(vfs: &Vfs, program: &str) {
     let Ok(image) = vfs.read_whole(&format!("/{program}")) else {
         return;
@@ -153,6 +206,18 @@ fn parse_seconds(text: &str) -> Option<u64> {
     text.parse::<u64>().ok()
 }
 
+fn parse_ipv4(text: &str) -> Option<[u8; IPV4_BYTES]> {
+    let mut octets = [0u8; IPV4_BYTES];
+    let mut parts = text.split('.');
+    for slot in octets.iter_mut() {
+        *slot = parts.next()?.parse().ok()?;
+    }
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(octets)
+}
+
 fn main() {
     let arguments = usrlib::args();
     let requested: &[&str] = if arguments.is_empty() {
@@ -175,8 +240,34 @@ fn main() {
                 .unwrap_or(DEFAULT_WATCH_SECONDS);
             watch(&nic, seconds);
         }
+        Some("who-has") => {
+            let Some(target_text) = requested.get(1).copied() else {
+                println!("arp usage: arp who-has <tip> [from <sip>]");
+                return;
+            };
+            let Some(target_ip) = parse_ipv4(target_text) else {
+                println!("arp invalid address: {target_text}");
+                return;
+            };
+            let mut source_ip = [0u8; IPV4_BYTES];
+            match (requested.get(2).copied(), requested.get(3).copied()) {
+                (None, _) => {}
+                (Some("from"), Some(source_text)) => {
+                    let Some(parsed) = parse_ipv4(source_text) else {
+                        println!("arp invalid address: {source_text}");
+                        return;
+                    };
+                    source_ip = parsed;
+                }
+                (Some(unexpected), _) => {
+                    println!("arp unexpected argument: {unexpected}");
+                    return;
+                }
+            }
+            who_has(&nic, source_ip, target_ip);
+        }
         Some(subcommand) => println!("arp unknown subcommand: {subcommand}"),
-        None => println!("arp usage: arp watch [secs]"),
+        None => println!("arp usage: arp watch [secs] | arp who-has <tip> [from <sip>]"),
     }
     nic.disconnect();
 }
