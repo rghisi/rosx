@@ -251,6 +251,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "fake-kernel-32"
+version = "0.1.0"
+dependencies = [
+ "rosx-boot-common",
+ "system",
+]
+
+[[package]]
+name = "fake-kernel-64"
+version = "0.1.0"
+dependencies = [
+ "rosx-boot-common",
+ "system",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -660,6 +676,24 @@ dependencies = [
  "volatile 0.2.7",
  "x86-generic",
  "x86_64",
+]
+
+[[package]]
+name = "rosx-boot-common"
+version = "0.1.0"
+dependencies = [
+ "system",
+]
+
+[[package]]
+name = "rosx-stage2"
+version = "0.1.0"
+dependencies = [
+ "fs-core",
+ "rosx-boot-common",
+ "rxfat",
+ "rxpart",
+ "system",
 ]
 
 [[package]]
