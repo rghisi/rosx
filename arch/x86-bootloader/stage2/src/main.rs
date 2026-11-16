@@ -1,18 +1,27 @@
 #![no_std]
 #![no_main]
 
+use fs_core::device::BlockDevice;
 use rosx_boot_common::bios::BOOT_DRIVE_MEMORY;
 use rosx_boot_common::bios::Regs16;
 use rosx_boot_common::bios::Regs32;
+use rosx_boot_common::biosdisk::GEOMETRY_PACKET_ADDRESS;
+use rosx_boot_common::biosdisk::HARD_DRIVE_BASE;
+use rosx_boot_common::biosdisk::INT13;
+use rosx_boot_common::biosdisk::SECTOR_BYTES;
 use rosx_boot_common::serial::Serial;
 use rosx_boot_common::DEBUG_EXIT_FAILURE;
 use rosx_boot_common::DEBUG_EXIT_SUCCESS;
 use rosx_boot_common::debug_exit;
+use rxpart::mbr::SIGNATURE;
 
+mod blk;
 mod entry;
+mod heap;
 mod memory;
 mod thunk;
 
+use blk::BiosBlockDevice;
 use thunk::BiosThunk;
 
 const WRAP_BASE: usize = 0x0010_0000;
@@ -20,8 +29,6 @@ const PROBE_ADDRESS: usize = 0x0000_0500;
 const PROBE_PATTERN_LOW: u8 = 0xC0;
 const PROBE_PATTERN_HIGH: u8 = 0x5A;
 
-const INT13: u8 = 0x13;
-const INT13_PARAM_TABLE: usize = 0x0580;
 const MEM88_REPEAT_CALLS: usize = 20;
 
 #[unsafe(no_mangle)]
@@ -57,8 +64,39 @@ extern "C" fn stage2_main() -> ! {
         console.write_line("[ERR] trampoline");
         debug_exit(DEBUG_EXIT_FAILURE);
     }
+    if boot_drive() >= u16::from(HARD_DRIVE_BASE) {
+        bring_up_boot_volume(&console, &thunk, boot_drive() as u8);
+        if !thunk.intact() {
+            console.write_line("[ERR] trampoline");
+            debug_exit(DEBUG_EXIT_FAILURE);
+        }
+    }
     console.write_line("[STAGE2_32] A20=OK THUNK=OK");
     debug_exit(DEBUG_EXIT_SUCCESS)
+}
+
+fn bring_up_boot_volume(console: &Serial, thunk: &BiosThunk, drive: u8) {
+    let Some(mut device) = BiosBlockDevice::bring_up(thunk, drive) else {
+        console.write_line("[ERR] disk");
+        debug_exit(DEBUG_EXIT_FAILURE);
+    };
+    let mut boot_record = [0u8; SECTOR_BYTES];
+    if device.read_block(0, &mut boot_record).is_err() {
+        console.write_line("[ERR] disk read");
+        debug_exit(DEBUG_EXIT_FAILURE);
+    }
+    let signature = u16::from_be_bytes(boot_record[SECTOR_BYTES - 2..].try_into().unwrap());
+    if boot_record[SECTOR_BYTES - 2..] != SIGNATURE {
+        console.write_line("[ERR] disk signature");
+        debug_exit(DEBUG_EXIT_FAILURE);
+    }
+    console.write_str("[DISK] media=");
+    console.write_str(device.media_name());
+    console.write_str(" slice=");
+    console.write_dec(device.slice_sectors());
+    console.write_str(" boot=");
+    console.write_hex(u64::from(signature), 4);
+    console.write_line("");
 }
 
 fn contiguous_high_memory_kib(thunk: &BiosThunk) -> Option<u32> {
@@ -76,7 +114,7 @@ fn contiguous_high_memory_kib(thunk: &BiosThunk) -> Option<u32> {
 
 fn report_boot_drive_geometry(console: &Serial, thunk: &BiosThunk) {
     let mut regs = Regs16::new(0x0800, 0, 0, boot_drive());
-    regs.di = INT13_PARAM_TABLE as u16;
+    regs.di = GEOMETRY_PACKET_ADDRESS as u16;
     thunk.call(INT13, &mut regs);
     if regs.carry() {
         console.write_line("[INT13] no geometry");
@@ -97,9 +135,9 @@ fn report_boot_drive_geometry(console: &Serial, thunk: &BiosThunk) {
 }
 
 fn extended_geometry() -> (u32, u32, u32) {
-    let sectors = read_u16(INT13_PARAM_TABLE + 2);
-    let heads = read_u16(INT13_PARAM_TABLE + 4);
-    let blocks = read_u32(INT13_PARAM_TABLE + 8);
+    let sectors = read_u16(GEOMETRY_PACKET_ADDRESS + 2);
+    let heads = read_u16(GEOMETRY_PACKET_ADDRESS + 4);
+    let blocks = read_u32(GEOMETRY_PACKET_ADDRESS + 8);
     let cylinders = match sectors.checked_mul(heads) {
         Some(tracks) if tracks != 0 => blocks / tracks,
         _ => 0,

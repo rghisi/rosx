@@ -11,7 +11,9 @@ bench = false
 test = false
 
 [dependencies]
+fs-core = { path = "../../../fs/core" }
 rosx-boot-common = { path = "../common" }
+rxpart = { path = "../../../fs/partition" }
 system = { path = "../../../system", default-features = false }
 
 [lints]

@@ -663,7 +663,9 @@ dependencies = [
 name = "rosx-stage2"
 version = "0.1.0"
 dependencies = [
+ "fs-core",
  "rosx-boot-common",
+ "rxpart",
  "system",
 ]
 
