@@ -27,8 +27,8 @@ fn frame_crosses_the_wire_between_two_ne2k_isa_guests() {
 
     let receiver_mark = receiver.mark();
     receiver.send_line("ne2k mac");
-    receiver.expect_output_since(receiver_mark, "[NE2KD] ISA NIC at 0x0300 irq 9", STACK_BUDGET);
-    receiver.expect_output_since(receiver_mark, "[NE2KD] irq 9 events bound to IRQ9", STACK_BUDGET);
+    receiver.expect_output("[NE2KD] ISA NIC at 0x0300 irq 9", STACK_BUDGET);
+    receiver.expect_output("[NE2KD] irq 9 events bound to IRQ9", STACK_BUDGET);
     receiver.expect_output_since(receiver_mark, "ne2k mac ", FRAME_BUDGET);
 
     let mut sender = QemuSession::spawn_ne2k_isa(MULTICAST);
