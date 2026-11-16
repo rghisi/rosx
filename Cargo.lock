@@ -13,7 +13,9 @@ name = "arp"
 version = "0.1.0"
 dependencies = [
  "net-protocol",
+ "pci-protocol",
  "usrlib",
+ "vfs-protocol",
 ]
 
 [[package]]
