@@ -36,10 +36,43 @@ const INITRD_LOCAL_NAME: &str = "initrd.bin";
 pub const INITRD_VOLUME_NAME: &str = "INITRD.BIN";
 const KERNEL_LOCAL_NAME: &str = "kernel.elf";
 pub const KERNEL_VOLUME_NAME: &str = "KERNEL.ELF";
+const KERNEL64_LOCAL_NAME: &str = "kernel.bin";
+pub const KERNEL64_VOLUME_NAME: &str = "KERNEL.BIN";
 pub const FAKE_KERNEL_CRATE: &str = "fake-kernel-32";
+pub const FAKE_KERNEL_64_CRATE: &str = "fake-kernel-64";
+pub const FAKE_KERNEL_64_TARGET_SPEC: &str = "arch/x86-bootloader/rosx-boot-x86_64.json";
 
 pub const INITRD_SEED: u64 = 0xB007_7E73_2026_1107;
 pub const INITRD_BYTES: usize = 64 * 1024;
+
+#[derive(Copy, Clone)]
+pub enum Stage2Flavor {
+    Flat32,
+    Long64,
+}
+
+impl Stage2Flavor {
+    fn feature(self) -> Option<&'static str> {
+        match self {
+            Stage2Flavor::Flat32 => None,
+            Stage2Flavor::Long64 => Some("stage-64"),
+        }
+    }
+
+    fn blob_name(self) -> &'static str {
+        match self {
+            Stage2Flavor::Flat32 => "stage2-32.bin",
+            Stage2Flavor::Long64 => "stage2-64.bin",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Stage2Flavor::Flat32 => "stage2-32",
+            Stage2Flavor::Long64 => "stage2-64",
+        }
+    }
+}
 
 pub fn initrd_payload() -> Vec<u8> {
     initrd_payload_of(INITRD_BYTES)
@@ -112,6 +145,13 @@ impl BootImage {
         };
         workspace_root().join("target").join(name)
     }
+
+    fn stage2_flavor(self) -> Stage2Flavor {
+        match self {
+            BootImage::Boot32 | BootImage::Floppy => Stage2Flavor::Flat32,
+            BootImage::Boot64 => Stage2Flavor::Long64,
+        }
+    }
 }
 
 pub fn boot_image_command(token: &str) {
@@ -161,7 +201,7 @@ fn link_flat_boot_sector(object: &Path, flat: &Path, flavor: &str) -> Vec<u8> {
     sector
 }
 
-pub fn build_stage2(object_dir: &Path) -> Vec<u8> {
+pub fn build_stage2(object_dir: &Path, flavor: Stage2Flavor) -> Vec<u8> {
     let mut builder = crate::cargo();
     builder
         .arg("build")
@@ -171,28 +211,46 @@ pub fn build_stage2(object_dir: &Path) -> Vec<u8> {
         .arg("--target")
         .arg(STAGE2_TARGET_SPEC)
         .args(crate::UNSTABLE);
-    run(&mut builder, "build the stage2 image crate");
+    if let Some(feature) = flavor.feature() {
+        builder.args(["--features", feature]);
+    }
+    run(&mut builder, &format!("build the {} image crate", flavor.label()));
     let elf = workspace_root()
         .join("target")
         .join("rosx-boot-i486")
         .join("release")
         .join("rosx-stage2");
-    let flat = object_dir.join("stage2.bin");
+    let flat = object_dir.join(flavor.blob_name());
     let mut objcopy = Command::new("objcopy");
     objcopy.args(["-O", "binary"]).arg(&elf).arg(&flat);
-    run(&mut objcopy, "objcopy the stage2 ELF into a flat binary");
+    run(&mut objcopy, &format!("objcopy the {} ELF into a flat binary", flavor.label()));
     let bin = fs::read(&flat).expect("cannot read the flat stage2 binary");
     assert!(
         !bin.is_empty() && bin.len() <= STAGE2_MAX_BIN_BYTES,
         "the stage2 image is {} bytes; the 0x7E00..0x2FFFF budget is {STAGE2_MAX_BIN_BYTES}",
         bin.len()
     );
-    let offenders = crate::check_isa::audit_stage_binary(&flat).expect("stage2 ISA audit");
-    assert!(
-        offenders.is_empty(),
-        "the stage2 image fails the 486 stage deny-list audit: {}",
-        offenders.join(", ")
-    );
+    match flavor {
+        Stage2Flavor::Flat32 => {
+            let offenders = crate::check_isa::audit_stage_binary(&flat).expect("stage2 ISA audit");
+            assert!(
+                offenders.is_empty(),
+                "the stage2 image fails the 486 stage deny-list audit: {}",
+                offenders.join(", ")
+            );
+        }
+        Stage2Flavor::Long64 => {
+            let elf_copy = object_dir.join("stage2-64.elf");
+            fs::copy(&elf, &elf_copy).expect("cannot copy the stage2-64 ELF for the audit");
+            let offenders = crate::check_isa::audit_stage2_longmode(&elf_copy)
+                .expect("stage2-64 per-section ISA audit");
+            assert!(
+                offenders.is_empty(),
+                "the stage2-64 image fails the per-section audit: {}",
+                offenders.join(", ")
+            );
+        }
+    }
     bin
 }
 
@@ -240,13 +298,13 @@ pub fn build_flat_stub(variant: StubVariant, object_dir: &Path) -> Vec<u8> {
 pub fn pack(kind: BootImage) -> PathBuf {
     let image = kind.path();
     match kind {
-        BootImage::Boot32 | BootImage::Boot64 => pack_partitioned(image.clone()),
+        BootImage::Boot32 | BootImage::Boot64 => pack_partitioned(image.clone(), kind),
         BootImage::Floppy => pack_floppy(image.clone()),
     }
     image
 }
 
-fn pack_partitioned(image: PathBuf) {
+fn pack_partitioned(image: PathBuf, kind: BootImage) {
     let stage1 = build_stage1(&scratch_dir());
 
     let mut entries: [Option<Entry>; ENTRY_COUNT] = [None; ENTRY_COUNT];
@@ -261,22 +319,25 @@ fn pack_partitioned(image: PathBuf) {
 
     create_sparse(&image, BOOT_IMAGE_BYTES);
     write_at(&image, 0, &mbr);
-    let stage2 = build_stage2(&scratch_dir());
+    let stage2 = build_stage2(&scratch_dir(), kind.stage2_flavor());
     write_at(&image, u64::from(STAGE2_IMAGE_LBA) * SECTOR_BYTES as u64, &stage2_blob(&stage2));
 
     let partition_sectors = (BOOT_IMAGE_BYTES / SECTOR_BYTES as u64) as u32 - PARTITION_START_LBA;
     mformat_volume(&image, partition_sectors);
     mcopy_probe(&image);
     mcopy_initrd(&image);
-    mcopy_kernel(&image);
-    mdir_sees_the_boot_volume(&image);
+    match kind {
+        BootImage::Boot64 => mcopy_kernel_bin(&image),
+        _ => mcopy_kernel(&image),
+    }
+    mdir_sees_the_boot_volume(&image, kind);
 }
 
 fn pack_floppy(image: PathBuf) {
     let stage1 = build_stage1(&scratch_dir());
     create_sparse(&image, FLOPPY_IMAGE_BYTES);
     write_at(&image, 0, &stage1);
-    let stage2 = build_stage2(&scratch_dir());
+    let stage2 = build_stage2(&scratch_dir(), Stage2Flavor::Flat32);
     write_at(&image, u64::from(STAGE2_IMAGE_LBA) * SECTOR_BYTES as u64, &stage2_blob(&stage2));
 }
 
@@ -358,6 +419,31 @@ pub fn build_fake_kernel() -> Vec<u8> {
     fs::read(&elf).expect("cannot read the fake-kernel-32 ELF")
 }
 
+pub fn build_fake_kernel64_flat() -> Vec<u8> {
+    let mut builder = crate::cargo();
+    builder
+        .arg("build")
+        .arg("--release")
+        .arg("-p")
+        .arg(FAKE_KERNEL_64_CRATE)
+        .arg("--target")
+        .arg(FAKE_KERNEL_64_TARGET_SPEC)
+        .args(crate::UNSTABLE);
+    run(&mut builder, "build the fake-kernel-64 smoke kernel");
+    let elf = workspace_root()
+        .join("target")
+        .join("rosx-boot-x86_64")
+        .join("release")
+        .join(FAKE_KERNEL_64_CRATE);
+    let flat = scratch_dir().join("fake-kernel-64.bin");
+    let mut objcopy = Command::new("objcopy");
+    objcopy.args(["-O", "binary"]).arg(&elf).arg(&flat);
+    run(&mut objcopy, "objcopy the fake-kernel-64 ELF into a flat binary");
+    let bin = fs::read(&flat).expect("cannot read the flat fake-kernel-64 binary");
+    assert!(!bin.is_empty(), "the flat fake-kernel-64 binary is empty");
+    bin
+}
+
 fn mcopy_kernel(image: &Path) {
     let kernel = scratch_dir().join(KERNEL_LOCAL_NAME);
     fs::write(&kernel, build_fake_kernel()).expect("cannot write the kernel ELF scratch file");
@@ -370,7 +456,24 @@ fn mcopy_kernel(image: &Path) {
     run(&mut cmd, "mcopy the fake-kernel ELF onto the boot image volume");
 }
 
-fn mdir_sees_the_boot_volume(image: &Path) {
+fn mcopy_kernel_bin(image: &Path) {
+    let kernel = scratch_dir().join(KERNEL64_LOCAL_NAME);
+    fs::write(&kernel, build_fake_kernel64_flat())
+        .expect("cannot write the flat kernel scratch file");
+    let mut cmd = Command::new("mcopy");
+    cmd.arg("-m")
+        .arg("-o")
+        .arg(partition_index(image))
+        .arg(&kernel)
+        .arg(format!("::{KERNEL64_VOLUME_NAME}"));
+    run(&mut cmd, "mcopy the flat fake-kernel-64 image onto the boot image volume");
+}
+
+fn mdir_sees_the_boot_volume(image: &Path, kind: BootImage) {
+    let kernel_extension = match kind {
+        BootImage::Boot64 => "BIN",
+        _ => "ELF",
+    };
     let mut cmd = Command::new("mdir");
     cmd.arg(partition_index(image)).arg("::");
     let output = cmd.output().expect("failed to run mdir");
@@ -381,7 +484,7 @@ fn mdir_sees_the_boot_volume(image: &Path) {
             && listing.contains("PROBE")
             && listing.contains("TXT")
             && listing.contains("KERNEL")
-            && listing.contains("ELF"),
+            && listing.contains(kernel_extension),
         "mdir cannot see the boot volume files on the {label} volume at LBA {start} — the FAT16 \
          recipe is broken; output: {listing}",
         label = VOLUME_LABEL,
@@ -390,13 +493,16 @@ fn mdir_sees_the_boot_volume(image: &Path) {
     println!(
         "==> mdir confirms {probe} and {kernel} on {label} at LBA {start}",
         probe = PROBE_VOLUME_NAME,
-        kernel = KERNEL_VOLUME_NAME,
+        kernel = match kind {
+            BootImage::Boot64 => KERNEL64_VOLUME_NAME,
+            _ => KERNEL_VOLUME_NAME,
+        },
         label = VOLUME_LABEL,
         start = PARTITION_START_LBA,
     );
 }
 
-fn scratch_dir() -> PathBuf {
+pub(crate) fn scratch_dir() -> PathBuf {
     let dir = workspace_root().join("target").join("boot-test");
     fs::create_dir_all(&dir).expect("cannot create target/boot-test");
     dir

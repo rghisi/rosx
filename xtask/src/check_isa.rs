@@ -114,6 +114,14 @@ pub const BOOTLOADER_ELF_NAMES: [&str; 1] = ["fake-kernel-32"];
 pub fn run_check_isa_bootloader() -> Result<Vec<String>, String> {
     let objdump = require_objdump()?;
     crate::boot_image::build_fake_kernel();
+    crate::boot_image::build_stage2(
+        &crate::boot_image::scratch_dir(),
+        crate::boot_image::Stage2Flavor::Flat32,
+    );
+    crate::boot_image::build_stage2(
+        &crate::boot_image::scratch_dir(),
+        crate::boot_image::Stage2Flavor::Long64,
+    );
     let release_dir = crate::workspace_root()
         .join("target")
         .join("rosx-boot-i486")
@@ -196,6 +204,69 @@ fn is_post_486(mnemonic: &str) -> bool {
                 | "fxsave"
                 | "fxrstor"
         )
+}
+
+pub const LONGMODE_SECTION: &str = ".longmode.text";
+
+pub const LONG_MODE_ALLOW_LIST: [&str; 3] = ["cpuid", "rdmsr", "wrmsr"];
+
+pub fn audit_longmode_disassembly(text: &str) -> Vec<Violation> {
+    let mut offenders: BTreeMap<String, usize> = BTreeMap::new();
+    for line in text.lines() {
+        let Some((_bytes, mnemonic)) = instruction_of(line) else {
+            continue;
+        };
+        if is_post_486(mnemonic) && !LONG_MODE_ALLOW_LIST.contains(&mnemonic) {
+            *offenders.entry(mnemonic.to_string()).or_insert(0) += 1;
+        }
+    }
+    offenders
+        .into_iter()
+        .map(|(mnemonic, occurrences)| Violation { mnemonic, occurrences })
+        .collect()
+}
+
+fn count_decoded_instructions(text: &str) -> usize {
+    text.lines()
+        .filter(|line| instruction_of(line).is_some())
+        .count()
+}
+
+pub fn audit_stage2_longmode(elf: &Path) -> Result<Vec<String>, String> {
+    let objdump = on_path("objdump").ok_or_else(|| {
+        "objdump not found on PATH; install binutils (sudo apt install binutils)".to_string()
+    })?;
+    let plain = disassemble_section(&objdump, elf, ".text", "i386")?;
+    let longmode = disassemble_section(&objdump, elf, LONGMODE_SECTION, "i386:x86-64")?;
+    if count_decoded_instructions(&longmode) == 0 {
+        return Err(format!(
+            "no instructions decoded from {LONGMODE_SECTION} in {}; the long-mode code is not \
+             landing in its dedicated section",
+            elf.display()
+        ));
+    }
+    let mut offenders: Vec<String> = audit_stage_disassembly(&plain)
+        .iter()
+        .map(|v| format!(".text: {} x{}", v.mnemonic, v.occurrences))
+        .collect();
+    offenders.extend(
+        audit_longmode_disassembly(&longmode)
+            .iter()
+            .map(|v| format!("{LONGMODE_SECTION}: {} x{}", v.mnemonic, v.occurrences)),
+    );
+    Ok(offenders)
+}
+
+fn disassemble_section(objdump: &Path, elf: &Path, section: &str, machine: &str) -> Result<String, String> {
+    let output = Command::new(objdump)
+        .args(["-d", "-j", section, "-M", machine])
+        .arg(elf)
+        .output()
+        .map_err(|err| format!("failed to run objdump on {}: {err}", elf.display()))?;
+    if !output.status.success() {
+        return Err(format!("objdump failed on {}", elf.display()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 pub fn audit_stage_binary(path: &Path) -> Result<Vec<String>, String> {
@@ -443,5 +514,36 @@ mod tests {
             let found = audit_stage_disassembly(&line);
             assert_eq!(found.len(), 1, "{mnemonic} must be rejected");
         }
+    }
+
+    #[test]
+    fn longmode_audit_admits_exactly_the_guard_and_msr_mnemonics() {
+        let admitted = stage_lines(&[
+            ("0f a2", "cpuid"),
+            ("0f 32", "rdmsr"),
+            ("0f 30", "wrmsr"),
+            ("48 c7 c4 00 f0 07 00", "movabs $0x7f000,%rsp"),
+            ("cb", "lret"),
+        ]);
+        assert_eq!(audit_longmode_disassembly(&admitted), vec![]);
+
+        let rejected = stage_lines(&[
+            ("0f 05", "syscall"),
+            ("0f 44 c1", "cmovne %ecx,%eax"),
+            ("0f 31", "rdtsc"),
+        ]);
+        let found = audit_longmode_disassembly(&rejected);
+        assert_eq!(found.len(), 3);
+        assert_eq!(found[0].mnemonic, "cmovne");
+        assert_eq!(found[1].mnemonic, "rdtsc");
+        assert_eq!(found[2].mnemonic, "syscall");
+    }
+
+    #[test]
+    fn an_empty_disassembly_decodes_no_instructions() {
+        let header_only = "Disassembly of section .longmode.text:\n\n000118d0 <switch>:\n";
+        assert_eq!(count_decoded_instructions(header_only), 0);
+        let with_code = stage_lines(&[("0f a2", "cpuid"), ("c3", "ret")]);
+        assert_eq!(count_decoded_instructions(&with_code), 2);
     }
 }
