@@ -2,6 +2,7 @@
 
 pub mod bios;
 pub mod biosdisk;
+pub mod bootinfo;
 pub mod crc32;
 pub mod elf32;
 pub mod gdt;
