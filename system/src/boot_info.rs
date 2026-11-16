@@ -26,6 +26,18 @@ pub enum MemoryKind {
     KernelAndModules = 5,
 }
 
+impl MemoryKind {
+    pub fn from_wire(value: u32) -> Option<Self> {
+        match value {
+            1 => Some(Self::Usable),
+            2 => Some(Self::Reserved),
+            3 => Some(Self::BootloaderReclaimable),
+            5 => Some(Self::KernelAndModules),
+            _ => None,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct MemoryRegion {
@@ -105,6 +117,24 @@ mod tests {
         assert_eq!(DisplayKind::None as u32, 0);
         assert_eq!(DisplayKind::VgaText as u32, 1);
         assert_eq!(DisplayKind::LinearFramebuffer as u32, 2);
+    }
+
+    #[test]
+    fn memory_kind_from_wire_accepts_only_the_declared_values() {
+        assert_eq!(MemoryKind::from_wire(1), Some(MemoryKind::Usable));
+        assert_eq!(MemoryKind::from_wire(2), Some(MemoryKind::Reserved));
+        assert_eq!(
+            MemoryKind::from_wire(3),
+            Some(MemoryKind::BootloaderReclaimable)
+        );
+        assert_eq!(MemoryKind::from_wire(5), Some(MemoryKind::KernelAndModules));
+    }
+
+    #[test]
+    fn memory_kind_from_wire_refuses_the_unknown_honestly() {
+        for value in [0u32, 4, 6, 7, 255, 0xFFFF_FFFF] {
+            assert_eq!(MemoryKind::from_wire(value), None, "{value} decodes");
+        }
     }
 
     #[test]
