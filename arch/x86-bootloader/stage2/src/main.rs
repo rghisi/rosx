@@ -7,11 +7,14 @@ use rosx_boot_common::bios::Regs32;
 use rosx_boot_common::biosdisk::GEOMETRY_PACKET_ADDRESS;
 use rosx_boot_common::biosdisk::HARD_DRIVE_BASE;
 use rosx_boot_common::biosdisk::INT13;
+use rosx_boot_common::bootinfo::BOOT_INFO_ADDRESS;
+use rosx_boot_common::bootinfo::assemble;
 use rosx_boot_common::elf32::KernelImage;
 use rosx_boot_common::serial::Serial;
 use rosx_boot_common::DEBUG_EXIT_FAILURE;
 use rosx_boot_common::DEBUG_EXIT_SUCCESS;
 use rosx_boot_common::debug_exit;
+use system::boot_info::BootInfo;
 
 mod blk;
 mod elf32;
@@ -78,24 +81,28 @@ extern "C" fn stage2_main() -> ! {
         let mut volume = fat::open(&console, device);
         let kernel = elf32::load_kernel(&console, &mut volume);
         let ceiling = memory::usable_ceiling(&detected_map, &console);
-        let initrd_end = fat::place_initrd(&console, &mut volume, kernel.phys_end, ceiling);
-        boot_payloads = Some((kernel, initrd_end));
+        let initrd = fat::place_initrd(&console, &mut volume, kernel.phys_end, ceiling);
+        boot_payloads = Some((kernel, initrd));
         if !thunk.intact() {
             console.write_line("[ERR] trampoline");
             debug_exit(DEBUG_EXIT_FAILURE);
         }
     }
-    memory::publish(&detected_map, kernel_carve_out(&boot_payloads), &console);
+    let map_len = memory::publish(&detected_map, kernel_carve_out(&boot_payloads), &console);
+    if let Some((_, initrd)) = &boot_payloads {
+        let boot_info = assemble(map_len, initrd.address, initrd.size);
+        unsafe { core::ptr::write(BOOT_INFO_ADDRESS as *mut BootInfo, boot_info) };
+    }
     console.write_line("[STAGE2_32] A20=OK THUNK=OK");
-    match boot_payloads {
-        Some((kernel, _)) => elf32::enter(&kernel),
+    match &boot_payloads {
+        Some((kernel, _)) => elf32::enter(&console, kernel, BOOT_INFO_ADDRESS),
         None => debug_exit(DEBUG_EXIT_SUCCESS),
     }
 }
 
-fn kernel_carve_out(payloads: &Option<(KernelImage, u64)>) -> Option<(u64, u64)> {
-    let (kernel, initrd_end) = payloads.as_ref()?;
-    Some((kernel.phys_start, initrd_end - kernel.phys_start))
+fn kernel_carve_out(payloads: &Option<(KernelImage, fat::InitrdPlacement)>) -> Option<(u64, u64)> {
+    let (kernel, initrd) = payloads.as_ref()?;
+    Some((kernel.phys_start, initrd.end - kernel.phys_start))
 }
 
 fn contiguous_high_memory_kib(thunk: &BiosThunk) -> Option<u32> {

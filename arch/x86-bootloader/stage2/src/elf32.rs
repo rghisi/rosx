@@ -12,6 +12,7 @@ use rosx_boot_common::elf32::KernelImage;
 use rosx_boot_common::elf32::KernelSegment;
 use rosx_boot_common::elf32::plan_kernel_image;
 use rosx_boot_common::serial::Serial;
+use system::boot_info::BOOT_INFO_MAGIC;
 
 use crate::fat::BootVolume;
 use crate::fat::refuse_engine;
@@ -19,6 +20,9 @@ use crate::fat::refuse_engine;
 const KERNEL_PATH: &[u8] = b"/KERNEL.ELF";
 const HEADER_WINDOW: u64 = 4096;
 const PLACEMENT_WINDOW: u64 = 16 * 512;
+const HANDOFF_STACK_TOP: usize = 0x0007_F000;
+const PAGE_ENABLE_BIT: u32 = 1 << 31;
+const INTERRUPT_ENABLE_BIT: u32 = 1 << 9;
 
 pub fn load_kernel(console: &Serial, volume: &mut BootVolume) -> KernelImage {
     let metadata = Engine::lookup(volume, KERNEL_PATH).unwrap_or_else(|error| refuse_engine(console, error));
@@ -88,22 +92,29 @@ fn place_segment(
     }
 }
 
-pub fn enter(image: &KernelImage) -> ! {
+pub fn enter(console: &Serial, image: &KernelImage, boot_info: u64) -> ! {
+    if read_cr0() & PAGE_ENABLE_BIT != 0 {
+        refuse_state(console, "cr0.pg");
+    }
+    if read_eflags() & INTERRUPT_ENABLE_BIT != 0 {
+        refuse_state(console, "eflags.if");
+    }
     let entry = image.entry as u32;
+    let magic = BOOT_INFO_MAGIC;
+    let pointer = boot_info as u32;
     unsafe {
         core::arch::asm!(
-            "and esp, -16",
-            "push {boot_info}",
-            "push {magic}",
-            "lea eax, {return_trap}",
+            "mov esp, {stack}",
+            "mov eax, {return_trap}",
             "push eax",
-            "mov ebx, {boot_info}",
             "mov eax, {magic}",
+            "mov ebx, {boot_info}",
             "jmp {entry}",
-            boot_info = in(reg) 0u32,
-            magic = in(reg) 0u32,
-            entry = in(reg) entry,
+            stack = in(reg) (HANDOFF_STACK_TOP + 4) as u32,
             return_trap = sym kernel_returned,
+            magic = in(reg) magic,
+            boot_info = in(reg) pointer,
+            entry = in(reg) entry,
             out("eax") _,
             out("ebx") _,
         )
@@ -114,6 +125,32 @@ pub fn enter(image: &KernelImage) -> ! {
 fn kernel_returned() -> ! {
     let console = Serial::COM1;
     console.write_line("[ERR] kernel returned");
+    debug_exit(DEBUG_EXIT_FAILURE)
+}
+
+fn read_cr0() -> u32 {
+    let value: u32;
+    unsafe {
+        core::arch::asm!(
+            "mov {value}, cr0",
+            value = out(reg) value,
+            options(nomem, nostack, preserves_flags)
+        )
+    };
+    value
+}
+
+fn read_eflags() -> u32 {
+    let value: u32;
+    unsafe {
+        core::arch::asm!("pushfd", "pop {value}", value = out(reg) value, options(preserves_flags))
+    };
+    value
+}
+
+fn refuse_state(console: &Serial, detail: &str) -> ! {
+    console.write_str("[ERR] state ");
+    console.write_line(detail);
     debug_exit(DEBUG_EXIT_FAILURE)
 }
 

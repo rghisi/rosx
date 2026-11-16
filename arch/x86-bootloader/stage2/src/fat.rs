@@ -18,14 +18,33 @@ pub fn open<'a>(console: &Serial, device: BiosBlockDevice<'a>) -> BootVolume<'a>
     rxfat::FileSystem::new(device).unwrap_or_else(|error| refuse_engine(console, error))
 }
 
+pub struct InitrdPlacement {
+    pub address: u64,
+    pub size: u64,
+    pub end: u64,
+}
+
 pub fn place_initrd(
     console: &Serial,
     volume: &mut BootVolume,
     kernel_end: u64,
     ceiling: u64,
-) -> u64 {
-    let metadata =
-        Engine::lookup(volume, INITRD_PATH).unwrap_or_else(|error| refuse_engine(console, error));
+) -> InitrdPlacement {
+    let metadata = match Engine::lookup(volume, INITRD_PATH) {
+        Ok(metadata) => metadata,
+        Err(FsError::NotFound) => {
+            return report(
+                console,
+                InitrdPlacement {
+                    address: 0,
+                    size: 0,
+                    end: kernel_end,
+                },
+                crc32(&[]),
+            );
+        }
+        Err(error) => refuse_engine(console, error),
+    };
     let size = usize::try_from(metadata.size()).unwrap_or_else(|_| refuse_memory(console));
     let placement =
         place_payload(kernel_end, metadata.size(), ceiling).unwrap_or_else(|| refuse_memory(console));
@@ -49,15 +68,26 @@ pub fn place_initrd(
         loaded += count;
     }
     Engine::close(volume, handle).unwrap_or_else(|error| refuse_engine(console, error));
-    let checksum = crc32(staging);
+    report(
+        console,
+        InitrdPlacement {
+            address: placement.address,
+            size: metadata.size(),
+            end: placement.end,
+        },
+        crc32(staging),
+    )
+}
+
+fn report(console: &Serial, payload: InitrdPlacement, checksum: u32) -> InitrdPlacement {
     console.write_str("[INITRD] addr=");
-    console.write_hex(placement.address, 8);
+    console.write_hex(payload.address, 8);
     console.write_str(" size=");
-    console.write_dec(size as u64);
+    console.write_dec(payload.size);
     console.write_str(" crc32=");
     console.write_hex(u64::from(checksum), 8);
     console.write_line("");
-    placement.end
+    payload
 }
 
 fn refuse_memory(console: &Serial) -> ! {

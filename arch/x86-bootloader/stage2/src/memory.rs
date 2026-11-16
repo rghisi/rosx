@@ -75,7 +75,7 @@ pub fn usable_ceiling(map: &DetectedMap, console: &Serial) -> u64 {
     top_of_usable(&regions[..count])
 }
 
-pub fn publish(map: &DetectedMap, kernel_carve_out: Option<(u64, u64)>, console: &Serial) {
+pub fn publish(map: &DetectedMap, kernel_carve_out: Option<(u64, u64)>, console: &Serial) -> u32 {
     let (map_regions, count) = normalize_or_refuse(map, kernel_carve_out, console);
     write_map_to_home(&map_regions[..count]);
     for region in &map_regions[..count] {
@@ -106,6 +106,7 @@ pub fn publish(map: &DetectedMap, kernel_carve_out: Option<(u64, u64)>, console:
     console.write_str(" gap=");
     console.write_hex(gap, 16);
     console.write_line(" OK");
+    count as u32
 }
 
 fn normalize_or_refuse(
