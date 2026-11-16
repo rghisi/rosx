@@ -1,0 +1,19 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "arp"
+publish = false
+version = "0.1.0"
+edition.workspace = true
+
+[lib]
+name = "arp"
+path = "src/lib.rs"
+
+[dependencies]
+
+[target.'cfg(target_os = "none")'.dependencies]
+usrlib = { path = "../../usrlib", features = ["runtime"] }
+net-protocol = { path = "../../protocol/net" }
+
+[lints]
+workspace = true

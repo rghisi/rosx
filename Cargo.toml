@@ -39,6 +39,7 @@ members = [
     "apps/ps2d",
     "apps/atad",
     "apps/ne2kd",
+    "apps/arp",
     "apps/pcid",
     "apps/ne2k",
     "apps/pci",
