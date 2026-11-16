@@ -216,6 +216,27 @@ pub fn top_of_usable(regions: &[MemoryRegion]) -> u64 {
         .unwrap_or(0)
 }
 
+pub const PAGE_BYTES: u64 = 4096;
+
+pub fn align_up_page(bytes: u64) -> Option<u64> {
+    bytes
+        .checked_add(PAGE_BYTES - 1)
+        .map(|rounded| rounded & !(PAGE_BYTES - 1))
+}
+
+pub struct PayloadPlacement {
+    pub address: u64,
+    pub end: u64,
+}
+
+pub fn place_payload(kernel_end: u64, payload_size: u64, ceiling: u64) -> Option<PayloadPlacement> {
+    let end = align_up_page(kernel_end.checked_add(payload_size)?)?;
+    (end <= ceiling).then_some(PayloadPlacement {
+        address: kernel_end,
+        end,
+    })
+}
+
 fn map_e820_kind(kind: u32) -> MemoryKind {
     match kind {
         1 => MemoryKind::Usable,
@@ -512,5 +533,41 @@ mod tests {
         let map = run(&raw);
         assert!(map.iter().all(|r| r.length > 0));
         assert!(map.windows(2).all(|w| w[0].base + w[0].length <= w[1].base));
+    }
+
+    #[test]
+    fn align_up_page_rounds_to_the_next_page_boundary() {
+        assert_eq!(align_up_page(0), Some(0));
+        assert_eq!(align_up_page(4096), Some(4096));
+        assert_eq!(align_up_page(4097), Some(8192));
+    }
+
+    #[test]
+    fn a_payload_lands_page_aligned_after_the_kernel() {
+        let placement = place_payload(0x0010_1000, 0x0001_0000, 0x01FF_0000).expect("fits");
+        assert_eq!(placement.address, 0x0010_1000);
+        assert_eq!(placement.end, 0x0011_1000);
+    }
+
+    #[test]
+    fn an_unaligned_payload_end_is_padded_up() {
+        let placement = place_payload(0x0010_1000, 5000, 0x01FF_0000).expect("fits");
+        assert_eq!(placement.end, 0x0010_3000);
+    }
+
+    #[test]
+    fn a_payload_reaching_exactly_the_ceiling_is_accepted() {
+        let placement = place_payload(0x0010_1000, 0x0001_0000, 0x0011_1000).expect("boundary fits");
+        assert_eq!(placement.end, 0x0011_1000);
+    }
+
+    #[test]
+    fn a_payload_past_the_ceiling_is_refused() {
+        assert!(place_payload(0x0010_1000, 0x0001_0000, 0x0011_0FFF).is_none());
+    }
+
+    #[test]
+    fn the_refusal_measures_the_aligned_end_not_the_payload_size() {
+        assert!(place_payload(0x0010_1000, 1, 0x0010_1000).is_none());
     }
 }
