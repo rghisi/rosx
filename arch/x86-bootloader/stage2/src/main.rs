@@ -9,7 +9,8 @@ use rosx_boot_common::biosdisk::HARD_DRIVE_BASE;
 use rosx_boot_common::biosdisk::INT13;
 use rosx_boot_common::bootinfo::BOOT_INFO_ADDRESS;
 use rosx_boot_common::bootinfo::assemble;
-use rosx_boot_common::elf32::KernelImage;
+#[cfg(feature = "stage-64")]
+use rosx_boot_common::memnorm::align_up_page;
 use rosx_boot_common::serial::Serial;
 use rosx_boot_common::DEBUG_EXIT_FAILURE;
 use rosx_boot_common::DEBUG_EXIT_SUCCESS;
@@ -17,6 +18,7 @@ use rosx_boot_common::debug_exit;
 use system::boot_info::BootInfo;
 
 mod blk;
+#[cfg(not(feature = "stage-64"))]
 mod elf32;
 mod entry;
 mod fat;
@@ -71,42 +73,72 @@ extern "C" fn stage2_main() -> ! {
         console.write_line("[ERR] trampoline");
         debug_exit(DEBUG_EXIT_FAILURE);
     }
-    let mut boot_payloads = None;
     if boot_drive() >= u16::from(HARD_DRIVE_BASE) {
-        let Some(device) = BiosBlockDevice::bring_up(&thunk, boot_drive() as u8) else {
-            console.write_line("[ERR] disk");
-            debug_exit(DEBUG_EXIT_FAILURE);
-        };
-        console.write_str("[DISK] media=");
-        console.write_str(device.media_name());
-        console.write_str(" slice=");
-        console.write_dec(device.slice_sectors());
-        console.write_line("");
-        let mut volume = fat::open(&console, device);
-        let kernel = elf32::load_kernel(&console, &mut volume);
-        let ceiling = memory::usable_ceiling(&detected_map, &console);
-        let initrd = fat::place_initrd(&console, &mut volume, kernel.phys_end, ceiling);
-        boot_payloads = Some((kernel, initrd));
-        if !thunk.intact() {
-            console.write_line("[ERR] trampoline");
-            debug_exit(DEBUG_EXIT_FAILURE);
-        }
+        boot_from_disk(&console, &thunk, &detected_map);
     }
-    let map_len = memory::publish(&detected_map, kernel_carve_out(&boot_payloads), &console);
-    if let Some((_, initrd)) = &boot_payloads {
-        let boot_info = assemble(map_len, initrd.address, initrd.size);
-        unsafe { core::ptr::write(BOOT_INFO_ADDRESS as *mut BootInfo, boot_info) };
-    }
-    console.write_line("[STAGE2_32] A20=OK THUNK=OK");
-    match &boot_payloads {
-        Some((kernel, _)) => elf32::enter(&console, kernel, BOOT_INFO_ADDRESS),
-        None => debug_exit(DEBUG_EXIT_SUCCESS),
-    }
+    memory::publish(&detected_map, None, &console);
+    console.write_line(COMPLETION_BANNER);
+    debug_exit(DEBUG_EXIT_SUCCESS)
 }
 
-fn kernel_carve_out(payloads: &Option<(KernelImage, fat::InitrdPlacement)>) -> Option<(u64, u64)> {
-    let (kernel, initrd) = payloads.as_ref()?;
-    Some((kernel.phys_start, initrd.end - kernel.phys_start))
+#[cfg(not(feature = "stage-64"))]
+const COMPLETION_BANNER: &str = "[STAGE2_32] A20=OK THUNK=OK";
+
+#[cfg(feature = "stage-64")]
+const COMPLETION_BANNER: &str = "[STAGE2_64] A20=OK THUNK=OK";
+
+fn open_boot_volume<'a>(console: &Serial, thunk: &'a BiosThunk) -> fat::BootVolume<'a> {
+    let Some(device) = BiosBlockDevice::bring_up(thunk, boot_drive() as u8) else {
+        console.write_line("[ERR] disk");
+        debug_exit(DEBUG_EXIT_FAILURE);
+    };
+    console.write_str("[DISK] media=");
+    console.write_str(device.media_name());
+    console.write_str(" slice=");
+    console.write_dec(device.slice_sectors());
+    console.write_line("");
+    fat::open(console, device)
+}
+
+#[cfg(not(feature = "stage-64"))]
+fn boot_from_disk(console: &Serial, thunk: &BiosThunk, detected_map: &memory::DetectedMap) -> ! {
+    let mut volume = open_boot_volume(console, thunk);
+    let kernel = elf32::load_kernel(console, &mut volume);
+    let ceiling = memory::usable_ceiling(detected_map, console);
+    let initrd = fat::place_initrd(console, &mut volume, kernel.phys_end, ceiling);
+    if !thunk.intact() {
+        console.write_line("[ERR] trampoline");
+        debug_exit(DEBUG_EXIT_FAILURE);
+    }
+    let carve = (kernel.phys_start, initrd.end - kernel.phys_start);
+    let map_len = memory::publish(detected_map, Some(carve), console);
+    let boot_info = assemble(map_len, initrd.address, initrd.size);
+    unsafe { core::ptr::write(BOOT_INFO_ADDRESS as *mut BootInfo, boot_info) };
+    console.write_line(COMPLETION_BANNER);
+    elf32::enter(console, &kernel, BOOT_INFO_ADDRESS)
+}
+
+#[cfg(feature = "stage-64")]
+fn boot_from_disk(console: &Serial, thunk: &BiosThunk, detected_map: &memory::DetectedMap) -> ! {
+    let mut volume = open_boot_volume(console, thunk);
+    let kernel = longmode::load_kernel(console, &mut volume);
+    let ceiling = memory::usable_ceiling(detected_map, console);
+    let Some(kernel_floor) = align_up_page(kernel.end) else {
+        console.write_line("[ERR] mem");
+        debug_exit(DEBUG_EXIT_FAILURE);
+    };
+    let initrd = fat::place_initrd(console, &mut volume, kernel_floor, ceiling);
+    if !thunk.intact() {
+        console.write_line("[ERR] trampoline");
+        debug_exit(DEBUG_EXIT_FAILURE);
+    }
+    let tables = longmode::build_page_tables(console, initrd.end, ceiling);
+    let carve = (kernel.address, tables.end - kernel.address);
+    let map_len = memory::publish(detected_map, Some(carve), console);
+    let boot_info = assemble(map_len, initrd.address, initrd.size);
+    unsafe { core::ptr::write(BOOT_INFO_ADDRESS as *mut BootInfo, boot_info) };
+    console.write_line(COMPLETION_BANNER);
+    longmode::enter_long_mode(console, tables.root, BOOT_INFO_ADDRESS)
 }
 
 fn contiguous_high_memory_kib(thunk: &BiosThunk) -> Option<u32> {

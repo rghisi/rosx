@@ -1,10 +1,45 @@
+use fs_core::engine::Engine;
+use fs_core::engine::MetadataView;
 use rosx_boot_common::DEBUG_EXIT_FAILURE;
+use rosx_boot_common::crc32::crc32;
 use rosx_boot_common::debug_exit;
+use rosx_boot_common::gdt;
+use rosx_boot_common::memnorm::align_up_page;
+use rosx_boot_common::memnorm::place_payload;
+use rosx_boot_common::pagetable::ENTRIES_PER_TABLE;
+use rosx_boot_common::pagetable::PAGE_TABLE_SET_BYTES;
+use rosx_boot_common::pagetable::TABLES_PER_SET;
+use rosx_boot_common::pagetable::fill_identity_map;
 use rosx_boot_common::serial::Serial;
+use system::boot_info::BOOT_INFO_MAGIC;
+
+use crate::fat::BootVolume;
+use crate::fat::refuse_engine;
 
 const EXTENDED_LEAF_FLOOR: u32 = 0x8000_0000;
 const EXTENDED_FEATURES_LEAF: u32 = 0x8000_0001;
 const LONG_MODE_BIT: u32 = 1 << 29;
+
+const KERNEL_PATH: &[u8] = b"/KERNEL.BIN";
+const READ_WINDOW: usize = 16 * 512;
+pub const KERNEL_LMA: u64 = 0x0010_0000;
+
+const PAGE_ENABLE_BIT: u32 = 1 << 31;
+const INTERRUPT_ENABLE_BIT: u32 = 1 << 9;
+
+#[repr(C, packed)]
+struct GdtPointer {
+    limit: u16,
+    base: u32,
+}
+
+static GDT64: [u64; 5] = [
+    gdt::NULL,
+    gdt::code64(),
+    gdt::data32(),
+    gdt::user_data(),
+    gdt::user_code64(),
+];
 
 pub fn ensure_long_mode(console: &Serial) {
     if !cpuid_available() || !long_mode_supported() {
@@ -54,4 +89,154 @@ fn cpuid(leaf: u32) -> (u32, u32, u32, u32) {
         )
     };
     (eax, ebx, ecx, edx)
+}
+
+pub struct FlatKernel {
+    pub address: u64,
+    pub end: u64,
+}
+
+pub fn load_kernel(console: &Serial, volume: &mut BootVolume) -> FlatKernel {
+    let metadata = Engine::lookup(volume, KERNEL_PATH).unwrap_or_else(|error| refuse_engine(console, error));
+    let size = usize::try_from(metadata.size()).unwrap_or_else(|_| refuse_kernel(console, "too-large"));
+    let handle = Engine::open(volume, KERNEL_PATH).unwrap_or_else(|error| refuse_engine(console, error));
+    let image = unsafe { core::slice::from_raw_parts_mut(KERNEL_LMA as *mut u8, size) };
+    let mut loaded = 0usize;
+    while loaded < size {
+        let span = (size - loaded).min(READ_WINDOW);
+        let count = Engine::read(volume, handle, loaded as u64, &mut image[loaded..loaded + span])
+            .unwrap_or_else(|error| refuse_engine(console, error));
+        if count == 0 {
+            refuse_kernel(console, "short-read");
+        }
+        loaded += count;
+    }
+    Engine::close(volume, handle).unwrap_or_else(|error| refuse_engine(console, error));
+    report_kernel(console, KERNEL_LMA, metadata.size(), crc32(image));
+    FlatKernel {
+        address: KERNEL_LMA,
+        end: KERNEL_LMA + metadata.size(),
+    }
+}
+
+fn report_kernel(console: &Serial, address: u64, size: u64, checksum: u32) {
+    console.write_str("[KERNEL64] addr=");
+    console.write_hex(address, 8);
+    console.write_str(" size=");
+    console.write_dec(size);
+    console.write_str(" crc32=");
+    console.write_hex(u64::from(checksum), 8);
+    console.write_line("");
+}
+
+fn refuse_kernel(console: &Serial, kind: &str) -> ! {
+    console.write_str("[ERR] kernel64 ");
+    console.write_line(kind);
+    debug_exit(DEBUG_EXIT_FAILURE)
+}
+
+pub struct PageTables {
+    pub root: u64,
+    pub end: u64,
+}
+
+pub fn build_page_tables(console: &Serial, lower_bound: u64, ceiling: u64) -> PageTables {
+    let floor = align_up_page(lower_bound).unwrap_or_else(|| refuse_memory(console));
+    let placement = place_payload(floor, PAGE_TABLE_SET_BYTES as u64, ceiling)
+        .unwrap_or_else(|| refuse_memory(console));
+    let set = unsafe { &mut *(placement.address as *mut [[u64; ENTRIES_PER_TABLE]; TABLES_PER_SET]) };
+    fill_identity_map(set, placement.address);
+    console.write_str("[PAGETABLE] root=");
+    console.write_hex(placement.address, 8);
+    console.write_str(" end=");
+    console.write_hex(placement.end, 8);
+    console.write_line("");
+    PageTables {
+        root: placement.address,
+        end: placement.end,
+    }
+}
+
+#[inline(never)]
+#[unsafe(link_section = ".longmode.text")]
+pub fn enter_long_mode(console: &Serial, root: u64, boot_info: u64) -> ! {
+    if read_cr0() & PAGE_ENABLE_BIT != 0 {
+        refuse_state(console, "cr0.pg");
+    }
+    if read_eflags() & INTERRUPT_ENABLE_BIT != 0 {
+        refuse_state(console, "eflags.if");
+    }
+    let pointer = GdtPointer {
+        limit: (core::mem::size_of_val(&GDT64) - 1) as u16,
+        base: &GDT64 as *const u64 as u32,
+    };
+    unsafe {
+        core::arch::asm!(
+            "lgdt [{gdt}]",
+            "mov cr3, {root}",
+            "mov edx, cr4",
+            "or edx, 0x20",
+            "mov cr4, edx",
+            "mov ecx, 0xC0000080",
+            "rdmsr",
+            "or eax, 0x100",
+            "wrmsr",
+            "mov edx, cr0",
+            "or edx, 0x80000000",
+            "mov cr0, edx",
+            "mov eax, 0x8",
+            "lea ecx, 2f",
+            "push eax",
+            "push ecx",
+            "retf",
+            ".code64",
+            "2:",
+            "mov eax, 0x10",
+            "mov ds, ax",
+            "mov es, ax",
+            "mov ss, ax",
+            "mov rsp, 0x7F000",
+            "mov eax, {magic}",
+            "mov ebx, {info}",
+            "movabs rdi, 0xFFFF800000100000",
+            "jmp rdi",
+            gdt = in(reg) &pointer as *const GdtPointer as u32,
+            root = in(reg) root as u32,
+            magic = in(reg) BOOT_INFO_MAGIC,
+            info = in(reg) boot_info as u32,
+            out("eax") _,
+            out("ecx") _,
+            out("edx") _,
+        )
+    }
+    rosx_boot_common::halt_forever()
+}
+
+fn read_cr0() -> u32 {
+    let value: u32;
+    unsafe {
+        core::arch::asm!(
+            "mov {value}, cr0",
+            value = out(reg) value,
+            options(nomem, nostack, preserves_flags)
+        )
+    };
+    value
+}
+
+fn read_eflags() -> u32 {
+    let value: u32;
+    unsafe { core::arch::asm!("pushfd", "pop {value}", value = out(reg) value, options(preserves_flags)) };
+    value
+}
+
+fn refuse_state(console: &Serial, detail: &str) -> ! {
+    console.write_str("[ERR] state ");
+    console.write_line(detail);
+    debug_exit(DEBUG_EXIT_FAILURE)
+}
+
+fn refuse_memory(console: &Serial) -> ! {
+    console.write_line("[ERR] mem");
+    debug_exit(DEBUG_EXIT_FAILURE)
 }
