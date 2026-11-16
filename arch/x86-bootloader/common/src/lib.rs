@@ -3,6 +3,7 @@
 pub mod bios;
 pub mod biosdisk;
 pub mod crc32;
+pub mod elf32;
 pub mod gdt;
 pub mod memnorm;
 pub mod serial;
