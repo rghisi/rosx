@@ -71,29 +71,27 @@ chs_geom:
     andb $0x3F, chs_sptrack
     incb %dh                     # head count = max head + 1
     movb %dh, chs_heads
-    xorw %ax, %ax                # AH=08h clobbers ES; the AH=02h read needs ES=0
-    movw %ax, %es
 
 read_image:
     movw $8, cur_lba             # header sector
-    movw $HDR_SCRATCH, cur_buf
+    movw $(HDR_SCRATCH >> 4), buf_seg
     movw $0x0001, cur_rem
     call read_sectors
     call validate_header         # leaves the body sector count in cur_rem
     movw $9, cur_lba             # body follows the one-sector header
-    movw $LOAD_OFF, cur_buf
+    movw $(LOAD_OFF >> 4), buf_seg
     call read_sectors
     ret
 
-# read_sectors: transfer cur_rem sectors at cur_lba into 0:cur_buf, picking the
+# read_sectors: transfer cur_rem sectors at cur_lba into buf_seg:0, picking the
 # LBA or CHS driver from use_lba. Any read failure is a fatal disk error.
 read_sectors:
     cmpb $0x00, use_lba
     je chs_read
     movw cur_rem, %ax
     movw %ax, dap_count
-    movw cur_buf, %ax
-    movw %ax, dap_off
+    movw buf_seg, %ax
+    movw %ax, dap_seg            # 512-byte steps keep the DAP offset at zero
     mov cur_lba, %ax
     movw %ax, dap_lba_lo         # the upper six LBA bytes are zero-init, never rewritten
     movb $0x42, %ah
@@ -103,7 +101,7 @@ read_sectors:
     jc disk_err
     ret
 
-# chs_read: read cur_rem sectors from cur_lba into 0:cur_buf, one per INT 13h.
+# chs_read: read cur_rem sectors from cur_lba into buf_seg:0, one per INT 13h.
 chs_read:
     cmpw $0, cur_rem
     je chs_done
@@ -126,13 +124,15 @@ chs_read:
     orb %ah, %al
     movb %al, %cl
     movb boot_drive, %dl
-    movw cur_buf, %bx
+    movw buf_seg, %ax
+    movw %ax, %es                # ES:0 reaches past the 64 KiB offset ceiling
+    xorw %bx, %bx
     movb $0x01, %al              # one sector
     movb $0x02, %ah
     int $0x13
     jc disk_err
 
-    addw $512, cur_buf
+    addw $0x20, buf_seg          # next 512-byte paragraph
     incw cur_lba
     decw cur_rem
     jmp chs_read
@@ -221,13 +221,13 @@ dap_resv:
 dap_count:
     .byte 0, 0
 dap_off:
-    .byte 0, 0
+    .byte 0, 0                   # stays zero: every transfer is paragraph-aligned
 dap_seg:
     .byte 0, 0
 dap_lba_lo:
     .byte 0, 0
     .byte 0, 0, 0, 0, 0, 0
-cur_buf:
+buf_seg:
     .word 0
 cur_lba:
     .word 0
