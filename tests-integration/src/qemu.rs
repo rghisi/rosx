@@ -339,6 +339,26 @@ impl QemuSession {
         self.send_key('\n');
     }
 
+    pub fn run_command(
+        &mut self,
+        line: &str,
+        done: impl Fn(&str) -> bool,
+        attempts: usize,
+        budget: Duration,
+    ) -> String {
+        let mark = self.mark();
+        for _attempt in 0..attempts {
+            self.send_line(line);
+            let _ = self.wait_until_since(mark, |delta| {
+                done(delta) || delta.contains("Unknown command")
+            }, budget);
+            if done(&self.content_since(mark)) {
+                break;
+            }
+        }
+        self.content_since(mark)
+    }
+
     fn monitor_mut(&mut self) -> &mut Monitor {
         if self.monitor.is_none() {
             let socket = self.monitor_socket();

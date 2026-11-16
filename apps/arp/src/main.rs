@@ -15,6 +15,7 @@ use vfs_protocol::client::Vfs;
 const LAUNCH_ATTEMPTS: usize = 100;
 const LAUNCH_RETRY_DELAY_MS: u64 = 100;
 const DEFAULT_WATCH_SECONDS: u64 = 10;
+const DEFAULT_RESPOND_SECONDS: u64 = 10;
 const WHO_HAS_TIMEOUT_MS: u64 = 5_000;
 const POLL_INTERVAL_MS: u64 = 10;
 
@@ -116,12 +117,72 @@ fn watch(nic: &Ne2k, seconds: u64) {
     );
 }
 
+fn announce(nic: &Ne2k, my_ip: [u8; IPV4_BYTES]) {
+    let Ok(mac) = nic.mac() else {
+        println!("arp mac failed");
+        return;
+    };
+    match nic.send(&wire::gratuitous_reply(mac, my_ip)) {
+        Ok(()) => println!("arp announced {} is at {}", format_ipv4(my_ip), format_mac(mac)),
+        Err(_) => println!("arp send failed"),
+    }
+}
+
+fn respond(nic: &Ne2k, my_ip: [u8; IPV4_BYTES], seconds: u64) {
+    let Ok(mac) = nic.mac() else {
+        println!("arp mac failed");
+        return;
+    };
+    let deadline = Syscall::now() + seconds * 1000;
+    let mut answers = 0u32;
+    loop {
+        match nic.poll() {
+            Ok(Some(frame)) => {
+                let request = match wire::decode_ethernet(&frame) {
+                    Ok(header) if header.ethertype == wire::ETHERTYPE_ARP => {
+                        wire::decode_arp(header.payload)
+                            .ok()
+                            .filter(|packet| is_arp_request_for(packet, my_ip))
+                    }
+                    _ => None,
+                };
+                if let Some(packet) = request {
+                    let answer = wire::reply(mac, my_ip, packet.sender_mac, packet.sender_ip);
+                    if nic.send(&answer).is_ok() {
+                        answers += 1;
+                        println!(
+                            "arp replied to {} ({})",
+                            format_ipv4(packet.sender_ip),
+                            format_mac(packet.sender_mac)
+                        );
+                    }
+                }
+            }
+            Ok(None) => {
+                if Syscall::now() >= deadline {
+                    println!("arp respond done: {} replies", answers);
+                    return;
+                }
+                Syscall::sleep(POLL_INTERVAL_MS);
+            }
+            Err(_) => {
+                println!("arp poll failed");
+                return;
+            }
+        }
+    }
+}
+
 fn service_is_live(binding: &str) -> bool {
     Syscall::ipc_connect(binding).is_ok()
 }
 
-fn is_arp_reply_from(packet_source: &wire::ArpPacket, target: [u8; IPV4_BYTES]) -> bool {
-    packet_source.operation == wire::Operation::Reply && packet_source.sender_ip == target
+fn is_arp_reply_from(packet: &wire::ArpPacket, target: [u8; IPV4_BYTES]) -> bool {
+    packet.operation == wire::Operation::Reply && packet.sender_ip == target
+}
+
+fn is_arp_request_for(packet: &wire::ArpPacket, target: [u8; IPV4_BYTES]) -> bool {
+    packet.operation == wire::Operation::Request && packet.target_ip == target
 }
 
 fn who_has(nic: &Ne2k, source_ip: [u8; IPV4_BYTES], target_ip: [u8; IPV4_BYTES]) {
@@ -266,8 +327,36 @@ fn main() {
             }
             who_has(&nic, source_ip, target_ip);
         }
+        Some("respond") => {
+            let Some(ip_text) = requested.get(1).copied() else {
+                println!("arp usage: arp respond <ip> [secs]");
+                return;
+            };
+            let Some(my_ip) = parse_ipv4(ip_text) else {
+                println!("arp invalid address: {ip_text}");
+                return;
+            };
+            let seconds = requested
+                .get(2)
+                .and_then(|text| parse_seconds(text))
+                .unwrap_or(DEFAULT_RESPOND_SECONDS);
+            respond(&nic, my_ip, seconds);
+        }
+        Some("announce") => {
+            let Some(ip_text) = requested.get(1).copied() else {
+                println!("arp usage: arp announce <ip>");
+                return;
+            };
+            let Some(my_ip) = parse_ipv4(ip_text) else {
+                println!("arp invalid address: {ip_text}");
+                return;
+            };
+            announce(&nic, my_ip);
+        }
         Some(subcommand) => println!("arp unknown subcommand: {subcommand}"),
-        None => println!("arp usage: arp watch [secs] | arp who-has <tip> [from <sip>]"),
+        None => println!(
+            "arp usage: arp watch [secs] | arp who-has <tip> [from <sip>] | arp respond <ip> [secs] | arp announce <ip>"
+        ),
     }
     nic.disconnect();
 }
