@@ -35,7 +35,7 @@ const PROBE_CONTENTS: &str = "rosx boot-image probe file\n";
 const INITRD_LOCAL_NAME: &str = "initrd.bin";
 const INITRD_VOLUME_NAME: &str = "INITRD.BIN";
 const KERNEL_LOCAL_NAME: &str = "kernel.elf";
-const KERNEL_VOLUME_NAME: &str = "KERNEL.ELF";
+pub const KERNEL_VOLUME_NAME: &str = "KERNEL.ELF";
 pub const FAKE_KERNEL_CRATE: &str = "fake-kernel-32";
 
 pub const INITRD_SEED: u64 = 0xB007_7E73_2026_1107;

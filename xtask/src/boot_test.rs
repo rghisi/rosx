@@ -55,6 +55,13 @@ enum ImageSource {
     BootImage(BootImage),
     CorruptStage2Header,
     ScribbledFatRoot,
+    PatchedKernel(KernelPatch),
+}
+
+#[derive(Clone, Copy)]
+enum KernelPatch {
+    Elf64Class,
+    ZeroPhysicalAddress,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -89,7 +96,7 @@ struct BootCheckpoint {
     timeout_seconds: u64,
 }
 
-const CHECKPOINTS: [BootCheckpoint; 12] = [
+const CHECKPOINTS: [BootCheckpoint; 15] = [
     BootCheckpoint {
         name: "harness-pass",
         machine: &BIOS_32,
@@ -223,6 +230,39 @@ const CHECKPOINTS: [BootCheckpoint; 12] = [
         timeout_seconds: 3,
     },
     BootCheckpoint {
+        name: "elf32-load",
+        machine: &BIOS_32,
+        media: BootMedia::Disk,
+        source: ImageSource::BootImage(BootImage::Boot32),
+        expected: ExitVerdict::Success,
+        serial_contains: &[
+            "[ELF] arch=X86_32 entry=0x00100000 phys=0x00100000..",
+            "[FK32] alive",
+        ],
+        serial_absent: &["[ERR] elf"],
+        timeout_seconds: 3,
+    },
+    BootCheckpoint {
+        name: "elf32-class64",
+        machine: &BIOS_32,
+        media: BootMedia::Disk,
+        source: ImageSource::PatchedKernel(KernelPatch::Elf64Class),
+        expected: ExitVerdict::Failure,
+        serial_contains: &["[ERR] elf class"],
+        serial_absent: &["[ELF]", "[FK32]"],
+        timeout_seconds: 3,
+    },
+    BootCheckpoint {
+        name: "elf32-zero-paddr",
+        machine: &BIOS_32,
+        media: BootMedia::Disk,
+        source: ImageSource::PatchedKernel(KernelPatch::ZeroPhysicalAddress),
+        expected: ExitVerdict::Failure,
+        serial_contains: &["[ERR] elf layout"],
+        serial_absent: &["[FK32]"],
+        timeout_seconds: 3,
+    },
+    BootCheckpoint {
         name: "stage2-corrupt-header",
         machine: &BIOS_32,
         media: BootMedia::Disk,
@@ -286,6 +326,7 @@ fn prepare_image(source: &ImageSource) -> PathBuf {
         ImageSource::BootImage(kind) => boot_image::pack(*kind),
         ImageSource::CorruptStage2Header => pack_corrupt_header_image(),
         ImageSource::ScribbledFatRoot => pack_scribbled_fat_root_image(),
+        ImageSource::PatchedKernel(patch) => pack_patched_kernel_image(*patch),
     }
 }
 
@@ -336,6 +377,63 @@ fn pack_scribbled_fat_root_image() -> PathBuf {
     file.write_all(&vec![0u8; (root_entries * 32) as usize])
         .expect("cannot scribble the FAT root directory");
     image
+}
+
+fn pack_patched_kernel_image(patch: KernelPatch) -> PathBuf {
+    let image = workspace_root()
+        .join("target")
+        .join("boot-test")
+        .join(match patch {
+            KernelPatch::Elf64Class => "stage2-elf64-class.img",
+            KernelPatch::ZeroPhysicalAddress => "stage2-elf-zero-paddr.img",
+        });
+    fs::copy(boot_image::pack(BootImage::Boot32), &image)
+        .expect("cannot copy the boot32 image for kernel patching");
+    let mut elf = boot_image::build_fake_kernel();
+    match patch {
+        KernelPatch::Elf64Class => patch_identity_to_elf64(&mut elf),
+        KernelPatch::ZeroPhysicalAddress => zero_first_load_physical_address(&mut elf),
+    }
+    mcopy_kernel_onto(&image, &elf);
+    image
+}
+
+fn patch_identity_to_elf64(elf: &mut [u8]) {
+    elf[4] = 2;
+    elf[18..20].copy_from_slice(&0x003Eu16.to_le_bytes());
+}
+
+fn zero_first_load_physical_address(elf: &mut [u8]) {
+    const PT_LOAD: u32 = 1;
+    let table = u32::from_le_bytes(elf[28..32].try_into().unwrap()) as usize;
+    let entry_size = u16::from_le_bytes(elf[42..44].try_into().unwrap()) as usize;
+    let count = u16::from_le_bytes(elf[44..46].try_into().unwrap()) as usize;
+    for index in 0..count {
+        let record = table + index * entry_size;
+        let kind = u32::from_le_bytes(elf[record..record + 4].try_into().unwrap());
+        if kind == PT_LOAD {
+            elf[record + 12..record + 16].copy_from_slice(&0u32.to_le_bytes());
+            return;
+        }
+    }
+    panic!("the fake kernel ELF carries no PT_LOAD to corrupt");
+}
+
+fn mcopy_kernel_onto(image: &Path, elf: &[u8]) {
+    let scratch = workspace_root()
+        .join("target")
+        .join("boot-test")
+        .join("patched-kernel.elf");
+    fs::write(&scratch, elf).expect("cannot write the patched kernel scratch file");
+    let offset = u64::from(boot_image::PARTITION_START_LBA) * boot_image::BOOT_SECTOR_BYTES as u64;
+    let mut cmd = Command::new("mcopy");
+    cmd.arg("-m")
+        .arg("-o")
+        .arg(format!("-i{}@@{}", image.display(), offset))
+        .arg(&scratch)
+        .arg(format!("::{}", boot_image::KERNEL_VOLUME_NAME));
+    let status = cmd.status().expect("failed to run mcopy");
+    assert!(status.success(), "mcopy cannot replace the kernel on the test image");
 }
 
 fn pack_harness_stub_image(variant: StubVariant) -> PathBuf {
