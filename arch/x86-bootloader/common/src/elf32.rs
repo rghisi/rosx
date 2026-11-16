@@ -11,14 +11,7 @@ pub const ELF32_PROGRAM_HEADER_BYTES: usize = 32;
 pub const MAX_PROGRAM_HEADERS: usize = 64;
 pub const MAX_KERNEL_SEGMENTS: usize = 8;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ElfError {
-    Class,
-    Machine,
-    Format,
-    Layout,
-    Entry,
-}
+pub use crate::ElfError;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct KernelSegment {
@@ -159,7 +152,7 @@ fn overlaps_loaded(loaded: &[KernelSegment], candidate: KernelSegment) -> bool {
     })
 }
 
-fn align_up_page(bytes: u64) -> u64 {
+pub(crate) fn align_up_page(bytes: u64) -> u64 {
     bytes.saturating_add(PAGE_BYTES - 1) & !(PAGE_BYTES - 1)
 }
 

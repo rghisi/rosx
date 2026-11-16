@@ -5,6 +5,7 @@ use system::boot_info::BootInfo;
 use system::boot_info::BootMethod;
 use system::boot_info::DisplayInfo;
 use system::boot_info::DisplayKind;
+use system::boot_info::HIGHER_HALF_OFFSET;
 use system::boot_info::MemoryRegion;
 
 pub const BOOT_INFO_WINDOW_ADDRESS: u64 = 0x0003_0000;
@@ -38,6 +39,20 @@ pub fn assemble(memory_map_len: u32, initrd_address: u64, initrd_size: u64) -> B
             blue_mask_shift: 0,
         },
     }
+}
+
+pub fn assemble_long_mode(
+    memory_map_len: u32,
+    initrd_address: u64,
+    initrd_size: u64,
+) -> BootInfo {
+    let mut info = assemble(memory_map_len, initrd_address, initrd_size);
+    info.arch = BootArch::X86_64;
+    info.memory_map_ptr += HIGHER_HALF_OFFSET;
+    if info.initrd_addr != 0 {
+        info.initrd_addr += HIGHER_HALF_OFFSET;
+    }
+    info
 }
 
 #[cfg(test)]
@@ -103,5 +118,25 @@ mod tests {
         assert_eq!(info.display.height, 25);
         assert_eq!(info.display.pitch, 160);
         assert_eq!(info.display.bpp, 0);
+    }
+
+    #[test]
+    fn long_mode_assembly_declares_x86_64_and_the_direct_map() {
+        let info = assemble_long_mode(12, 0x0010_1000, 65536);
+        assert_eq!(info.arch, BootArch::X86_64);
+        assert_eq!(
+            info.memory_map_ptr,
+            BOOT_INFO_WINDOW_ADDRESS + HIGHER_HALF_OFFSET
+        );
+        assert_eq!(info.initrd_addr, 0x0010_1000 + HIGHER_HALF_OFFSET);
+        assert_eq!(info.initrd_size, 65536);
+        assert_eq!(info.magic, BOOT_INFO_MAGIC);
+    }
+
+    #[test]
+    fn an_absent_initrd_keeps_the_zero_address_in_long_mode_too() {
+        let empty = assemble_long_mode(9, 0, 0);
+        assert_eq!(empty.initrd_addr, 0);
+        assert_eq!(empty.initrd_size, 0);
     }
 }

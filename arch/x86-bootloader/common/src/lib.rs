@@ -5,6 +5,7 @@ pub mod biosdisk;
 pub mod bootinfo;
 pub mod crc32;
 pub mod elf32;
+pub mod elf64;
 pub mod gdt;
 pub mod memnorm;
 pub mod pagetable;
@@ -13,6 +14,15 @@ pub mod serial;
 mod pio;
 
 pub const COM1_PORT: u16 = 0x3F8;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ElfError {
+    Class,
+    Machine,
+    Format,
+    Layout,
+    Entry,
+}
 
 pub const DEBUG_EXIT_PORT: u16 = 0xF4;
 pub const DEBUG_EXIT_SUCCESS: u8 = 0x10;
