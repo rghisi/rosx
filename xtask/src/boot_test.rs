@@ -17,18 +17,30 @@ struct BootMachine {
     binary: &'static str,
     cpu: &'static str,
     ram: &'static str,
+    ram_bytes: u64,
 }
+
+const MEBIBYTE: u64 = 1024 * 1024;
 
 const BIOS_32: BootMachine = BootMachine {
     binary: "qemu-system-i386",
     cpu: "486",
     ram: "32M",
+    ram_bytes: 32 * MEBIBYTE,
+};
+
+const BIOS_32_512: BootMachine = BootMachine {
+    binary: "qemu-system-i386",
+    cpu: "486",
+    ram: "512M",
+    ram_bytes: 512 * MEBIBYTE,
 };
 
 const BIOS_64: BootMachine = BootMachine {
     binary: "qemu-system-x86_64",
     cpu: "qemu64",
     ram: "128M",
+    ram_bytes: 128 * MEBIBYTE,
 };
 
 #[derive(Copy, Clone)]
@@ -76,7 +88,7 @@ struct BootCheckpoint {
     timeout_seconds: u64,
 }
 
-const CHECKPOINTS: [BootCheckpoint; 8] = [
+const CHECKPOINTS: [BootCheckpoint; 9] = [
     BootCheckpoint {
         name: "harness-pass",
         machine: &BIOS_32,
@@ -161,6 +173,20 @@ const CHECKPOINTS: [BootCheckpoint; 8] = [
         ],
         serial_absent: &["BOOTLOADER-HARNESS", "[ERR] disk"],
         timeout_seconds: 2,
+    },
+    BootCheckpoint {
+        name: "stage2-map-512m",
+        machine: &BIOS_32_512,
+        media: BootMedia::Disk,
+        source: ImageSource::BootImage(BootImage::Boot32),
+        expected: ExitVerdict::Success,
+        serial_contains: &[
+            "[STAGE1] OK",
+            "[STAGE2_32] A20=OK THUNK=OK",
+            "[MEM] entries=",
+        ],
+        serial_absent: &["BOOTLOADER-HARNESS", "[ERR] disk", "[ERR] memnorm"],
+        timeout_seconds: 3,
     },
     BootCheckpoint {
         name: "stage2-corrupt-header",
@@ -340,6 +366,11 @@ fn verdict_mismatch(checkpoint: &BootCheckpoint, outcome: &BootOutcome) -> Optio
             return Some(format!("serial output unexpectedly contains {forbidden_text:?}"));
         }
     }
+    if outcome.serial.contains("[STAGE2_32]") {
+        if let Some(reason) = verify_memory_map(&outcome.serial, checkpoint.machine.ram_bytes) {
+            return Some(reason);
+        }
+    }
     None
 }
 
@@ -347,4 +378,223 @@ fn dump_serial(serial: &str) {
     for line in serial.lines() {
         println!("  serial | {line}");
     }
+}
+
+const FIRST_MEBIBYTE: u64 = MEBIBYTE;
+
+#[derive(Clone, Copy)]
+struct MapRow {
+    base: u64,
+    length: u64,
+    kind: u32,
+}
+
+struct MapSummary {
+    entries: u64,
+    raw_sum: u64,
+    norm_sum: u64,
+    usable: u64,
+    gap: u64,
+}
+
+struct Reservation {
+    start: u64,
+    end: u64,
+    kind: u32,
+}
+
+const RESERVATION_TABLE: [Reservation; 12] = [
+    Reservation { start: 0x0000_0000, end: 0x0000_0400, kind: 2 },
+    Reservation { start: 0x0000_0400, end: 0x0000_0500, kind: 2 },
+    Reservation { start: 0x0000_0500, end: 0x0000_0600, kind: 3 },
+    Reservation { start: 0x0000_0600, end: 0x0000_0800, kind: 3 },
+    Reservation { start: 0x0000_0800, end: 0x0000_7C00, kind: 3 },
+    Reservation { start: 0x0000_7C00, end: 0x0000_7E00, kind: 3 },
+    Reservation { start: 0x0000_7E00, end: 0x0003_0000, kind: 3 },
+    Reservation { start: 0x0003_0000, end: 0x0003_1000, kind: 2 },
+    Reservation { start: 0x0003_1000, end: 0x0004_0000, kind: 1 },
+    Reservation { start: 0x0004_0000, end: 0x0007_C000, kind: 3 },
+    Reservation { start: 0x0007_C000, end: 0x0008_0000, kind: 2 },
+    Reservation { start: 0x0008_0000, end: FIRST_MEBIBYTE, kind: 2 },
+];
+
+fn verify_memory_map(serial: &str, ram_bytes: u64) -> Option<String> {
+    let rows = parse_map_rows(serial)?;
+    let summary = parse_map_summary(serial)?;
+    if rows.is_empty() {
+        return Some("memory map printed no [MEM] region rows".to_string());
+    }
+    if summary.entries as usize != rows.len() {
+        return Some(format!(
+            "summary claims {} entries, serial printed {}",
+            summary.entries,
+            rows.len()
+        ));
+    }
+    if summary.raw_sum != summary.norm_sum {
+        return Some(format!(
+            "normalization changed the byte total: raw_sum={:#x} norm_sum={:#x}",
+            summary.raw_sum, summary.norm_sum
+        ));
+    }
+    if rows.iter().any(|row| row.length == 0) {
+        return Some("memory map carries a zero-length region".to_string());
+    }
+    for pair in rows.windows(2) {
+        let (previous, next) = (pair[0], pair[1]);
+        if next.base < previous.base + previous.length {
+            return Some(format!(
+                "regions overlap or are unsorted: {:#x}..{:#x} then {:#x}..{:#x}",
+                previous.base,
+                previous.base + previous.length,
+                next.base,
+                next.base + next.length
+            ));
+        }
+    }
+    let recomputed_norm_sum: u64 = rows.iter().map(|row| row.length).sum();
+    if recomputed_norm_sum != summary.norm_sum {
+        return Some(format!(
+            "row lengths sum to {:#x}, summary says norm_sum={:#x}",
+            recomputed_norm_sum, summary.norm_sum
+        ));
+    }
+    let recomputed_usable: u64 = rows
+        .iter()
+        .filter(|row| row.kind == 1)
+        .map(|row| row.length)
+        .sum();
+    if recomputed_usable != summary.usable {
+        return Some(format!(
+            "usable rows sum to {:#x}, summary says usable={:#x}",
+            recomputed_usable, summary.usable
+        ));
+    }
+    if rows
+        .iter()
+        .any(|row| !matches!(row.kind, 1 | 2 | 3 | 5) && row.base < FIRST_MEBIBYTE)
+    {
+        return Some("memory map carries a kind outside the boot ABI".to_string());
+    }
+    for row in rows.iter().filter(|row| row.base < FIRST_MEBIBYTE) {
+        let Some(expected) = reservation_kind(row.base) else {
+            return Some(format!(
+                "map row {:#x}..{:#x} sits outside the reservation table",
+                row.base,
+                row.base + row.length
+            ));
+        };
+        if row.kind != expected {
+            return Some(format!(
+                "reservation table demands kind {} at {:#x}, map says kind {}",
+                expected, row.base, row.kind
+            ));
+        }
+    }
+    let usable_above_one_mebibyte = rows
+        .iter()
+        .filter(|row| row.kind == 1 && row.base >= FIRST_MEBIBYTE)
+        .map(|row| row.length)
+        .sum::<u64>();
+    let top_of_usable = rows
+        .iter()
+        .filter(|row| row.kind == 1)
+        .map(|row| row.base + row.length)
+        .max()
+        .unwrap_or(0);
+    let expected_gap = top_of_usable
+        .saturating_sub(FIRST_MEBIBYTE)
+        .saturating_sub(usable_above_one_mebibyte);
+    if expected_gap != summary.gap {
+        return Some(format!(
+            "recomputed gap {:#x} differs from printed gap={:#x}",
+            expected_gap, summary.gap
+        ));
+    }
+    if summary.gap > 4 * MEBIBYTE {
+        return Some(format!(
+            "bios gap {:#x} exceeds the 4 MiB allowance",
+            summary.gap
+        ));
+    }
+    if !(top_of_usable <= ram_bytes && ram_bytes - top_of_usable <= MEBIBYTE) {
+        return Some(format!(
+            "top of usable {:#x} is off the machine's {:#x} bytes of RAM",
+            top_of_usable, ram_bytes
+        ));
+    }
+    if usable_above_one_mebibyte == 0 {
+        return Some("memory map reports no usable memory above 1 MiB".to_string());
+    }
+    None
+}
+
+fn reservation_kind(address: u64) -> Option<u32> {
+    RESERVATION_TABLE
+        .iter()
+        .find(|slot| slot.start <= address && address < slot.end)
+        .map(|slot| slot.kind)
+}
+
+fn parse_hex_value(token: &str) -> Option<u64> {
+    let digits = token.strip_prefix("0x")?;
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    u64::from_str_radix(digits, 16).ok()
+}
+
+fn parse_map_rows(serial: &str) -> Option<Vec<MapRow>> {
+    let mut rows = Vec::new();
+    for line in serial.lines().map(|line| line.trim_end_matches('\r')) {
+        let Some(rest) = line.strip_prefix("[MEM] base=") else {
+            continue;
+        };
+        let mut fields = rest.split_whitespace();
+        let base = parse_hex_value(fields.next()?)?;
+        if fields.next()? != "len=" {
+            return None;
+        }
+        let length = parse_hex_value(fields.next()?)?;
+        if fields.next()? != "kind=" {
+            return None;
+        }
+        let kind = fields.next()?.parse::<u32>().ok()?;
+        if fields.next().is_some() {
+            return None;
+        }
+        rows.push(MapRow { base, length, kind });
+    }
+    Some(rows)
+}
+
+fn parse_map_summary(serial: &str) -> Option<MapSummary> {
+    let line = serial
+        .lines()
+        .map(|line| line.trim_end_matches('\r'))
+        .find(|line| line.starts_with("[MEM] entries="))?;
+    let mut entries = None;
+    let mut raw_sum = None;
+    let mut norm_sum = None;
+    let mut usable = None;
+    let mut gap = None;
+    let mut tokens = line.strip_prefix("[MEM] ")?.split_whitespace();
+    while let Some(token) = tokens.next() {
+        match token {
+            "entries=" => entries = Some(tokens.next()?.parse::<u64>().ok()?),
+            "raw_sum=" => raw_sum = parse_hex_value(tokens.next()?),
+            "norm_sum=" => norm_sum = parse_hex_value(tokens.next()?),
+            "usable=" => usable = parse_hex_value(tokens.next()?),
+            "gap=" => gap = parse_hex_value(tokens.next()?),
+            "OK" => {}
+            _ => return None,
+        }
+    }
+    Some(MapSummary {
+        entries: entries?,
+        raw_sum: raw_sum?,
+        norm_sum: norm_sum?,
+        usable: usable?,
+        gap: gap?,
+    })
 }
