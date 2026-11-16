@@ -50,6 +50,13 @@ const BIOS_64: BootMachine = BootMachine {
     ram_bytes: 128 * MEBIBYTE,
 };
 
+const BIOS_64_NO_LM: BootMachine = BootMachine {
+    binary: "qemu-system-x86_64",
+    cpu: "qemu64,-lm",
+    ram: "128M",
+    ram_bytes: 128 * MEBIBYTE,
+};
+
 #[derive(Copy, Clone)]
 enum BootMedia {
     Disk,
@@ -105,7 +112,7 @@ struct BootCheckpoint {
     timeout_seconds: u64,
 }
 
-const CHECKPOINTS: [BootCheckpoint; 18] = [
+const CHECKPOINTS: [BootCheckpoint; 21] = [
     BootCheckpoint {
         name: "harness-pass",
         machine: &BIOS_32,
@@ -170,7 +177,7 @@ const CHECKPOINTS: [BootCheckpoint; 18] = [
         expected: ExitVerdict::Success,
         serial_contains: &[
             "[STAGE1] OK",
-            "[STAGE2_32] A20=OK THUNK=OK",
+            "[STAGE2_64] A20=OK THUNK=OK",
             "[MEM88]",
             "[INT13]",
             "[DISK] media=lba",
@@ -309,6 +316,43 @@ const CHECKPOINTS: [BootCheckpoint; 18] = [
         expected: ExitVerdict::Failure,
         serial_contains: &["[ERR] elf layout"],
         serial_absent: &["[INITRD]", "kernel loaded"],
+        timeout_seconds: 3,
+    },
+    BootCheckpoint {
+        name: "lm-smoke",
+        machine: &BIOS_64,
+        media: BootMedia::Disk,
+        source: ImageSource::BootImage(BootImage::Boot64),
+        expected: ExitVerdict::Success,
+        serial_contains: &[
+            "[STAGE1] OK",
+            "[STAGE2_64] A20=OK THUNK=OK",
+            "[KERNEL64] addr=0x00100000",
+            "[INITRD] addr=",
+            "[PAGETABLE] root=",
+            "[FK64] alive",
+        ],
+        serial_absent: &["[FAT-ERR]", "[ERR]"],
+        timeout_seconds: 3,
+    },
+    BootCheckpoint {
+        name: "lm-guard-486",
+        machine: &BIOS_32,
+        media: BootMedia::Disk,
+        source: ImageSource::BootImage(BootImage::Boot64),
+        expected: ExitVerdict::Failure,
+        serial_contains: &["[STAGE1] OK", "[ERR] CPU does not support x86_64 Long Mode"],
+        serial_absent: &["[STAGE2_64]", "[FK64]", "[MEM88]"],
+        timeout_seconds: 3,
+    },
+    BootCheckpoint {
+        name: "lm-guard-nolm",
+        machine: &BIOS_64_NO_LM,
+        media: BootMedia::Disk,
+        source: ImageSource::BootImage(BootImage::Boot64),
+        expected: ExitVerdict::Failure,
+        serial_contains: &["[STAGE1] OK", "[ERR] CPU does not support x86_64 Long Mode"],
+        serial_absent: &["[STAGE2_64]", "[FK64]", "[MEM88]"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -623,15 +667,16 @@ fn verdict_mismatch(checkpoint: &BootCheckpoint, outcome: &BootOutcome) -> Optio
             return Some(format!("serial output unexpectedly contains {forbidden_text:?}"));
         }
     }
-    if outcome.serial.contains("[STAGE2_32]")
+    if outcome.serial.contains("[MEM] entries=")
         && let Some(reason) = verify_memory_map(&outcome.serial, checkpoint.machine.ram_bytes)
     {
         return Some(reason);
     }
-    if let Some(line) = outcome
-        .serial
-        .lines()
-        .find(|line| line.starts_with("[INITRD]"))
+    if outcome.serial.contains("kernel loaded")
+        && let Some(line) = outcome
+            .serial
+            .lines()
+            .find(|line| line.starts_with("[INITRD]"))
         && let Some(reason) = verify_initrd(line, &outcome.serial)
     {
         return Some(reason);
