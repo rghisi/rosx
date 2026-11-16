@@ -81,10 +81,10 @@ fn walk_memory_map(console: &Serial, info: *const u8) {
         if length == 0 {
             violation(console, "map-entry");
         }
-        if let Some(previous) = previous_end {
-            if base < previous {
-                violation(console, "map-order");
-            }
+        if let Some(previous) = previous_end
+            && base < previous
+        {
+            violation(console, "map-order");
         }
         previous_end = Some(base + length);
         if kind == MemoryKind::Usable {
