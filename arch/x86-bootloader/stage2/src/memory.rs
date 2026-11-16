@@ -32,7 +32,13 @@ enum E820Outcome {
     TooMany,
 }
 
-pub fn publish_memory_map(thunk: &BiosThunk, console: &Serial, mem88_kib: u16) {
+pub struct DetectedMap {
+    raw: [RawEntry; MEMORY_MAP_MAX_ENTRIES],
+    raw_count: usize,
+    raw_sum: u64,
+}
+
+pub fn detect(thunk: &BiosThunk, console: &Serial, mem88_kib: u16) -> DetectedMap {
     let mut raw = [RawEntry::usable(0, 0); MEMORY_MAP_MAX_ENTRIES];
     let raw_count = match collect_e820(thunk, console, &mut raw) {
         E820Outcome::Collected(count) => count,
@@ -43,34 +49,36 @@ pub fn publish_memory_map(thunk: &BiosThunk, console: &Serial, mem88_kib: u16) {
         E820Outcome::Refused => {
             console.write_line("[MEM] e820 refused, trying e801");
             match detected_e801(thunk) {
-            Some((entries, count)) => {
-                raw[..count].copy_from_slice(&entries[..count]);
-                count
-            }
-            None => {
-                console.write_line("[MEM] e801 refused, using e88");
-                let (entries, count) = synthesize_e88(mem88_kib);
-                raw[..count].copy_from_slice(&entries[..count]);
-                count
+                Some((entries, count)) => {
+                    raw[..count].copy_from_slice(&entries[..count]);
+                    count
+                }
+                None => {
+                    console.write_line("[MEM] e801 refused, using e88");
+                    let (entries, count) = synthesize_e88(mem88_kib);
+                    raw[..count].copy_from_slice(&entries[..count]);
+                    count
+                }
             }
         }
-        },
     };
     let raw_sum = raw[..raw_count].iter().map(|entry| entry.length).sum();
-    let mut map = [MemoryRegion {
-        base: 0,
-        length: 0,
-        kind: MemoryKind::Reserved,
-    }; MEMORY_MAP_MAX_ENTRIES];
-    let count = match normalize(&raw[..raw_count], None, &mut map) {
-        Ok(count) => count,
-        Err(_) => {
-            console.write_line("[ERR] memnorm");
-            debug_exit(DEBUG_EXIT_FAILURE);
-        }
-    };
-    write_map_to_home(&map[..count]);
-    for region in &map[..count] {
+    DetectedMap {
+        raw,
+        raw_count,
+        raw_sum,
+    }
+}
+
+pub fn usable_ceiling(map: &DetectedMap, console: &Serial) -> u64 {
+    let (regions, count) = normalize_or_refuse(map, None, console);
+    top_of_usable(&regions[..count])
+}
+
+pub fn publish(map: &DetectedMap, kernel_carve_out: Option<(u64, u64)>, console: &Serial) {
+    let (map_regions, count) = normalize_or_refuse(map, kernel_carve_out, console);
+    write_map_to_home(&map_regions[..count]);
+    for region in &map_regions[..count] {
         console.write_str("[MEM] base=");
         console.write_hex(region.base, 16);
         console.write_str(" len=");
@@ -79,25 +87,44 @@ pub fn publish_memory_map(thunk: &BiosThunk, console: &Serial, mem88_kib: u16) {
         console.write_dec(u64::from(region.kind as u32));
         console.write_line("");
     }
-    let usable_above_one_megabyte = map[..count]
+    let usable_above_one_megabyte = map_regions[..count]
         .iter()
         .filter(|region| region.kind == MemoryKind::Usable && region.base >= FIRST_MEGABYTE)
         .map(|region| region.length)
         .sum::<u64>();
-    let gap = top_of_usable(&map[..count])
+    let gap = top_of_usable(&map_regions[..count])
         .saturating_sub(FIRST_MEGABYTE)
         .saturating_sub(usable_above_one_megabyte);
     console.write_str("[MEM] entries=");
     console.write_dec(count as u64);
     console.write_str(" raw_sum=");
-    console.write_hex(raw_sum, 16);
+    console.write_hex(map.raw_sum, 16);
     console.write_str(" norm_sum=");
-    console.write_hex(region_sum(&map[..count]), 16);
+    console.write_hex(region_sum(&map_regions[..count]), 16);
     console.write_str(" usable=");
-    console.write_hex(usable_bytes(&map[..count]), 16);
+    console.write_hex(usable_bytes(&map_regions[..count]), 16);
     console.write_str(" gap=");
     console.write_hex(gap, 16);
     console.write_line(" OK");
+}
+
+fn normalize_or_refuse(
+    map: &DetectedMap,
+    kernel_carve_out: Option<(u64, u64)>,
+    console: &Serial,
+) -> ([MemoryRegion; MEMORY_MAP_MAX_ENTRIES], usize) {
+    let mut regions = [MemoryRegion {
+        base: 0,
+        length: 0,
+        kind: MemoryKind::Reserved,
+    }; MEMORY_MAP_MAX_ENTRIES];
+    match normalize(&map.raw[..map.raw_count], kernel_carve_out, &mut regions) {
+        Ok(count) => (regions, count),
+        Err(_) => {
+            console.write_line("[ERR] memnorm");
+            debug_exit(DEBUG_EXIT_FAILURE);
+        }
+    }
 }
 
 fn collect_e820(thunk: &BiosThunk, console: &Serial, raw: &mut [RawEntry]) -> E820Outcome {

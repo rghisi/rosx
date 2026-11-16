@@ -7,6 +7,7 @@ use rosx_boot_common::bios::Regs32;
 use rosx_boot_common::biosdisk::GEOMETRY_PACKET_ADDRESS;
 use rosx_boot_common::biosdisk::HARD_DRIVE_BASE;
 use rosx_boot_common::biosdisk::INT13;
+use rosx_boot_common::elf32::KernelImage;
 use rosx_boot_common::serial::Serial;
 use rosx_boot_common::DEBUG_EXIT_FAILURE;
 use rosx_boot_common::DEBUG_EXIT_SUCCESS;
@@ -58,12 +59,12 @@ extern "C" fn stage2_main() -> ! {
         debug_exit(DEBUG_EXIT_FAILURE);
     }
     report_boot_drive_geometry(&console, &thunk);
-    memory::publish_memory_map(&thunk, &console, kib as u16);
+    let detected_map = memory::detect(&thunk, &console, kib as u16);
     if !thunk.intact() {
         console.write_line("[ERR] trampoline");
         debug_exit(DEBUG_EXIT_FAILURE);
     }
-    let mut kernel = None;
+    let mut boot_payloads = None;
     if boot_drive() >= u16::from(HARD_DRIVE_BASE) {
         let Some(device) = BiosBlockDevice::bring_up(&thunk, boot_drive() as u8) else {
             console.write_line("[ERR] disk");
@@ -75,18 +76,26 @@ extern "C" fn stage2_main() -> ! {
         console.write_dec(device.slice_sectors());
         console.write_line("");
         let mut volume = fat::open(&console, device);
-        fat::load_initrd(&console, &mut volume);
-        kernel = Some(elf32::load_kernel(&console, &mut volume));
+        let kernel = elf32::load_kernel(&console, &mut volume);
+        let ceiling = memory::usable_ceiling(&detected_map, &console);
+        let initrd_end = fat::place_initrd(&console, &mut volume, kernel.phys_end, ceiling);
+        boot_payloads = Some((kernel, initrd_end));
         if !thunk.intact() {
             console.write_line("[ERR] trampoline");
             debug_exit(DEBUG_EXIT_FAILURE);
         }
     }
+    memory::publish(&detected_map, kernel_carve_out(&boot_payloads), &console);
     console.write_line("[STAGE2_32] A20=OK THUNK=OK");
-    match kernel {
-        Some(image) => elf32::enter(&image),
+    match boot_payloads {
+        Some((kernel, _)) => elf32::enter(&kernel),
         None => debug_exit(DEBUG_EXIT_SUCCESS),
     }
+}
+
+fn kernel_carve_out(payloads: &Option<(KernelImage, u64)>) -> Option<(u64, u64)> {
+    let (kernel, initrd_end) = payloads.as_ref()?;
+    Some((kernel.phys_start, initrd_end - kernel.phys_start))
 }
 
 fn contiguous_high_memory_kib(thunk: &BiosThunk) -> Option<u32> {
