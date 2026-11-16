@@ -1,8 +1,10 @@
 use fs_core::engine::Engine;
 use fs_core::engine::MetadataView;
 use rosx_boot_common::DEBUG_EXIT_FAILURE;
-use rosx_boot_common::crc32::crc32;
 use rosx_boot_common::debug_exit;
+use rosx_boot_common::elf64;
+use rosx_boot_common::elf64::KernelImage;
+use rosx_boot_common::elf64::KernelSegment;
 use rosx_boot_common::gdt;
 use rosx_boot_common::memnorm::align_up_page;
 use rosx_boot_common::memnorm::place_payload;
@@ -20,12 +22,14 @@ const EXTENDED_LEAF_FLOOR: u32 = 0x8000_0000;
 const EXTENDED_FEATURES_LEAF: u32 = 0x8000_0001;
 const LONG_MODE_BIT: u32 = 1 << 29;
 
-const KERNEL_PATH: &[u8] = b"/KERNEL.BIN";
-const READ_WINDOW: usize = 16 * 512;
-pub const KERNEL_LMA: u64 = 0x0010_0000;
+const KERNEL_PATH: &[u8] = b"/KERNEL.ELF";
+const HEADER_WINDOW: usize = 4096;
+const PLACEMENT_WINDOW: usize = 16 * 512;
 
 const PAGE_ENABLE_BIT: u32 = 1 << 31;
 const INTERRUPT_ENABLE_BIT: u32 = 1 << 9;
+
+const _: () = assert!(BOOT_INFO_MAGIC == 0x524F_5358);
 
 #[repr(C, packed)]
 struct GdtPointer {
@@ -91,46 +95,108 @@ fn cpuid(leaf: u32) -> (u32, u32, u32, u32) {
     (eax, ebx, ecx, edx)
 }
 
-pub struct FlatKernel {
-    pub address: u64,
-    pub end: u64,
-}
+extern crate alloc;
 
-pub fn load_kernel(console: &Serial, volume: &mut BootVolume) -> FlatKernel {
+use alloc::vec;
+use alloc::vec::Vec;
+
+pub fn load_kernel(console: &Serial, volume: &mut BootVolume) -> KernelImage {
     let metadata = Engine::lookup(volume, KERNEL_PATH).unwrap_or_else(|error| refuse_engine(console, error));
-    let size = usize::try_from(metadata.size()).unwrap_or_else(|_| refuse_kernel(console, "too-large"));
     let handle = Engine::open(volume, KERNEL_PATH).unwrap_or_else(|error| refuse_engine(console, error));
-    let image = unsafe { core::slice::from_raw_parts_mut(KERNEL_LMA as *mut u8, size) };
-    let mut loaded = 0usize;
-    while loaded < size {
-        let span = (size - loaded).min(READ_WINDOW);
-        let count = Engine::read(volume, handle, loaded as u64, &mut image[loaded..loaded + span])
-            .unwrap_or_else(|error| refuse_engine(console, error));
-        if count == 0 {
-            refuse_kernel(console, "short-read");
-        }
-        loaded += count;
+    let window = usize::try_from(metadata.size()).unwrap_or(HEADER_WINDOW).min(HEADER_WINDOW);
+    let table = read_window(console, volume, handle, 0, window);
+    let image = elf64::plan_kernel_image(&table).unwrap_or_else(|error| refuse_elf(console, error));
+    for segment in &image.segments[..image.segment_count] {
+        place_segment(console, volume, handle, metadata.size(), *segment);
     }
     Engine::close(volume, handle).unwrap_or_else(|error| refuse_engine(console, error));
-    report_kernel(console, KERNEL_LMA, metadata.size(), crc32(image));
-    FlatKernel {
-        address: KERNEL_LMA,
-        end: KERNEL_LMA + metadata.size(),
+    report(console, &image);
+    image
+}
+
+fn read_window(
+    console: &Serial,
+    volume: &mut BootVolume,
+    handle: rxfat::FatHandle,
+    offset: u64,
+    want: usize,
+) -> Vec<u8> {
+    let mut bytes = vec![0u8; want];
+    let mut done = 0usize;
+    while done < want {
+        let count = Engine::read(volume, handle, offset + done as u64, &mut bytes[done..])
+            .unwrap_or_else(|error| refuse_engine(console, error));
+        if count == 0 {
+            refuse_layout(console, "truncated");
+        }
+        done += count;
+    }
+    bytes
+}
+
+fn place_segment(
+    console: &Serial,
+    volume: &mut BootVolume,
+    handle: rxfat::FatHandle,
+    file_size: u64,
+    segment: KernelSegment,
+) {
+    if segment.file_offset.saturating_add(segment.file_bytes) > file_size {
+        refuse_layout(console, "truncated");
+    }
+    let mut placed = 0u64;
+    while placed < segment.file_bytes {
+        let span = (segment.file_bytes - placed).min(PLACEMENT_WINDOW as u64) as usize;
+        let destination = unsafe {
+            core::slice::from_raw_parts_mut((segment.memory_address + placed) as *mut u8, span)
+        };
+        let count = Engine::read(volume, handle, segment.file_offset + placed, destination)
+            .unwrap_or_else(|error| refuse_engine(console, error));
+        if count == 0 {
+            refuse_layout(console, "short-read");
+        }
+        placed += count as u64;
+    }
+    let zero_fill = (segment.memory_bytes - segment.file_bytes) as usize;
+    if zero_fill > 0 {
+        unsafe {
+            core::ptr::write_bytes(
+                (segment.memory_address + segment.file_bytes) as *mut u8,
+                0,
+                zero_fill,
+            );
+        }
     }
 }
 
-fn report_kernel(console: &Serial, address: u64, size: u64, checksum: u32) {
-    console.write_str("[KERNEL64] addr=");
-    console.write_hex(address, 8);
-    console.write_str(" size=");
-    console.write_dec(size);
-    console.write_str(" crc32=");
-    console.write_hex(u64::from(checksum), 8);
+fn report(console: &Serial, image: &KernelImage) {
+    console.write_str("[ELF] arch=X86_64 entry=");
+    console.write_hex(image.entry, 16);
+    console.write_str(" phys=");
+    console.write_hex(image.phys_start, 8);
+    console.write_str("..");
+    console.write_hex(image.phys_end, 8);
     console.write_line("");
 }
 
-fn refuse_kernel(console: &Serial, kind: &str) -> ! {
-    console.write_str("[ERR] kernel64 ");
+fn refuse_elf(console: &Serial, error: rosx_boot_common::ElfError) -> ! {
+    console.write_str("[ERR] elf ");
+    console.write_line(elf_kind(error));
+    debug_exit(DEBUG_EXIT_FAILURE)
+}
+
+fn elf_kind(error: rosx_boot_common::ElfError) -> &'static str {
+    match error {
+        rosx_boot_common::ElfError::Class => "class",
+        rosx_boot_common::ElfError::Machine => "machine",
+        rosx_boot_common::ElfError::Format => "format",
+        rosx_boot_common::ElfError::Layout => "layout",
+        rosx_boot_common::ElfError::Entry => "entry",
+    }
+}
+
+fn refuse_layout(console: &Serial, kind: &str) -> ! {
+    console.write_str("[ERR] elf ");
     console.write_line(kind);
     debug_exit(DEBUG_EXIT_FAILURE)
 }
@@ -159,7 +225,7 @@ pub fn build_page_tables(console: &Serial, lower_bound: u64, ceiling: u64) -> Pa
 
 #[inline(never)]
 #[unsafe(link_section = ".longmode.text")]
-pub fn enter_long_mode(console: &Serial, root: u64, boot_info: u64) -> ! {
+pub fn enter_long_mode(console: &Serial, entry: u64, root: u64, boot_info: u64) -> ! {
     if read_cr0() & PAGE_ENABLE_BIT != 0 {
         refuse_state(console, "cr0.pg");
     }
@@ -174,6 +240,8 @@ pub fn enter_long_mode(console: &Serial, root: u64, boot_info: u64) -> ! {
         core::arch::asm!(
             "lgdt [{gdt}]",
             "mov cr3, {root}",
+            "mov ebp, {entry}",
+            "mov edi, {info}",
             "mov edx, cr4",
             "or edx, 0x20",
             "mov cr4, edx",
@@ -195,21 +263,19 @@ pub fn enter_long_mode(console: &Serial, root: u64, boot_info: u64) -> ! {
             "mov ds, ax",
             "mov es, ax",
             "mov ss, ax",
-            "mov rsp, 0x7F000",
-            "mov eax, {magic}",
-            "mov ebx, {info}",
-            "movabs rdi, 0xFFFF800000100000",
-            "jmp rdi",
+            "movabs rsp, 0xFFFF80000007F000",
+            "movabs rax, 0xFFFF800000000000",
+            "or rbp, rax",
+            "or rdi, rax",
+            "mov eax, 0x524F5358",
+            "jmp rbp",
             gdt = in(reg) &pointer as *const GdtPointer as u32,
             root = in(reg) root as u32,
-            magic = in(reg) BOOT_INFO_MAGIC,
+            entry = in(reg) entry as u32,
             info = in(reg) boot_info as u32,
-            out("eax") _,
-            out("ecx") _,
-            out("edx") _,
+            options(noreturn)
         )
     }
-    rosx_boot_common::halt_forever()
 }
 
 fn read_cr0() -> u32 {

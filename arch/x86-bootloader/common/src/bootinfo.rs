@@ -22,6 +22,7 @@ pub fn assemble(memory_map_len: u32, initrd_address: u64, initrd_size: u64) -> B
         version: BOOT_INFO_VERSION,
         arch: BootArch::X86_32,
         boot_method: BootMethod::Bios,
+        reserved: [0; 6],
         memory_map_ptr: BOOT_INFO_WINDOW_ADDRESS,
         memory_map_len,
         memory_map_entry_size: core::mem::size_of::<MemoryRegion>() as u32,
@@ -29,6 +30,7 @@ pub fn assemble(memory_map_len: u32, initrd_address: u64, initrd_size: u64) -> B
         initrd_size,
         display: DisplayInfo {
             kind: DisplayKind::VgaText,
+            reserved: [0; 4],
             addr: 0x000B_8000,
             width: 80,
             height: 25,

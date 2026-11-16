@@ -38,7 +38,7 @@ pub enum MemoryKind {
     KernelAndModules = 5,
 }
 
-#[repr(C)]
+#[repr(C, align(8))]
 #[derive(Copy, Clone, Debug)]
 pub struct MemoryRegion {
     pub base: u64,
@@ -54,10 +54,11 @@ pub enum DisplayKind {
     LinearFramebuffer = 2,
 }
 
-#[repr(C)]
+#[repr(C, align(8))]
 #[derive(Copy, Clone, Debug)]
 pub struct DisplayInfo {
     pub kind: DisplayKind,
+    pub reserved: [u8; 4],
     pub addr: u64,
     pub width: u32,
     pub height: u32,
@@ -68,13 +69,14 @@ pub struct DisplayInfo {
     pub blue_mask_shift: u8,
 }
 
-#[repr(C)]
+#[repr(C, align(8))]
 #[derive(Copy, Clone, Debug)]
 pub struct BootInfo {
     pub magic: u32,
     pub version: u16,
     pub arch: BootArch,
     pub boot_method: BootMethod,
+    pub reserved: [u8; 6],
     pub memory_map_ptr: u64,
     pub memory_map_len: u32,
     pub memory_map_entry_size: u32,
@@ -111,8 +113,11 @@ Notes on the design versus the original sketch:
 | `initrd_addr` / `initrd_size` | The loaded initrd bytes; same address-space rule as `memory_map_ptr`. `size == 0` ⇒ `addr == 0`. |
 | `display` | `VgaText`: `addr = 0xB8000`, `width = 80`, `height = 25`, `pitch = 160`, `bpp = 0`, shifts `0` — text mode, the remaining fields carry no meaning under this contract. BIOS never mode-sets in this plan. |
 
-`BootInfo` is written 16-byte aligned. The `u16` trio (`version`, `arch`, `boot_method`) plus
-implicit trailing padding is the only padding in the struct; alignment/size unit tests pin it.
+`BootInfo` is written 16-byte aligned. The `reserved` fields are explicit: a bare `#[repr(C)]`
+would place `memory_map_ptr` at offset 12 on a 32-bit build (`u64` is 4-aligned there) and 16
+on a 64-bit one, so the i486 stage2 and the x86_64 kernel would disagree on the wire. The
+`reserved` gaps plus `align(8)` pin one byte layout on every bit width; alignment/size/offset
+unit tests pin it and the phase-12 handoff row proves it across the stage2/kernel boundary.
 
 ## 3. Handoff calling convention
 

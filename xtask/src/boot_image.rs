@@ -36,8 +36,6 @@ const INITRD_LOCAL_NAME: &str = "initrd.bin";
 pub const INITRD_VOLUME_NAME: &str = "INITRD.BIN";
 const KERNEL_LOCAL_NAME: &str = "kernel.elf";
 pub const KERNEL_VOLUME_NAME: &str = "KERNEL.ELF";
-const KERNEL64_LOCAL_NAME: &str = "kernel.bin";
-pub const KERNEL64_VOLUME_NAME: &str = "KERNEL.BIN";
 pub const FAKE_KERNEL_CRATE: &str = "fake-kernel-32";
 pub const FAKE_KERNEL_64_CRATE: &str = "fake-kernel-64";
 pub const FAKE_KERNEL_64_TARGET_SPEC: &str = "arch/x86-bootloader/rosx-boot-x86_64.json";
@@ -327,10 +325,10 @@ fn pack_partitioned(image: PathBuf, kind: BootImage) {
     mcopy_probe(&image);
     mcopy_initrd(&image);
     match kind {
-        BootImage::Boot64 => mcopy_kernel_bin(&image),
-        _ => mcopy_kernel(&image),
+        BootImage::Boot64 => mcopy_kernel(&image, build_fake_kernel64()),
+        _ => mcopy_kernel(&image, build_fake_kernel()),
     }
-    mdir_sees_the_boot_volume(&image, kind);
+    mdir_sees_the_boot_volume(&image);
 }
 
 fn pack_floppy(image: PathBuf) {
@@ -419,7 +417,7 @@ pub fn build_fake_kernel() -> Vec<u8> {
     fs::read(&elf).expect("cannot read the fake-kernel-32 ELF")
 }
 
-pub fn build_fake_kernel64_flat() -> Vec<u8> {
+pub fn build_fake_kernel64() -> Vec<u8> {
     let mut builder = crate::cargo();
     builder
         .arg("build")
@@ -435,18 +433,12 @@ pub fn build_fake_kernel64_flat() -> Vec<u8> {
         .join("rosx-boot-x86_64")
         .join("release")
         .join(FAKE_KERNEL_64_CRATE);
-    let flat = scratch_dir().join("fake-kernel-64.bin");
-    let mut objcopy = Command::new("objcopy");
-    objcopy.args(["-O", "binary"]).arg(&elf).arg(&flat);
-    run(&mut objcopy, "objcopy the fake-kernel-64 ELF into a flat binary");
-    let bin = fs::read(&flat).expect("cannot read the flat fake-kernel-64 binary");
-    assert!(!bin.is_empty(), "the flat fake-kernel-64 binary is empty");
-    bin
+    fs::read(&elf).expect("cannot read the fake-kernel-64 ELF")
 }
 
-fn mcopy_kernel(image: &Path) {
+fn mcopy_kernel(image: &Path, kernel_elf: Vec<u8>) {
     let kernel = scratch_dir().join(KERNEL_LOCAL_NAME);
-    fs::write(&kernel, build_fake_kernel()).expect("cannot write the kernel ELF scratch file");
+    fs::write(&kernel, kernel_elf).expect("cannot write the kernel ELF scratch file");
     let mut cmd = Command::new("mcopy");
     cmd.arg("-m")
         .arg("-o")
@@ -456,24 +448,7 @@ fn mcopy_kernel(image: &Path) {
     run(&mut cmd, "mcopy the fake-kernel ELF onto the boot image volume");
 }
 
-fn mcopy_kernel_bin(image: &Path) {
-    let kernel = scratch_dir().join(KERNEL64_LOCAL_NAME);
-    fs::write(&kernel, build_fake_kernel64_flat())
-        .expect("cannot write the flat kernel scratch file");
-    let mut cmd = Command::new("mcopy");
-    cmd.arg("-m")
-        .arg("-o")
-        .arg(partition_index(image))
-        .arg(&kernel)
-        .arg(format!("::{KERNEL64_VOLUME_NAME}"));
-    run(&mut cmd, "mcopy the flat fake-kernel-64 image onto the boot image volume");
-}
-
-fn mdir_sees_the_boot_volume(image: &Path, kind: BootImage) {
-    let kernel_extension = match kind {
-        BootImage::Boot64 => "BIN",
-        _ => "ELF",
-    };
+fn mdir_sees_the_boot_volume(image: &Path) {
     let mut cmd = Command::new("mdir");
     cmd.arg(partition_index(image)).arg("::");
     let output = cmd.output().expect("failed to run mdir");
@@ -484,7 +459,7 @@ fn mdir_sees_the_boot_volume(image: &Path, kind: BootImage) {
             && listing.contains("PROBE")
             && listing.contains("TXT")
             && listing.contains("KERNEL")
-            && listing.contains(kernel_extension),
+            && listing.contains("ELF"),
         "mdir cannot see the boot volume files on the {label} volume at LBA {start} — the FAT16 \
          recipe is broken; output: {listing}",
         label = VOLUME_LABEL,
@@ -493,10 +468,7 @@ fn mdir_sees_the_boot_volume(image: &Path, kind: BootImage) {
     println!(
         "==> mdir confirms {probe} and {kernel} on {label} at LBA {start}",
         probe = PROBE_VOLUME_NAME,
-        kernel = match kind {
-            BootImage::Boot64 => KERNEL64_VOLUME_NAME,
-            _ => KERNEL_VOLUME_NAME,
-        },
+        kernel = KERNEL_VOLUME_NAME,
         label = VOLUME_LABEL,
         start = PARTITION_START_LBA,
     );

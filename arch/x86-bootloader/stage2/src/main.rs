@@ -8,9 +8,10 @@ use rosx_boot_common::biosdisk::GEOMETRY_PACKET_ADDRESS;
 use rosx_boot_common::biosdisk::HARD_DRIVE_BASE;
 use rosx_boot_common::biosdisk::INT13;
 use rosx_boot_common::bootinfo::BOOT_INFO_ADDRESS;
+#[cfg(not(feature = "stage-64"))]
 use rosx_boot_common::bootinfo::assemble;
 #[cfg(feature = "stage-64")]
-use rosx_boot_common::memnorm::align_up_page;
+use rosx_boot_common::bootinfo::assemble_long_mode;
 use rosx_boot_common::serial::Serial;
 use rosx_boot_common::DEBUG_EXIT_FAILURE;
 use rosx_boot_common::DEBUG_EXIT_SUCCESS;
@@ -123,22 +124,18 @@ fn boot_from_disk(console: &Serial, thunk: &BiosThunk, detected_map: &memory::De
     let mut volume = open_boot_volume(console, thunk);
     let kernel = longmode::load_kernel(console, &mut volume);
     let ceiling = memory::usable_ceiling(detected_map, console);
-    let Some(kernel_floor) = align_up_page(kernel.end) else {
-        console.write_line("[ERR] mem");
-        debug_exit(DEBUG_EXIT_FAILURE);
-    };
-    let initrd = fat::place_initrd(console, &mut volume, kernel_floor, ceiling);
+    let initrd = fat::place_initrd(console, &mut volume, kernel.phys_end, ceiling);
     if !thunk.intact() {
         console.write_line("[ERR] trampoline");
         debug_exit(DEBUG_EXIT_FAILURE);
     }
     let tables = longmode::build_page_tables(console, initrd.end, ceiling);
-    let carve = (kernel.address, tables.end - kernel.address);
+    let carve = (kernel.phys_start, tables.end - kernel.phys_start);
     let map_len = memory::publish(detected_map, Some(carve), console);
-    let boot_info = assemble(map_len, initrd.address, initrd.size);
+    let boot_info = assemble_long_mode(map_len, initrd.address, initrd.size);
     unsafe { core::ptr::write(BOOT_INFO_ADDRESS as *mut BootInfo, boot_info) };
     console.write_line(COMPLETION_BANNER);
-    longmode::enter_long_mode(console, tables.root, BOOT_INFO_ADDRESS)
+    longmode::enter_long_mode(console, kernel.entry, tables.root, BOOT_INFO_ADDRESS)
 }
 
 fn contiguous_high_memory_kib(thunk: &BiosThunk) -> Option<u32> {

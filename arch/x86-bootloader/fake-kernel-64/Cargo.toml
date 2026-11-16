@@ -12,6 +12,7 @@ test = false
 
 [dependencies]
 rosx-boot-common = { path = "../common" }
+system = { path = "../../../system", default-features = false }
 
 [lints]
 workspace = true

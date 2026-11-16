@@ -253,6 +253,7 @@ name = "fake-kernel-64"
 version = "0.1.0"
 dependencies = [
  "rosx-boot-common",
+ "system",
 ]
 
 [[package]]

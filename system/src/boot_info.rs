@@ -38,7 +38,7 @@ impl MemoryKind {
     }
 }
 
-#[repr(C)]
+#[repr(C, align(8))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct MemoryRegion {
     pub base: u64,
@@ -54,10 +54,11 @@ pub enum DisplayKind {
     LinearFramebuffer = 2,
 }
 
-#[repr(C)]
+#[repr(C, align(8))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct DisplayInfo {
     pub kind: DisplayKind,
+    pub reserved: [u8; 4],
     pub addr: u64,
     pub width: u32,
     pub height: u32,
@@ -68,13 +69,14 @@ pub struct DisplayInfo {
     pub blue_mask_shift: u8,
 }
 
-#[repr(C)]
+#[repr(C, align(8))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BootInfo {
     pub magic: u32,
     pub version: u16,
     pub arch: BootArch,
     pub boot_method: BootMethod,
+    pub reserved: [u8; 6],
     pub memory_map_ptr: u64,
     pub memory_map_len: u32,
     pub memory_map_entry_size: u32,
@@ -164,6 +166,7 @@ mod tests {
         assert_eq!(size_of::<DisplayInfo>(), 32);
         assert_eq!(align_of::<DisplayInfo>(), 8);
         assert_eq!(offset_of!(DisplayInfo, kind), 0);
+        assert_eq!(offset_of!(DisplayInfo, reserved), 4);
         assert_eq!(offset_of!(DisplayInfo, addr), 8);
         assert_eq!(offset_of!(DisplayInfo, width), 16);
         assert_eq!(offset_of!(DisplayInfo, height), 20);
@@ -179,6 +182,7 @@ mod tests {
         assert_eq!(offset_of!(BootInfo, version), 4);
         assert_eq!(offset_of!(BootInfo, arch), 6);
         assert_eq!(offset_of!(BootInfo, boot_method), 8);
+        assert_eq!(offset_of!(BootInfo, reserved), 10);
         assert_eq!(offset_of!(BootInfo, memory_map_ptr), 16);
         assert_eq!(offset_of!(BootInfo, memory_map_len), 24);
         assert_eq!(offset_of!(BootInfo, memory_map_entry_size), 28);
