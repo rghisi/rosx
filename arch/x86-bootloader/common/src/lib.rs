@@ -7,6 +7,7 @@ pub mod crc32;
 pub mod elf32;
 pub mod gdt;
 pub mod memnorm;
+pub mod pagetable;
 pub mod serial;
 
 mod pio;

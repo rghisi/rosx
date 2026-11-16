@@ -2,8 +2,11 @@ pub const NULL: u64 = 0;
 
 const CODE_ACCESS: u8 = 0x9A;
 const DATA_ACCESS: u8 = 0x92;
+const USER_DATA_ACCESS: u8 = 0xF2;
+const USER_CODE_ACCESS: u8 = 0xFA;
 const FLAGS_16: u8 = 0b1000;
 const FLAGS_32: u8 = 0b1100;
+const FLAGS_64: u8 = 0b1010;
 const FULL_LIMIT: u32 = 0x000F_FFFF;
 
 pub const fn encode(base: u32, limit: u32, access: u8, flags: u8) -> u64 {
@@ -27,6 +30,18 @@ pub const fn code32() -> u64 {
     encode(0, FULL_LIMIT, CODE_ACCESS, FLAGS_32)
 }
 
+pub const fn code64() -> u64 {
+    encode(0, FULL_LIMIT, CODE_ACCESS, FLAGS_64)
+}
+
+pub const fn user_data() -> u64 {
+    encode(0, FULL_LIMIT, USER_DATA_ACCESS, FLAGS_32)
+}
+
+pub const fn user_code64() -> u64 {
+    encode(0, FULL_LIMIT, USER_CODE_ACCESS, FLAGS_64)
+}
+
 pub const fn data32() -> u64 {
     encode(0, FULL_LIMIT, DATA_ACCESS, FLAGS_32)
 }
@@ -43,6 +58,14 @@ mod tests {
         (descriptor >> 52) as u8 & 0x0F
     }
 
+    fn long_mode(descriptor: u64) -> bool {
+        descriptor >> 53 & 1 == 1
+    }
+
+    fn default_size(descriptor: u64) -> bool {
+        descriptor >> 54 & 1 == 1
+    }
+
     fn limit(descriptor: u64) -> u32 {
         (descriptor as u32 & 0xFFFF) | ((descriptor >> 32) as u32 & 0x000F_0000)
     }
@@ -54,6 +77,29 @@ mod tests {
     #[test]
     fn flat_code32_matches_the_canonical_encoding() {
         assert_eq!(code32(), 0x00CF_9A00_0000_FFFF);
+    }
+
+    #[test]
+    fn flat_code64_matches_the_canonical_encoding() {
+        assert_eq!(code64(), 0x00AF_9A00_0000_FFFF);
+    }
+
+    #[test]
+    fn code64_sets_long_mode_and_clears_default_size() {
+        assert!(long_mode(code64()));
+        assert!(!default_size(code64()));
+    }
+
+    #[test]
+    fn code32_clears_long_mode_and_sets_default_size() {
+        assert!(!long_mode(code32()));
+        assert!(default_size(code32()));
+    }
+
+    #[test]
+    fn user_data_and_user_code64_match_the_star_compatible_encodings() {
+        assert_eq!(user_data(), 0x00CF_F200_0000_FFFF);
+        assert_eq!(user_code64(), 0x00AF_FA00_0000_FFFF);
     }
 
     #[test]
