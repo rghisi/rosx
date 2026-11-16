@@ -8,28 +8,32 @@ use rosx_boot_common::debug_exit;
 
 use crate::blk::BiosBlockDevice;
 
+pub type BootVolume<'a> = rxfat::FileSystem<BiosBlockDevice<'a>>;
+
 const INITRD_PATH: &[u8] = b"/INITRD.BIN";
 const INITRD_STAGING: usize = 0x0010_0000;
 const INITRD_CAPACITY: usize = 64 * 1024;
 const READ_WINDOW: usize = 16 * 512;
 
-pub fn load_initrd(console: &Serial, device: BiosBlockDevice) {
-    let mut volume =
-        rxfat::FileSystem::new(device).unwrap_or_else(|error| refuse_engine(console, error));
+pub fn open<'a>(console: &Serial, device: BiosBlockDevice<'a>) -> BootVolume<'a> {
+    rxfat::FileSystem::new(device).unwrap_or_else(|error| refuse_engine(console, error))
+}
+
+pub fn load_initrd(console: &Serial, volume: &mut BootVolume) {
     let metadata =
-        Engine::lookup(&mut volume, INITRD_PATH).unwrap_or_else(|error| refuse_engine(console, error));
+        Engine::lookup(volume, INITRD_PATH).unwrap_or_else(|error| refuse_engine(console, error));
     let size = match usize::try_from(metadata.size()) {
         Ok(size) if size <= INITRD_CAPACITY => size,
         _ => refuse_kind(console, "too-large"),
     };
     let handle =
-        Engine::open(&mut volume, INITRD_PATH).unwrap_or_else(|error| refuse_engine(console, error));
+        Engine::open(volume, INITRD_PATH).unwrap_or_else(|error| refuse_engine(console, error));
     let staging = unsafe { core::slice::from_raw_parts_mut(INITRD_STAGING as *mut u8, size) };
     let mut loaded = 0usize;
     while loaded < size {
         let span = (size - loaded).min(READ_WINDOW);
         let count = Engine::read(
-            &mut volume,
+            volume,
             handle,
             loaded as u64,
             &mut staging[loaded..loaded + span],
@@ -40,7 +44,7 @@ pub fn load_initrd(console: &Serial, device: BiosBlockDevice) {
         }
         loaded += count;
     }
-    Engine::close(&mut volume, handle).unwrap_or_else(|error| refuse_engine(console, error));
+    Engine::close(volume, handle).unwrap_or_else(|error| refuse_engine(console, error));
     let checksum = crc32(staging);
     console.write_str("[FAT] initrd addr=");
     console.write_hex(INITRD_STAGING as u64, 8);
@@ -51,7 +55,7 @@ pub fn load_initrd(console: &Serial, device: BiosBlockDevice) {
     console.write_line("");
 }
 
-fn refuse_engine(console: &Serial, error: FsError) -> ! {
+pub(crate) fn refuse_engine(console: &Serial, error: FsError) -> ! {
     console.write_str("[FAT-ERR] ");
     console.write_line(kind_name(error));
     debug_exit(DEBUG_EXIT_FAILURE)

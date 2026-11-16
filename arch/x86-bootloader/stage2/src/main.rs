@@ -13,6 +13,7 @@ use rosx_boot_common::DEBUG_EXIT_SUCCESS;
 use rosx_boot_common::debug_exit;
 
 mod blk;
+mod elf32;
 mod entry;
 mod fat;
 mod heap;
@@ -62,6 +63,7 @@ extern "C" fn stage2_main() -> ! {
         console.write_line("[ERR] trampoline");
         debug_exit(DEBUG_EXIT_FAILURE);
     }
+    let mut kernel = None;
     if boot_drive() >= u16::from(HARD_DRIVE_BASE) {
         let Some(device) = BiosBlockDevice::bring_up(&thunk, boot_drive() as u8) else {
             console.write_line("[ERR] disk");
@@ -72,14 +74,19 @@ extern "C" fn stage2_main() -> ! {
         console.write_str(" slice=");
         console.write_dec(device.slice_sectors());
         console.write_line("");
-        fat::load_initrd(&console, device);
+        let mut volume = fat::open(&console, device);
+        fat::load_initrd(&console, &mut volume);
+        kernel = Some(elf32::load_kernel(&console, &mut volume));
         if !thunk.intact() {
             console.write_line("[ERR] trampoline");
             debug_exit(DEBUG_EXIT_FAILURE);
         }
     }
     console.write_line("[STAGE2_32] A20=OK THUNK=OK");
-    debug_exit(DEBUG_EXIT_SUCCESS)
+    match kernel {
+        Some(image) => elf32::enter(&image),
+        None => debug_exit(DEBUG_EXIT_SUCCESS),
+    }
 }
 
 fn contiguous_high_memory_kib(thunk: &BiosThunk) -> Option<u32> {
