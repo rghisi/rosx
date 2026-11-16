@@ -14,12 +14,14 @@ existing suites speak port `0xE9` and pass `-serial none` (`tests-integration/sr
 |--------------|----------------|-----------------|
 | write `0x10` to port `0xF4` | **33** | PASS (if stdout assertions also hold) |
 | write `0x01` to port `0xF4` | **3** | FAIL (diagnostic path) |
-| triple fault / reset with `-no-reboot` | **1** | FAIL — "crashed before verdict" |
-| timeout (default 10 s), any other code | n/a | FAIL |
+| triple fault / guest shutdown with `-no-reboot` | **0** | FAIL — "crashed before verdict" |
+| guest reset with `-no-reboot` | **1** | FAIL — also crash class; the banned `0x00` write aliases it |
+| timeout (per-checkpoint), any other code | n/a | FAIL |
 
-Measured fact behind the design: `0x00` written to `0xF4` yields exit code `1`, identical to the
-`-no-reboot` triple-fault exit — so `0x00` is banned as a signal and `1` is defined as crash.
-Each run records `qemu-system-* --version` into the log.
+Measured facts on QEMU 10.2.1: `0x10` → 33, `0x01` → 3, `0x00` → 1, a zero-IDT-limit `INT 3`
+triple fault → 0 (the `cpu_x86_shutdown` path), and a hang → harness kill on timeout. The
+crash rows of later phases expect **0**; the `-no-reboot` reset path (**1**) is source-verified
+and treated identically. Each run records `qemu-system-* --version` into the log.
 
 ## 2. Standard invocations
 
@@ -28,7 +30,8 @@ Each run records `qemu-system-* --version` into the log.
 ```bash
 qemu-system-i386 -cpu 486 -m 32M \
   -drive format=raw,file=target/boot32.img \
-  -serial stdio -display none \
+  -serial file:target/boot-test/<checkpoint>.serial \
+  -display none -monitor none \
   -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
   -no-reboot
 ```
@@ -38,7 +41,8 @@ qemu-system-i386 -cpu 486 -m 32M \
 ```bash
 qemu-system-x86_64 -cpu qemu64 -m 128M \
   -drive format=raw,file=target/boot64.img \
-  -serial stdio -display none \
+  -serial file:target/boot-test/<checkpoint>.serial \
+  -display none -monitor none \
   -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
   -no-reboot
 ```
@@ -83,16 +87,18 @@ bootloader artifacts, run the §6 audits from `00-overview.md`, run `boot-test`.
 
 ## 5. Checkpoints (phase 1)
 
-1. Workspace wiring: `ros-boot-common` crate (16550 init/put string/hex, CRC32 table-less,
+1. Workspace wiring: `rosx-boot-common` crate (16550 init/put string/hex, CRC32 table-less,
    `debug_exit(code)` helper centralizing the port `0xF4` law) compiles for both bare-metal
    targets; `xtask boot-test` with an empty checkpoint table exits 0.
-2. Harness self-test: a trivial `.code16` stub that prints `BOOTLOADER-HARNESS OK` and writes
-   `0x10` to `0xF4`, built by the same toolchain path phase 2 will use (`as` with `.code16`,
-   `ld -Ttext 0x7C00 --oformat binary`; binutils presence check fails with a clear message when
-   a tool is missing). Three rows: pass (exit 33 + stdout), deliberate fail stub writing `0x01`
-   (exit 3), deliberate crash (`ud2`-style under `-no-reboot`, exit 1 classified as
-   "crashed before verdict") — plus a timeout row. This is where the exit-code law gets tested
-   before any real stage depends on it.
+2. Harness self-test: one `.code16` stub source, four behaviors selected with
+   `as --32 --defsym VARIANT=n` (`arch/x86-bootloader/scripts/harness_stub.s`), linked by the
+   same toolchain path phase 2 will use (`ld -m elf_i386 -Ttext 0x7C00 --oformat binary`;
+   binutils + qemu presence checks fail with a clear message when a tool is missing). Four
+   rows: pass (exit 33 + stdout), deliberate fail stub writing `0x01` (exit 3), deliberate
+   triple fault via a zeroed IDT limit + `INT 3` (measured exit 0 — SeaBIOS installs real-mode
+   IVT entries, so neutralizing the IDT first is what makes the crash deterministic), and a
+   hang row killed on timeout. This is where the exit-code law gets tested before any real
+   stage depends on it.
 3. `boot-image` produces the MBR/gap/FAT16 layout with a placeholder stage1 blob; `mdir` lists
    the volume at offset 2048 (proof the recipe works before any real stage exists).
 

@@ -7,7 +7,10 @@ packs.
 ## 1. Implementation (stage1 additions, still inside the 446-byte budget)
 
 1. **LBA probe:** `INT 13h, AH=41h, BX=55AAh` on the boot drive; support iff CF clear **and**
-   `AH == 0x01` and `BX == 0xAA55`.
+   `BX == 0xAA55`. Measured correction (QEMU 10.2.1 / SeaBIOS): `AH` answers `0x30`, not the
+   planned `0x01` — it is an implementation version byte, and `AH==0x01` belongs to the `CH=01h`
+   install-check, not the `BX=55AAh` probe. The canonical EDD marker (`CF clear && BX==0xAA55`)
+   is what actually discriminates: HDD `CF=0 BX=AA55`, floppy `CF=1 BX=55AA`.
 2. **LBA read:** `AH=42h` with a Disk Address Packet on the stack (packet at a fixed offset in
    stage1's own sector, count from the stage2 header). Read the header sector (LBA 8) first,
    validate `magic == 'ROS2'` and `total_bytes ≤ 160 KiB + 512`, then read the remaining sectors
@@ -15,7 +18,8 @@ packs.
 3. **CHS fallback** (LBA unsupported — super-floppy media): geometry via `INT 13h, AH=08h`;
    LBA→CHS conversion (sectors-per-track from the result table, heads ≤ 256); sector-at-a-time
    `AH=02h` reads with retry (3 attempts, `AH=00h` controller reset between failures) into
-   `0x0000:0x7E00`.
+   `0x0000:0x7E00`. Measured trap (QEMU 10.2.1): `AH=08h` **clobbers `ES`** — re-zero it before
+   any `AH=02h` read, or the transfer lands at the wrong physical address and reports success.
 4. Transfer errors print `[ERR] disk` + the failing LBA in hex and halt (no debug-exit exists
    yet at this phase — the harness row judges stdout + timeout).
 5. **Jump:** `ljmp $0x0000, $0x7E00`, `DL` (boot drive) preserved.

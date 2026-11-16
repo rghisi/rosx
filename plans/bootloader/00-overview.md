@@ -70,7 +70,7 @@ arch/x86-bootloader/
 ├── stage2/                   # crate; features stage-32 / stage-64 select the boot path
 │   ├── linker.ld             # .text.entry at 0x7E00, BSS bounds exported
 │   └── src/ ...
-├── common/                   # ros-boot-common: 16550 serial writer, hex formatting, CRC32
+├── common/                   # rosx-boot-common: 16550 serial writer, hex formatting, CRC32
 ├── fake-kernel-32/           # crate, rosx-boot-i486, linked at 0x0010_0000
 │   └── linker.ld
 ├── fake-kernel-64/           # crate, x86_64-unknown-none, VA 0xFFFF_8000_0010_0000 AT 0x0010_0000
@@ -78,7 +78,7 @@ arch/x86-bootloader/
 └── scripts/                  # gas/ld/objcopy wrappers used by xtask
 ```
 
-Workspace members: `stage2`, `ros-boot-common`, `fake-kernel-32`, `fake-kernel-64` (bare-metal,
+Workspace members: `stage2`, `rosx-boot-common`, `fake-kernel-32`, `fake-kernel-64` (bare-metal,
 like the other arch bins — `cargo build --workspace` remains unsupported and each builds with its
 explicit `--target`). `stage1` and `stub2.s` are built by the `xtask` boot recipes through
 `as`/`ld`/`objcopy` (binutils, already a CI prerequisite via `objdump`), with an existence check
@@ -125,10 +125,12 @@ CI gains a `bootloader` job (build all artifacts, run audits, run `cargo xtask b
 
 - Success: guest writes `0x10` to port `0xF4` → QEMU exit code **33**.
 - Failure: guest writes `0x01` to port `0xF4` → QEMU exit code **3**.
-- **Never `0x00`.** Measured: writing `0x00` exits with code `1`, and a triple fault / guest reset
-  under `-no-reboot` also exits with code `1` — the success signal must not alias the crash
-  signal. Exit `1` is therefore *defined* as "crashed before reaching a verdict".
-- Timeout (default 10 s wall) → failure; any other exit code → failure.
+- **Never `0x00`.** Measured: writing `0x00` exits with code `1` — the same code a guest
+  **reset** under `-no-reboot` produces; the success signal must not alias crash paths.
+- Crash-before-verdict (measured on QEMU 10.2.1): a **triple fault / guest shutdown** exits with
+  code **0** (the `cpu_x86_shutdown` path), a **reset** under `-no-reboot` with code **1**. The
+  harness defines exit `0` or `1` as "crashed before reaching a verdict".
+- Timeout (per-checkpoint, 5 s default) → failure; any other exit code → failure.
 - The harness logs the QEMU version line with every run (upstream behavior around debug-exit and
   boot ROMs has shifted across releases).
 
