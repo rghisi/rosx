@@ -98,25 +98,56 @@ const EXACT_486_MNEMONICS: &[&str] = &[
 ];
 
 pub fn run_check_isa(spec: &ArchSpec, user_elfs: &[&str]) -> Result<Vec<String>, String> {
-    let objdump = on_path("objdump").ok_or_else(|| {
-        "objdump not found on PATH; install binutils (sudo apt install binutils)".to_string()
-    })?;
-    let mut failures = Vec::new();
+    let objdump = require_objdump()?;
     let mut audited = vec![spec.kernel_elf("release")];
     let release_dir = spec.user_release_dir();
     audited.extend(user_elfs.iter().map(|name| release_dir.join(name)));
+    audit_elf_paths(
+        &objdump,
+        &audited,
+        &format!("cargo xtask build {}", spec.name),
+    )
+}
 
-    for elf in &audited {
-        let output = Command::new(&objdump)
+pub const BOOTLOADER_ELF_NAMES: [&str; 1] = ["fake-kernel-32"];
+
+pub fn run_check_isa_bootloader() -> Result<Vec<String>, String> {
+    let objdump = require_objdump()?;
+    crate::boot_image::build_fake_kernel();
+    let release_dir = crate::workspace_root()
+        .join("target")
+        .join("rosx-boot-i486")
+        .join("release");
+    let elfs: Vec<PathBuf> = BOOTLOADER_ELF_NAMES
+        .iter()
+        .map(|name| release_dir.join(name))
+        .collect();
+    audit_elf_paths(&objdump, &elfs, "cargo xtask check-isa bootloader")
+}
+
+fn require_objdump() -> Result<PathBuf, String> {
+    on_path("objdump").ok_or_else(|| {
+        "objdump not found on PATH; install binutils (sudo apt install binutils)".to_string()
+    })
+}
+
+fn audit_elf_paths(
+    objdump: &Path,
+    elfs: &[PathBuf],
+    build_hint: &str,
+) -> Result<Vec<String>, String> {
+    let mut failures = Vec::new();
+    for elf in elfs {
+        let output = Command::new(objdump)
             .arg("-d")
             .arg(elf)
             .output()
             .map_err(|err| format!("failed to run objdump on {}: {err}", elf.display()))?;
         if !output.status.success() {
             return Err(format!(
-                "objdump failed on {} (missing? run `cargo xtask build {}` first)",
+                "objdump failed on {} (missing? run `{}` first)",
                 elf.display(),
-                spec.name
+                build_hint
             ));
         }
         let violations = audit_disassembly(&String::from_utf8_lossy(&output.stdout));

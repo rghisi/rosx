@@ -263,6 +263,29 @@ fn check_isa_command(spec: &ArchSpec) {
     }
 }
 
+fn check_isa_bootloader_command() {
+    match check_isa::run_check_isa_bootloader() {
+        Err(message) => {
+            eprintln!("error: {message}");
+            process::exit(1);
+        }
+        Ok(failures) => {
+            if failures.is_empty() {
+                println!(
+                    "==> check-isa bootloader: {} bootloader ELFs are 486-clean",
+                    check_isa::BOOTLOADER_ELF_NAMES.len()
+                );
+                return;
+            }
+            eprintln!("non-486 mnemonics found:");
+            for failure in &failures {
+                eprintln!("  {failure}");
+            }
+            process::exit(1);
+        }
+    }
+}
+
 fn check_isa_stages_command(stages_dir: &std::path::Path) {
     match check_isa::run_check_stages(stages_dir) {
         Err(message) => {
@@ -306,7 +329,7 @@ fn parse_stages_option(extras: &[String]) -> Result<Option<std::path::PathBuf>, 
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | test [--skip-integration] | boot-image [32|64|floppy] | boot-test>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | check-isa bootloader | test [--skip-integration] | boot-image [32|64|floppy] | boot-test>"
     );
 }
 
@@ -402,14 +425,18 @@ fn main() {
             pack_rom(spec);
         }
         "check-isa" => {
-            let (spec, rest) = split_arch(extras);
-            match parse_stages_option(rest) {
-                Ok(Some(dir)) => check_isa_stages_command(&dir),
-                Ok(None) => check_isa_command(spec),
-                Err(message) => {
-                    eprintln!("{message}");
-                    usage();
-                    process::exit(2);
+            if extras.first().map(String::as_str) == Some("bootloader") {
+                check_isa_bootloader_command();
+            } else {
+                let (spec, rest) = split_arch(extras);
+                match parse_stages_option(rest) {
+                    Ok(Some(dir)) => check_isa_stages_command(&dir),
+                    Ok(None) => check_isa_command(spec),
+                    Err(message) => {
+                        eprintln!("{message}");
+                        usage();
+                        process::exit(2);
+                    }
                 }
             }
         }

@@ -34,6 +34,9 @@ const PROBE_VOLUME_NAME: &str = "PROBE.TXT";
 const PROBE_CONTENTS: &str = "rosx boot-image probe file\n";
 const INITRD_LOCAL_NAME: &str = "initrd.bin";
 const INITRD_VOLUME_NAME: &str = "INITRD.BIN";
+const KERNEL_LOCAL_NAME: &str = "kernel.elf";
+const KERNEL_VOLUME_NAME: &str = "KERNEL.ELF";
+pub const FAKE_KERNEL_CRATE: &str = "fake-kernel-32";
 
 pub const INITRD_SEED: u64 = 0xB007_7E73_2026_1107;
 pub const INITRD_BYTES: usize = 64 * 1024;
@@ -261,7 +264,8 @@ fn pack_partitioned(image: PathBuf) {
     mformat_volume(&image, partition_sectors);
     mcopy_probe(&image);
     mcopy_initrd(&image);
-    mdir_sees_probe(&image);
+    mcopy_kernel(&image);
+    mdir_sees_the_boot_volume(&image);
 }
 
 fn pack_floppy(image: PathBuf) {
@@ -331,7 +335,38 @@ fn mcopy_initrd(image: &Path) {
     run(&mut cmd, "mcopy the seeded initrd onto the boot image volume");
 }
 
-fn mdir_sees_probe(image: &Path) {
+pub fn build_fake_kernel() -> Vec<u8> {
+    let mut builder = crate::cargo();
+    builder
+        .arg("build")
+        .arg("--release")
+        .arg("-p")
+        .arg(FAKE_KERNEL_CRATE)
+        .arg("--target")
+        .arg(STAGE2_TARGET_SPEC)
+        .args(crate::UNSTABLE);
+    run(&mut builder, "build the fake-kernel-32 smoke kernel");
+    let elf = workspace_root()
+        .join("target")
+        .join("rosx-boot-i486")
+        .join("release")
+        .join(FAKE_KERNEL_CRATE);
+    fs::read(&elf).expect("cannot read the fake-kernel-32 ELF")
+}
+
+fn mcopy_kernel(image: &Path) {
+    let kernel = scratch_dir().join(KERNEL_LOCAL_NAME);
+    fs::write(&kernel, build_fake_kernel()).expect("cannot write the kernel ELF scratch file");
+    let mut cmd = Command::new("mcopy");
+    cmd.arg("-m")
+        .arg("-o")
+        .arg(partition_index(image))
+        .arg(&kernel)
+        .arg(format!("::{KERNEL_VOLUME_NAME}"));
+    run(&mut cmd, "mcopy the fake-kernel ELF onto the boot image volume");
+}
+
+fn mdir_sees_the_boot_volume(image: &Path) {
     let mut cmd = Command::new("mdir");
     cmd.arg(partition_index(image)).arg("::");
     let output = cmd.output().expect("failed to run mdir");
@@ -340,15 +375,18 @@ fn mdir_sees_probe(image: &Path) {
         output.status.success()
             && listing.contains("ROSXBOOT")
             && listing.contains("PROBE")
-            && listing.contains("TXT"),
-        "mdir cannot see the probe file on the {label} volume at LBA {start} — the FAT16 \
+            && listing.contains("TXT")
+            && listing.contains("KERNEL")
+            && listing.contains("ELF"),
+        "mdir cannot see the boot volume files on the {label} volume at LBA {start} — the FAT16 \
          recipe is broken; output: {listing}",
         label = VOLUME_LABEL,
         start = PARTITION_START_LBA,
     );
     println!(
-        "==> mdir confirms {probe} on {label} at LBA {start}",
+        "==> mdir confirms {probe} and {kernel} on {label} at LBA {start}",
         probe = PROBE_VOLUME_NAME,
+        kernel = KERNEL_VOLUME_NAME,
         label = VOLUME_LABEL,
         start = PARTITION_START_LBA,
     );
