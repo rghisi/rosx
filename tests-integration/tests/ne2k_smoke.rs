@@ -12,7 +12,7 @@ fn ne2k_cli_drives_the_stack_on_one_guest() {
 
     let mark = session.mark();
     session.send_line("ne2k mac");
-    session.expect_output_since(mark, "[NE2KD] ISA NIC at 0x0300 irq 9", REPLY_BUDGET);
+    session.expect_output("[NE2KD] ISA NIC at 0x0300 irq 9", REPLY_BUDGET);
     session.expect_output_since(mark, "ne2k mac ", REPLY_BUDGET);
 
     let stats_mark = session.mark();

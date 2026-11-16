@@ -88,6 +88,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         .service("/randomd", "RANDOM")
         .service("/echo", "BULKECHO")
         .service("/pong", "PING")
+        .service("/pcid", pci_protocol::wire::SERVICE_NAME)
+        .service("/ne2kd", "NE2K")
         .exec("/shell", &[])
         .exec("rom:shell", &[]);
     let _ = kernel.schedule(new_elf_task_with_arguments("init", INIT_ELF, boot_plan.encode()));

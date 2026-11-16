@@ -235,6 +235,10 @@ pub fn attach_ne2k_isa(command: &mut Command, multicast: &str) {
     ));
 }
 
+pub fn attach_ne2k_pci(command: &mut Command) {
+    command.arg("-device").arg("ne2k_pci");
+}
+
 pub fn persistent_hdd_image() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     ensure_hdd_image(&PathBuf::from(home).join("tmp"))
