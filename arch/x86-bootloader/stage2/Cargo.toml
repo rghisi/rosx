@@ -10,6 +10,9 @@ name = "rosx-stage2"
 bench = false
 test = false
 
+[features]
+stage-64 = []
+
 [dependencies]
 fs-core = { path = "../../../fs/core" }
 rosx-boot-common = { path = "../common" }

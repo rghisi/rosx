@@ -21,6 +21,8 @@ mod elf32;
 mod entry;
 mod fat;
 mod heap;
+#[cfg(feature = "stage-64")]
+mod longmode;
 mod memory;
 mod thunk;
 
@@ -38,6 +40,8 @@ const MEM88_REPEAT_CALLS: usize = 20;
 extern "C" fn stage2_main() -> ! {
     let console = Serial::COM1;
     console.init();
+    #[cfg(feature = "stage-64")]
+    longmode::ensure_long_mode(&console);
     if !a20_is_visible() {
         console.write_line("[ERR] a20");
         debug_exit(DEBUG_EXIT_FAILURE);

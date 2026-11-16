@@ -10,6 +10,10 @@ SECTIONS
         *(.text .text.*)
     }
 
+    .longmode.text : {
+        *(.longmode.text)
+    }
+
     .rodata : {
         *(.rodata .rodata.*)
     }
