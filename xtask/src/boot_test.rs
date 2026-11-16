@@ -36,6 +36,13 @@ const BIOS_32_512: BootMachine = BootMachine {
     ram_bytes: 512 * MEBIBYTE,
 };
 
+const BIOS_32_8: BootMachine = BootMachine {
+    binary: "qemu-system-i386",
+    cpu: "486",
+    ram: "8M",
+    ram_bytes: 8 * MEBIBYTE,
+};
+
 const BIOS_64: BootMachine = BootMachine {
     binary: "qemu-system-x86_64",
     cpu: "qemu64",
@@ -56,6 +63,7 @@ enum ImageSource {
     CorruptStage2Header,
     ScribbledFatRoot,
     PatchedKernel(KernelPatch),
+    OversizedInitrd,
 }
 
 #[derive(Clone, Copy)]
@@ -96,7 +104,7 @@ struct BootCheckpoint {
     timeout_seconds: u64,
 }
 
-const CHECKPOINTS: [BootCheckpoint; 15] = [
+const CHECKPOINTS: [BootCheckpoint; 17] = [
     BootCheckpoint {
         name: "harness-pass",
         machine: &BIOS_32,
@@ -200,13 +208,33 @@ const CHECKPOINTS: [BootCheckpoint; 15] = [
         timeout_seconds: 3,
     },
     BootCheckpoint {
-        name: "fat-initrd",
+        name: "initrd-crc",
         machine: &BIOS_32,
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot32),
         expected: ExitVerdict::Success,
-        serial_contains: &["[FAT] initrd addr=0x00100000 size=65536 crc32=0x"],
-        serial_absent: &["[FAT-ERR]"],
+        serial_contains: &["[INITRD] addr=", "[FK32] alive"],
+        serial_absent: &["[FAT-ERR]", "[ERR] mem"],
+        timeout_seconds: 3,
+    },
+    BootCheckpoint {
+        name: "initrd-crc-512m",
+        machine: &BIOS_32_512,
+        media: BootMedia::Disk,
+        source: ImageSource::BootImage(BootImage::Boot32),
+        expected: ExitVerdict::Success,
+        serial_contains: &["[INITRD] addr=0x00101000", "[FK32] alive"],
+        serial_absent: &["[FAT-ERR]", "[ERR] mem"],
+        timeout_seconds: 4,
+    },
+    BootCheckpoint {
+        name: "initrd-too-big",
+        machine: &BIOS_32_8,
+        media: BootMedia::Disk,
+        source: ImageSource::OversizedInitrd,
+        expected: ExitVerdict::Failure,
+        serial_contains: &["[ELF]", "[ERR] mem"],
+        serial_absent: &["[ERR] memnorm", "[INITRD]", "[FK32]", "[STAGE2_32]"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -215,7 +243,7 @@ const CHECKPOINTS: [BootCheckpoint; 15] = [
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot64),
         expected: ExitVerdict::Success,
-        serial_contains: &["[FAT] initrd"],
+        serial_contains: &["[INITRD] addr="],
         serial_absent: &["[FAT-ERR]"],
         timeout_seconds: 3,
     },
@@ -226,7 +254,7 @@ const CHECKPOINTS: [BootCheckpoint; 15] = [
         source: ImageSource::ScribbledFatRoot,
         expected: ExitVerdict::Failure,
         serial_contains: &["[FAT-ERR]"],
-        serial_absent: &["[FAT] initrd", "[STAGE2_32]"],
+        serial_absent: &["[INITRD]", "[STAGE2_32]"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -327,6 +355,7 @@ fn prepare_image(source: &ImageSource) -> PathBuf {
         ImageSource::CorruptStage2Header => pack_corrupt_header_image(),
         ImageSource::ScribbledFatRoot => pack_scribbled_fat_root_image(),
         ImageSource::PatchedKernel(patch) => pack_patched_kernel_image(*patch),
+        ImageSource::OversizedInitrd => pack_oversized_initrd_image(),
     }
 }
 
@@ -404,10 +433,7 @@ fn patch_identity_to_elf64(elf: &mut [u8]) {
 }
 
 fn zero_first_load_physical_address(elf: &mut [u8]) {
-    const PT_LOAD: u32 = 1;
-    let table = u32::from_le_bytes(elf[28..32].try_into().unwrap()) as usize;
-    let entry_size = u16::from_le_bytes(elf[42..44].try_into().unwrap()) as usize;
-    let count = u16::from_le_bytes(elf[44..46].try_into().unwrap()) as usize;
+    let (table, entry_size, count) = kernel_program_headers(elf);
     for index in 0..count {
         let record = table + index * entry_size;
         let kind = u32::from_le_bytes(elf[record..record + 4].try_into().unwrap());
@@ -420,20 +446,43 @@ fn zero_first_load_physical_address(elf: &mut [u8]) {
 }
 
 fn mcopy_kernel_onto(image: &Path, elf: &[u8]) {
+    mcopy_volume_file(image, "patched-kernel.elf", boot_image::KERNEL_VOLUME_NAME, elf);
+}
+
+fn mcopy_volume_file(image: &Path, local_name: &str, volume_name: &str, bytes: &[u8]) {
     let scratch = workspace_root()
         .join("target")
         .join("boot-test")
-        .join("patched-kernel.elf");
-    fs::write(&scratch, elf).expect("cannot write the patched kernel scratch file");
+        .join(local_name);
+    fs::write(&scratch, bytes).expect("cannot write the mcopy scratch file");
     let offset = u64::from(boot_image::PARTITION_START_LBA) * boot_image::BOOT_SECTOR_BYTES as u64;
     let mut cmd = Command::new("mcopy");
     cmd.arg("-m")
         .arg("-o")
         .arg(format!("-i{}@@{}", image.display(), offset))
         .arg(&scratch)
-        .arg(format!("::{}", boot_image::KERNEL_VOLUME_NAME));
+        .arg(format!("::{volume_name}"));
     let status = cmd.status().expect("failed to run mcopy");
-    assert!(status.success(), "mcopy cannot replace the kernel on the test image");
+    assert!(
+        status.success(),
+        "mcopy cannot replace {volume_name} on the test image"
+    );
+}
+
+fn pack_oversized_initrd_image() -> PathBuf {
+    let image = workspace_root()
+        .join("target")
+        .join("boot-test")
+        .join("stage2-oversized-initrd.img");
+    fs::copy(boot_image::pack(BootImage::Boot32), &image)
+        .expect("cannot copy the boot32 image for the oversized initrd");
+    mcopy_volume_file(
+        &image,
+        "oversized-initrd.bin",
+        boot_image::INITRD_VOLUME_NAME,
+        &boot_image::initrd_payload_of(8 * MEBIBYTE as usize),
+    );
+    image
 }
 
 fn pack_harness_stub_image(variant: StubVariant) -> PathBuf {
@@ -536,17 +585,15 @@ fn verdict_mismatch(checkpoint: &BootCheckpoint, outcome: &BootOutcome) -> Optio
     if let Some(line) = outcome
         .serial
         .lines()
-        .find(|line| line.starts_with("[FAT] initrd"))
-        && let Some(reason) = verify_fat_initrd(line)
+        .find(|line| line.starts_with("[INITRD]"))
+        && let Some(reason) = verify_initrd(line)
     {
         return Some(reason);
     }
     None
 }
 
-const INITRD_STAGING_ADDRESS: u64 = 0x0010_0000;
-
-fn verify_fat_initrd(line: &str) -> Option<String> {
+fn verify_initrd(line: &str) -> Option<String> {
     let mut fields = line.split_whitespace();
     let (_, _) = (fields.next()?, fields.next()?);
     let (Some(addr), Some(size), Some(printed)) = (
@@ -554,11 +601,12 @@ fn verify_fat_initrd(line: &str) -> Option<String> {
         parse_dec_field(fields.next()?, "size="),
         parse_hex_field(fields.next()?, "crc32="),
     ) else {
-        return Some(format!("malformed [FAT] initrd line: {line}"));
+        return Some(format!("malformed [INITRD] line: {line}"));
     };
-    if addr != INITRD_STAGING_ADDRESS {
+    let expected_address = fake_kernel_phys_end();
+    if addr != expected_address {
         return Some(format!(
-            "initrd staged at {addr:#010x}, expected {INITRD_STAGING_ADDRESS:#010x}"
+            "initrd placed at {addr:#010x}, expected the kernel phys end {expected_address:#010x}"
         ));
     }
     if size != boot_image::INITRD_BYTES as u64 {
@@ -574,6 +622,32 @@ fn verify_fat_initrd(line: &str) -> Option<String> {
         ));
     }
     None
+}
+
+const PT_LOAD: u32 = 1;
+
+fn kernel_program_headers(elf: &[u8]) -> (usize, usize, usize) {
+    let table = u32::from_le_bytes(elf[28..32].try_into().unwrap()) as usize;
+    let entry_size = u16::from_le_bytes(elf[42..44].try_into().unwrap()) as usize;
+    let count = u16::from_le_bytes(elf[44..46].try_into().unwrap()) as usize;
+    (table, entry_size, count)
+}
+
+fn fake_kernel_phys_end() -> u64 {
+    let elf = boot_image::build_fake_kernel();
+    let (table, entry_size, count) = kernel_program_headers(&elf);
+    let mut phys_end = 0u64;
+    for index in 0..count {
+        let record = table + index * entry_size;
+        if u32::from_le_bytes(elf[record..record + 4].try_into().unwrap()) != PT_LOAD {
+            continue;
+        }
+        let address = u32::from_le_bytes(elf[record + 12..record + 16].try_into().unwrap()) as u64;
+        let memory_bytes =
+            u32::from_le_bytes(elf[record + 20..record + 24].try_into().unwrap()) as u64;
+        phys_end = phys_end.max(address + memory_bytes);
+    }
+    (phys_end + 4095) & !4095
 }
 
 fn parse_hex_field(field: &str, key: &str) -> Option<u64> {

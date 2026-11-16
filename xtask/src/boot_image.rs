@@ -33,7 +33,7 @@ const PROBE_LOCAL_NAME: &str = "probe.txt";
 const PROBE_VOLUME_NAME: &str = "PROBE.TXT";
 const PROBE_CONTENTS: &str = "rosx boot-image probe file\n";
 const INITRD_LOCAL_NAME: &str = "initrd.bin";
-const INITRD_VOLUME_NAME: &str = "INITRD.BIN";
+pub const INITRD_VOLUME_NAME: &str = "INITRD.BIN";
 const KERNEL_LOCAL_NAME: &str = "kernel.elf";
 pub const KERNEL_VOLUME_NAME: &str = "KERNEL.ELF";
 pub const FAKE_KERNEL_CRATE: &str = "fake-kernel-32";
@@ -42,7 +42,11 @@ pub const INITRD_SEED: u64 = 0xB007_7E73_2026_1107;
 pub const INITRD_BYTES: usize = 64 * 1024;
 
 pub fn initrd_payload() -> Vec<u8> {
-    let mut payload = vec![0u8; INITRD_BYTES];
+    initrd_payload_of(INITRD_BYTES)
+}
+
+pub fn initrd_payload_of(bytes: usize) -> Vec<u8> {
+    let mut payload = vec![0u8; bytes];
     let mut state = INITRD_SEED;
     for chunk in payload.chunks_mut(8) {
         state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
