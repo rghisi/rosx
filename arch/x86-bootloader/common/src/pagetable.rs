@@ -3,7 +3,7 @@ pub const PAGE_TABLE_BYTES: usize = 4096;
 pub const PAGE_TABLE_SET_BYTES: usize = 6 * PAGE_TABLE_BYTES;
 pub const PRESENT: u64 = 0b01;
 pub const WRITABLE: u64 = 0b10;
-pub const HUGE_PAGE_2MIB: u64 = 1 << 5;
+pub const HUGE_PAGE_2MIB: u64 = 1 << 7;
 pub const HIGHER_HALF_PML4_INDEX: usize = 256;
 pub const TABLES_PER_SET: usize = 6;
 
@@ -51,14 +51,20 @@ mod tests {
 
     #[test]
     fn huge_pages_carry_present_writable_and_page_size() {
-        assert_eq!(huge_page(0), 0x23);
-        assert_eq!(huge_page(1), 0x200_023);
-        assert_eq!(huge_page(2047), 0xFFE0_0023);
+        assert_eq!(huge_page(0), 0x83);
+        assert_eq!(huge_page(1), 0x200_083);
+        assert_eq!(huge_page(2047), 0xFFE0_0083);
     }
 
     #[test]
     fn table_pointers_carry_present_and_writable_only() {
         assert_eq!(next_table(0x0011_1000), 0x0011_1003);
+    }
+
+    #[test]
+    fn the_page_size_bit_of_a_directory_entry_is_bit_seven() {
+        assert_eq!(huge_page(0) & (1 << 7), 1 << 7);
+        assert_eq!(next_table(0) & (1 << 7), 0);
     }
 
     #[test]
