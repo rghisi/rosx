@@ -50,6 +50,13 @@ const BIOS_64: BootMachine = BootMachine {
     ram_bytes: 128 * MEBIBYTE,
 };
 
+const BIOS_64_512: BootMachine = BootMachine {
+    binary: "qemu-system-x86_64",
+    cpu: "qemu64",
+    ram: "512M",
+    ram_bytes: 512 * MEBIBYTE,
+};
+
 const BIOS_64_NO_LM: BootMachine = BootMachine {
     binary: "qemu-system-x86_64",
     cpu: "qemu64,-lm",
@@ -70,6 +77,7 @@ enum ImageSource {
     CorruptStage2Header,
     ScribbledFatRoot,
     PatchedKernel(KernelPatch),
+    Elf32OnLongMode,
     OversizedInitrd,
     NoInitrdVolume,
 }
@@ -112,7 +120,7 @@ struct BootCheckpoint {
     timeout_seconds: u64,
 }
 
-const CHECKPOINTS: [BootCheckpoint; 21] = [
+const CHECKPOINTS: [BootCheckpoint; 24] = [
     BootCheckpoint {
         name: "harness-pass",
         machine: &BIOS_32,
@@ -256,6 +264,31 @@ const CHECKPOINTS: [BootCheckpoint; 21] = [
         timeout_seconds: 3,
     },
     BootCheckpoint {
+        name: "handoff64",
+        machine: &BIOS_64,
+        media: BootMedia::Disk,
+        source: ImageSource::BootImage(BootImage::Boot64),
+        expected: ExitVerdict::Success,
+        serial_contains: &[
+            "[INITRD] addr=",
+            "kernel loaded",
+            "arch: x86_64",
+            "initrd_crc32: 0x",
+        ],
+        serial_absent: &["[FAT-ERR]", "[ERR] mem", "[FK64] violation"],
+        timeout_seconds: 3,
+    },
+    BootCheckpoint {
+        name: "handoff64-512m",
+        machine: &BIOS_64_512,
+        media: BootMedia::Disk,
+        source: ImageSource::BootImage(BootImage::Boot64),
+        expected: ExitVerdict::Success,
+        serial_contains: &["[INITRD] addr=", "kernel loaded", "initrd_crc32: 0x"],
+        serial_absent: &["[FAT-ERR]", "[ERR] mem", "[FK64] violation"],
+        timeout_seconds: 4,
+    },
+    BootCheckpoint {
         name: "initrd-too-big",
         machine: &BIOS_32_8,
         media: BootMedia::Disk,
@@ -319,6 +352,16 @@ const CHECKPOINTS: [BootCheckpoint; 21] = [
         timeout_seconds: 3,
     },
     BootCheckpoint {
+        name: "elf64-class32",
+        machine: &BIOS_64,
+        media: BootMedia::Disk,
+        source: ImageSource::Elf32OnLongMode,
+        expected: ExitVerdict::Failure,
+        serial_contains: &["[DISK] media=lba", "[ERR] elf class"],
+        serial_absent: &["[ELF] arch=", "kernel loaded"],
+        timeout_seconds: 3,
+    },
+    BootCheckpoint {
         name: "lm-smoke",
         machine: &BIOS_64,
         media: BootMedia::Disk,
@@ -327,12 +370,12 @@ const CHECKPOINTS: [BootCheckpoint; 21] = [
         serial_contains: &[
             "[STAGE1] OK",
             "[STAGE2_64] A20=OK THUNK=OK",
-            "[KERNEL64] addr=0x00100000",
+            "[ELF] arch=X86_64 entry=0xffff800000100000",
             "[INITRD] addr=",
             "[PAGETABLE] root=",
-            "[FK64] alive",
+            "kernel loaded",
         ],
-        serial_absent: &["[FAT-ERR]", "[ERR]"],
+        serial_absent: &["[FAT-ERR]", "[ERR]", "[FK64] violation"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -420,6 +463,7 @@ fn prepare_image(source: &ImageSource) -> PathBuf {
         ImageSource::CorruptStage2Header => pack_corrupt_header_image(),
         ImageSource::ScribbledFatRoot => pack_scribbled_fat_root_image(),
         ImageSource::PatchedKernel(patch) => pack_patched_kernel_image(*patch),
+        ImageSource::Elf32OnLongMode => pack_elf32_on_long_mode_image(),
         ImageSource::OversizedInitrd => pack_oversized_initrd_image(),
         ImageSource::NoInitrdVolume => pack_no_initrd_image(),
     }
@@ -513,6 +557,18 @@ fn zero_first_load_physical_address(elf: &mut [u8]) {
 
 fn mcopy_kernel_onto(image: &Path, elf: &[u8]) {
     mcopy_volume_file(image, "patched-kernel.elf", boot_image::KERNEL_VOLUME_NAME, elf);
+}
+
+fn pack_elf32_on_long_mode_image() -> PathBuf {
+    let image = workspace_root()
+        .join("target")
+        .join("boot-test")
+        .join("stage2-elf32-on-64.img");
+    fs::copy(boot_image::pack(BootImage::Boot64), &image)
+        .expect("cannot copy the boot64 image for the class-1 kernel swap");
+    let elf = boot_image::build_fake_kernel();
+    mcopy_kernel_onto(&image, &elf);
+    image
 }
 
 fn mcopy_volume_file(image: &Path, local_name: &str, volume_name: &str, bytes: &[u8]) {
@@ -702,7 +758,11 @@ fn verify_initrd(line: &str, serial: &str) -> Option<String> {
         }
         0u64
     } else {
-        let expected_address = fake_kernel_phys_end();
+        let expected_address = if serial.contains("arch: x86_64") {
+            fake_kernel64_phys_end()
+        } else {
+            fake_kernel_phys_end()
+        };
         if addr != expected_address {
             return Some(format!(
                 "initrd placed at {addr:#010x}, expected the kernel phys end {expected_address:#010x}"
@@ -747,6 +807,13 @@ fn kernel_program_headers(elf: &[u8]) -> (usize, usize, usize) {
     (table, entry_size, count)
 }
 
+fn kernel64_program_headers(elf: &[u8]) -> (usize, usize, usize) {
+    let table = u64::from_le_bytes(elf[32..40].try_into().unwrap()) as usize;
+    let entry_size = u16::from_le_bytes(elf[54..56].try_into().unwrap()) as usize;
+    let count = u16::from_le_bytes(elf[56..58].try_into().unwrap()) as usize;
+    (table, entry_size, count)
+}
+
 fn fake_kernel_phys_end() -> u64 {
     let elf = boot_image::build_fake_kernel();
     let (table, entry_size, count) = kernel_program_headers(&elf);
@@ -759,6 +826,22 @@ fn fake_kernel_phys_end() -> u64 {
         let address = u32::from_le_bytes(elf[record + 12..record + 16].try_into().unwrap()) as u64;
         let memory_bytes =
             u32::from_le_bytes(elf[record + 20..record + 24].try_into().unwrap()) as u64;
+        phys_end = phys_end.max(address + memory_bytes);
+    }
+    (phys_end + 4095) & !4095
+}
+
+fn fake_kernel64_phys_end() -> u64 {
+    let elf = boot_image::build_fake_kernel64();
+    let (table, entry_size, count) = kernel64_program_headers(&elf);
+    let mut phys_end = 0u64;
+    for index in 0..count {
+        let record = table + index * entry_size;
+        if u32::from_le_bytes(elf[record..record + 4].try_into().unwrap()) != PT_LOAD {
+            continue;
+        }
+        let address = u64::from_le_bytes(elf[record + 24..record + 32].try_into().unwrap());
+        let memory_bytes = u64::from_le_bytes(elf[record + 40..record + 48].try_into().unwrap());
         phys_end = phys_end.max(address + memory_bytes);
     }
     (phys_end + 4095) & !4095
