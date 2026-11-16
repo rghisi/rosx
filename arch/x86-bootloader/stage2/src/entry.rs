@@ -121,6 +121,12 @@ putc16_wait:
     out dx, al
     ret
 
+    .p2align 1
+a20_saved_low:
+    .skip 2
+a20_saved_high:
+    .skip 2
+
     .code32
 protected_entry:
     mov ax, {data_selector}
@@ -139,7 +145,7 @@ protected_entry:
 1:  hlt
     jmp 1b
 
-    .section .rodata
+    .section .entry_rodata, "a", @progbits
     .p2align 2
 gdt_pointer:
     .short {gdt_limit}
@@ -149,12 +155,6 @@ pm_entry_pointer:
     .short {code32_selector}
 msg_err_a20:
     .asciz "[ERR] a20\r\n"
-
-    .section .bss
-a20_saved_low:
-    .skip 2
-a20_saved_high:
-    .skip 2
     "#,
     pe_bit = const 1u32,
     boot_drive_memory = const BOOT_DRIVE_MEMORY as u32,
