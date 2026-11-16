@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::io::{Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, ExitStatus, Stdio};
 use std::thread::sleep;
@@ -54,6 +54,7 @@ enum ImageSource {
     HarnessStub(StubVariant),
     BootImage(BootImage),
     CorruptStage2Header,
+    ScribbledFatRoot,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -88,7 +89,7 @@ struct BootCheckpoint {
     timeout_seconds: u64,
 }
 
-const CHECKPOINTS: [BootCheckpoint; 9] = [
+const CHECKPOINTS: [BootCheckpoint; 12] = [
     BootCheckpoint {
         name: "harness-pass",
         machine: &BIOS_32,
@@ -192,6 +193,36 @@ const CHECKPOINTS: [BootCheckpoint; 9] = [
         timeout_seconds: 3,
     },
     BootCheckpoint {
+        name: "fat-initrd",
+        machine: &BIOS_32,
+        media: BootMedia::Disk,
+        source: ImageSource::BootImage(BootImage::Boot32),
+        expected: ExitVerdict::Success,
+        serial_contains: &["[FAT] initrd addr=0x00100000 size=65536 crc32=0x"],
+        serial_absent: &["[FAT-ERR]"],
+        timeout_seconds: 3,
+    },
+    BootCheckpoint {
+        name: "fat-boot64-media",
+        machine: &BIOS_64,
+        media: BootMedia::Disk,
+        source: ImageSource::BootImage(BootImage::Boot64),
+        expected: ExitVerdict::Success,
+        serial_contains: &["[FAT] initrd"],
+        serial_absent: &["[FAT-ERR]"],
+        timeout_seconds: 3,
+    },
+    BootCheckpoint {
+        name: "fat-corrupt",
+        machine: &BIOS_32,
+        media: BootMedia::Disk,
+        source: ImageSource::ScribbledFatRoot,
+        expected: ExitVerdict::Failure,
+        serial_contains: &["[FAT-ERR]"],
+        serial_absent: &["[FAT] initrd", "[STAGE2_32]"],
+        timeout_seconds: 3,
+    },
+    BootCheckpoint {
         name: "stage2-corrupt-header",
         machine: &BIOS_32,
         media: BootMedia::Disk,
@@ -254,6 +285,7 @@ fn prepare_image(source: &ImageSource) -> PathBuf {
         ImageSource::HarnessStub(variant) => pack_harness_stub_image(*variant),
         ImageSource::BootImage(kind) => boot_image::pack(*kind),
         ImageSource::CorruptStage2Header => pack_corrupt_header_image(),
+        ImageSource::ScribbledFatRoot => pack_scribbled_fat_root_image(),
     }
 }
 
@@ -274,6 +306,35 @@ fn pack_corrupt_header_image() -> PathBuf {
     .expect("cannot seek to the stage2 header");
     file.write_all(b"NOPE")
         .expect("cannot scribble the stage2 header magic");
+    image
+}
+
+fn pack_scribbled_fat_root_image() -> PathBuf {
+    let image = workspace_root()
+        .join("target")
+        .join("boot-test")
+        .join("stage2-scribbled-fat-root.img");
+    fs::copy(boot_image::pack(BootImage::Boot32), &image)
+        .expect("cannot copy the boot32 image for root-directory scribbling");
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&image)
+        .expect("cannot open the scribbled-fat-root image");
+    let sector = boot_image::BOOT_SECTOR_BYTES as u64;
+    file.seek(SeekFrom::Start(u64::from(boot_image::PARTITION_START_LBA) * sector))
+        .expect("cannot seek to the volume boot sector");
+    let mut boot_sector = [0u8; 512];
+    file.read_exact(&mut boot_sector)
+        .expect("cannot read the volume boot sector");
+    let reserved_sectors = u16::from_le_bytes([boot_sector[14], boot_sector[15]]) as u64;
+    let fat_sectors = u16::from_le_bytes([boot_sector[22], boot_sector[23]]) as u64;
+    let root_entries = u16::from_le_bytes([boot_sector[17], boot_sector[18]]) as u64;
+    let root_lba = u64::from(boot_image::PARTITION_START_LBA) + reserved_sectors + 2 * fat_sectors;
+    file.seek(SeekFrom::Start(root_lba * sector))
+        .expect("cannot seek to the FAT root directory");
+    file.write_all(&vec![0u8; (root_entries * 32) as usize])
+        .expect("cannot scribble the FAT root directory");
     image
 }
 
@@ -369,12 +430,72 @@ fn verdict_mismatch(checkpoint: &BootCheckpoint, outcome: &BootOutcome) -> Optio
             return Some(format!("serial output unexpectedly contains {forbidden_text:?}"));
         }
     }
-    if outcome.serial.contains("[STAGE2_32]") {
-        if let Some(reason) = verify_memory_map(&outcome.serial, checkpoint.machine.ram_bytes) {
-            return Some(reason);
-        }
+    if outcome.serial.contains("[STAGE2_32]")
+        && let Some(reason) = verify_memory_map(&outcome.serial, checkpoint.machine.ram_bytes)
+    {
+        return Some(reason);
+    }
+    if let Some(line) = outcome
+        .serial
+        .lines()
+        .find(|line| line.starts_with("[FAT] initrd"))
+        && let Some(reason) = verify_fat_initrd(line)
+    {
+        return Some(reason);
     }
     None
+}
+
+const INITRD_STAGING_ADDRESS: u64 = 0x0010_0000;
+
+fn verify_fat_initrd(line: &str) -> Option<String> {
+    let mut fields = line.split_whitespace();
+    let (_, _) = (fields.next()?, fields.next()?);
+    let (Some(addr), Some(size), Some(printed)) = (
+        parse_hex_field(fields.next()?, "addr="),
+        parse_dec_field(fields.next()?, "size="),
+        parse_hex_field(fields.next()?, "crc32="),
+    ) else {
+        return Some(format!("malformed [FAT] initrd line: {line}"));
+    };
+    if addr != INITRD_STAGING_ADDRESS {
+        return Some(format!(
+            "initrd staged at {addr:#010x}, expected {INITRD_STAGING_ADDRESS:#010x}"
+        ));
+    }
+    if size != boot_image::INITRD_BYTES as u64 {
+        return Some(format!(
+            "initrd read {size} bytes, expected {}",
+            boot_image::INITRD_BYTES
+        ));
+    }
+    let expected = crc32_ieee(&boot_image::initrd_payload());
+    if printed != u64::from(expected) {
+        return Some(format!(
+            "guest crc32 {printed:#010x} differs from the seed-recomputed {expected:#08x}"
+        ));
+    }
+    None
+}
+
+fn parse_hex_field(field: &str, key: &str) -> Option<u64> {
+    u64::from_str_radix(field.strip_prefix(key)?.strip_prefix("0x")?, 16).ok()
+}
+
+fn parse_dec_field(field: &str, key: &str) -> Option<u64> {
+    field.strip_prefix(key)?.parse().ok()
+}
+
+fn crc32_ieee(data: &[u8]) -> u32 {
+    let mut accumulator = 0xFFFF_FFFFu32;
+    for byte in data {
+        accumulator ^= u32::from(*byte);
+        for _ in 0..8 {
+            let mask = (accumulator & 1).wrapping_neg();
+            accumulator = (accumulator >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !accumulator
 }
 
 fn dump_serial(serial: &str) {
