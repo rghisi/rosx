@@ -236,7 +236,8 @@ pub fn attach_ne2k_isa(command: &mut Command, multicast: &str) {
 }
 
 pub fn attach_ne2k_pci(command: &mut Command) {
-    command.arg("-device").arg("ne2k_pci");
+    command.arg("-netdev").arg("user,id=rosxnet");
+    command.arg("-device").arg("ne2k_pci,netdev=rosxnet");
 }
 
 pub fn persistent_hdd_image() -> Option<PathBuf> {
