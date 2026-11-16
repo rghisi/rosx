@@ -32,6 +32,25 @@ const SECTORS_PER_CLUSTER: &str = "2";
 const PROBE_LOCAL_NAME: &str = "probe.txt";
 const PROBE_VOLUME_NAME: &str = "PROBE.TXT";
 const PROBE_CONTENTS: &str = "rosx boot-image probe file\n";
+const INITRD_LOCAL_NAME: &str = "initrd.bin";
+const INITRD_VOLUME_NAME: &str = "INITRD.BIN";
+
+pub const INITRD_SEED: u64 = 0xB007_7E73_2026_1107;
+pub const INITRD_BYTES: usize = 64 * 1024;
+
+pub fn initrd_payload() -> Vec<u8> {
+    let mut payload = vec![0u8; INITRD_BYTES];
+    let mut state = INITRD_SEED;
+    for chunk in payload.chunks_mut(8) {
+        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut mixed = state;
+        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        mixed ^= mixed >> 31;
+        chunk.copy_from_slice(&mixed.to_le_bytes()[..chunk.len()]);
+    }
+    payload
+}
 
 #[derive(Copy, Clone)]
 pub enum StubVariant {
@@ -241,6 +260,7 @@ fn pack_partitioned(image: PathBuf) {
     let partition_sectors = (BOOT_IMAGE_BYTES / SECTOR_BYTES as u64) as u32 - PARTITION_START_LBA;
     mformat_volume(&image, partition_sectors);
     mcopy_probe(&image);
+    mcopy_initrd(&image);
     mdir_sees_probe(&image);
 }
 
@@ -297,6 +317,18 @@ fn mcopy_probe(image: &Path) {
         .arg(&probe)
         .arg(format!("::{PROBE_VOLUME_NAME}"));
     run(&mut cmd, "mcopy the probe file onto the boot image volume");
+}
+
+fn mcopy_initrd(image: &Path) {
+    let initrd = scratch_dir().join(INITRD_LOCAL_NAME);
+    fs::write(&initrd, initrd_payload()).expect("cannot write the volume initrd file");
+    let mut cmd = Command::new("mcopy");
+    cmd.arg("-m")
+        .arg("-o")
+        .arg(partition_index(image))
+        .arg(&initrd)
+        .arg(format!("::{INITRD_VOLUME_NAME}"));
+    run(&mut cmd, "mcopy the seeded initrd onto the boot image volume");
 }
 
 fn mdir_sees_probe(image: &Path) {
