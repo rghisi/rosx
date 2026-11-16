@@ -17,6 +17,9 @@ const M_SAVED_ESP: u32 = TRAMPOLINE_BASE as u32 + 0x180;
 const M_REGS_PTR: u32 = TRAMPOLINE_BASE as u32 + 0x184;
 const M_INT_NO: u32 = TRAMPOLINE_BASE as u32 + 0x188;
 const M_SAVED_EFLAGS: u32 = TRAMPOLINE_BASE as u32 + 0x18C;
+const M_RET_SRC: u32 = TRAMPOLINE_BASE as u32 + 0x190;
+const M_RET_CNT: u32 = TRAMPOLINE_BASE as u32 + 0x194;
+const _: () = assert!(TRAMPOLINE_BASE + TRAMPOLINE_BUDGET <= 0xFFFF);
 const RM_STACK_TOP: u32 = 0x7A00;
 const PE_BIT: u32 = 1;
 const PE_CLEAR_MASK: u32 = 0x7FFF_FFFE;
@@ -72,7 +75,7 @@ impl BiosThunk {
             core::arch::asm!(
                 "call {entry}",
                 entry = sym thunk_entry32_wide,
-                in("edx") regs_address,
+                inlateout("edx") regs_address => _,
                 lateout("eax") _,
                 lateout("ecx") _,
                 options(preserves_flags),
@@ -103,7 +106,7 @@ pm16_landing:
     mov ss, ax
     mov sp, {rm_stack}
     test byte ptr [{int_no}], {wide_mark}
-    jc wide_far
+    js wide_far
     jmp fword ptr [{far_rm}]
 wide_far:
     jmp fword ptr [{far_rm_wide}]
@@ -158,13 +161,14 @@ rm_entry_wide:
     mov es, [{wide}+16]
     mov di, [{wide}+18]
     mov ax, [{wide}]
-    mov bx, [{wide}+2]
-    mov cx, [{wide}+4]
+    mov bx, [{wide}+4]
+    mov cx, [{wide}+8]
     mov edx, [{wide}+12]
     int 0x15
 wide_store:
-    mov [{wide}], ax
+    mov [{wide}], eax
     mov [{wide}+4], bx
+    mov [{wide}+8], cx
     pushfd
     pop ax
     mov [{wide}+20], ax
@@ -181,17 +185,9 @@ pm16_return:
 
     .code32
 thunk32_return:
-    mov esi, {regs}
+    mov esi, [{ret_src}]
     mov edi, [{regs_ptr}]
-    mov ecx, 4
-    rep movsd
-    jmp restore_frame
-
-    .code32
-thunk32_return_wide:
-    mov esi, {wide}
-    mov edi, [{regs_ptr}]
-    mov ecx, 6
+    mov ecx, [{ret_cnt}]
     rep movsd
 
 restore_frame:
@@ -214,8 +210,6 @@ restore_frame:
     .long pm16_return - thunk_blob_start + {tramp}
     .short {code16}
     .long thunk32_return - thunk_blob_start + {tramp}
-    .short {code32}
-    .long thunk32_return_wide - thunk_blob_start + {tramp}
     .short {code32}
     .skip 0x148 - (. - thunk_blob_start)
     .skip 0x18
@@ -246,6 +240,8 @@ thunk_entry32:
     mov [{regs}+8], eax
     mov eax, [edx+12]
     mov [{regs}+12], eax
+    mov dword ptr [{ret_src}], {regs}
+    mov dword ptr [{ret_cnt}], 4
     jmp fword ptr [{far_pm16_in}]
 
     .code32
@@ -272,6 +268,8 @@ thunk_entry32_wide:
     mov [{wide}+16], ax
     mov ax, [edx+18]
     mov [{wide}+18], ax
+    mov dword ptr [{ret_src}], {wide}
+    mov dword ptr [{ret_cnt}], 6
     jmp fword ptr [{far_pm16_in}]
     "#,
     tramp = const TRAMPOLINE_BASE as u32,
@@ -286,6 +284,8 @@ thunk_entry32_wide:
     regs_ptr = const M_REGS_PTR,
     int_no = const M_INT_NO,
     saved_eflags = const M_SAVED_EFLAGS,
+    ret_src = const M_RET_SRC,
+    ret_cnt = const M_RET_CNT,
     rm_stack = const RM_STACK_TOP,
     pe_bit = const PE_BIT,
     pe_clear_mask = const PE_CLEAR_MASK,
