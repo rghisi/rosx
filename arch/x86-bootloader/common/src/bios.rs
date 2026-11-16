@@ -14,6 +14,7 @@ pub struct Regs16 {
     pub di: u16,
     pub bp: u16,
     pub flags: u16,
+    pub es: u16,
 }
 
 impl Regs16 {
@@ -27,6 +28,7 @@ impl Regs16 {
             di: 0,
             bp: 0,
             flags: 0,
+            es: 0,
         }
     }
 
@@ -45,7 +47,7 @@ pub struct Regs32 {
     pub es: u16,
     pub di: u16,
     pub flags: u16,
-    pub reserved: u16,
+    pub si: u16,
 }
 
 impl Regs32 {
@@ -58,7 +60,7 @@ impl Regs32 {
             es: 0,
             di: 0,
             flags: 0,
-            reserved: 0,
+            si: 0,
         }
     }
 

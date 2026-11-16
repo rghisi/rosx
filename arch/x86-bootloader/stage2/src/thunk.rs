@@ -144,6 +144,7 @@ store_results:
     mov [{regs}+8], si
     mov [{regs}+10], di
     mov [{regs}+12], bp
+    mov word ptr [{regs}+16], es
 
 rm_to_pm:
     xor ax, ax
@@ -160,6 +161,7 @@ rm_entry_wide:
     cli
     mov es, [{wide}+16]
     mov di, [{wide}+18]
+    mov si, [{wide}+22]
     mov ax, [{wide}]
     mov bx, [{wide}+4]
     mov cx, [{wide}+8]
@@ -188,7 +190,7 @@ thunk32_return:
     mov esi, [{ret_src}]
     mov edi, [{regs_ptr}]
     mov ecx, [{ret_cnt}]
-    rep movsd
+    rep movsb
 
 restore_frame:
     mov esp, [{saved_esp}]
@@ -240,8 +242,10 @@ thunk_entry32:
     mov [{regs}+8], eax
     mov eax, [edx+12]
     mov [{regs}+12], eax
+    mov ax, [edx+16]
+    mov [{regs}+16], ax
     mov dword ptr [{ret_src}], {regs}
-    mov dword ptr [{ret_cnt}], 4
+    mov dword ptr [{ret_cnt}], 18
     jmp fword ptr [{far_pm16_in}]
 
     .code32
@@ -268,8 +272,10 @@ thunk_entry32_wide:
     mov [{wide}+16], ax
     mov ax, [edx+18]
     mov [{wide}+18], ax
+    mov ax, [edx+22]
+    mov [{wide}+22], ax
     mov dword ptr [{ret_src}], {wide}
-    mov dword ptr [{ret_cnt}], 6
+    mov dword ptr [{ret_cnt}], 24
     jmp fword ptr [{far_pm16_in}]
     "#,
     tramp = const TRAMPOLINE_BASE as u32,
