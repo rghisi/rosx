@@ -66,6 +66,10 @@ impl Ne2k {
         Err(ClientError::NoConnection)
     }
 
+    pub fn connection(&self) -> UserConnectionHandle {
+        self.connection
+    }
+
     pub fn mac(&self) -> Result<[u8; MAC_BYTES], ClientError> {
         let frame = transact_frame(self.connection, Request::Mac)?;
         match Reply::decode(&frame).map_err(ClientError::Net)? {

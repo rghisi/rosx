@@ -383,10 +383,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "ip"
+version = "0.1.0"
+dependencies = [
+ "ip-protocol",
+ "net-protocol",
+ "pci-protocol",
+ "usrlib",
+ "vfs-protocol",
+]
+
+[[package]]
+name = "ip-protocol"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
 name = "ipd"
 version = "0.1.0"
 dependencies = [
+ "ip-protocol",
  "net-protocol",
+ "usrlib",
 ]
 
 [[package]]
@@ -903,6 +924,7 @@ dependencies = [
 name = "tests-integration"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "rxpart",
  "tempfile",
  "x86-runner",

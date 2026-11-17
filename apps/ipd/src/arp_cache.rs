@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+use ip_protocol::wire::Neighbour;
 use net_protocol::ethernet::MAC_BYTES;
 use net_protocol::ipv4::IPV4_BYTES;
 
@@ -79,6 +80,19 @@ impl ArpCache {
             .iter()
             .find(|entry| entry.ip == ip)
             .map(|entry| entry.mac)
+    }
+
+    pub fn snapshot(&mut self, now_ms: u64) -> Vec<Neighbour> {
+        self.entries
+            .retain(|entry| now_ms.saturating_sub(entry.updated_ms) <= ENTRY_TTL_MS);
+        self.entries
+            .iter()
+            .map(|entry| Neighbour {
+                address: entry.ip,
+                mac: entry.mac,
+                updated_ms: entry.updated_ms,
+            })
+            .collect()
     }
 
     pub fn want(&mut self, ip: [u8; IPV4_BYTES], now_ms: u64) -> Want {
@@ -245,5 +259,22 @@ mod tests {
         assert_eq!(cache.want(PEER, 1_000), Want::Started);
         let early = cache.deadlines(1_000 + RESOLVE_RETRY_MS - 1);
         assert!(early.retry.is_empty() && early.exhausted.is_empty());
+    }
+
+    #[test]
+    fn snapshot_prunes_expired_and_maps_fresh_entries() {
+        let mut cache = ArpCache::new();
+        cache.learn(IP, MAC, 0);
+        cache.learn(PEER, PEER_MAC, 1_000);
+        let rows = cache.snapshot(ENTRY_TTL_MS + 1);
+        assert_eq!(
+            rows,
+            alloc::vec![Neighbour {
+                address: PEER,
+                mac: PEER_MAC,
+                updated_ms: 1_000,
+            }]
+        );
+        assert!(cache.snapshot(ENTRY_TTL_MS + 2_000).is_empty());
     }
 }

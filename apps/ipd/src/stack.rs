@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+use ip_protocol::wire::Neighbour;
 use net_protocol::arp::{self, Operation};
 use net_protocol::ethernet::{self, MAC_BYTES};
 use net_protocol::icmp::{self, Icmp};
@@ -76,6 +77,10 @@ impl<D: FrameDevice> Stack<D> {
         &self.device
     }
 
+    pub fn device_mut(&mut self) -> &mut D {
+        &mut self.device
+    }
+
     pub fn mac(&self) -> [u8; MAC_BYTES] {
         self.device.mac()
     }
@@ -90,6 +95,10 @@ impl<D: FrameDevice> Stack<D> {
 
     pub fn configure(&mut self, config: Config) {
         self.config = Some(config);
+    }
+
+    pub fn neighbours(&mut self, now_ms: u64) -> Vec<Neighbour> {
+        self.arp.snapshot(now_ms)
     }
 
     pub fn on_frame(&mut self, frame: &[u8], now_ms: u64) -> Vec<Event> {

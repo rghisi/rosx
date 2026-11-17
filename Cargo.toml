@@ -44,6 +44,7 @@ members = [
     "apps/atad",
     "apps/ne2kd",
     "apps/ipd",
+    "apps/ip",
     "apps/arp",
     "apps/pcid",
     "apps/ne2k",
