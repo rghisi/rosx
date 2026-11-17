@@ -59,7 +59,10 @@ Gate: `cargo test -p rosx-boot-common`, `boot-test` **3× consecutive 24/24**, `
 Remove `common::serial` and `COM1_PORT` (A.2 leaves no consumer — repo law: no dead
 surface). Re-measure the stage1 footprint: code+data ends at byte 427 of 446 today; the
 COM1 init (~35 B) and TX poll loop (~20 B) come back, restoring roughly 70 bytes of MBR
-headroom. Update `arch/x86-bootloader/README.md` (serial console section becomes
+headroom (measured at Phase 13 HEAD, B.1 teletype included: initialized code ends at byte
+390 and the in-sector scratch labels at byte 410 of the 446 budget — 36 bytes of headroom,
+not 70; the serial code freed by A.3 and the teletype added by B.1 shifted the layout less
+than estimated). Update `arch/x86-bootloader/README.md` (serial console section becomes
 debug-port; hand-boot lines use `-debugcon file:`; the era note gains the
 "0xE9 is harmless on silicon" rationale). Add the `00-overview.md` §9 stub line
 acknowledging this rework.
@@ -102,6 +105,13 @@ col `0x0451`, page `0x0400` (identity-mapped in both flavors), write cells at
 `0xB8000` attribute `0x0F`, advance BDA, update the CRTC cursor (`0x3D4/0x3D5`). Gated on
 `BootInfo.display.kind == VgaText` (honor the treaty; stay silent otherwise).
 
+Measured correction at implementation: the cursor is **read from the CRTC** (indices
+`0x0E`/`0x0F` at `0x3D4`/`0x3D5`), not from the BDA — SeaBIOS's teletype does not maintain
+`0x0450`/`0x0451`, so a BDA read returns a stale zero; and `0x0400` is the equipment word
+(SeaBIOS leaves `0xF8`), not a page, so the screen base is pinned to page-0 `0xB8000`. The
+writer **publishes both** the BDA pair and the CRTC so the next BIOS user continues where we
+stopped. The doctrine stands unchanged: continue the BIOS's own cursor, own zero display state.
+
 No scrolling, by decision: at the bottom row the writer clamps (rewrites the last row).
 The budget makes that unreachable at shipped geometries (24 of 25 rows), and overflow
 degradation is bounded and visible. Pure logic (cursor math on a `&mut [u16]` buffer,
@@ -119,7 +129,10 @@ positioning (emulator evidence never marks hardware items green).
 
 `boot-test` must stay **3× green on every B commit** (VGA is strictly additive — the debug
 stream must be byte-identical to A.3), plus `check-isa bootloader` (stage1 budget), unit
-suites, and one recorded 86Box `screen_text` reading of the full boot corpus.
+suites, and one recorded 86Box `screen_text` reading of the full boot corpus (recorded
+2026-11-17: `target/86box/runs/20261117T155926Z-b32-console/` — the Award 4.51 era BIOS
+renders the whole corpus on its VGA console; the era thunk-INT 13h limitation is documented
+in that run's `facts.md`).
 
 ## 3. Commit sequence (each gate green before the next)
 
@@ -137,7 +150,8 @@ suites, and one recorded 86Box `screen_text` reading of the full boot corpus.
   doctrine, harmless on silicon; the checkpoint corpus changes capture pipe, never strings.
 - **Atomic A.2**: the corpus has four producers; any partial flip reddens checkpoints.
 - **BIOS-first, direct-VRAM-exception only where BIOS cannot exist** (post-handoff), and
-  even then continuing the BIOS's own cursor through the BDA.
+  even then continuing the BIOS's own cursor — through the live CRTC cursor, publishing the
+  BDA pair alongside it (measured correction, see B.3).
 - **No scrolling implemented anywhere**: budget (≤25 rows at shipped configs) plus BIOS
   teletype overflow as the safety net plus a clamped bottom row for the fake kernels.
 - **Debug port stays the sole verdict stream**: screen-capture OCR in CI was weighed and

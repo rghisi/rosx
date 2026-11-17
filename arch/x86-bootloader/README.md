@@ -82,6 +82,16 @@ the stage banners (`[STAGE1] OK`, `[MEM88]`, `[DISK]`, `[ELF]`, `[INITRD]`,
 `[PAGETABLE]`, `[MEM]`, `[STAGE2_32]/[STAGE2_64]`) and the fake kernels'
 validation lines.
 
+That port is the **verdict stream** — the only channel any checkpoint reads. In parallel the
+same text rides the **human stream**, the BIOS VGA text console: stage1 teletypes every
+character through `INT 10h, AH=0Eh` (page 0); stage2 broadcasts through a `BroadcastConsole`
+(debug port + teletype over the already-installed BIOS thunk); the fake kernels — post-handoff,
+where the 16-bit ROM is unreachable — append directly to page-0 `0xB8000` at the live CRTC
+cursor (`0x3D4/0x3D5` indices `0x0E`/`0x0F`; SeaBIOS's teletype leaves the BDA pair stale, so
+the CRTC is read and the BDA pair re-published) and clamp at the bottom row. Stage1 and stage2
+own zero display state — the BIOS owns cursor, glyphs and overflow
+(`plans/bootloader/13-console.md`).
+
 ## Build and run
 
 Host tools: `qemu-system-i386`, `qemu-system-x86_64`, mtools
@@ -153,3 +163,15 @@ fails loudly instead of faulting. The boot console rides port 0xE9 for the
 same era reason: QEMU traps it as a debug console, while on silicon it is an
 unclaimed ISA port whose writes are architecturally harmless no-ops — the
 banners evaporate and the boot proceeds.
+
+The human stream is era-proven on the 86Box `b32` VM ([SiS 496] ASUS
+PVI-486SP3, i486SX, Award 4.51, S3 Trio64): a `screen_text` reading records
+stage1's banner, stage2's thunk-teletype banners and the honest `[ERR]`
+verdict rendered by the era BIOS itself (run protocol and recorded run
+directories: `arch/x86-86box/`; emulator evidence never marks hardware items
+green). Known era limitation, recorded in that run's `facts.md`: INT 13h
+issued through the unreal-mode thunk returns garbage geometry on this Award
+BIOS — the handler executes `sti` at entry, so IRQs land on the thunk's
+return slots — while SeaBIOS keeps interrupts masked inside INT 13h and every
+checkpoint passes unchanged. Era disk boot through the thunk stays open
+bring-up work, independent of the console.
