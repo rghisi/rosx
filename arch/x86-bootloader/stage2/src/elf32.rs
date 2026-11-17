@@ -14,6 +14,7 @@ use rosx_boot_common::elf32::plan_kernel_image;
 use rosx_boot_common::debugport::DebugConsole;
 use system::boot_info::BOOT_INFO_MAGIC;
 
+use crate::console::BroadcastConsole;
 use crate::fat::BootVolume;
 use crate::fat::refuse_engine;
 
@@ -24,7 +25,7 @@ const HANDOFF_STACK_TOP: usize = 0x0007_F000;
 const PAGE_ENABLE_BIT: u32 = 1 << 31;
 const INTERRUPT_ENABLE_BIT: u32 = 1 << 9;
 
-pub fn load_kernel(console: &DebugConsole, volume: &mut BootVolume) -> KernelImage {
+pub fn load_kernel(console: &BroadcastConsole<'_>, volume: &mut BootVolume) -> KernelImage {
     let metadata = Engine::lookup(volume, KERNEL_PATH).unwrap_or_else(|error| refuse_engine(console, error));
     let handle = Engine::open(volume, KERNEL_PATH).unwrap_or_else(|error| refuse_engine(console, error));
     let table = read_window(console, volume, handle, 0, metadata.size().min(HEADER_WINDOW) as usize);
@@ -38,7 +39,7 @@ pub fn load_kernel(console: &DebugConsole, volume: &mut BootVolume) -> KernelIma
 }
 
 fn read_window(
-    console: &DebugConsole,
+    console: &BroadcastConsole<'_>,
     volume: &mut BootVolume,
     handle: rxfat::FatHandle,
     offset: u64,
@@ -58,7 +59,7 @@ fn read_window(
 }
 
 fn place_segment(
-    console: &DebugConsole,
+    console: &BroadcastConsole<'_>,
     volume: &mut BootVolume,
     handle: rxfat::FatHandle,
     file_size: u64,
@@ -92,7 +93,7 @@ fn place_segment(
     }
 }
 
-pub fn enter(console: &DebugConsole, image: &KernelImage, boot_info: u64) -> ! {
+pub fn enter(console: &BroadcastConsole<'_>, image: &KernelImage, boot_info: u64) -> ! {
     if read_cr0() & PAGE_ENABLE_BIT != 0 {
         refuse_state(console, "cr0.pg");
     }
@@ -148,13 +149,13 @@ fn read_eflags() -> u32 {
     value
 }
 
-fn refuse_state(console: &DebugConsole, detail: &str) -> ! {
+fn refuse_state(console: &BroadcastConsole<'_>, detail: &str) -> ! {
     console.write_str("[ERR] state ");
     console.write_line(detail);
     debug_exit(DEBUG_EXIT_FAILURE)
 }
 
-fn report(console: &DebugConsole, image: &KernelImage) {
+fn report(console: &BroadcastConsole<'_>, image: &KernelImage) {
     console.write_str("[ELF] arch=X86_32 entry=");
     console.write_hex(image.entry, 8);
     console.write_str(" phys=");
@@ -164,7 +165,7 @@ fn report(console: &DebugConsole, image: &KernelImage) {
     console.write_line("");
 }
 
-fn refuse_elf(console: &DebugConsole, error: ElfError) -> ! {
+fn refuse_elf(console: &BroadcastConsole<'_>, error: ElfError) -> ! {
     console.write_str("[ERR] elf ");
     console.write_line(elf_kind(error));
     debug_exit(DEBUG_EXIT_FAILURE)
@@ -180,7 +181,7 @@ fn elf_kind(error: ElfError) -> &'static str {
     }
 }
 
-fn refuse_layout(console: &DebugConsole, kind: &str) -> ! {
+fn refuse_layout(console: &BroadcastConsole<'_>, kind: &str) -> ! {
     console.write_str("[ERR] elf ");
     console.write_line(kind);
     debug_exit(DEBUG_EXIT_FAILURE)

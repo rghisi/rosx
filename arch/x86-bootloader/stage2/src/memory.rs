@@ -7,13 +7,13 @@ use rosx_boot_common::memnorm::synthesize_e801;
 use rosx_boot_common::memnorm::synthesize_e88;
 use rosx_boot_common::memnorm::top_of_usable;
 use rosx_boot_common::memnorm::usable_bytes;
-use rosx_boot_common::debugport::DebugConsole;
 use rosx_boot_common::DEBUG_EXIT_FAILURE;
 use rosx_boot_common::debug_exit;
 use system::boot_info::MEMORY_MAP_MAX_ENTRIES;
 use system::boot_info::MemoryKind;
 use system::boot_info::MemoryRegion;
 
+use crate::console::BroadcastConsole;
 use crate::read_u32;
 use crate::thunk::BiosThunk;
 
@@ -38,7 +38,7 @@ pub struct DetectedMap {
     raw_sum: u64,
 }
 
-pub fn detect(thunk: &BiosThunk, console: &DebugConsole, mem88_kib: u16) -> DetectedMap {
+pub fn detect(thunk: &BiosThunk, console: &BroadcastConsole<'_>, mem88_kib: u16) -> DetectedMap {
     let mut raw = [RawEntry::usable(0, 0); MEMORY_MAP_MAX_ENTRIES];
     let raw_count = match collect_e820(thunk, console, &mut raw) {
         E820Outcome::Collected(count) => count,
@@ -70,12 +70,12 @@ pub fn detect(thunk: &BiosThunk, console: &DebugConsole, mem88_kib: u16) -> Dete
     }
 }
 
-pub fn usable_ceiling(map: &DetectedMap, console: &DebugConsole) -> u64 {
+pub fn usable_ceiling(map: &DetectedMap, console: &BroadcastConsole<'_>) -> u64 {
     let (regions, count) = normalize_or_refuse(map, None, console);
     top_of_usable(&regions[..count])
 }
 
-pub fn publish(map: &DetectedMap, kernel_carve_out: Option<(u64, u64)>, console: &DebugConsole) -> u32 {
+pub fn publish(map: &DetectedMap, kernel_carve_out: Option<(u64, u64)>, console: &BroadcastConsole<'_>) -> u32 {
     let (map_regions, count) = normalize_or_refuse(map, kernel_carve_out, console);
     write_map_to_home(&map_regions[..count]);
     for region in &map_regions[..count] {
@@ -112,7 +112,7 @@ pub fn publish(map: &DetectedMap, kernel_carve_out: Option<(u64, u64)>, console:
 fn normalize_or_refuse(
     map: &DetectedMap,
     kernel_carve_out: Option<(u64, u64)>,
-    console: &DebugConsole,
+    console: &BroadcastConsole<'_>,
 ) -> ([MemoryRegion; MEMORY_MAP_MAX_ENTRIES], usize) {
     let mut regions = [MemoryRegion {
         base: 0,
@@ -128,7 +128,7 @@ fn normalize_or_refuse(
     }
 }
 
-fn collect_e820(thunk: &BiosThunk, console: &DebugConsole, raw: &mut [RawEntry]) -> E820Outcome {
+fn collect_e820(thunk: &BiosThunk, console: &BroadcastConsole<'_>, raw: &mut [RawEntry]) -> E820Outcome {
     let mut count = 0usize;
     let mut continuation: u16 = 0;
     loop {

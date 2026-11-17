@@ -121,10 +121,15 @@ rm_entry:
     mov si, [{regs}+8]
     mov di, [{regs}+10]
     mov bp, [{regs}+12]
+    cmp byte ptr [{int_no}], 0x10
+    je thunk_int10
     cmp byte ptr [{int_no}], 0x13
     je thunk_int13
     cmp byte ptr [{int_no}], 0x15
     je thunk_int15
+    jmp store_results
+thunk_int10:
+    int 0x10
     jmp store_results
 thunk_int13:
     int 0x13

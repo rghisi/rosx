@@ -41,7 +41,7 @@ impl core::fmt::Write for DebugConsole {
     }
 }
 
-pub(crate) fn render_hex(mut emit: impl FnMut(u8), value: u64, nibbles: u32) {
+pub fn render_hex(mut emit: impl FnMut(u8), value: u64, nibbles: u32) {
     emit(b'0');
     emit(b'x');
     for nibble_index in (0..nibbles).rev() {
@@ -50,7 +50,7 @@ pub(crate) fn render_hex(mut emit: impl FnMut(u8), value: u64, nibbles: u32) {
     }
 }
 
-pub(crate) fn render_dec(mut emit: impl FnMut(u8), value: u64) {
+pub fn render_dec(mut emit: impl FnMut(u8), value: u64) {
     let mut digits = [b'0'; LARGEST_DECIMAL_DIGITS];
     let mut first_digit = digits.len();
     let mut remaining = value;

@@ -15,6 +15,7 @@ use rosx_boot_common::pagetable::fill_identity_map;
 use rosx_boot_common::debugport::DebugConsole;
 use system::boot_info::BOOT_INFO_MAGIC;
 
+use crate::console::BroadcastConsole;
 use crate::fat::BootVolume;
 use crate::fat::refuse_engine;
 
@@ -100,7 +101,7 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-pub fn load_kernel(console: &DebugConsole, volume: &mut BootVolume) -> KernelImage {
+pub fn load_kernel(console: &BroadcastConsole<'_>, volume: &mut BootVolume) -> KernelImage {
     let metadata = Engine::lookup(volume, KERNEL_PATH).unwrap_or_else(|error| refuse_engine(console, error));
     let handle = Engine::open(volume, KERNEL_PATH).unwrap_or_else(|error| refuse_engine(console, error));
     let window = usize::try_from(metadata.size()).unwrap_or(HEADER_WINDOW).min(HEADER_WINDOW);
@@ -115,7 +116,7 @@ pub fn load_kernel(console: &DebugConsole, volume: &mut BootVolume) -> KernelIma
 }
 
 fn read_window(
-    console: &DebugConsole,
+    console: &BroadcastConsole<'_>,
     volume: &mut BootVolume,
     handle: rxfat::FatHandle,
     offset: u64,
@@ -135,7 +136,7 @@ fn read_window(
 }
 
 fn place_segment(
-    console: &DebugConsole,
+    console: &BroadcastConsole<'_>,
     volume: &mut BootVolume,
     handle: rxfat::FatHandle,
     file_size: u64,
@@ -169,7 +170,7 @@ fn place_segment(
     }
 }
 
-fn report(console: &DebugConsole, image: &KernelImage) {
+fn report(console: &BroadcastConsole<'_>, image: &KernelImage) {
     console.write_str("[ELF] arch=X86_64 entry=");
     console.write_hex(image.entry, 16);
     console.write_str(" phys=");
@@ -179,7 +180,7 @@ fn report(console: &DebugConsole, image: &KernelImage) {
     console.write_line("");
 }
 
-fn refuse_elf(console: &DebugConsole, error: rosx_boot_common::ElfError) -> ! {
+fn refuse_elf(console: &BroadcastConsole<'_>, error: rosx_boot_common::ElfError) -> ! {
     console.write_str("[ERR] elf ");
     console.write_line(elf_kind(error));
     debug_exit(DEBUG_EXIT_FAILURE)
@@ -195,7 +196,7 @@ fn elf_kind(error: rosx_boot_common::ElfError) -> &'static str {
     }
 }
 
-fn refuse_layout(console: &DebugConsole, kind: &str) -> ! {
+fn refuse_layout(console: &BroadcastConsole<'_>, kind: &str) -> ! {
     console.write_str("[ERR] elf ");
     console.write_line(kind);
     debug_exit(DEBUG_EXIT_FAILURE)
@@ -206,7 +207,7 @@ pub struct PageTables {
     pub end: u64,
 }
 
-pub fn build_page_tables(console: &DebugConsole, lower_bound: u64, ceiling: u64) -> PageTables {
+pub fn build_page_tables(console: &BroadcastConsole<'_>, lower_bound: u64, ceiling: u64) -> PageTables {
     let floor = align_up_page(lower_bound).unwrap_or_else(|| refuse_memory(console));
     let placement = place_payload(floor, PAGE_TABLE_SET_BYTES as u64, ceiling)
         .unwrap_or_else(|| refuse_memory(console));
@@ -225,7 +226,7 @@ pub fn build_page_tables(console: &DebugConsole, lower_bound: u64, ceiling: u64)
 
 #[inline(never)]
 #[unsafe(link_section = ".longmode.text")]
-pub fn enter_long_mode(console: &DebugConsole, entry: u64, root: u64, boot_info: u64) -> ! {
+pub fn enter_long_mode(console: &BroadcastConsole<'_>, entry: u64, root: u64, boot_info: u64) -> ! {
     if read_cr0() & PAGE_ENABLE_BIT != 0 {
         refuse_state(console, "cr0.pg");
     }
@@ -296,13 +297,13 @@ fn read_eflags() -> u32 {
     value
 }
 
-fn refuse_state(console: &DebugConsole, detail: &str) -> ! {
+fn refuse_state(console: &BroadcastConsole<'_>, detail: &str) -> ! {
     console.write_str("[ERR] state ");
     console.write_line(detail);
     debug_exit(DEBUG_EXIT_FAILURE)
 }
 
-fn refuse_memory(console: &DebugConsole) -> ! {
+fn refuse_memory(console: &BroadcastConsole<'_>) -> ! {
     console.write_line("[ERR] mem");
     debug_exit(DEBUG_EXIT_FAILURE)
 }

@@ -19,6 +19,7 @@ use rosx_boot_common::debug_exit;
 use system::boot_info::BootInfo;
 
 mod blk;
+mod console;
 #[cfg(not(feature = "stage-64"))]
 mod elf32;
 mod entry;
@@ -30,6 +31,7 @@ mod memory;
 mod thunk;
 
 use blk::BiosBlockDevice;
+use console::BroadcastConsole;
 use thunk::BiosThunk;
 
 const WRAP_BASE: usize = 0x0010_0000;
@@ -52,6 +54,7 @@ extern "C" fn stage2_main() -> ! {
         console.write_line("[ERR] thunk");
         debug_exit(DEBUG_EXIT_FAILURE);
     };
+    let console = BroadcastConsole::new(&thunk);
     let Some(kib) = contiguous_high_memory_kib(&thunk) else {
         console.write_line("[ERR] mem88");
         debug_exit(DEBUG_EXIT_FAILURE);
@@ -87,7 +90,7 @@ const COMPLETION_BANNER: &str = "[STAGE2_32] A20=OK THUNK=OK";
 #[cfg(feature = "stage-64")]
 const COMPLETION_BANNER: &str = "[STAGE2_64] A20=OK THUNK=OK";
 
-fn open_boot_volume<'a>(console: &DebugConsole, thunk: &'a BiosThunk) -> fat::BootVolume<'a> {
+fn open_boot_volume<'a>(console: &BroadcastConsole<'_>, thunk: &'a BiosThunk) -> fat::BootVolume<'a> {
     let Some(device) = BiosBlockDevice::bring_up(thunk, boot_drive() as u8) else {
         console.write_line("[ERR] disk");
         debug_exit(DEBUG_EXIT_FAILURE);
@@ -101,7 +104,7 @@ fn open_boot_volume<'a>(console: &DebugConsole, thunk: &'a BiosThunk) -> fat::Bo
 }
 
 #[cfg(not(feature = "stage-64"))]
-fn boot_from_disk(console: &DebugConsole, thunk: &BiosThunk, detected_map: &memory::DetectedMap) -> ! {
+fn boot_from_disk(console: &BroadcastConsole<'_>, thunk: &BiosThunk, detected_map: &memory::DetectedMap) -> ! {
     let mut volume = open_boot_volume(console, thunk);
     let kernel = elf32::load_kernel(console, &mut volume);
     let ceiling = memory::usable_ceiling(detected_map, console);
@@ -119,7 +122,7 @@ fn boot_from_disk(console: &DebugConsole, thunk: &BiosThunk, detected_map: &memo
 }
 
 #[cfg(feature = "stage-64")]
-fn boot_from_disk(console: &DebugConsole, thunk: &BiosThunk, detected_map: &memory::DetectedMap) -> ! {
+fn boot_from_disk(console: &BroadcastConsole<'_>, thunk: &BiosThunk, detected_map: &memory::DetectedMap) -> ! {
     let mut volume = open_boot_volume(console, thunk);
     let kernel = longmode::load_kernel(console, &mut volume);
     let ceiling = memory::usable_ceiling(detected_map, console);
@@ -150,7 +153,7 @@ fn contiguous_high_memory_kib(thunk: &BiosThunk) -> Option<u32> {
     (1024..=0xFFFF).contains(&answer).then_some(answer)
 }
 
-fn report_boot_drive_geometry(console: &DebugConsole, thunk: &BiosThunk) {
+fn report_boot_drive_geometry(console: &BroadcastConsole<'_>, thunk: &BiosThunk) {
     let mut regs = Regs16::new(0x0800, 0, 0, boot_drive());
     regs.di = GEOMETRY_PACKET_ADDRESS as u16;
     thunk.call(INT13, &mut regs);
