@@ -1,3 +1,4 @@
+use crate::debugport::{render_dec, render_hex};
 use crate::pio;
 use crate::COM1_PORT;
 
@@ -16,9 +17,6 @@ const MODEM_CONTROL_REQUEST_TO_SEND: u8 = 0x02;
 const MODEM_CONTROL_OUT2: u8 = 0x08;
 const FIFO_CONTROL_ENABLE_WITH_14_BYTE_TRIGGER: u8 = 0xC7;
 const LINE_STATUS_TRANSMITTER_HOLDING_EMPTY: u8 = 0x20;
-
-const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
-const LARGEST_DECIMAL_DIGITS: usize = 20;
 
 pub struct Serial {
     port: u16,
@@ -66,29 +64,11 @@ impl Serial {
     }
 
     pub fn write_hex(&self, value: u64, nibbles: u32) {
-        self.write_str("0x");
-        for nibble_index in (0..nibbles).rev() {
-            let digit = ((value >> (nibble_index * 4)) & 0xF) as usize;
-            self.write_byte(HEX_DIGITS[digit]);
-        }
+        render_hex(|byte| self.write_byte(byte), value, nibbles);
     }
 
     pub fn write_dec(&self, value: u64) {
-        let mut digits = [b'0'; LARGEST_DECIMAL_DIGITS];
-        let mut first_digit = digits.len();
-        let mut remaining = value;
-        loop {
-            first_digit -= 1;
-            digits[first_digit] = b'0' + (remaining % 10) as u8;
-            remaining /= 10;
-            if remaining == 0 {
-                break;
-            }
-        }
-        match core::str::from_utf8(&digits[first_digit..]) {
-            Ok(rendered) => self.write_str(rendered),
-            Err(_) => self.write_str("?"),
-        }
+        render_dec(|byte| self.write_byte(byte), value);
     }
 }
 
