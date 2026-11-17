@@ -104,7 +104,7 @@ pm16_landing:
     mov fs, ax
     mov gs, ax
     mov ss, ax
-    mov sp, {rm_stack}
+    mov esp, {rm_stack}
     test byte ptr [{int_no}], {wide_mark}
     js wide_far
     jmp fword ptr [{far_rm}]
