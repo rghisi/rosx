@@ -1,8 +1,9 @@
 # Stage 1 boot sector (plans/bootloader phases 2-3).
 # MBR-resident: code+data live in bytes 0..445 (the packager splices this
 # into the rxpart-encoded MBR; its own table and signature own 446..512).
-# Prints on port 0xE9 (QEMU's debug console, an architecturally harmless
-# no-op on silicon), loads the [ROS2 header][stage2 bin] image at LBA 8 into
+# Prints on two channels — port 0xE9 (the emulator verdict stream) and the
+# BIOS teletype on the VGA console (plans/bootloader 13-console.md) — loads
+# the [ROS2 header][stage2 bin] image at LBA 8 into
 # 0x0000:0x7E00 via the INT 13h LBA extensions, falling back to CHS when the
 # BIOS lacks them (super-floppy media), then jumps. Linked with
 # `ld -m elf_i386 -Ttext 0x7C00 --oformat binary`.
@@ -181,11 +182,19 @@ emit_num:
     call putc
     ret
 
-# putc: emit AL on the debug port, clobbering only DX. On silicon 0xE9 is
-# unclaimed, so the write evaporates without a trace.
+# putc: emit AL on both channels — port 0xE9 carries the test verdict
+# stream (an architecturally harmless no-op on silicon) and the BIOS
+# teletype carries the human VGA stream, BIOS-owned cursor and all. AX is
+# preserved around the INT: put_hex keeps its second nybble in ah, and INT
+# 10h is permitted to destroy AX. DX is clobbered by both channels.
 putc:
+    pushw %ax
     movw $DEBUG_PORT, %dx
     outb %al, %dx
+    movb $0x0E, %ah              # teletype output, AL=char
+    xorb %bh, %bh                # page 0
+    int $0x10
+    popw %ax
     ret
 
 msg_stage1_ok:
