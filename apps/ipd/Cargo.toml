@@ -1,0 +1,16 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "ipd"
+publish = false
+version = "0.1.0"
+edition.workspace = true
+
+[lib]
+name = "ipd"
+path = "src/lib.rs"
+
+[dependencies]
+net-protocol = { path = "../../protocol/net" }
+
+[lints]
+workspace = true
