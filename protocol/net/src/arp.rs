@@ -1,13 +1,10 @@
-pub const MAC_BYTES: usize = 6;
-pub const IPV4_BYTES: usize = 4;
-pub const MIN_FRAME_BYTES: usize = 60;
+use crate::ethernet::{
+    BROADCAST, ETHERTYPE_ARP, ETHERTYPE_IPV4, HEADER_BYTES as ETHER_HEADER_BYTES, MAC_BYTES,
+    MIN_FRAME_BYTES,
+};
+use crate::ipv4::IPV4_BYTES;
+use crate::u16_at;
 
-pub const ETHERTYPE_ARP: u16 = 0x0806;
-pub const ETHERTYPE_IPV4: u16 = 0x0800;
-
-pub const BROADCAST: [u8; MAC_BYTES] = [0xff; MAC_BYTES];
-
-const ETHER_HEADER_BYTES: usize = 14;
 const ARP_BYTES: usize = 28;
 
 const ARP_HRD_ETHERNET: u16 = 0x0001;
@@ -56,15 +53,7 @@ impl Operation {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct EthernetHeader<'a> {
-    pub destination: [u8; MAC_BYTES],
-    pub source: [u8; MAC_BYTES],
-    pub ethertype: u16,
-    pub payload: &'a [u8],
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct ArpPacket {
+pub struct Packet {
     pub operation: Operation,
     pub sender_mac: [u8; MAC_BYTES],
     pub sender_ip: [u8; IPV4_BYTES],
@@ -72,27 +61,7 @@ pub struct ArpPacket {
     pub target_ip: [u8; IPV4_BYTES],
 }
 
-fn u16_at(bytes: &[u8], at: usize) -> u16 {
-    u16::from_be_bytes([bytes[at], bytes[at + 1]])
-}
-
-pub fn decode_ethernet(frame: &[u8]) -> Result<EthernetHeader<'_>, ArpError> {
-    if frame.len() < ETHER_HEADER_BYTES {
-        return Err(ArpError::TooShort);
-    }
-    let mut destination = [0u8; MAC_BYTES];
-    destination.copy_from_slice(&frame[0..MAC_BYTES]);
-    let mut source = [0u8; MAC_BYTES];
-    source.copy_from_slice(&frame[MAC_BYTES..2 * MAC_BYTES]);
-    Ok(EthernetHeader {
-        destination,
-        source,
-        ethertype: u16_at(frame, 12),
-        payload: &frame[ETHER_HEADER_BYTES..],
-    })
-}
-
-pub fn decode_arp(payload: &[u8]) -> Result<ArpPacket, ArpError> {
+pub fn decode(payload: &[u8]) -> Result<Packet, ArpError> {
     if payload.len() < ARP_BYTES {
         return Err(ArpError::TooShort);
     }
@@ -113,7 +82,7 @@ pub fn decode_arp(payload: &[u8]) -> Result<ArpPacket, ArpError> {
     target_mac.copy_from_slice(&payload[ARP_THA_AT..ARP_THA_AT + MAC_BYTES]);
     let mut target_ip = [0u8; IPV4_BYTES];
     target_ip.copy_from_slice(&payload[ARP_TPA_AT..ARP_TPA_AT + IPV4_BYTES]);
-    Ok(ArpPacket {
+    Ok(Packet {
         operation: Operation::from_code(u16_at(payload, ARP_OPER_AT)),
         sender_mac,
         sender_ip,
@@ -122,7 +91,7 @@ pub fn decode_arp(payload: &[u8]) -> Result<ArpPacket, ArpError> {
     })
 }
 
-fn encode_into_frame(destination: [u8; MAC_BYTES], packet: &ArpPacket) -> [u8; MIN_FRAME_BYTES] {
+fn encode_into_frame(destination: [u8; MAC_BYTES], packet: &Packet) -> [u8; MIN_FRAME_BYTES] {
     let mut frame = [0u8; MIN_FRAME_BYTES];
     frame[0..MAC_BYTES].copy_from_slice(&destination);
     frame[MAC_BYTES..2 * MAC_BYTES].copy_from_slice(&packet.sender_mac);
@@ -141,7 +110,7 @@ fn encode_into_frame(destination: [u8; MAC_BYTES], packet: &ArpPacket) -> [u8; M
 }
 
 pub fn request(sender_mac: [u8; MAC_BYTES], sender_ip: [u8; IPV4_BYTES], target_ip: [u8; IPV4_BYTES]) -> [u8; MIN_FRAME_BYTES] {
-    let packet = ArpPacket {
+    let packet = Packet {
         operation: Operation::Request,
         sender_mac,
         sender_ip,
@@ -157,7 +126,7 @@ pub fn reply(
     target_mac: [u8; MAC_BYTES],
     target_ip: [u8; IPV4_BYTES],
 ) -> [u8; MIN_FRAME_BYTES] {
-    let packet = ArpPacket {
+    let packet = Packet {
         operation: Operation::Reply,
         sender_mac,
         sender_ip,
@@ -168,7 +137,7 @@ pub fn reply(
 }
 
 pub fn gratuitous_reply(sender_mac: [u8; MAC_BYTES], sender_ip: [u8; IPV4_BYTES]) -> [u8; MIN_FRAME_BYTES] {
-    let packet = ArpPacket {
+    let packet = Packet {
         operation: Operation::Reply,
         sender_mac,
         sender_ip,
@@ -181,6 +150,7 @@ pub fn gratuitous_reply(sender_mac: [u8; MAC_BYTES], sender_ip: [u8; IPV4_BYTES]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ethernet;
 
     const MAC: [u8; MAC_BYTES] = [0x02, 0x52, 0x4e, 0x45, 0x32, 0x07];
     const PEER_MAC: [u8; MAC_BYTES] = [0x52, 0x55, 0x0a, 0x00, 0x02, 0x00];
@@ -232,9 +202,9 @@ mod tests {
     #[test]
     fn decode_round_trips_request() {
         let frame = request(MAC, IP, PEER_IP);
-        let header = decode_ethernet(&frame).expect("frame decodes");
+        let header = ethernet::decode(&frame).expect("frame decodes");
         assert_eq!(header.ethertype, ETHERTYPE_ARP);
-        let packet = decode_arp(header.payload).expect("arp decodes");
+        let packet = decode(header.payload).expect("arp decodes");
         assert_eq!(packet.operation, Operation::Request);
         assert_eq!(packet.sender_mac, MAC);
         assert_eq!(packet.sender_ip, IP);
@@ -245,9 +215,9 @@ mod tests {
     #[test]
     fn decode_round_trips_reply() {
         let frame = reply(PEER_MAC, PEER_IP, MAC, IP);
-        let header = decode_ethernet(&frame).expect("frame decodes");
+        let header = ethernet::decode(&frame).expect("frame decodes");
         assert_eq!(header.ethertype, ETHERTYPE_ARP);
-        let packet = decode_arp(header.payload).expect("arp decodes");
+        let packet = decode(header.payload).expect("arp decodes");
         assert_eq!(packet.operation, Operation::Reply);
         assert_eq!(packet.sender_mac, PEER_MAC);
         assert_eq!(packet.sender_ip, PEER_IP);
@@ -256,73 +226,45 @@ mod tests {
     }
 
     #[test]
-    fn decode_ethernet_splits_header_and_payload() {
-        let frame = request(MAC, IP, PEER_IP);
-        let header = decode_ethernet(&frame).expect("frame decodes");
-        assert_eq!(header.destination, BROADCAST);
-        assert_eq!(header.source, MAC);
-        assert_eq!(header.ethertype, ETHERTYPE_ARP);
-        assert_eq!(header.payload.len(), MIN_FRAME_BYTES - 14);
-    }
-
-    #[test]
-    fn decode_rejects_short_frames() {
-        assert_eq!(decode_ethernet(&[0u8; 13]).unwrap_err(), ArpError::TooShort);
-        assert_eq!(decode_arp(&arp_payload(&[0u8; 20])).unwrap_err(), ArpError::TooShort);
-    }
-
-    #[test]
-    fn decode_splits_foreign_ethertype_routing() {
-        let mut frame = request(MAC, IP, PEER_IP);
-        frame[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
-        let header = decode_ethernet(&frame).expect("header decodes");
-        assert_ne!(header.ethertype, ETHERTYPE_ARP);
+    fn decode_rejects_short_payloads() {
+        assert_eq!(decode(&arp_payload(&[0u8; 20])).unwrap_err(), ArpError::TooShort);
     }
 
     #[test]
     fn decode_rejects_foreign_hardware_format() {
         let mut frame = request(MAC, IP, PEER_IP);
         frame[14..16].copy_from_slice(&[0x00, 0x0f]);
-        let header = decode_ethernet(&frame).expect("header decodes");
-        assert_eq!(decode_arp(header.payload).unwrap_err(), ArpError::HardwareFormat);
+        let header = ethernet::decode(&frame).expect("frame decodes");
+        assert_eq!(decode(header.payload).unwrap_err(), ArpError::HardwareFormat);
     }
 
     #[test]
     fn decode_rejects_non_ipv4_protocol() {
         let mut frame = request(MAC, IP, PEER_IP);
         frame[16..18].copy_from_slice(&[0x86, 0xdd]);
-        let header = decode_ethernet(&frame).expect("header decodes");
-        assert_eq!(decode_arp(header.payload).unwrap_err(), ArpError::ProtocolFormat);
+        let header = ethernet::decode(&frame).expect("frame decodes");
+        assert_eq!(decode(header.payload).unwrap_err(), ArpError::ProtocolFormat);
     }
 
     #[test]
     fn decode_rejects_bad_address_sizes() {
         let mut frame = request(MAC, IP, PEER_IP);
         frame[18] = 8;
-        let header = decode_ethernet(&frame).expect("header decodes");
-        assert_eq!(decode_arp(header.payload).unwrap_err(), ArpError::AddressSize);
+        let header = ethernet::decode(&frame).expect("frame decodes");
+        assert_eq!(decode(header.payload).unwrap_err(), ArpError::AddressSize);
         let mut frame = request(MAC, IP, PEER_IP);
         frame[19] = 6;
-        let header = decode_ethernet(&frame).expect("header decodes");
-        assert_eq!(decode_arp(header.payload).unwrap_err(), ArpError::AddressSize);
+        let header = ethernet::decode(&frame).expect("frame decodes");
+        assert_eq!(decode(header.payload).unwrap_err(), ArpError::AddressSize);
     }
 
     #[test]
     fn decode_passes_unknown_operations_through() {
         let mut frame = request(MAC, IP, PEER_IP);
         frame[20..22].copy_from_slice(&[0x00, 0x09]);
-        let header = decode_ethernet(&frame).expect("header decodes");
-        let packet = decode_arp(header.payload).expect("unknown operation still decodes");
+        let header = ethernet::decode(&frame).expect("frame decodes");
+        let packet = decode(header.payload).expect("unknown operation still decodes");
         assert_eq!(packet.operation, Operation::Other(9));
-    }
-
-    #[test]
-    fn decode_accepts_frame_longer_than_minimum() {
-        let mut frame = request(MAC, IP, PEER_IP).to_vec();
-        frame.resize(128, 0x5a);
-        let header = decode_ethernet(&frame).expect("frame decodes");
-        let packet = decode_arp(header.payload).expect("padding after arp is ignored");
-        assert_eq!(packet.sender_ip, IP);
     }
 
     #[test]

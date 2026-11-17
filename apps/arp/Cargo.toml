@@ -5,10 +5,6 @@ publish = false
 version = "0.1.0"
 edition.workspace = true
 
-[lib]
-name = "arp"
-path = "src/lib.rs"
-
 [[bin]]
 name = "arp"
 bench = false
