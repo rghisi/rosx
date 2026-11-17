@@ -23,7 +23,7 @@ without the AGENTS.md hardware evidence rules.
 common/        pure-logic library crate: crc32, memnorm (memory-map
                normalization), pagetable (identity + higher-half maps), gdt,
                elf32/elf64 planners, bootinfo assembly, BIOS data, INT 13h
-               packet layout, serial/pio
+               packet layout, debugport/pio
 stage1/        boot.s — MBR boot sector: loads the stage2 image from LBA 8 to
                physical 0x7E00 (INT 13h LBA extensions, CHS fallback), jumps
                in real mode
@@ -77,9 +77,10 @@ and a clean debug-exit failure — never a `#UD`. All 586-era mechanism
 
 Every guest verdict rides `isa-debug-exit,iobase=0xf4`: success `0x10` →
 shell exit **33**, guest-reported failure `0x01` → exit **3**, no write →
-QEMU must be timed out. The serial console (COM1) carries the stage banners
-(`[STAGE1] OK`, `[MEM88]`, `[DISK]`, `[ELF]`, `[INITRD]`, `[PAGETABLE]`,
-`[MEM]`, `[STAGE2_32]/[STAGE2_64]`) and the fake kernels' validation lines.
+QEMU must be timed out. The QEMU debug port (`-debugcon`, port 0xE9) carries
+the stage banners (`[STAGE1] OK`, `[MEM88]`, `[DISK]`, `[ELF]`, `[INITRD]`,
+`[PAGETABLE]`, `[MEM]`, `[STAGE2_32]/[STAGE2_64]`) and the fake kernels'
+validation lines.
 
 ## Build and run
 
@@ -101,7 +102,7 @@ Boot a built image by hand (64-bit chain, expect exit 33):
 
 ```bash
 qemu-system-x86_64 -cpu qemu64 -m 128M -drive format=raw,file=target/boot64.img \
-  -serial file:/tmp/rosx64.serial -display none -monitor none \
+  -debugcon file:/tmp/rosx64.debugcon -display none -monitor none \
   -device isa-debug-exit,iobase=0xf4,iosize=0x04 -no-reboot; echo $?   # 33
 ```
 
@@ -135,7 +136,7 @@ command line.
 | `stage2-corrupt-header` | 486 | a bogus ROS2 magic hangs stage1 (timed-out verdict) |
 
 The generic verifiers read `[MEM] entries=` and `[INITRD] addr=` off the
-serial stream: the published map must re-derive from the host-computed seed,
+debug-port stream: the published map must re-derive from the host-computed seed,
 and the initrd crc32 must match three ways (stage2 banner, fake-kernel
 recompute, host seed) — so a passing row proves the guest read real bytes.
 
@@ -148,4 +149,7 @@ state saved across the switch. `cargo xtask check-isa bootloader` audits the
 shipped binaries against that floor and every 32-bit checkpoint boots under
 QEMU `-cpu 486`; the 64-bit flavor carries the 586-era exception as a
 runtime probed path, not a compile-time assumption, so the same era silicon
-fails loudly instead of faulting.
+fails loudly instead of faulting. The boot console rides port 0xE9 for the
+same era reason: QEMU traps it as a debug console, while on silicon it is an
+unclaimed ISA port whose writes are architecturally harmless no-ops — the
+banners evaporate and the boot proceeds.

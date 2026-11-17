@@ -10,11 +10,8 @@ pub mod elf64;
 pub mod gdt;
 pub mod memnorm;
 pub mod pagetable;
-pub mod serial;
 
 mod pio;
-
-pub const COM1_PORT: u16 = 0x3F8;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ElfError {
