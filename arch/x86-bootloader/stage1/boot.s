@@ -1,7 +1,8 @@
 # Stage 1 boot sector (plans/bootloader phases 2-3).
 # MBR-resident: code+data live in bytes 0..445 (the packager splices this
 # into the rxpart-encoded MBR; its own table and signature own 446..512).
-# Brings up COM1, loads the [ROS2 header][stage2 bin] image at LBA 8 into
+# Prints on port 0xE9 (QEMU's debug console, an architecturally harmless
+# no-op on silicon), loads the [ROS2 header][stage2 bin] image at LBA 8 into
 # 0x0000:0x7E00 via the INT 13h LBA extensions, falling back to CHS when the
 # BIOS lacks them (super-floppy media), then jumps. Linked with
 # `ld -m elf_i386 -Ttext 0x7C00 --oformat binary`.
@@ -14,7 +15,7 @@
 
 .code16
 
-.equ COM1, 0x3F8
+.equ DEBUG_PORT, 0xE9
 .equ HDR_SCRATCH, 0x900          # header sector lands here to be validated
 .equ LOAD_OFF, 0x7E00            # stage2 image destination (physical)
 .equ STAGE2_TOTAL_MAX, 164352    # 160 KiB + 512 (the 0x7E00..0x2FFFF budget)
@@ -29,14 +30,6 @@ _start:
     movw %ax, %ss
     movw $0x7C00, %sp
     movb %dl, boot_drive         # BIOS boot drive, needed by INT 13h and stage2
-
-    movb $0x00, COM1+1           # IER = 0
-    movb $0x80, COM1+3           # LCR: DLAB = 1
-    movb $0x01, COM1+0           # divisor low  = 1  (115200)
-    movb $0x00, COM1+1           # divisor high = 0
-    movb $0x03, COM1+3           # LCR: 8N1, DLAB = 0
-    movb $0x0B, COM1+4           # FCR: enable + reset FIFO
-    movb $0xC7, COM1+2           # MCR: DTR | RTS | OUT2
 
     leaw msg_stage1_ok, %si
     call puts
@@ -188,15 +181,10 @@ emit_num:
     call putc
     ret
 
+# putc: emit AL on the debug port, clobbering only DX. On silicon 0xE9 is
+# unclaimed, so the write evaporates without a trace.
 putc:
-    pushw %ax
-    movw $COM1+5, %dx
-putc_wait:
-    inb %dx, %al
-    testb $0x20, %al
-    jz putc_wait
-    popw %ax
-    movw $COM1, %dx
+    movw $DEBUG_PORT, %dx
     outb %al, %dx
     ret
 

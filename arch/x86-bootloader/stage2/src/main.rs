@@ -12,7 +12,7 @@ use rosx_boot_common::bootinfo::BOOT_INFO_ADDRESS;
 use rosx_boot_common::bootinfo::assemble;
 #[cfg(feature = "stage-64")]
 use rosx_boot_common::bootinfo::assemble_long_mode;
-use rosx_boot_common::serial::Serial;
+use rosx_boot_common::debugport::DebugConsole;
 use rosx_boot_common::DEBUG_EXIT_FAILURE;
 use rosx_boot_common::DEBUG_EXIT_SUCCESS;
 use rosx_boot_common::debug_exit;
@@ -41,8 +41,7 @@ const MEM88_REPEAT_CALLS: usize = 20;
 
 #[unsafe(no_mangle)]
 extern "C" fn stage2_main() -> ! {
-    let console = Serial::COM1;
-    console.init();
+    let console = DebugConsole;
     #[cfg(feature = "stage-64")]
     longmode::ensure_long_mode(&console);
     if !a20_is_visible() {
@@ -88,7 +87,7 @@ const COMPLETION_BANNER: &str = "[STAGE2_32] A20=OK THUNK=OK";
 #[cfg(feature = "stage-64")]
 const COMPLETION_BANNER: &str = "[STAGE2_64] A20=OK THUNK=OK";
 
-fn open_boot_volume<'a>(console: &Serial, thunk: &'a BiosThunk) -> fat::BootVolume<'a> {
+fn open_boot_volume<'a>(console: &DebugConsole, thunk: &'a BiosThunk) -> fat::BootVolume<'a> {
     let Some(device) = BiosBlockDevice::bring_up(thunk, boot_drive() as u8) else {
         console.write_line("[ERR] disk");
         debug_exit(DEBUG_EXIT_FAILURE);
@@ -102,7 +101,7 @@ fn open_boot_volume<'a>(console: &Serial, thunk: &'a BiosThunk) -> fat::BootVolu
 }
 
 #[cfg(not(feature = "stage-64"))]
-fn boot_from_disk(console: &Serial, thunk: &BiosThunk, detected_map: &memory::DetectedMap) -> ! {
+fn boot_from_disk(console: &DebugConsole, thunk: &BiosThunk, detected_map: &memory::DetectedMap) -> ! {
     let mut volume = open_boot_volume(console, thunk);
     let kernel = elf32::load_kernel(console, &mut volume);
     let ceiling = memory::usable_ceiling(detected_map, console);
@@ -120,7 +119,7 @@ fn boot_from_disk(console: &Serial, thunk: &BiosThunk, detected_map: &memory::De
 }
 
 #[cfg(feature = "stage-64")]
-fn boot_from_disk(console: &Serial, thunk: &BiosThunk, detected_map: &memory::DetectedMap) -> ! {
+fn boot_from_disk(console: &DebugConsole, thunk: &BiosThunk, detected_map: &memory::DetectedMap) -> ! {
     let mut volume = open_boot_volume(console, thunk);
     let kernel = longmode::load_kernel(console, &mut volume);
     let ceiling = memory::usable_ceiling(detected_map, console);
@@ -151,7 +150,7 @@ fn contiguous_high_memory_kib(thunk: &BiosThunk) -> Option<u32> {
     (1024..=0xFFFF).contains(&answer).then_some(answer)
 }
 
-fn report_boot_drive_geometry(console: &Serial, thunk: &BiosThunk) {
+fn report_boot_drive_geometry(console: &DebugConsole, thunk: &BiosThunk) {
     let mut regs = Regs16::new(0x0800, 0, 0, boot_drive());
     regs.di = GEOMETRY_PACKET_ADDRESS as u16;
     thunk.call(INT13, &mut regs);
@@ -223,8 +222,7 @@ fn a20_is_visible() -> bool {
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     use core::fmt::Write;
-    let mut console = Serial::COM1;
-    console.init();
+    let mut console = DebugConsole;
     let _ = writeln!(console, "[STAGE2] PANIC: {info}");
     debug_exit(DEBUG_EXIT_FAILURE)
 }

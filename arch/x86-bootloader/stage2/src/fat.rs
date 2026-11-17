@@ -3,7 +3,7 @@ use fs_core::engine::MetadataView;
 use fs_core::error::FsError;
 use rosx_boot_common::crc32::crc32;
 use rosx_boot_common::memnorm::place_payload;
-use rosx_boot_common::serial::Serial;
+use rosx_boot_common::debugport::DebugConsole;
 use rosx_boot_common::DEBUG_EXIT_FAILURE;
 use rosx_boot_common::debug_exit;
 
@@ -14,7 +14,7 @@ pub type BootVolume<'a> = rxfat::FileSystem<BiosBlockDevice<'a>>;
 const INITRD_PATH: &[u8] = b"/INITRD.BIN";
 const READ_WINDOW: usize = 16 * 512;
 
-pub fn open<'a>(console: &Serial, device: BiosBlockDevice<'a>) -> BootVolume<'a> {
+pub fn open<'a>(console: &DebugConsole, device: BiosBlockDevice<'a>) -> BootVolume<'a> {
     rxfat::FileSystem::new(device).unwrap_or_else(|error| refuse_engine(console, error))
 }
 
@@ -25,7 +25,7 @@ pub struct InitrdPlacement {
 }
 
 pub fn place_initrd(
-    console: &Serial,
+    console: &DebugConsole,
     volume: &mut BootVolume,
     kernel_end: u64,
     ceiling: u64,
@@ -79,7 +79,7 @@ pub fn place_initrd(
     )
 }
 
-fn report(console: &Serial, payload: InitrdPlacement, checksum: u32) -> InitrdPlacement {
+fn report(console: &DebugConsole, payload: InitrdPlacement, checksum: u32) -> InitrdPlacement {
     console.write_str("[INITRD] addr=");
     console.write_hex(payload.address, 8);
     console.write_str(" size=");
@@ -90,18 +90,18 @@ fn report(console: &Serial, payload: InitrdPlacement, checksum: u32) -> InitrdPl
     payload
 }
 
-fn refuse_memory(console: &Serial) -> ! {
+fn refuse_memory(console: &DebugConsole) -> ! {
     console.write_line("[ERR] mem");
     debug_exit(DEBUG_EXIT_FAILURE)
 }
 
-pub(crate) fn refuse_engine(console: &Serial, error: FsError) -> ! {
+pub(crate) fn refuse_engine(console: &DebugConsole, error: FsError) -> ! {
     console.write_str("[FAT-ERR] ");
     console.write_line(kind_name(error));
     debug_exit(DEBUG_EXIT_FAILURE)
 }
 
-fn refuse_kind(console: &Serial, kind: &str) -> ! {
+fn refuse_kind(console: &DebugConsole, kind: &str) -> ! {
     console.write_str("[FAT-ERR] ");
     console.write_line(kind);
     debug_exit(DEBUG_EXIT_FAILURE)

@@ -7,7 +7,7 @@ use rosx_boot_common::DEBUG_EXIT_FAILURE;
 use rosx_boot_common::DEBUG_EXIT_SUCCESS;
 use rosx_boot_common::crc32::crc32;
 use rosx_boot_common::debug_exit;
-use rosx_boot_common::serial::Serial;
+use rosx_boot_common::debugport::DebugConsole;
 use system::boot_info::BOOT_INFO_MAGIC;
 use system::boot_info::BOOT_INFO_VERSION;
 use system::boot_info::BootArch;
@@ -34,8 +34,7 @@ extern "C" fn _start() {
 }
 
 extern "C" fn kernel_main(eax_magic: u32, ebx_ptr: u32) -> ! {
-    let console = Serial::COM1;
-    console.init();
+    let console = DebugConsole;
     if eax_magic != BOOT_INFO_MAGIC {
         violation(&console, "magic");
     }
@@ -59,7 +58,7 @@ extern "C" fn kernel_main(eax_magic: u32, ebx_ptr: u32) -> ! {
     debug_exit(DEBUG_EXIT_SUCCESS)
 }
 
-fn walk_memory_map(console: &Serial, info: *const u8) {
+fn walk_memory_map(console: &DebugConsole, info: *const u8) {
     let map_ptr = read_u64(info, offset_of!(BootInfo, memory_map_ptr)) as *const u8;
     let map_len = read_u32(info, offset_of!(BootInfo, memory_map_len));
     let entry_size = read_u32(info, offset_of!(BootInfo, memory_map_entry_size));
@@ -96,7 +95,7 @@ fn walk_memory_map(console: &Serial, info: *const u8) {
     }
 }
 
-fn verify_initrd(console: &Serial, address: u64, size: u64) -> u32 {
+fn verify_initrd(console: &DebugConsole, address: u64, size: u64) -> u32 {
     if size == 0 {
         if address != 0 {
             violation(console, "initrd-address");
@@ -123,7 +122,7 @@ fn read_u64(base: *const u8, offset: usize) -> u64 {
     unsafe { core::ptr::read_unaligned(base.add(offset) as *const u64) }
 }
 
-fn violation(console: &Serial, kind: &str) -> ! {
+fn violation(console: &DebugConsole, kind: &str) -> ! {
     console.write_str("[FK32] violation ");
     console.write_line(kind);
     debug_exit(DEBUG_EXIT_FAILURE)
@@ -135,8 +134,7 @@ fn kernel_returned() -> ! {
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
-    let console = Serial::COM1;
-    console.init();
+    let console = DebugConsole;
     console.write_line("[FK32] panic");
     debug_exit(DEBUG_EXIT_FAILURE)
 }

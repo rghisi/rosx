@@ -11,7 +11,7 @@
 
 .code16
 
-.equ COM1, 0x3F8
+.equ DEBUG_PORT, 0xE9
 .equ DEBUG_EXIT_PORT, 0xF4
 
 .text
@@ -22,14 +22,6 @@ _start:
     movw %ax, %ds
     movw %ax, %ss
     movw $0x7C00, %sp
-
-    movb $0x00, COM1+1
-    movb $0x80, COM1+3
-    movb $0x01, COM1+0
-    movb $0x00, COM1+1
-    movb $0x03, COM1+3
-    movb $0x0B, COM1+4
-    movb $0xC7, COM1+2
 
     leaw banner, %si
     call puts
@@ -66,15 +58,9 @@ puts:
 puts_done:
     ret
 
+# putc: emit AL on the debug port, clobbering only DX.
 putc:
-    pushw %ax
-    movw $COM1+5, %dx
-putc_wait:
-    inb %dx, %al
-    testb $0x20, %al
-    jz putc_wait
-    popw %ax
-    movw $COM1, %dx
+    movw $DEBUG_PORT, %dx
     outb %al, %dx
     ret
 
