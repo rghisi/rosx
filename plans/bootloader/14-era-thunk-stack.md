@@ -60,8 +60,50 @@ the caller ESP from `{saved_esp}` as before. If the extra byte overflows the cod
   silicon checkbox; the hardware checklist stays open.
 - Bonus row: `boot64.img` on the 486SX VM must land on the long-mode guard line, era-clean.
 
-## 3. Commit sequence (each gate green before the next)
+## 3. Era round two — the staging relocation (measured 2026-11-17, INT13-site trace)
+
+The stack fix moved era past the geometry read and exposed the next era truth. Measured at
+the thunk's INT13 site (`int 13` at linear `0x666`, decode `linear = cs<<4 + eip`; stage1
+never executes there, so the bp sees stage2 traffic only):
+
+- **era rejects the EDD probe**: `AH=41/BX=0x55AA` answers without the marker, so
+  `probe_media` falls to the classic path — media is **CHS**, not LBA (the first run's
+  AH=42 assumption was wrong; the trace is `AH=08 → AH=41 → AH=08 → AH=02` and silence).
+- **the first `AH=02` read storms**: request `AX=0201 BX=0 CX=0001 DX=080 ES=4000` — the
+  bounce segment — and control never returns past the handler; the Award RAM IDE driver
+  (`CS=0xB400`, code in the `0xA0000-0xE8000` hole E820 never reports) enters its internal
+  reset-retry (`AX=1201`) recursively, descending ~230 B per retry through the leg-stack
+  window until ESP wraps below zero and the box dies.
+- **the request is byte-identical to stage1's proven era read except for ES**: stage1
+  failed the same EDD probe and loaded stage2 with the identical `AH=02`, ES segments
+  `0x90`/`0x7E0`-`0x1690`. The geometry/packet path (transfer at `0x580`) is era-clean.
+- **era's own E820 does not reserve the landmine**: collected at `0x40000` (24-byte entries
+  despite `ECX=20` — era ignores the requested size), the map marks `0x0-0x9FC00` usable,
+  `0xE8000+` reserved — the RAM driver's scratch window is undocumented. `0x40000` is a
+  legal RAM address for an OS; the era driver simply owns it under the table.
+
+**Fix**: stage everything below the driver's territory. The strip between the stage2 top
+(`0x7E00` + 62.6 KiB = `0x17A10`) and the BootInfo/map home (`0x30000`) fits the 32 KiB
+bounce and 64 KiB heap exactly:
+
+- `BOUNCE_ADDRESS 0x40000 → 0x18000`, `BOUNCE_SELECTOR 0x4000 → 0x1800` — `HEAP_ADDRESS`
+  follows to `0x20000`, heap ends at exactly `0x30000`, adjacent to the map home.
+- the E820 bounce moves to the same region (per-entry copy-out is immediate — the two
+  bounces never share the window in time); era's own E820 then lands at `0x18000`.
+- `STAGE2_MAX_BIN_BYTES 160 KiB → 66048` (`0x7E00..0x18000` budget) so the existing
+  build-time guard protects the new neighbour: 32-bit stage2 is 60312 B, 64-bit 62608 B.
+- the reservation model (`memnorm.rs`, mirrored by the boot-test golden) frees
+  `0x31000..0x7C000` as Usable and drops the `0x40000..0x7C000` bootloader row;
+  `0x0800..0x7C00` already reserves the leg-stack window, `0x7E00..0x30000` already
+  reserves image+bounce+heap as one row.
+
+Era acceptance: media=CHS on `[DISK]`, then `[ELF]`/`[INITRD]` and the fake kernel's B.3
+VGA append lines. QEMU keeps all its gates: SeaBIOS transfers to any conventional address.
+
+## 4. Commit sequence (each gate green before the next)
 
 1. `Plan the true real-mode thunk stack for era BIOSes` (this file)
 2. `Run BIOS thunk legs on a true real-mode stack` (the fix)
-3. `Record the era proof of the real-mode thunk stack` (README era note + run directory)
+3. `Plan the staging relocation for the era RAM-driver window` (§3)
+4. `Stage disk and E820 transfers below the era RAM-driver window` (the relocation)
+5. `Record the era proof of the relocated staging` (README era note + run directory)
