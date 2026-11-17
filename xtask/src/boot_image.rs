@@ -21,7 +21,7 @@ pub const PARTITION_START_LBA: u32 = 2048;
 pub const STAGE2_IMAGE_LBA: u32 = 8;
 pub const STAGE2_HEADER_MAGIC: &[u8; 4] = b"ROS2";
 pub const STAGE2_HEADER_BYTES: usize = SECTOR_BYTES;
-pub const STAGE2_MAX_BIN_BYTES: usize = 160 * 1024;
+pub const STAGE2_MAX_BIN_BYTES: usize = 64 * 1024 + 512;
 
 const BOOTABLE: u8 = 0x80;
 const FAT16_TYPE: u8 = 0x06;
@@ -225,7 +225,7 @@ pub fn build_stage2(object_dir: &Path, flavor: Stage2Flavor) -> Vec<u8> {
     let bin = fs::read(&flat).expect("cannot read the flat stage2 binary");
     assert!(
         !bin.is_empty() && bin.len() <= STAGE2_MAX_BIN_BYTES,
-        "the stage2 image is {} bytes; the 0x7E00..0x2FFFF budget is {STAGE2_MAX_BIN_BYTES}",
+        "the stage2 image is {} bytes; the 0x7E00..0x18000 budget is {STAGE2_MAX_BIN_BYTES}",
         bin.len()
     );
     match flavor {

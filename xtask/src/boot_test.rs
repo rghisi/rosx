@@ -896,7 +896,7 @@ struct Reservation {
     kind: u32,
 }
 
-const RESERVATION_TABLE: [Reservation; 12] = [
+const RESERVATION_TABLE: [Reservation; 11] = [
     Reservation { start: 0x0000_0000, end: 0x0000_0400, kind: 2 },
     Reservation { start: 0x0000_0400, end: 0x0000_0500, kind: 2 },
     Reservation { start: 0x0000_0500, end: 0x0000_0600, kind: 3 },
@@ -905,8 +905,7 @@ const RESERVATION_TABLE: [Reservation; 12] = [
     Reservation { start: 0x0000_7C00, end: 0x0000_7E00, kind: 3 },
     Reservation { start: 0x0000_7E00, end: 0x0003_0000, kind: 3 },
     Reservation { start: 0x0003_0000, end: 0x0003_1000, kind: 2 },
-    Reservation { start: 0x0003_1000, end: 0x0004_0000, kind: 1 },
-    Reservation { start: 0x0004_0000, end: 0x0007_C000, kind: 3 },
+    Reservation { start: 0x0003_1000, end: 0x0007_C000, kind: 1 },
     Reservation { start: 0x0007_C000, end: 0x0008_0000, kind: 2 },
     Reservation { start: 0x0008_0000, end: FIRST_MEBIBYTE, kind: 2 },
 ];

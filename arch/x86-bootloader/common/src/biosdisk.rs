@@ -1,8 +1,8 @@
 pub const SECTOR_BYTES: usize = 512;
 pub const PARTITION_BASE_LBA: u64 = 2048;
 pub const MAX_CHUNK_SECTORS: usize = 64;
-pub const BOUNCE_SELECTOR: u16 = 0x4000;
-pub const BOUNCE_ADDRESS: usize = 0x0004_0000;
+pub const BOUNCE_SELECTOR: u16 = 0x1800;
+pub const BOUNCE_ADDRESS: usize = 0x0001_8000;
 pub const BOUNCE_BYTES: usize = 64 * SECTOR_BYTES;
 pub const HEAP_ADDRESS: usize = BOUNCE_ADDRESS + BOUNCE_BYTES;
 pub const HEAP_BYTES: usize = 64 * 1024;
@@ -70,8 +70,10 @@ pub fn dap_bytes(sectors: usize, lba: u64, buffer_address: usize) -> [u8; DAP_BY
     let mut dap = [0u8; DAP_BYTES];
     dap[0] = DAP_BYTES as u8;
     dap[2..4].copy_from_slice(&(sectors as u16).to_le_bytes());
-    dap[4..6].copy_from_slice(&(buffer_address as u16).to_le_bytes());
-    dap[6..8].copy_from_slice(&((buffer_address >> 4) as u16).to_le_bytes());
+    let offset = (buffer_address & 0xFFFF) as u16;
+    let segment = ((buffer_address - usize::from(offset)) >> 4) as u16;
+    dap[4..6].copy_from_slice(&offset.to_le_bytes());
+    dap[6..8].copy_from_slice(&segment.to_le_bytes());
     dap[8..16].copy_from_slice(&lba.to_le_bytes());
     dap
 }
@@ -194,8 +196,8 @@ mod tests {
         assert_eq!(dap[0], 16);
         assert_eq!(dap[1], 0);
         assert_eq!(&dap[2..4], &64u16.to_le_bytes());
-        assert_eq!(&dap[4..6], &0u16.to_le_bytes());
-        assert_eq!(&dap[6..8], &0x4000u16.to_le_bytes());
+        assert_eq!(&dap[4..6], &0x8000u16.to_le_bytes());
+        assert_eq!(&dap[6..8], &0x1000u16.to_le_bytes());
         assert_eq!(&dap[8..16], &0x0000_0123_4567_89ABu64.to_le_bytes());
     }
 
