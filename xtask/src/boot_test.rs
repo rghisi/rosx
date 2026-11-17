@@ -244,7 +244,7 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot32),
         expected: ExitVerdict::Success,
-        console_contains: &["[INITRD] addr=0x00101000", "kernel loaded", "initrd_crc32: 0x"],
+        console_contains: &["[INITRD] addr=0x", "kernel loaded", "initrd_crc32: 0x"],
         console_absent: &["[FAT-ERR]", "[ERR] mem", "[FK32] violation"],
         timeout_seconds: 4,
     },

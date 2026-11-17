@@ -8,11 +8,13 @@ use rosx_boot_common::DEBUG_EXIT_SUCCESS;
 use rosx_boot_common::crc32::crc32;
 use rosx_boot_common::debug_exit;
 use rosx_boot_common::debugport::DebugConsole;
+use rosx_boot_common::vga;
 use system::boot_info::BOOT_INFO_MAGIC;
 use system::boot_info::BOOT_INFO_VERSION;
 use system::boot_info::BootArch;
 use system::boot_info::BootInfo;
 use system::boot_info::BootMethod;
+use system::boot_info::DisplayKind;
 use system::boot_info::HIGHER_HALF_OFFSET;
 use system::boot_info::MEMORY_MAP_MAX_ENTRIES;
 use system::boot_info::MemoryKind;
@@ -40,7 +42,10 @@ extern "C" fn _start() {
 }
 
 extern "C" fn kernel_main(rax_magic: u64, rdi_ptr: u64, entry_rsp: u64, entry_rip: u64) -> ! {
-    let console = DebugConsole;
+    let mut console = Echo {
+        machine: DebugConsole,
+        human: false,
+    };
     if rax_magic != u64::from(BOOT_INFO_MAGIC) {
         violation(&console, "magic");
     }
@@ -64,6 +69,8 @@ extern "C" fn kernel_main(rax_magic: u64, rdi_ptr: u64, entry_rsp: u64, entry_ri
     {
         violation(&console, "header");
     }
+    console.human =
+        read_u32(info, offset_of!(BootInfo, display.kind)) == DisplayKind::VgaText as u32;
     let map_ptr = read_u64(info, offset_of!(BootInfo, memory_map_ptr));
     let map_len = read_u32(info, offset_of!(BootInfo, memory_map_len));
     let entry_size = read_u32(info, offset_of!(BootInfo, memory_map_entry_size));
@@ -85,7 +92,33 @@ extern "C" fn kernel_main(rax_magic: u64, rdi_ptr: u64, entry_rsp: u64, entry_ri
     debug_exit(DEBUG_EXIT_SUCCESS)
 }
 
-fn verify_dual_map(console: &DebugConsole, virtual_ptr: u64, length: usize) {
+struct Echo {
+    machine: DebugConsole,
+    human: bool,
+}
+
+impl Echo {
+    fn write_str(&self, text: &str) {
+        self.machine.write_str(text);
+        if self.human {
+            vga::append(text);
+        }
+    }
+
+    fn write_line(&self, text: &str) {
+        self.write_str(text);
+        self.write_str("\r\n");
+    }
+
+    fn write_hex(&self, value: u64, nibbles: u32) {
+        self.machine.write_hex(value, nibbles);
+        if self.human {
+            vga::append_hex(value, nibbles);
+        }
+    }
+}
+
+fn verify_dual_map(console: &Echo, virtual_ptr: u64, length: usize) {
     if virtual_ptr < HIGHER_HALF_OFFSET {
         violation(console, "map-address");
     }
@@ -100,7 +133,7 @@ fn verify_dual_map(console: &DebugConsole, virtual_ptr: u64, length: usize) {
     }
 }
 
-fn walk_memory_map(console: &DebugConsole, map_ptr: *const u8, map_len: u32, entry_size: u32) {
+fn walk_memory_map(console: &Echo, map_ptr: *const u8, map_len: u32, entry_size: u32) {
     let mut usable_total = 0u64;
     let mut previous_end: Option<u64> = None;
     for index in 0..map_len {
@@ -129,7 +162,7 @@ fn walk_memory_map(console: &DebugConsole, map_ptr: *const u8, map_len: u32, ent
     }
 }
 
-fn verify_initrd(console: &DebugConsole, address: u64, size: u64) -> u32 {
+fn verify_initrd(console: &Echo, address: u64, size: u64) -> u32 {
     if size == 0 {
         if address != 0 {
             violation(console, "initrd-address");
@@ -156,7 +189,7 @@ fn read_u64(base: *const u8, offset: usize) -> u64 {
     unsafe { core::ptr::read_unaligned(base.add(offset) as *const u64) }
 }
 
-fn violation(console: &DebugConsole, kind: &str) -> ! {
+fn violation(console: &Echo, kind: &str) -> ! {
     console.write_str("[FK64] violation ");
     console.write_line(kind);
     debug_exit(DEBUG_EXIT_FAILURE)

@@ -10,6 +10,7 @@ pub mod elf64;
 pub mod gdt;
 pub mod memnorm;
 pub mod pagetable;
+pub mod vga;
 
 mod pio;
 
