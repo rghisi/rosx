@@ -12,7 +12,7 @@ fn ip_ping_crosses_slirp() {
 
     let status = session.run_command(
         "ip status",
-        |delta| delta.contains("ip link=") || delta.contains("ip no service"),
+        |delta| delta.contains("ip counters") || delta.contains("ip no service"),
         INPUT_ATTEMPTS,
         COMMAND_BUDGET,
     );
@@ -31,7 +31,7 @@ fn ip_ping_crosses_slirp() {
 
     let ping = session.run_command(
         "ip ping 10.0.2.2 2",
-        |delta| delta.contains("ping: "),
+        |delta| delta.contains("% loss"),
         INPUT_ATTEMPTS,
         COMMAND_BUDGET,
     );

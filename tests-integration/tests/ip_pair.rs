@@ -33,7 +33,7 @@ fn ip_pair_pings_across_the_multicast_medium() {
 
     let ping = requester.run_command(
         "ip ping 10.9.9.1 2",
-        |delta| delta.contains("ping: "),
+        |delta| delta.contains("% loss"),
         INPUT_ATTEMPTS,
         COMMAND_BUDGET,
     );
