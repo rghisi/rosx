@@ -30,8 +30,14 @@ fn format_mac(mac: [u8; MAC_BYTES]) -> String {
 
 fn report_stats(stats: &Stats) {
     println!(
-        "ne2k tx={} tx-errors={} rx={} rx-errors={} overruns={}",
-        stats.tx_frames, stats.tx_errors, stats.rx_frames, stats.rx_errors, stats.rx_overruns
+        "ne2k tx={} tx-errors={} rx={} rx-errors={} overruns={} pushes={} push-drops={}",
+        stats.tx_frames,
+        stats.tx_errors,
+        stats.rx_frames,
+        stats.rx_errors,
+        stats.rx_overruns,
+        stats.watch_pushes,
+        stats.watch_drops
     );
 }
 
@@ -135,6 +141,25 @@ fn main() {
             match nic.send(&frame) {
                 Ok(()) => println!("ne2k sent {} bytes", frame.len()),
                 Err(_) => println!("ne2k send failed"),
+            }
+        }
+        Some("watch") => {
+            let count = requested
+                .get(1)
+                .and_then(|text| text.parse::<u32>().ok())
+                .unwrap_or(1);
+            if nic.watch().is_err() {
+                println!("ne2k watch subscribe failed");
+                return;
+            }
+            for _ in 0..count {
+                match nic.receive_frame() {
+                    Ok(frame) => report_frame(&frame),
+                    Err(err) => {
+                        println!("ne2k watch receive failed: {err:?}");
+                        break;
+                    }
+                }
             }
         }
         Some(subcommand) => println!("ne2k unknown subcommand: {subcommand}"),

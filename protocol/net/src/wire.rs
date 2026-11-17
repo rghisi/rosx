@@ -8,6 +8,7 @@ pub const MAC: u8 = 0x01;
 pub const SEND: u8 = 0x02;
 pub const POLL: u8 = 0x03;
 pub const STATS: u8 = 0x04;
+pub const WATCH: u8 = 0x05;
 
 pub const REPLY_ACK: u8 = 0x10;
 pub const REPLY_ERROR: u8 = 0x11;
@@ -15,6 +16,8 @@ pub const REPLY_MAC: u8 = 0x12;
 pub const REPLY_DATA: u8 = 0x13;
 pub const REPLY_NO_FRAME: u8 = 0x14;
 pub const REPLY_STATS: u8 = 0x15;
+
+pub const PUSH_FRAME: u8 = 0x20;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
@@ -54,6 +57,7 @@ pub enum Request {
     Send { token: u32, length: u16 },
     Poll,
     Stats,
+    Watch,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -63,6 +67,8 @@ pub struct Stats {
     pub rx_frames: u32,
     pub rx_errors: u32,
     pub rx_overruns: u32,
+    pub watch_pushes: u32,
+    pub watch_drops: u32,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -73,6 +79,7 @@ pub enum Reply {
     Data { token: u32, length: u16 },
     NoFrame,
     Stats(Stats),
+    PushFrame { token: u32, length: u16 },
 }
 
 impl Request {
@@ -94,6 +101,7 @@ impl Request {
             }
             Request::Poll => frame[0] = POLL,
             Request::Stats => frame[0] = STATS,
+            Request::Watch => frame[0] = WATCH,
         }
         Ok(frame)
     }
@@ -120,6 +128,10 @@ impl Request {
             STATS => {
                 zero_tail(frame, 1)?;
                 Ok(Request::Stats)
+            }
+            WATCH => {
+                zero_tail(frame, 1)?;
+                Ok(Request::Watch)
             }
             _ => Err(NetError::Protocol),
         }
@@ -155,6 +167,16 @@ impl Reply {
                 frame[9..13].copy_from_slice(&stats.rx_frames.to_le_bytes());
                 frame[13..17].copy_from_slice(&stats.rx_errors.to_le_bytes());
                 frame[17..21].copy_from_slice(&stats.rx_overruns.to_le_bytes());
+                frame[21..25].copy_from_slice(&stats.watch_pushes.to_le_bytes());
+                frame[25..29].copy_from_slice(&stats.watch_drops.to_le_bytes());
+            }
+            Reply::PushFrame { token, length } => {
+                if !valid_frame_length(*length) {
+                    return Err(NetError::Protocol);
+                }
+                frame[0] = PUSH_FRAME;
+                frame[1..5].copy_from_slice(&token.to_le_bytes());
+                frame[5..7].copy_from_slice(&length.to_le_bytes());
             }
         }
         Ok(frame)
@@ -194,14 +216,27 @@ impl Reply {
                 Ok(Reply::NoFrame)
             }
             REPLY_STATS => {
-                zero_tail(frame, 21)?;
+                zero_tail(frame, 29)?;
                 Ok(Reply::Stats(Stats {
                     tx_frames: read_u32(frame, 1),
                     tx_errors: read_u32(frame, 5),
                     rx_frames: read_u32(frame, 9),
                     rx_errors: read_u32(frame, 13),
                     rx_overruns: read_u32(frame, 17),
+                    watch_pushes: read_u32(frame, 21),
+                    watch_drops: read_u32(frame, 25),
                 }))
+            }
+            PUSH_FRAME => {
+                zero_tail(frame, 7)?;
+                let length = read_u16(frame, 5);
+                if !valid_frame_length(length) {
+                    return Err(NetError::Protocol);
+                }
+                Ok(Reply::PushFrame {
+                    token: read_u32(frame, 1),
+                    length,
+                })
             }
             _ => Err(NetError::Protocol),
         }
@@ -234,13 +269,15 @@ mod tests {
         assert_eq!(SEND, 0x02);
         assert_eq!(POLL, 0x03);
         assert_eq!(STATS, 0x04);
+        assert_eq!(WATCH, 0x05);
         assert_eq!(REPLY_ACK, 0x10);
         assert_eq!(REPLY_ERROR, 0x11);
         assert_eq!(REPLY_MAC, 0x12);
         assert_eq!(REPLY_DATA, 0x13);
         assert_eq!(REPLY_NO_FRAME, 0x14);
         assert_eq!(REPLY_STATS, 0x15);
-        let opcodes = [MAC, SEND, POLL, STATS];
+        assert_eq!(PUSH_FRAME, 0x20);
+        let opcodes = [MAC, SEND, POLL, STATS, WATCH];
         let tags = [
             REPLY_ACK,
             REPLY_ERROR,
@@ -252,6 +289,8 @@ mod tests {
         for tag in tags {
             assert!(!opcodes.contains(&tag), "tag {tag:#04x} collides with opcode");
         }
+        assert!(!opcodes.contains(&PUSH_FRAME));
+        assert!(!tags.contains(&PUSH_FRAME));
     }
 
     #[test]
@@ -267,11 +306,12 @@ mod tests {
 
     #[test]
     fn query_request_frames_are_tag_only() {
-        for request in [Request::Mac, Request::Poll, Request::Stats] {
+        for request in [Request::Mac, Request::Poll, Request::Stats, Request::Watch] {
             let frame = request.encode().unwrap();
             assert_eq!(frame[0], match request {
                 Request::Mac => MAC,
                 Request::Poll => POLL,
+                Request::Watch => WATCH,
                 _ => STATS,
             });
             assert!(frame[1..].iter().all(|byte| *byte == 0));
@@ -333,7 +373,7 @@ mod tests {
 
     #[test]
     fn request_decode_rejects_unknown_op_bytes() {
-        for op in [0u8, 5, 0x0F, 0x10, 0xFF] {
+        for op in [0u8, 6, 0x0F, 0x10, 0xFF] {
             let mut frame = Request::Poll.encode().unwrap();
             frame[0] = op;
             assert_eq!(Request::decode(&frame), Err(NetError::Protocol));
@@ -389,13 +429,15 @@ mod tests {
     }
 
     #[test]
-    fn stats_reply_pins_the_five_counters() {
+    fn stats_reply_pins_the_seven_counters() {
         let stats = Stats {
             tx_frames: 10,
             tx_errors: 1,
             rx_frames: 20,
             rx_errors: 2,
             rx_overruns: 3,
+            watch_pushes: 40,
+            watch_drops: 4,
         };
         let frame = Reply::Stats(stats).encode().unwrap();
         assert_eq!(frame[0], REPLY_STATS);
@@ -404,8 +446,49 @@ mod tests {
         assert_eq!(&frame[9..13], &20u32.to_le_bytes());
         assert_eq!(&frame[13..17], &2u32.to_le_bytes());
         assert_eq!(&frame[17..21], &3u32.to_le_bytes());
-        assert!(frame[21..].iter().all(|byte| *byte == 0));
+        assert_eq!(&frame[21..25], &40u32.to_le_bytes());
+        assert_eq!(&frame[25..29], &4u32.to_le_bytes());
+        assert!(frame[29..].iter().all(|byte| *byte == 0));
         assert_eq!(Reply::decode(&frame), Ok(Reply::Stats(stats)));
+    }
+
+    #[test]
+    fn push_frame_reply_pins_token_and_length_offsets() {
+        let frame = Reply::PushFrame {
+            token: 0x0A0B_0C0D,
+            length: 1514,
+        }
+        .encode()
+        .unwrap();
+        assert_eq!(frame[0], PUSH_FRAME);
+        assert_eq!(&frame[1..5], &[0x0D, 0x0C, 0x0B, 0x0A]);
+        assert_eq!(&frame[5..7], &[0xEA, 0x05]);
+        assert!(frame[7..].iter().all(|byte| *byte == 0));
+        assert_eq!(
+            Reply::decode(&frame),
+            Ok(Reply::PushFrame {
+                token: 0x0A0B_0C0D,
+                length: 1514
+            })
+        );
+    }
+
+    #[test]
+    fn push_frame_decode_refuses_out_of_bounds_length() {
+        for length in [0u16, 59, 1515, u16::MAX] {
+            let mut frame = Reply::PushFrame {
+                token: 1,
+                length: 60,
+            }
+            .encode()
+            .unwrap();
+            frame[5..7].copy_from_slice(&length.to_le_bytes());
+            assert_eq!(
+                Reply::decode(&frame),
+                Err(NetError::Protocol),
+                "length {length} accepted"
+            );
+        }
     }
 
     #[test]
@@ -429,12 +512,22 @@ mod tests {
                 length: 1514,
             },
             Reply::NoFrame,
+            Reply::PushFrame {
+                token: 0,
+                length: 60,
+            },
+            Reply::PushFrame {
+                token: u32::MAX,
+                length: 1514,
+            },
             Reply::Stats(Stats {
                 tx_frames: u32::MAX,
                 tx_errors: 0,
                 rx_frames: u32::MAX,
                 rx_errors: 0,
                 rx_overruns: u32::MAX,
+                watch_pushes: u32::MAX,
+                watch_drops: 1,
             }),
         ];
         for reply in replies {
@@ -464,12 +557,20 @@ mod tests {
             .encode()
             .unwrap(),
             Reply::NoFrame.encode().unwrap(),
+            Reply::PushFrame {
+                token: 1,
+                length: 60,
+            }
+            .encode()
+            .unwrap(),
             Reply::Stats(Stats {
                 tx_frames: 1,
                 tx_errors: 0,
                 rx_frames: 0,
                 rx_errors: 0,
                 rx_overruns: 0,
+                watch_pushes: 0,
+                watch_drops: 0,
             })
             .encode()
             .unwrap(),
@@ -478,7 +579,8 @@ mod tests {
             let dirty_byte = match seed[0] {
                 REPLY_MAC => 7,
                 REPLY_DATA => 7,
-                REPLY_STATS => 21,
+                PUSH_FRAME => 7,
+                REPLY_STATS => 29,
                 REPLY_ERROR => 2,
                 _ => 1,
             };
@@ -540,6 +642,7 @@ mod tests {
             },
             Request::Poll,
             Request::Stats,
+            Request::Watch,
         ] {
             frames.push(request.encode().expect("seed request encodes"));
         }
@@ -554,12 +657,18 @@ mod tests {
                 length: 1514,
             },
             Reply::NoFrame,
+            Reply::PushFrame {
+                token: 5,
+                length: 90,
+            },
             Reply::Stats(Stats {
                 tx_frames: 3,
                 tx_errors: 0,
                 rx_frames: 7,
                 rx_errors: 1,
                 rx_overruns: 0,
+                watch_pushes: 2,
+                watch_drops: 1,
             }),
         ] {
             frames.push(reply.encode().expect("seed reply encodes"));

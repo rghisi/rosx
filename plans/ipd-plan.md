@@ -157,11 +157,12 @@ bit-flip decode-never-panics. Gate: `cargo test -p net-protocol -p arp`, arp int
 
 **M3 — the `Watch` amendment.** Wire: opcode + `PushFrame` tag + the two `Stats` counters.
 Server: watcher list, fan-out inside the existing event path, release-on-send-error, prune on
-`ConnectionNotFound`, drop accounting. Client: `watch()` + `receive_frame()` (blocking receive
-future). New `ne2k watch [secs]` subcommand — the first in-tree proof of daemon→client unsolicited
-push (fact 2: the kernel already supports it; nobody has used it). Poll and every existing client
-untouched. Gate: `cargo test -p net-protocol -p ne2kd -p ne2k`, `ne2k_smoke`/`ne2k_pair`/arp
-suites.
+`ConnectionNotFound`, drop accounting. Client: `watch()` + a blocking `receive_frame()`; a new
+`ne2k watch [count]` subcommand receives pushes (blocking — there is no timeout future, so the
+harness supplies the frames, the `arp_watch` injection pattern) — the first in-tree proof of
+daemon→client unsolicited push (fact 2: the kernel already supports it; nobody has used it). Poll
+and every existing client untouched. Gate: `cargo test -p net-protocol -p ne2kd -p ne2k`,
+`ne2k_smoke`/`ne2k_pair`/arp suites.
 
 **M4 — ipd stack core as a mock-tested lib.** `FrameDevice` + `MockDevice`; `arp_cache`
 (learn-from-any-frame, `now_ms`-driven aging with bounded TTL, resolve with bounded retries and a
