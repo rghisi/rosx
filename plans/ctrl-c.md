@@ -1,6 +1,6 @@
 # Ctrl+C — Interrupt the Foreground App
 
-> **Status:** planned, not implemented.
+> **Status:** implemented — see `plans/ctrl-c-impl.md` for the evidence log.
 > **Scope:** v1 kills exactly one thing — the shell's current foreground program — via Ctrl+C.
 > **Decisions taken:** kill authority stays with the shell (waitset); decoder maps Ctrl+C only;
 > Kill is addressed by the child's completion-future handle and stamps a new
