@@ -108,6 +108,14 @@ impl MailboxManager {
         }
     }
 
+    pub(crate) fn discard_futures(&mut self, handles: &[FutureHandle]) {
+        let _section = MAILBOX_SECTION.acquire();
+        for parked in self.waiters.values_mut() {
+            parked.retain(|future| !handles.contains(future));
+        }
+        self.waiters.retain(|_, parked| !parked.is_empty());
+    }
+
     fn notify_waiters(&mut self, handle: MailboxHandle) {
         let notifier = self.notifier;
         if let Some(waiters) = self.waiters.get_mut(&handle) {
@@ -267,6 +275,25 @@ mod tests {
         manager.remove(handle);
 
         assert_eq!(services().future_registry.borrow_mut().get(parked), None);
+    }
+
+    #[test]
+    fn discard_futures_prunes_parked_lists_by_identity() {
+        use system::ipc::MESSAGE_PAYLOAD_BYTES;
+        let mut manager = MailboxManager::new_with_notifier(real_notifier());
+        let first = manager.create();
+        let second = manager.create();
+        let doomed = manager.pop_front_async(first, TaskHandle::new(7, 0));
+        let survivor = manager.pop_front_async(second, TaskHandle::new(7, 0));
+
+        manager.discard_futures(&[doomed]);
+
+        assert!(manager.waiters.get(&first).is_none_or(|parked| parked.is_empty()));
+        assert_eq!(manager.waiters.get(&second).unwrap(), &alloc::vec![survivor]);
+
+        let msg = Message::new(Handle::new(1, 1).pack() as u32, &[0x2E; MESSAGE_PAYLOAD_BYTES]);
+        assert_eq!(manager.push_back(second, msg), Ok(()));
+        assert_eq!(services().future_registry.borrow_mut().get(survivor), Some(true));
     }
 
     #[test]

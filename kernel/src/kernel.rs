@@ -301,15 +301,18 @@ impl Kernel {
         self.execution_state.preemption_enabled = false;
         if let Some(task_handle) = self.execution_state.current_task.take() {
             let group = services().task_manager.borrow().get_group(task_handle);
-            if let Some(completion_handle) =
-                services().task_manager.borrow().get_completion_future(task_handle)
-            {
+            let completion = services()
+                .task_manager
+                .borrow()
+                .get_completion_future(task_handle);
+            if let Some(completion_handle) = completion {
                 services().future_registry.borrow_mut().notify_with_status(completion_handle, status);
             }
             services()
                 .task_manager
                 .borrow_mut()
                 .set_state(task_handle, Terminated);
+            self.reap_task_resources(task_handle, completion);
             crate::platform::portio::revoke(task_handle);
             if let Some(group) = group {
                 if !services().task_manager.borrow().group_has_live_members(group) {
@@ -320,6 +323,23 @@ impl Kernel {
         }
         self.execution_state.switch_to_scheduler();
         unreachable!()
+    }
+
+    pub(crate) fn reap_task_resources(
+        &mut self,
+        task: TaskHandle,
+        spare_completion: Option<FutureHandle>,
+    ) {
+        services().future_registry.borrow_mut().discard_waiter(task);
+        services().ipc_manager.borrow_mut().close_connections_of(task);
+        let orphaned = services()
+            .future_registry
+            .borrow_mut()
+            .discard_owned(task, spare_completion);
+        if !orphaned.is_empty() {
+            services().ipc_manager.borrow_mut().discard_parked_futures(&orphaned);
+            services().timer_manager.borrow_mut().discard_futures(&orphaned);
+        }
     }
 
     pub(crate) fn kill_task(&mut self, completion: FutureHandle) -> Result<(), KillError> {
@@ -343,9 +363,7 @@ impl Kernel {
             .borrow_mut()
             .notify_with_status(completion, system::exit::interrupted_status());
         services().task_manager.borrow_mut().set_state(owner, Terminated);
-        services().future_registry.borrow_mut().discard_waiter(owner);
-        services().ipc_manager.borrow_mut().close_connections_of(owner);
-        services().future_registry.borrow_mut().discard_owned(owner, Some(completion));
+        self.reap_task_resources(owner, Some(completion));
         crate::platform::portio::revoke(owner);
         let group = services().task_manager.borrow().get_group(owner);
         if let Some(group) = group {
@@ -747,6 +765,62 @@ mod tests {
         assert_eq!(kernel().kill_task(completion), Ok(()));
 
         assert_eq!(services().future_registry.borrow_mut().get(parked), None);
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn the_reap_clears_connections_futures_and_timer_entries_alike() {
+        install_kill_stage();
+        services()
+            .ipc_manager
+            .borrow_mut()
+            .bind_service("REAP-BODY")
+            .expect("bind the reap-body service");
+        let (victim, completion) = spawn_paired("[T] reap-body");
+        let connection = services()
+            .ipc_manager
+            .borrow_mut()
+            .connect("REAP-BODY", victim)
+            .expect("victim connects");
+        let parked = services()
+            .ipc_manager
+            .borrow_mut()
+            .receive_message_async(connection, victim);
+        let sleeper = services()
+            .future_registry
+            .borrow_mut()
+            .register(Box::new(TimeFuture::owned_by(victim)))
+            .expect("register the victim's sleep future");
+        services()
+            .timer_manager
+            .borrow_mut()
+            .add_sleep(0, 10_000, sleeper);
+        let server = add_created_task("[T] reap-body-server");
+
+        services()
+            .task_manager
+            .borrow_mut()
+            .set_state(victim, crate::task::TaskState::Terminated);
+        kernel().reap_task_resources(victim, Some(completion));
+
+        assert_eq!(services().future_registry.borrow_mut().get(parked), None);
+        assert_eq!(services().future_registry.borrow_mut().get(sleeper), None);
+        assert_eq!(completion_status(completion), system::exit::clean_status(0).unwrap());
+        assert_eq!(
+            services().ipc_manager.borrow_mut().send_message(
+                server,
+                &system::ipc::Message::new(
+                    connection.pack() as u32,
+                    &[0u8; system::ipc::MESSAGE_PAYLOAD_BYTES]
+                )
+            ),
+            Err(crate::ipc::errors::IpcSendError::ConnectionNotFound)
+        );
+        assert!(!services()
+            .timer_manager
+            .borrow_mut()
+            .pop_expired(20_000)
+            .is_some_and(|expired| expired.contains(&sleeper)));
         *KERNEL_PTR.borrow_mut() = null_mut();
     }
 

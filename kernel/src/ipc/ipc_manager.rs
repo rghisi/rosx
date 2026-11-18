@@ -150,6 +150,10 @@ impl IpcManager {
         self.data_manager.gc_task(task);
     }
 
+    pub(crate) fn discard_parked_futures(&mut self, handles: &[FutureHandle]) {
+        self.mailbox_manager.discard_futures(handles);
+    }
+
     pub(crate) fn send_message(&mut self, caller: TaskHandle, envelope: &Message) -> Result<(), IpcSendError> {
         let connection = match IpcConnectionHandle::from_packed(envelope.conn() as usize) {
             Some(connection) => connection,
