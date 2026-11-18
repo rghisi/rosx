@@ -98,25 +98,64 @@ const EXACT_486_MNEMONICS: &[&str] = &[
 ];
 
 pub fn run_check_isa(spec: &ArchSpec, user_elfs: &[&str]) -> Result<Vec<String>, String> {
-    let objdump = on_path("objdump").ok_or_else(|| {
-        "objdump not found on PATH; install binutils (sudo apt install binutils)".to_string()
-    })?;
-    let mut failures = Vec::new();
+    let objdump = require_objdump()?;
     let mut audited = vec![spec.kernel_elf("release")];
     let release_dir = spec.user_release_dir();
     audited.extend(user_elfs.iter().map(|name| release_dir.join(name)));
+    audit_elf_paths(
+        &objdump,
+        &audited,
+        &format!("cargo xtask build {}", spec.name),
+    )
+}
 
-    for elf in &audited {
-        let output = Command::new(&objdump)
+pub const BOOTLOADER_ELF_NAMES: [&str; 1] = ["fake-kernel-32"];
+
+pub fn run_check_isa_bootloader() -> Result<Vec<String>, String> {
+    let objdump = require_objdump()?;
+    crate::boot_image::build_fake_kernel();
+    crate::boot_image::build_stage2(
+        &crate::boot_image::scratch_dir(),
+        crate::boot_image::Stage2Flavor::Flat32,
+    );
+    crate::boot_image::build_stage2(
+        &crate::boot_image::scratch_dir(),
+        crate::boot_image::Stage2Flavor::Long64,
+    );
+    let release_dir = crate::workspace_root()
+        .join("target")
+        .join("rosx-boot-i486")
+        .join("release");
+    let elfs: Vec<PathBuf> = BOOTLOADER_ELF_NAMES
+        .iter()
+        .map(|name| release_dir.join(name))
+        .collect();
+    audit_elf_paths(&objdump, &elfs, "cargo xtask check-isa bootloader")
+}
+
+fn require_objdump() -> Result<PathBuf, String> {
+    on_path("objdump").ok_or_else(|| {
+        "objdump not found on PATH; install binutils (sudo apt install binutils)".to_string()
+    })
+}
+
+fn audit_elf_paths(
+    objdump: &Path,
+    elfs: &[PathBuf],
+    build_hint: &str,
+) -> Result<Vec<String>, String> {
+    let mut failures = Vec::new();
+    for elf in elfs {
+        let output = Command::new(objdump)
             .arg("-d")
             .arg(elf)
             .output()
             .map_err(|err| format!("failed to run objdump on {}: {err}", elf.display()))?;
         if !output.status.success() {
             return Err(format!(
-                "objdump failed on {} (missing? run `cargo xtask build {}` first)",
+                "objdump failed on {} (missing? run `{}` first)",
                 elf.display(),
-                spec.name
+                build_hint
             ));
         }
         let violations = audit_disassembly(&String::from_utf8_lossy(&output.stdout));
@@ -167,10 +206,88 @@ fn is_post_486(mnemonic: &str) -> bool {
         )
 }
 
-pub fn run_check_stages(stages_dir: &Path) -> Result<Vec<String>, String> {
+pub const LONGMODE_SECTION: &str = ".longmode.text";
+
+pub const LONG_MODE_ALLOW_LIST: [&str; 3] = ["cpuid", "rdmsr", "wrmsr"];
+
+pub fn audit_longmode_disassembly(text: &str) -> Vec<Violation> {
+    let mut offenders: BTreeMap<String, usize> = BTreeMap::new();
+    for line in text.lines() {
+        let Some((_bytes, mnemonic)) = instruction_of(line) else {
+            continue;
+        };
+        if is_post_486(mnemonic) && !LONG_MODE_ALLOW_LIST.contains(&mnemonic) {
+            *offenders.entry(mnemonic.to_string()).or_insert(0) += 1;
+        }
+    }
+    offenders
+        .into_iter()
+        .map(|(mnemonic, occurrences)| Violation { mnemonic, occurrences })
+        .collect()
+}
+
+fn count_decoded_instructions(text: &str) -> usize {
+    text.lines()
+        .filter(|line| instruction_of(line).is_some())
+        .count()
+}
+
+pub fn audit_stage2_longmode(elf: &Path) -> Result<Vec<String>, String> {
     let objdump = on_path("objdump").ok_or_else(|| {
         "objdump not found on PATH; install binutils (sudo apt install binutils)".to_string()
     })?;
+    let plain = disassemble_section(&objdump, elf, ".text", "i386")?;
+    let longmode = disassemble_section(&objdump, elf, LONGMODE_SECTION, "i386:x86-64")?;
+    if count_decoded_instructions(&longmode) == 0 {
+        return Err(format!(
+            "no instructions decoded from {LONGMODE_SECTION} in {}; the long-mode code is not \
+             landing in its dedicated section",
+            elf.display()
+        ));
+    }
+    let mut offenders: Vec<String> = audit_stage_disassembly(&plain)
+        .iter()
+        .map(|v| format!(".text: {} x{}", v.mnemonic, v.occurrences))
+        .collect();
+    offenders.extend(
+        audit_longmode_disassembly(&longmode)
+            .iter()
+            .map(|v| format!("{LONGMODE_SECTION}: {} x{}", v.mnemonic, v.occurrences)),
+    );
+    Ok(offenders)
+}
+
+fn disassemble_section(objdump: &Path, elf: &Path, section: &str, machine: &str) -> Result<String, String> {
+    let output = Command::new(objdump)
+        .args(["-d", "-j", section, "-M", machine])
+        .arg(elf)
+        .output()
+        .map_err(|err| format!("failed to run objdump on {}: {err}", elf.display()))?;
+    if !output.status.success() {
+        return Err(format!("objdump failed on {}", elf.display()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+pub fn audit_stage_binary(path: &Path) -> Result<Vec<String>, String> {
+    let objdump = on_path("objdump").ok_or_else(|| {
+        "objdump not found on PATH; install binutils (sudo apt install binutils)".to_string()
+    })?;
+    let output = Command::new(&objdump)
+        .args(["-D", "-b", "binary", "-m", "i386"])
+        .arg(path)
+        .output()
+        .map_err(|err| format!("failed to run objdump on {}: {err}", path.display()))?;
+    if !output.status.success() {
+        return Err(format!("objdump failed on {}", path.display()));
+    }
+    Ok(audit_stage_disassembly(&String::from_utf8_lossy(&output.stdout))
+        .iter()
+        .map(|v| format!("{} x{}", v.mnemonic, v.occurrences))
+        .collect())
+}
+
+pub fn run_check_stages(stages_dir: &Path) -> Result<Vec<String>, String> {
     if !stages_dir.is_dir() {
         return Err(format!(
             "no stage directory at {}; run arch/x86-86box/scripts/fetch-grub-legacy.sh first",
@@ -183,22 +300,9 @@ pub fn run_check_stages(stages_dir: &Path) -> Result<Vec<String>, String> {
         if !stage.is_file() {
             return Err(format!("missing stage binary {}", stage.display()));
         }
-        let output = Command::new(&objdump)
-            .args(["-D", "-b", "binary", "-m", "i386"])
-            .arg(&stage)
-            .output()
-            .map_err(|err| format!("failed to run objdump on {}: {err}", stage.display()))?;
-        if !output.status.success() {
-            return Err(format!("objdump failed on {}", stage.display()));
-        }
-        let violations = audit_stage_disassembly(&String::from_utf8_lossy(&output.stdout));
-        if !violations.is_empty() {
-            let detail = violations
-                .iter()
-                .map(|v| format!("{} x{}", v.mnemonic, v.occurrences))
-                .collect::<Vec<_>>()
-                .join(", ");
-            failures.push(format!("{}: {detail}", stage.display()));
+        let offenders = audit_stage_binary(&stage)?;
+        if !offenders.is_empty() {
+            failures.push(format!("{}: {}", stage.display(), offenders.join(", ")));
         }
     }
     Ok(failures)
@@ -410,5 +514,36 @@ mod tests {
             let found = audit_stage_disassembly(&line);
             assert_eq!(found.len(), 1, "{mnemonic} must be rejected");
         }
+    }
+
+    #[test]
+    fn longmode_audit_admits_exactly_the_guard_and_msr_mnemonics() {
+        let admitted = stage_lines(&[
+            ("0f a2", "cpuid"),
+            ("0f 32", "rdmsr"),
+            ("0f 30", "wrmsr"),
+            ("48 c7 c4 00 f0 07 00", "movabs $0x7f000,%rsp"),
+            ("cb", "lret"),
+        ]);
+        assert_eq!(audit_longmode_disassembly(&admitted), vec![]);
+
+        let rejected = stage_lines(&[
+            ("0f 05", "syscall"),
+            ("0f 44 c1", "cmovne %ecx,%eax"),
+            ("0f 31", "rdtsc"),
+        ]);
+        let found = audit_longmode_disassembly(&rejected);
+        assert_eq!(found.len(), 3);
+        assert_eq!(found[0].mnemonic, "cmovne");
+        assert_eq!(found[1].mnemonic, "rdtsc");
+        assert_eq!(found[2].mnemonic, "syscall");
+    }
+
+    #[test]
+    fn an_empty_disassembly_decodes_no_instructions() {
+        let header_only = "Disassembly of section .longmode.text:\n\n000118d0 <switch>:\n";
+        assert_eq!(count_decoded_instructions(header_only), 0);
+        let with_code = stage_lines(&[("0f a2", "cpuid"), ("c3", "ret")]);
+        assert_eq!(count_decoded_instructions(&with_code), 2);
     }
 }

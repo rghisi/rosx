@@ -9,6 +9,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "arp"
+version = "0.1.0"
+dependencies = [
+ "net-protocol",
+ "pci-protocol",
+ "usrlib",
+ "vfs-protocol",
+]
+
+[[package]]
 name = "ata"
 version = "0.1.0"
 dependencies = [
@@ -241,6 +251,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "fake-kernel-32"
+version = "0.1.0"
+dependencies = [
+ "rosx-boot-common",
+ "system",
+]
+
+[[package]]
+name = "fake-kernel-64"
+version = "0.1.0"
+dependencies = [
+ "rosx-boot-common",
+ "system",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -357,6 +383,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "ip"
+version = "0.1.0"
+dependencies = [
+ "ip-protocol",
+ "net-protocol",
+ "pci-protocol",
+ "usrlib",
+ "vfs-protocol",
+]
+
+[[package]]
+name = "ip-protocol"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
+name = "ipd"
+version = "0.1.0"
+dependencies = [
+ "ip-protocol",
+ "net-protocol",
+ "usrlib",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -466,10 +520,63 @@ dependencies = [
 ]
 
 [[package]]
+name = "ne2k"
+version = "0.1.0"
+dependencies = [
+ "net-protocol",
+ "pci-protocol",
+ "usrlib",
+ "vfs-protocol",
+]
+
+[[package]]
+name = "ne2kd"
+version = "0.1.0"
+dependencies = [
+ "net-protocol",
+ "pci-protocol",
+ "system",
+ "usrlib",
+]
+
+[[package]]
+name = "net-protocol"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "pci"
+version = "0.1.0"
+dependencies = [
+ "pci-protocol",
+ "usrlib",
+]
+
+[[package]]
+name = "pci-protocol"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
+]
+
+[[package]]
+name = "pcid"
+version = "0.1.0"
+dependencies = [
+ "pci-protocol",
+ "system",
+ "usrlib",
+]
 
 [[package]]
 name = "pi"
@@ -596,6 +703,7 @@ dependencies = [
  "bootloader_api",
  "input-protocol",
  "kernel",
+ "pci-protocol",
  "pic8259",
  "spin",
  "system",
@@ -607,6 +715,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rosx-boot-common"
+version = "0.1.0"
+dependencies = [
+ "system",
+]
+
+[[package]]
+name = "rosx-stage2"
+version = "0.1.0"
+dependencies = [
+ "fs-core",
+ "rosx-boot-common",
+ "rxfat",
+ "rxpart",
+ "system",
+]
+
+[[package]]
 name = "rosx-x86_32"
 version = "0.1.0"
 dependencies = [
@@ -614,6 +740,7 @@ dependencies = [
  "block-protocol",
  "input-protocol",
  "kernel",
+ "pci-protocol",
  "spin",
  "system",
  "vfs-protocol",
@@ -805,6 +932,7 @@ dependencies = [
 name = "tests-integration"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "rxpart",
  "tempfile",
  "x86-runner",

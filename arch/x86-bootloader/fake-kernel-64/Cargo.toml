@@ -1,0 +1,18 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "fake-kernel-64"
+publish = false
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "fake-kernel-64"
+bench = false
+test = false
+
+[dependencies]
+rosx-boot-common = { path = "../common" }
+system = { path = "../../../system", default-features = false }
+
+[lints]
+workspace = true

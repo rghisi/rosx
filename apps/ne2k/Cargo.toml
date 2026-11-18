@@ -1,0 +1,23 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "ne2k"
+publish = false
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "ne2k"
+bench = false
+test = false
+
+[dependencies]
+usrlib = { path = "../../usrlib" }
+net-protocol = { path = "../../protocol/net" }
+pci-protocol = { path = "../../protocol/pci" }
+vfs-protocol = { path = "../../protocol/vfs" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+usrlib = { path = "../../usrlib", features = ["runtime"] }
+
+[lints]
+workspace = true

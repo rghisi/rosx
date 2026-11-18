@@ -1,0 +1,23 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "ip"
+publish = false
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "ip"
+bench = false
+test = false
+
+[dependencies]
+
+[target.'cfg(target_os = "none")'.dependencies]
+usrlib = { path = "../../usrlib", features = ["runtime"] }
+ip-protocol = { path = "../../protocol/ip" }
+net-protocol = { path = "../../protocol/net" }
+pci-protocol = { path = "../../protocol/pci" }
+vfs-protocol = { path = "../../protocol/vfs" }
+
+[lints]
+workspace = true

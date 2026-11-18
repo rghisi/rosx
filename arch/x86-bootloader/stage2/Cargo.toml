@@ -1,0 +1,24 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "rosx-stage2"
+publish = false
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "rosx-stage2"
+bench = false
+test = false
+
+[features]
+stage-64 = []
+
+[dependencies]
+fs-core = { path = "../../../fs/core" }
+rosx-boot-common = { path = "../common" }
+rxpart = { path = "../../../fs/partition" }
+rxfat = { path = "../../../fs/fat" }
+system = { path = "../../../system", default-features = false }
+
+[lints]
+workspace = true

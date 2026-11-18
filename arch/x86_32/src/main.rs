@@ -16,7 +16,7 @@ static KCONFIG: kernel::kconfig::KConfig = kernel::kconfig::KConfig {
     cpu: &CPU,
     elf_arch: &ELF_ARCH,
     port_io: &PORT_IO,
-    port_pool: x86_generic::port::ATA_PORT_POOL,
+    port_pool: x86_generic::port::X86_PORT_POOL,
     scheduler_factory: kernel::scheduler::mfq_scheduler,
 };
 
@@ -68,6 +68,8 @@ extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
         .service("/randomd", "RANDOM")
         .service("/echo", "BULKECHO")
         .service("/pong", "PING")
+        .service("/pcid", pci_protocol::wire::SERVICE_NAME)
+        .service("/ne2kd", "NE2K")
         .exec("/shell", &[])
         .exec("rom:shell", &[]);
     let _ = kernel.schedule(kernel::task::new_elf_task_with_arguments("init", INIT_ELF, boot_plan.encode()), kernel::future::FutureOwner::Kernel);

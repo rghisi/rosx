@@ -11,6 +11,7 @@ input-protocol = { path = "../../protocol/input" }
 vfs-protocol = { path = "../../protocol/vfs" }
 ata-protocol = { path = "../../protocol/ata" }
 block-protocol = { path = "../../protocol/block" }
+pci-protocol = { path = "../../protocol/pci" }
 spin = "0.10.0"
 volatile = "0.2.6"
 

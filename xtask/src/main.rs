@@ -4,6 +4,8 @@ use std::process::{self, Command};
 
 mod arch;
 mod boot_disk;
+mod boot_image;
+mod boot_test;
 mod check_isa;
 
 use arch::{ArchSpec, X86_64, USER_APPS};
@@ -81,6 +83,7 @@ fn launch(medium: &BootMedium, spec: &ArchSpec) {
             .arg(format!("if=ide,index=0,media=disk,format=raw,file={}", disk.display()));
     }
     x86_runner::attach_persistent_hdd(&mut cmd);
+    x86_runner::attach_ne2k_pci(&mut cmd);
     run(&mut cmd, &format!("boot {} in qemu", spec.name));
 }
 
@@ -230,6 +233,9 @@ fn run_tests(skip_integration: bool) {
     };
     cmd.arg("--").arg("--test-threads=1");
     run(&mut cmd, description);
+    if !skip_integration {
+        boot_test::run_boot_test();
+    }
 }
 
 fn check_isa_command(spec: &ArchSpec) {
@@ -246,6 +252,29 @@ fn check_isa_command(spec: &ArchSpec) {
         Ok(failures) => {
             if failures.is_empty() {
                 println!("==> check-isa {}: kernel and {} user ELFs are 486-clean", spec.name, elfs.len());
+                return;
+            }
+            eprintln!("non-486 mnemonics found:");
+            for failure in &failures {
+                eprintln!("  {failure}");
+            }
+            process::exit(1);
+        }
+    }
+}
+
+fn check_isa_bootloader_command() {
+    match check_isa::run_check_isa_bootloader() {
+        Err(message) => {
+            eprintln!("error: {message}");
+            process::exit(1);
+        }
+        Ok(failures) => {
+            if failures.is_empty() {
+                println!(
+                    "==> check-isa bootloader: {} bootloader ELFs are 486-clean",
+                    check_isa::BOOTLOADER_ELF_NAMES.len()
+                );
                 return;
             }
             eprintln!("non-486 mnemonics found:");
@@ -300,7 +329,7 @@ fn parse_stages_option(extras: &[String]) -> Result<Option<std::path::PathBuf>, 
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | test [--skip-integration]>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | check-isa bootloader | test [--skip-integration] | boot-image [32|64|floppy] | boot-test>"
     );
 }
 
@@ -396,20 +425,36 @@ fn main() {
             pack_rom(spec);
         }
         "check-isa" => {
-            let (spec, rest) = split_arch(extras);
-            match parse_stages_option(rest) {
-                Ok(Some(dir)) => check_isa_stages_command(&dir),
-                Ok(None) => check_isa_command(spec),
-                Err(message) => {
-                    eprintln!("{message}");
-                    usage();
-                    process::exit(2);
+            if extras.first().map(String::as_str) == Some("bootloader") {
+                check_isa_bootloader_command();
+            } else {
+                let (spec, rest) = split_arch(extras);
+                match parse_stages_option(rest) {
+                    Ok(Some(dir)) => check_isa_stages_command(&dir),
+                    Ok(None) => check_isa_command(spec),
+                    Err(message) => {
+                        eprintln!("{message}");
+                        usage();
+                        process::exit(2);
+                    }
                 }
             }
         }
         "test" => {
             let skip_integration = parse_optional_flag(extras, "--skip-integration");
             run_tests(skip_integration);
+        }
+        "boot-image" => {
+            if extras.len() != 1 {
+                eprintln!("boot-image expects exactly one of: 32, 64, floppy");
+                usage();
+                process::exit(2);
+            }
+            boot_image::boot_image_command(&extras[0]);
+        }
+        "boot-test" => {
+            require_no_extras(extras);
+            boot_test::run_boot_test();
         }
         "help" | "--help" | "-h" => usage(),
         other => {

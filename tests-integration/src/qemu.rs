@@ -129,6 +129,38 @@ impl QemuSession {
         Self::spawn_capturing(command, temp_dir)
     }
 
+    pub fn spawn_ne2k_isa(multicast: &str) -> QemuSession {
+        let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
+        let kernel_elf = kernel_build::kernel_elf();
+        let arch = Arch::current();
+        let medium = x86_runner::prepare_run_medium_in(&kernel_elf, arch.boot(), temp_dir.path())
+            .unwrap_or_else(|err| panic!(
+                "failed to prepare boot medium for kernel '{}': {err}",
+                kernel_elf.display()
+            ));
+        let mut command =
+            x86_runner::qemu_command(arch.boot(), &medium, x86_runner::LaunchMode::Headless);
+        attach_fat_master_disk(&mut command, temp_dir.path());
+        x86_runner::attach_ne2k_isa(&mut command, multicast);
+        Self::spawn_capturing(command, temp_dir)
+    }
+
+    pub fn spawn_ne2k_pci() -> QemuSession {
+        let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
+        let kernel_elf = kernel_build::kernel_elf();
+        let arch = Arch::current();
+        let medium = x86_runner::prepare_run_medium_in(&kernel_elf, arch.boot(), temp_dir.path())
+            .unwrap_or_else(|err| panic!(
+                "failed to prepare boot medium for kernel '{}': {err}",
+                kernel_elf.display()
+            ));
+        let mut command =
+            x86_runner::qemu_command(arch.boot(), &medium, x86_runner::LaunchMode::Headless);
+        attach_fat_master_disk(&mut command, temp_dir.path());
+        x86_runner::attach_ne2k_pci(&mut command);
+        Self::spawn_capturing(command, temp_dir)
+    }
+
     pub fn spawn_cdrom(cdrom: &Path) -> QemuSession {
         let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
         let medium = x86_runner::BootMedium::CdImage(cdrom.to_path_buf());
@@ -305,6 +337,26 @@ impl QemuSession {
     pub fn send_line(&mut self, s: &str) {
         self.send_text(s);
         self.send_key('\n');
+    }
+
+    pub fn run_command(
+        &mut self,
+        line: &str,
+        done: impl Fn(&str) -> bool,
+        attempts: usize,
+        budget: Duration,
+    ) -> String {
+        let mark = self.mark();
+        for _attempt in 0..attempts {
+            self.send_line(line);
+            let _ = self.wait_until_since(mark, |delta| {
+                done(delta) || delta.contains("Unknown command")
+            }, budget);
+            if done(&self.content_since(mark)) {
+                break;
+            }
+        }
+        self.content_since(mark)
     }
 
     fn monitor_mut(&mut self) -> &mut Monitor {

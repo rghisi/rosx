@@ -1,0 +1,22 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "arp"
+publish = false
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "arp"
+bench = false
+test = false
+
+[dependencies]
+
+[target.'cfg(target_os = "none")'.dependencies]
+usrlib = { path = "../../usrlib", features = ["runtime"] }
+net-protocol = { path = "../../protocol/net" }
+pci-protocol = { path = "../../protocol/pci" }
+vfs-protocol = { path = "../../protocol/vfs" }
+
+[lints]
+workspace = true

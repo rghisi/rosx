@@ -1,9 +1,12 @@
 use core::arch::asm;
 use kernel::platform::portio::{PortIo, PortRange, PortWidth};
 
-pub const ATA_PORT_POOL: &[PortRange] = &[
+pub const X86_PORT_POOL: &[PortRange] = &[
     PortRange::new(0x1F0, 0x1F7),
     PortRange::new(0x3F6, 0x3F6),
+    PortRange::new(0x280, 0x3FF),
+    PortRange::new(0xCF8, 0xCFF),
+    PortRange::new(0xC000, 0xFFFF),
 ];
 
 pub struct X86PortIo;

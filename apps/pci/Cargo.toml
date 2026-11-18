@@ -1,0 +1,21 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "pci"
+publish = false
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "pci"
+bench = false
+test = false
+
+[dependencies]
+usrlib = { path = "../../usrlib" }
+pci-protocol = { path = "../../protocol/pci" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+usrlib = { path = "../../usrlib", features = ["runtime"] }
+
+[lints]
+workspace = true

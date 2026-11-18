@@ -39,10 +39,43 @@ impl InterruptIndex {
 
 static IDT: Once<InterruptDescriptorTable> = Once::new();
 
+macro_rules! irq_event_handlers {
+    ($($name:ident => $irq:expr;)*) => {
+        $(
+            extern "x86-interrupt" fn $name(_stack_frame: InterruptStackFrame) {
+                interrupt::dispatch_irq($irq);
+            }
+        )*
+
+        fn install_irq_event_vectors(idt: &mut InterruptDescriptorTable) {
+            $(
+                idt[PicController::VECTOR_BASE + $irq].set_handler_fn($name);
+            )*
+        }
+    };
+}
+
+irq_event_handlers! {
+    irq3_interrupt_handler => 3;
+    irq4_interrupt_handler => 4;
+    irq5_interrupt_handler => 5;
+    irq6_interrupt_handler => 6;
+    irq7_interrupt_handler => 7;
+    irq8_interrupt_handler => 8;
+    irq9_interrupt_handler => 9;
+    irq10_interrupt_handler => 10;
+    irq11_interrupt_handler => 11;
+    irq12_interrupt_handler => 12;
+    irq13_interrupt_handler => 13;
+    irq14_interrupt_handler => 14;
+    irq15_interrupt_handler => 15;
+}
+
 fn build_idt() -> InterruptDescriptorTable {
     let mut idt = InterruptDescriptorTable::new();
     idt[InterruptIndex::Timer.as_u8()].set_handler_fn(timer_interrupt_handler);
     idt[InterruptIndex::Keyboard.as_u8()].set_handler_fn(keyboard_interrupt_handler);
+    install_irq_event_vectors(&mut idt);
     idt[SYSCALL_VECTOR].set_handler_fn(syscall_handler);
 
     unsafe {
