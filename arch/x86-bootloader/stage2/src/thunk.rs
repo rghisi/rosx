@@ -24,6 +24,7 @@ const RM_STACK_TOP: u32 = 0x7A00;
 const PE_BIT: u32 = 1;
 const PE_CLEAR_MASK: u32 = 0x7FFF_FFFE;
 const WIDE_MARK: u32 = 0x80;
+const IF_CLEAR_MASK: u32 = 0xFFFF_FDFF;
 
 unsafe extern "C" {
     fn thunk_entry32();
@@ -153,6 +154,7 @@ store_results:
     mov word ptr [{regs}+16], es
 
 rm_to_pm:
+    cli
     xor ax, ax
     mov ds, ax
     mov es, ax
@@ -240,6 +242,7 @@ thunk_entry32:
     mov dword ptr [{saved_esp}], esp
     pushfd
     pop dword ptr [{saved_eflags}]
+    and dword ptr [{saved_eflags}], {no_if_mask}
     mov eax, [edx]
     mov [{regs}], eax
     mov eax, [edx+4]
@@ -266,6 +269,7 @@ thunk_entry32_wide:
     mov dword ptr [{saved_esp}], esp
     pushfd
     pop dword ptr [{saved_eflags}]
+    and dword ptr [{saved_eflags}], {no_if_mask}
     mov eax, [edx]
     mov [{wide}], eax
     mov eax, [edx+4]
@@ -296,6 +300,7 @@ thunk_entry32_wide:
     regs_ptr = const M_REGS_PTR,
     int_no = const M_INT_NO,
     saved_eflags = const M_SAVED_EFLAGS,
+    no_if_mask = const IF_CLEAR_MASK,
     ret_src = const M_RET_SRC,
     ret_cnt = const M_RET_CNT,
     rm_stack = const RM_STACK_TOP,

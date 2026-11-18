@@ -106,4 +106,47 @@ VGA append lines. QEMU keeps all its gates: SeaBIOS transfers to any conventiona
 2. `Run BIOS thunk legs on a true real-mode stack` (the fix)
 3. `Plan the staging relocation for the era RAM-driver window` (§3)
 4. `Stage disk and E820 transfers below the era RAM-driver window` (the relocation)
-5. `Record the era proof of the relocated staging` (README era note + run directory)
+5. `Load and restore ES around real-mode thunk legs` (§3: the last byte missing from
+   stage1's proven read)
+6. `Keep interrupts masked across protected-mode thunk returns` (§5)
+7. `Record the era proof of the relocated staging` (README era note + run directory)
+
+## 5. Era round three — Award INT 15h returns with IF set (measured 2026-11-18, instrumented 86Box master)
+
+The relocated staging moved the transfers past the RAM driver, but era still reset at ~13 s of
+VM clock, right after `[ELF]`, while QEMU never reproduced it once. Instrumenting every
+soft-reset site and the protected-mode gate fetch of an 86Box master build pinned the death
+mechanism exactly: `GATE num=08 raw=56c6 c000 … idt=00000000:0400` → `GATE num=0d` → triple
+fault → `SOFTRESET`. (86Box resets the IDTR to `base 0, limit 0x3FF` on a 386, so a PM gate
+fetch reads the IVT bytes as gate descriptors; selector `C000` is a #GP, and the cascade
+triples.) In short: a timer tick was accepted **while stage2 ran protected-mode code**, and a
+PM window without an IDT cannot survive a single IRQ.
+
+Why IF was on: instrumenting every flag-setting operation proved it — zero STIs ever executed
+in PM, and every single `restore_frame` POPFD restored IF (`val=0x202/0x206/0x216…` across all
+285 legs): the snapshot taken at thunk entry already carried it. The leak is `enable_a20`'s
+`int 0x15` (AH=2401) — the same handler family §0 caught forcing `sti`, and Award BIOSes are
+documented to return from INT 15h with IF set. It runs before the first thunk, so stage2's
+mode transition inherited IF=1 and every later POPFD reinstalled it. SeaBIOS preserves IF
+across INT 13h/15h, which is why only era dies — and why death is clock-anchored: the first
+tick after stage2's PM start lands in a PM window.
+
+**Fix**: the thunk owns the interrupt state on return to protected mode, whatever the BIOS
+handler did inside the leg:
+
+- both thunk entries mask IF out of the snapshot (`and dword ptr [{saved_eflags}],
+  0xfffffdff`), so `restore_frame`'s POPFD can never enable interrupts entering PM;
+- `rm_to_pm` `cli`s before setting CR0.PE, so a leg's internal `sti` cannot carry IF across
+  the mode transition;
+- `protected_entry` starts with `cli`, so the INT 15h leak cannot carry IF across stage1's
+  transition either.
+
+The tick still fires *inside* the legs — the handler's own `sti` services INT 8h and `0x40:6C`
+advances, which §0 proved era INT 13h success requires — but no IRQ can ever reach an
+unprotected PM window.
+
+Proof (86Box `b32`: 486sp3c, Award 4.51, i486SX): full boot — `[DISK] media=chs`, `[ELF]`,
+the fake kernel's `[MEM]` map and `[STAGE2_32] A20=OK THUNK=OK`, then
+**`initrd_crc32: 0x7551f9f4`** with `vm_info` reporting `soft_resets: 0`, on both the
+instrumented and the unmodified emulator builds. The successful run's trace: 1149 POPFDs,
+zero with IF set.
