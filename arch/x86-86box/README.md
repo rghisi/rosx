@@ -123,6 +123,19 @@ deterministic; `cpu_family=i486sx`/`fpu_type=none` is the no-FPU floor;
 drive timing; the 993/16/63 geometry is "big enough for the era" and
 inside both BIOS translation limits.
 
+## Bootloader era proof
+
+The era bar for the BIOS-thunk bootloader is the fake-kernel boot of
+`boot32.img`: `cargo xtask boot-image 32`, copied into the VM dir as
+`hdd.img` and grown to 488 MiB, booted on `486sp3c`. The screen must render
+`[DISK] media=chs`, `[ELF]`, `[INITRD]` and the fake kernel's
+`initrd_crc32: 0x7551f9f4` with `vm_info` `soft_resets: 0` — real Award
+INT 13h/15h behavior (forced `sti`, RAM-driver staging landmine, INT 15h
+IF-on-return) makes this bar the era's strictest test of the thunk. Measured
+2026-11-18: PASS (run dir `target/86box/runs/20261118T172136Z-486sp3c/`).
+The three-era-defect chain and its instrumentation method:
+`plans/bootloader/14-era-thunk-stack.md`.
+
 ## Evidence run
 
 Follow `docs/evidence-checklist.md` — it maps every hardware-checklist
