@@ -21,6 +21,8 @@ use crate::handle::{FutureHandle, IpcConnectionHandle, IpcBindingHandle, IpcData
 #[cfg(not(test))]
 use crate::future::waitset::{AttachError, WaitsetFuture};
 #[cfg(not(test))]
+use crate::future::FutureOwner;
+#[cfg(not(test))]
 use crate::memory::free_list_allocator::BlockOwner;
 #[cfg(not(test))]
 use crate::future::TaskCompletionFuture;
@@ -41,15 +43,21 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::Sleep) => {
             let millis = arg1 as u64;
-            kernel().sleep(millis);
-            0
+            match kernel().sleep(millis, current_group_owner()) {
+                Ok(()) => 0,
+                Err(_) => ErrorCode::FutureCapacityExhausted.to_reg(),
+            }
         }
         Ok(SyscallNum::Now) => kernel().get_system_time() as usize,
         Ok(SyscallNum::Spawn) => {
             let caller = kernel().execution_state.current_task();
             let caller_group = services().task_manager.borrow().get_group(caller);
             match caller_group
-                .and_then(|group| kernel().schedule(new_entrypoint_task(arg1, group)).ok())
+                .and_then(|group| {
+                    kernel()
+                        .schedule(new_entrypoint_task(arg1, group), FutureOwner::Group(group))
+                        .ok()
+                })
             {
                 Some(handle) => handle.pack(),
                 None => u64::MAX as usize,
@@ -117,7 +125,13 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             let Some(name) = first_argument(blob) else {
                 return ErrorCode::ElfArgumentBlobMalformed.to_reg();
             };
-            match kernel().schedule(new_elf_task_with_arguments(name, elf_bytes, Vec::from(blob))).ok() {
+            match kernel()
+                .schedule(
+                    new_elf_task_with_arguments(name, elf_bytes, Vec::from(blob)),
+                    current_group_owner(),
+                )
+                .ok()
+            {
                 Some(handle) => handle.pack(),
                 None => u64::MAX as usize,
             }
@@ -150,11 +164,25 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             }
         }
         Ok(SyscallNum::IpcReceiveMessage) => match IpcConnectionHandle::from_packed(arg1) {
-            Some(connection_handle) => services().ipc_manager.borrow_mut().receive_message_async(connection_handle).pack(),
+            Some(connection_handle) => match services()
+                .ipc_manager
+                .borrow_mut()
+                .receive_message_async(connection_handle, current_group_owner())
+            {
+                Some(handle) => handle.pack(),
+                None => ErrorCode::FutureCapacityExhausted.to_reg(),
+            },
             None => ErrorCode::Unknown.to_reg(),
         },
         Ok(SyscallNum::IpcAcceptMessage) => match IpcBindingHandle::from_packed(arg1) {
-            Some(binding_handle) => services().ipc_manager.borrow_mut().accept_message_async(binding_handle).pack(),
+            Some(binding_handle) => match services()
+                .ipc_manager
+                .borrow_mut()
+                .accept_message_async(binding_handle, current_group_owner())
+            {
+                Some(handle) => handle.pack(),
+                None => ErrorCode::FutureCapacityExhausted.to_reg(),
+            },
             None => ErrorCode::Unknown.to_reg(),
         },
         Ok(SyscallNum::IpcDataWrite) => {
@@ -191,7 +219,11 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             crate::rom::read(arg1 as u64, dst)
         }
         Ok(SyscallNum::WaitsetCreate) => {
-            match services().future_registry.borrow_mut().register(Box::new(WaitsetFuture::new())) {
+            match services()
+                .future_registry
+                .borrow_mut()
+                .register(Box::new(WaitsetFuture::new()), current_group_owner())
+            {
                 Some(handle) => handle.pack(),
                 None => ErrorCode::FutureCapacityExhausted.to_reg(),
             }
@@ -310,6 +342,17 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         },
         Err(_) => 0,
     }
+}
+
+#[cfg(not(test))]
+fn current_group_owner() -> FutureOwner {
+    let caller = kernel().execution_state.current_task();
+    services()
+        .task_manager
+        .borrow()
+        .get_group(caller)
+        .map(FutureOwner::Group)
+        .unwrap_or(FutureOwner::Kernel)
 }
 
 #[cfg(not(test))]

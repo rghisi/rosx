@@ -58,6 +58,7 @@ members = [
     "apps/cp",
     "apps/mkdir",
     "apps/rmdir",
+    "apps/leaky",
     "xtask",
     "tests-integration",
 ]

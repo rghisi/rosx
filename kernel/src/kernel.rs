@@ -2,7 +2,7 @@ use crate::platform::cpu::Cpu;
 #[cfg(not(test))]
 use crate::platform::output::{KernelOutput, setup_default_output};
 use crate::platform::elf::ElfArch;
-use crate::future::{TaskCompletionFuture, TimeFuture};
+use crate::future::{FutureOwner, TaskCompletionFuture, TimeFuture};
 use crate::future::waitset::WaitsetTake;
 use system::waitset::WaitEvent;
 use crate::kconfig::KConfig;
@@ -180,44 +180,51 @@ impl Kernel {
             .swap_context(state_pointer, null_mut(), scheduler_thread_stack_pointer);
     }
 
-    pub fn schedule(&mut self, task: SharedTask) -> Result<FutureHandle, ()> {
-        self.schedule_with_task_handle(task).map(|(_task_handle, future_handle)| future_handle)
+    pub fn schedule(
+        &mut self,
+        task: SharedTask,
+        owner: FutureOwner,
+    ) -> Result<FutureHandle, ()> {
+        self.schedule_with_task_handle(task, owner).map(|(_task_handle, future_handle)| future_handle)
     }
 
-    pub(crate) fn schedule_with_task_handle(&mut self, task: SharedTask) -> Result<(TaskHandle, FutureHandle), ()> {
+    pub(crate) fn schedule_with_task_handle(
+        &mut self,
+        task: SharedTask,
+        owner: FutureOwner,
+    ) -> Result<(TaskHandle, FutureHandle), ()> {
         let prev = self.execution_state.preemption_enabled;
         self.execution_state.preemption_enabled = false;
-        let result = services().task_manager.borrow_mut().add_task(task);
-        let paired = match result {
-            Ok(task_handle) => {
-                let future = Box::new(TaskCompletionFuture::new());
-                let future_handle = services().future_registry.borrow_mut().register(future);
-                if let Some(fh) = future_handle {
-                    services().task_manager.borrow_mut().set_completion_future(task_handle, fh);
-                }
+        let future = Box::new(TaskCompletionFuture::new());
+        let future_handle = services().future_registry.borrow_mut().register(future, owner);
+        let paired = match future_handle {
+            Some(future_handle) => {
+                let task_handle = match services().task_manager.borrow_mut().add_task(task) {
+                    Ok(task_handle) => task_handle,
+                    Err(_) => panic!("Not able to create new task"),
+                };
+                services().task_manager.borrow_mut().set_completion_future(task_handle, future_handle);
                 self.schedule_task(task_handle);
-                future_handle.map(|fh| (task_handle, fh))
+                Ok((task_handle, future_handle))
             }
-            Err(_) => {
-                panic!("Not able to create new task");
-            }
+            None => Err(()),
         };
         self.execution_state.preemption_enabled = prev;
-        paired.ok_or(())
+        paired
     }
 
-    pub fn sleep(&mut self, millis: u64) {
+    pub fn sleep(&mut self, millis: u64, owner: FutureOwner) -> Result<(), ()> {
         let future = Box::new(TimeFuture::new());
-        let handle = services().future_registry
-            .borrow_mut()
-            .register(future)
-            .expect("Failed to register sleep future");
+        let Some(handle) = services().future_registry.borrow_mut().register(future, owner) else {
+            return Err(());
+        };
         services().timer_manager.borrow_mut().add_sleep(
             kernel().get_system_time(),
             millis,
             handle,
         );
         let _ = self.wait_future(handle);
+        Ok(())
     }
 
     pub fn wait_future(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
@@ -306,6 +313,7 @@ impl Kernel {
             crate::platform::portio::revoke(task_handle);
             if let Some(group) = group {
                 if !services().task_manager.borrow().group_has_live_members(group) {
+                    services().future_registry.borrow_mut().reclaim_group(group);
                     unsafe { services().memory_manager.release_group_allocations(group.value()) };
                 }
             }
@@ -459,10 +467,93 @@ mod tests {
         let sleeper = add_created_task("[T] wake-sleeper");
         install_stub_kernel(scheduler, Some(sleeper), true, false);
         let future = Box::new(TaskCompletionFuture::new());
-        let future_handle = services().future_registry.borrow_mut().register(future).expect("register");
+        let future_handle = services().future_registry.borrow_mut().register(future, FutureOwner::Kernel).expect("register");
         services().future_registry.borrow_mut().register_waiter(future_handle, sleeper);
         services().future_registry.borrow_mut().notify(future_handle);
         assert!(kernel().execution_state.need_resched);
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    fn exhaust_future_registry() -> Vec<FutureHandle> {
+        let mut fillers = Vec::new();
+        while let Some(handle) = services()
+            .future_registry
+            .borrow_mut()
+            .register(Box::new(TimeFuture::new()), FutureOwner::Kernel)
+        {
+            fillers.push(handle);
+        }
+        fillers
+    }
+
+    fn release_future_registry(fillers: Vec<FutureHandle>) {
+        for handle in fillers {
+            services().future_registry.borrow_mut().consume(handle).unwrap();
+        }
+    }
+
+    #[test]
+    fn sleep_reports_exhaustion_instead_of_panicking() {
+        crate::kernel_services::init();
+        let scheduler = add_created_task("[T] exhausted-sleep-scheduler");
+        install_stub_kernel(scheduler, None, false, false);
+        let fillers = exhaust_future_registry();
+        assert_eq!(kernel().sleep(1, FutureOwner::Kernel), Err(()));
+        release_future_registry(fillers);
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn schedule_refuses_a_task_when_the_registry_is_exhausted() {
+        crate::kernel_services::init();
+        let scheduler = add_created_task("[T] ghost-scheduler");
+        install_stub_kernel(scheduler, None, false, false);
+        let fillers = exhaust_future_registry();
+        let live_before = services().task_manager.borrow().snapshot_processes().len();
+        let task = Task::new("[T] ghost-attempt", 0x1000, 0);
+        assert_eq!(
+            kernel().schedule_with_task_handle(task, FutureOwner::Kernel),
+            Err(())
+        );
+        assert_eq!(
+            services().task_manager.borrow().snapshot_processes().len(),
+            live_before
+        );
+        release_future_registry(fillers);
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn termination_of_the_last_group_member_reclaims_the_groups_futures() {
+        crate::kernel_services::init();
+        let scheduler = add_created_task("[T] reclaim-hook-scheduler");
+        let dying = add_created_task("[T] reclaim-hook-dying");
+        install_stub_kernel(scheduler, Some(dying), false, false);
+        let dying_group = services().task_manager.borrow().get_group(dying).unwrap();
+        let parent_group = services().task_manager.borrow().get_group(scheduler).unwrap();
+
+        let abandoned = services()
+            .future_registry
+            .borrow_mut()
+            .register(Box::new(TimeFuture::new()), FutureOwner::Group(dying_group))
+            .unwrap();
+        let report_to_parent = services()
+            .future_registry
+            .borrow_mut()
+            .register(Box::new(TaskCompletionFuture::new()), FutureOwner::Group(parent_group))
+            .unwrap();
+        services().task_manager.borrow_mut().set_completion_future(dying, report_to_parent);
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            kernel().terminate_with_status(system::exit::clean_status(5).unwrap())
+        }));
+        assert!(outcome.is_err());
+
+        assert_eq!(services().future_registry.borrow_mut().get(abandoned), None);
+        let report = services().future_registry.borrow_mut().consume(report_to_parent).unwrap();
+        let report = report.into_any().downcast::<TaskCompletionFuture>().unwrap();
+        assert!(report.is_completed());
+        assert_eq!(report.status(), system::exit::clean_status(5).unwrap());
         *KERNEL_PTR.borrow_mut() = null_mut();
     }
 }
