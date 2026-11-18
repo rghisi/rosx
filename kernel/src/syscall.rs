@@ -308,6 +308,20 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
                 ErrorCode::IrqControllerUnavailable.to_reg()
             }
         },
+        Ok(SyscallNum::Kill) => {
+            let Some(completion) = FutureHandle::from_packed(arg1) else {
+                return ErrorCode::TaskKillTargetTerminated.to_reg();
+            };
+            match kernel().kill_task(completion) {
+                Ok(()) => 0,
+                Err(crate::kernel::KillError::TargetTerminated) => {
+                    ErrorCode::TaskKillTargetTerminated.to_reg()
+                }
+                Err(crate::kernel::KillError::TargetRunning) => {
+                    ErrorCode::TaskKillTargetRunning.to_reg()
+                }
+            }
+        }
         Err(_) => 0,
     }
 }
