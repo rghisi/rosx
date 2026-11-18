@@ -1,6 +1,6 @@
 # Kill-Aware Resource Sweep — Reap Everything a Dying Task Owns
 
-> **Status:** proposed.
+> **Status:** implemented — see `plans/kill-resource-sweep-impl.md` for the evidence log.
 > **Scope:** v1 reclaims every kernel resource a dying task owns — futures by
 > owner, IPC connections and data objects by task, parked mailbox waiters and
 > timer-queue entries — on **both** death paths (voluntary `Exit` and `Kill`).
