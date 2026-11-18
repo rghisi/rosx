@@ -10,9 +10,9 @@
 #
 # Budget notes: the image body starts at LBA 9 and is <= 321 sectors, so every
 # LBA this stage handles fits in 16 bits; cur_lba/cur_rem and the CHS math are
-# 16-bit throughout (native in .code16, no 0x66 prefixes). The CHS path is the
-# documented budget sacrifice: no retry/controller-reset loop (QEMU never
-# errors here); the LBA path and the header validation are kept whole.
+# 16-bit throughout (native in .code16, no 0x66 prefixes). Failed reads reset
+# the controller and re-issue: era firmware (Phoenix 4.04 on UMC 8881) hands
+# the first INT 13h reads after boot a timeout (AH=80h) that QEMU never makes.
 
 .code16
 
@@ -78,8 +78,13 @@ read_image:
     ret
 
 # read_sectors: transfer cur_rem sectors at cur_lba into buf_seg:0, picking the
-# LBA or CHS driver from use_lba. Any read failure is a fatal disk error.
+# LBA or CHS driver from use_lba. A failed read resets the controller and
+# re-issues (era timeout discipline); the CHS loop re-arms the count per
+# sector. A timing-out LBA face hands the whole load to the CHS geometry path
+# once before the error becomes fatal.
 read_sectors:
+    movb $3, retries
+drive_once:
     cmpb $0x00, use_lba
     je chs_read
     movw cur_rem, %ax
@@ -92,8 +97,20 @@ read_sectors:
     movb boot_drive, %dl
     leaw dap, %si
     int $0x13
-    jc disk_err
+    jc reset_retry
     ret
+
+reset_retry:
+    decb retries
+    jz lba_or_die
+    movb $0x00, %ah              # reset the controller, as era DOS did
+    movb boot_drive, %dl
+    int $0x13
+    jmp drive_once
+lba_or_die:
+    cmpb $0x00, use_lba
+    jne chs_geom                 # a faking EDD face: restart the load over CHS, once
+    jmp disk_err
 
 # chs_read: read cur_rem sectors from cur_lba into buf_seg:0, one per INT 13h.
 chs_read:
@@ -124,11 +141,12 @@ chs_read:
     movb $0x01, %al              # one sector
     movb $0x02, %ah
     int $0x13
-    jc disk_err
+    jc reset_retry
 
     addw $0x20, buf_seg          # next 512-byte paragraph
     incw cur_lba
     decw cur_rem
+    movb $3, retries             # the allowance is per sector: fresh on every advance
     jmp chs_read
 chs_done:
     ret
@@ -209,6 +227,8 @@ chs_sptrack:
 chs_heads:
     .byte 0
 use_lba:
+    .byte 0
+retries:
     .byte 0
 dap:
 dap_size:
