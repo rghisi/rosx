@@ -63,10 +63,11 @@ impl<Reader: Copy + PartialEq> InputMux<Reader> {
         self.watcher = Some(watcher);
     }
 
-    pub fn handle_unwatch(&mut self, watcher: Reader) {
-        if self.watcher == Some(watcher) {
+    pub fn handle_unwatch(&mut self, reader: Reader) -> MuxAction<Reader> {
+        if self.watcher == Some(reader) {
             self.watcher = None;
         }
+        MuxAction::Reply(reader, wire::encode_unwatched())
     }
 
     pub fn forget(&mut self, reader: Reader) {
@@ -248,7 +249,9 @@ mod tests {
     fn unwatch_by_the_watcher_returns_control_c_to_the_ordinary_path() {
         let mut mux: InputMux<u32> = InputMux::new();
         mux.handle_watch(11);
-        mux.handle_unwatch(11);
+        let MuxAction::Reply(acked, frame) = mux.handle_unwatch(11);
+        assert_eq!(acked, 11);
+        assert_eq!(frame_tag(&frame), wire::TAG_UNWATCHED);
         let MuxAction::Reply(reader, frame) =
             mux.handle_read_nowait(5).expect("nowait answers before the push");
         assert_eq!(frame_tag(&frame), TAG_NO_KEY);
@@ -263,7 +266,9 @@ mod tests {
     fn unwatch_from_another_connection_leaves_the_watcher_in_place() {
         let mut mux: InputMux<u32> = InputMux::new();
         mux.handle_watch(11);
-        mux.handle_unwatch(22);
+        let MuxAction::Reply(acked, frame) = mux.handle_unwatch(22);
+        assert_eq!(acked, 22);
+        assert_eq!(frame_tag(&frame), wire::TAG_UNWATCHED);
         let MuxAction::Reply(notified, _) =
             mux.handle_push(wire::CONTROL_C).expect("watcher survives foreign unwatch");
         assert_eq!(notified, 11);

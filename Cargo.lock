@@ -839,6 +839,7 @@ dependencies = [
 name = "shell"
 version = "0.1.0"
 dependencies = [
+ "input-protocol",
  "system",
  "usrlib",
  "vfs-protocol",

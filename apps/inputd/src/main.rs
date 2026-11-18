@@ -43,10 +43,7 @@ fn serve_one(mux: &mut InputMux<UserConnectionHandle>, received: &ReceivedMessag
             mux.handle_watch(connection);
             None
         }
-        wire::TAG_UNWATCH => {
-            mux.handle_unwatch(connection);
-            None
-        }
+        wire::TAG_UNWATCH => Some(mux.handle_unwatch(connection)),
         wire::TAG_PUSH => match wire::frame_char(received.data()) {
             Some(c) => mux.handle_push(c),
             None => None,

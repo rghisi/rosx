@@ -11,6 +11,7 @@ pub const TAG_NO_KEY: u8 = 5;
 pub const TAG_WATCH: u8 = 6;
 pub const TAG_UNWATCH: u8 = 7;
 pub const TAG_CONTROL: u8 = 8;
+pub const TAG_UNWATCHED: u8 = 9;
 
 pub const CONTROL_C: char = '\x03';
 
@@ -36,6 +37,10 @@ pub fn encode_unwatch() -> [u8; MESSAGE_PAYLOAD_BYTES] {
 
 pub fn encode_control() -> [u8; MESSAGE_PAYLOAD_BYTES] {
     encode_tag_only(TAG_CONTROL)
+}
+
+pub fn encode_unwatched() -> [u8; MESSAGE_PAYLOAD_BYTES] {
+    encode_tag_only(TAG_UNWATCHED)
 }
 
 pub fn encode_push(c: char) -> [u8; MESSAGE_PAYLOAD_BYTES] {
@@ -96,6 +101,7 @@ mod tests {
         assert_eq!(frame_tag(&encode_watch()), TAG_WATCH);
         assert_eq!(frame_tag(&encode_unwatch()), TAG_UNWATCH);
         assert_eq!(frame_tag(&encode_control()), TAG_CONTROL);
+        assert_eq!(frame_tag(&encode_unwatched()), TAG_UNWATCHED);
     }
 
     #[test]
@@ -107,6 +113,7 @@ mod tests {
             encode_watch(),
             encode_unwatch(),
             encode_control(),
+            encode_unwatched(),
         ] {
             assert_eq!(nonzero_bytes(&data), vec![data[0]]);
         }
@@ -117,7 +124,8 @@ mod tests {
                 encode_no_key(),
                 encode_watch(),
                 encode_unwatch(),
-                encode_control()
+                encode_control(),
+                encode_unwatched()
             ]
             .map(|d| frame_tag(&d)),
             [
@@ -126,7 +134,8 @@ mod tests {
                 TAG_NO_KEY,
                 TAG_WATCH,
                 TAG_UNWATCH,
-                TAG_CONTROL
+                TAG_CONTROL,
+                TAG_UNWATCHED
             ]
         );
     }
@@ -183,9 +192,10 @@ mod tests {
                 TAG_NO_KEY,
                 TAG_WATCH,
                 TAG_UNWATCH,
-                TAG_CONTROL
+                TAG_CONTROL,
+                TAG_UNWATCHED
             ),
-            (1, 2, 3, 4, 5, 6, 7, 8)
+            (1, 2, 3, 4, 5, 6, 7, 8, 9)
         );
     }
 }
