@@ -4,7 +4,7 @@ use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
 use rosx_boot_common::biosdisk::HEAP_ADDRESS;
 use rosx_boot_common::biosdisk::HEAP_BYTES;
-use rosx_boot_common::serial::Serial;
+use rosx_boot_common::debugport::DebugConsole;
 use rosx_boot_common::DEBUG_EXIT_FAILURE;
 use rosx_boot_common::debug_exit;
 
@@ -42,7 +42,7 @@ unsafe impl GlobalAlloc for BumpAllocator {
 }
 
 fn refuse() -> ! {
-    Serial::COM1.write_line("[ERR] heap");
+    DebugConsole.write_line("[ERR] heap");
     debug_exit(DEBUG_EXIT_FAILURE)
 }
 

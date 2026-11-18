@@ -7,12 +7,14 @@ use rosx_boot_common::DEBUG_EXIT_FAILURE;
 use rosx_boot_common::DEBUG_EXIT_SUCCESS;
 use rosx_boot_common::crc32::crc32;
 use rosx_boot_common::debug_exit;
-use rosx_boot_common::serial::Serial;
+use rosx_boot_common::debugport::DebugConsole;
+use rosx_boot_common::vga;
 use system::boot_info::BOOT_INFO_MAGIC;
 use system::boot_info::BOOT_INFO_VERSION;
 use system::boot_info::BootArch;
 use system::boot_info::BootInfo;
 use system::boot_info::BootMethod;
+use system::boot_info::DisplayKind;
 use system::boot_info::MEMORY_MAP_MAX_ENTRIES;
 use system::boot_info::MemoryKind;
 use system::boot_info::MemoryRegion;
@@ -34,8 +36,10 @@ extern "C" fn _start() {
 }
 
 extern "C" fn kernel_main(eax_magic: u32, ebx_ptr: u32) -> ! {
-    let console = Serial::COM1;
-    console.init();
+    let mut console = Echo {
+        machine: DebugConsole,
+        human: false,
+    };
     if eax_magic != BOOT_INFO_MAGIC {
         violation(&console, "magic");
     }
@@ -47,6 +51,8 @@ extern "C" fn kernel_main(eax_magic: u32, ebx_ptr: u32) -> ! {
     {
         violation(&console, "header");
     }
+    console.human =
+        read_u32(info, offset_of!(BootInfo, display.kind)) == DisplayKind::VgaText as u32;
     walk_memory_map(&console, info);
     let initrd_address = read_u64(info, offset_of!(BootInfo, initrd_addr));
     let initrd_size = read_u64(info, offset_of!(BootInfo, initrd_size));
@@ -59,7 +65,33 @@ extern "C" fn kernel_main(eax_magic: u32, ebx_ptr: u32) -> ! {
     debug_exit(DEBUG_EXIT_SUCCESS)
 }
 
-fn walk_memory_map(console: &Serial, info: *const u8) {
+struct Echo {
+    machine: DebugConsole,
+    human: bool,
+}
+
+impl Echo {
+    fn write_str(&self, text: &str) {
+        self.machine.write_str(text);
+        if self.human {
+            vga::append(text);
+        }
+    }
+
+    fn write_line(&self, text: &str) {
+        self.write_str(text);
+        self.write_str("\r\n");
+    }
+
+    fn write_hex(&self, value: u64, nibbles: u32) {
+        self.machine.write_hex(value, nibbles);
+        if self.human {
+            vga::append_hex(value, nibbles);
+        }
+    }
+}
+
+fn walk_memory_map(console: &Echo, info: *const u8) {
     let map_ptr = read_u64(info, offset_of!(BootInfo, memory_map_ptr)) as *const u8;
     let map_len = read_u32(info, offset_of!(BootInfo, memory_map_len));
     let entry_size = read_u32(info, offset_of!(BootInfo, memory_map_entry_size));
@@ -96,7 +128,7 @@ fn walk_memory_map(console: &Serial, info: *const u8) {
     }
 }
 
-fn verify_initrd(console: &Serial, address: u64, size: u64) -> u32 {
+fn verify_initrd(console: &Echo, address: u64, size: u64) -> u32 {
     if size == 0 {
         if address != 0 {
             violation(console, "initrd-address");
@@ -123,7 +155,7 @@ fn read_u64(base: *const u8, offset: usize) -> u64 {
     unsafe { core::ptr::read_unaligned(base.add(offset) as *const u64) }
 }
 
-fn violation(console: &Serial, kind: &str) -> ! {
+fn violation(console: &Echo, kind: &str) -> ! {
     console.write_str("[FK32] violation ");
     console.write_line(kind);
     debug_exit(DEBUG_EXIT_FAILURE)
@@ -135,8 +167,7 @@ fn kernel_returned() -> ! {
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
-    let console = Serial::COM1;
-    console.init();
+    let console = DebugConsole;
     console.write_line("[FK32] panic");
     debug_exit(DEBUG_EXIT_FAILURE)
 }

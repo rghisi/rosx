@@ -40,8 +40,7 @@ const RESERVATIONS: &[(u64, u64, MemoryKind)] = &[
     (0x0000_7C00, 0x0000_7E00, MemoryKind::BootloaderReclaimable),
     (0x0000_7E00, 0x0003_0000, MemoryKind::BootloaderReclaimable),
     (0x0003_0000, 0x0003_1000, MemoryKind::Reserved),
-    (0x0003_1000, 0x0004_0000, MemoryKind::Usable),
-    (0x0004_0000, 0x0007_C000, MemoryKind::BootloaderReclaimable),
+    (0x0003_1000, 0x0007_C000, MemoryKind::Usable),
     (0x0007_C000, 0x0008_0000, MemoryKind::Reserved),
     (0x0008_0000, FIRST_MEGABYTE, MemoryKind::Reserved),
 ];
@@ -364,8 +363,7 @@ mod tests {
             region(0x0000_0000, 0x0000_0500, MemoryKind::Reserved),
             region(0x0000_0500, 0x0002_FB00, MemoryKind::BootloaderReclaimable),
             region(0x0003_0000, 0x0000_1000, MemoryKind::Reserved),
-            region(0x0003_1000, 0x0000_F000, MemoryKind::Usable),
-            region(0x0004_0000, 0x0003_C000, MemoryKind::BootloaderReclaimable),
+            region(0x0003_1000, 0x0004_B000, MemoryKind::Usable),
             region(0x0007_C000, 0x0002_3C00, MemoryKind::Reserved),
         ];
         assert_eq!(map, expected);
@@ -406,7 +404,7 @@ mod tests {
             .iter()
             .filter(|r| r.kind == MemoryKind::BootloaderReclaimable)
             .count();
-        assert_eq!(reclaimable, 2);
+        assert_eq!(reclaimable, 1);
     }
 
     #[test]
@@ -460,7 +458,7 @@ mod tests {
         let (raw, count) = synthesize_e801(15 * 1024, 0);
         let map = run(&raw[..count]);
         assert_eq!(region_sum(&map), 16 * FIRST_MEGABYTE);
-        assert_eq!(usable_bytes(&map), 0x0000_F000 + 15 * FIRST_MEGABYTE);
+        assert_eq!(usable_bytes(&map), 0x0004_B000 + 15 * FIRST_MEGABYTE);
     }
 
     #[test]
@@ -497,7 +495,7 @@ mod tests {
             kind: 2,
         };
         let mut out = out_buf();
-        assert_eq!(normalize(&raw, None, &mut out), Ok(8));
+        assert_eq!(normalize(&raw, None, &mut out), Ok(7));
 
         let many: Vec<RawEntry> = (0..MEMORY_MAP_MAX_ENTRIES + 1)
             .map(|i| RawEntry::usable((i as u64) * 0x0100_0000, 0x0010_0000))

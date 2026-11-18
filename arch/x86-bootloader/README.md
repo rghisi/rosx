@@ -23,7 +23,7 @@ without the AGENTS.md hardware evidence rules.
 common/        pure-logic library crate: crc32, memnorm (memory-map
                normalization), pagetable (identity + higher-half maps), gdt,
                elf32/elf64 planners, bootinfo assembly, BIOS data, INT 13h
-               packet layout, serial/pio
+               packet layout, debugport/pio
 stage1/        boot.s — MBR boot sector: loads the stage2 image from LBA 8 to
                physical 0x7E00 (INT 13h LBA extensions, CHS fallback), jumps
                in real mode
@@ -77,9 +77,20 @@ and a clean debug-exit failure — never a `#UD`. All 586-era mechanism
 
 Every guest verdict rides `isa-debug-exit,iobase=0xf4`: success `0x10` →
 shell exit **33**, guest-reported failure `0x01` → exit **3**, no write →
-QEMU must be timed out. The serial console (COM1) carries the stage banners
-(`[STAGE1] OK`, `[MEM88]`, `[DISK]`, `[ELF]`, `[INITRD]`, `[PAGETABLE]`,
-`[MEM]`, `[STAGE2_32]/[STAGE2_64]`) and the fake kernels' validation lines.
+QEMU must be timed out. The QEMU debug port (`-debugcon`, port 0xE9) carries
+the stage banners (`[STAGE1] OK`, `[MEM88]`, `[DISK]`, `[ELF]`, `[INITRD]`,
+`[PAGETABLE]`, `[MEM]`, `[STAGE2_32]/[STAGE2_64]`) and the fake kernels'
+validation lines.
+
+That port is the **verdict stream** — the only channel any checkpoint reads. In parallel the
+same text rides the **human stream**, the BIOS VGA text console: stage1 teletypes every
+character through `INT 10h, AH=0Eh` (page 0); stage2 broadcasts through a `BroadcastConsole`
+(debug port + teletype over the already-installed BIOS thunk); the fake kernels — post-handoff,
+where the 16-bit ROM is unreachable — append directly to page-0 `0xB8000` at the live CRTC
+cursor (`0x3D4/0x3D5` indices `0x0E`/`0x0F`; SeaBIOS's teletype leaves the BDA pair stale, so
+the CRTC is read and the BDA pair re-published) and clamp at the bottom row. Stage1 and stage2
+own zero display state — the BIOS owns cursor, glyphs and overflow
+(`plans/bootloader/13-console.md`).
 
 ## Build and run
 
@@ -101,7 +112,7 @@ Boot a built image by hand (64-bit chain, expect exit 33):
 
 ```bash
 qemu-system-x86_64 -cpu qemu64 -m 128M -drive format=raw,file=target/boot64.img \
-  -serial file:/tmp/rosx64.serial -display none -monitor none \
+  -debugcon file:/tmp/rosx64.debugcon -display none -monitor none \
   -device isa-debug-exit,iobase=0xf4,iosize=0x04 -no-reboot; echo $?   # 33
 ```
 
@@ -135,7 +146,7 @@ command line.
 | `stage2-corrupt-header` | 486 | a bogus ROS2 magic hangs stage1 (timed-out verdict) |
 
 The generic verifiers read `[MEM] entries=` and `[INITRD] addr=` off the
-serial stream: the published map must re-derive from the host-computed seed,
+debug-port stream: the published map must re-derive from the host-computed seed,
 and the initrd crc32 must match three ways (stage2 banner, fake-kernel
 recompute, host seed) — so a passing row proves the guest read real bytes.
 
@@ -148,4 +159,19 @@ state saved across the switch. `cargo xtask check-isa bootloader` audits the
 shipped binaries against that floor and every 32-bit checkpoint boots under
 QEMU `-cpu 486`; the 64-bit flavor carries the 586-era exception as a
 runtime probed path, not a compile-time assumption, so the same era silicon
-fails loudly instead of faulting.
+fails loudly instead of faulting. The boot console rides port 0xE9 for the
+same era reason: QEMU traps it as a debug console, while on silicon it is an
+unclaimed ISA port whose writes are architecturally harmless no-ops — the
+banners evaporate and the boot proceeds.
+
+The human stream is era-proven on the 86Box `b32` VM ([SiS 496] ASUS
+PVI-486SP3, i486SX, Award 4.51, S3 Trio64): a `screen_text` reading records
+stage1's banner, stage2's thunk-teletype banners and the honest `[ERR]`
+verdict rendered by the era BIOS itself (run protocol and recorded run
+directories: `arch/x86-86box/`; emulator evidence never marks hardware items
+green). Known era limitation, recorded in that run's `facts.md`: INT 13h
+issued through the unreal-mode thunk returns garbage geometry on this Award
+BIOS — the handler executes `sti` at entry, so IRQs land on the thunk's
+return slots — while SeaBIOS keeps interrupts masked inside INT 13h and every
+checkpoint passes unchanged. Era disk boot through the thunk stays open
+bring-up work, independent of the console.

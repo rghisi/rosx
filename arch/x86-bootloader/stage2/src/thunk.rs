@@ -24,6 +24,7 @@ const RM_STACK_TOP: u32 = 0x7A00;
 const PE_BIT: u32 = 1;
 const PE_CLEAR_MASK: u32 = 0x7FFF_FFFE;
 const WIDE_MARK: u32 = 0x80;
+const IF_CLEAR_MASK: u32 = 0xFFFF_FDFF;
 
 unsafe extern "C" {
     fn thunk_entry32();
@@ -104,7 +105,7 @@ pm16_landing:
     mov fs, ax
     mov gs, ax
     mov ss, ax
-    mov sp, {rm_stack}
+    mov esp, {rm_stack}
     test byte ptr [{int_no}], {wide_mark}
     js wide_far
     jmp fword ptr [{far_rm}]
@@ -114,6 +115,7 @@ wide_far:
     .code16
 rm_entry:
     cli
+    mov es, [{regs}+16]
     mov ax, [{regs}]
     mov bx, [{regs}+2]
     mov cx, [{regs}+4]
@@ -121,10 +123,15 @@ rm_entry:
     mov si, [{regs}+8]
     mov di, [{regs}+10]
     mov bp, [{regs}+12]
+    cmp byte ptr [{int_no}], 0x10
+    je thunk_int10
     cmp byte ptr [{int_no}], 0x13
     je thunk_int13
     cmp byte ptr [{int_no}], 0x15
     je thunk_int15
+    jmp store_results
+thunk_int10:
+    int 0x10
     jmp store_results
 thunk_int13:
     int 0x13
@@ -147,6 +154,7 @@ store_results:
     mov word ptr [{regs}+16], es
 
 rm_to_pm:
+    cli
     xor ax, ax
     mov ds, ax
     mov es, ax
@@ -234,6 +242,7 @@ thunk_entry32:
     mov dword ptr [{saved_esp}], esp
     pushfd
     pop dword ptr [{saved_eflags}]
+    and dword ptr [{saved_eflags}], {no_if_mask}
     mov eax, [edx]
     mov [{regs}], eax
     mov eax, [edx+4]
@@ -260,6 +269,7 @@ thunk_entry32_wide:
     mov dword ptr [{saved_esp}], esp
     pushfd
     pop dword ptr [{saved_eflags}]
+    and dword ptr [{saved_eflags}], {no_if_mask}
     mov eax, [edx]
     mov [{wide}], eax
     mov eax, [edx+4]
@@ -290,6 +300,7 @@ thunk_entry32_wide:
     regs_ptr = const M_REGS_PTR,
     int_no = const M_INT_NO,
     saved_eflags = const M_SAVED_EFLAGS,
+    no_if_mask = const IF_CLEAR_MASK,
     ret_src = const M_RET_SRC,
     ret_cnt = const M_RET_CNT,
     rm_stack = const RM_STACK_TOP,
