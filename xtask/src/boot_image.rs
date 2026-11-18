@@ -252,12 +252,13 @@ pub fn build_stage2(object_dir: &Path, flavor: Stage2Flavor) -> Vec<u8> {
     bin
 }
 
-pub fn build_stage1(object_dir: &Path) -> Vec<u8> {
+pub fn build_stage1(object_dir: &Path, hard_unit: bool) -> Vec<u8> {
     let object = object_dir.join("stage1.o");
     let flat = object_dir.join("stage1.bin");
     let mut assembler = Command::new("as");
     assembler
         .arg("--32")
+        .arg(format!("--defsym=HARD_UNIT={}", u8::from(hard_unit)))
         .arg(workspace_root().join(STAGE1_SOURCE))
         .arg("-o")
         .arg(&object);
@@ -303,7 +304,7 @@ pub fn pack(kind: BootImage) -> PathBuf {
 }
 
 fn pack_partitioned(image: PathBuf, kind: BootImage) {
-    let stage1 = build_stage1(&scratch_dir());
+    let stage1 = build_stage1(&scratch_dir(), true);
 
     let mut entries: [Option<Entry>; ENTRY_COUNT] = [None; ENTRY_COUNT];
     entries[0] = Some(Entry {
@@ -332,7 +333,7 @@ fn pack_partitioned(image: PathBuf, kind: BootImage) {
 }
 
 fn pack_floppy(image: PathBuf) {
-    let stage1 = build_stage1(&scratch_dir());
+    let stage1 = build_stage1(&scratch_dir(), false);
     create_sparse(&image, FLOPPY_IMAGE_BYTES);
     write_at(&image, 0, &stage1);
     let stage2 = build_stage2(&scratch_dir(), Stage2Flavor::Flat32);

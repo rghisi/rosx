@@ -6,7 +6,9 @@
 # the [ROS2 header][stage2 bin] image at LBA 8 into
 # 0x0000:0x7E00 via the INT 13h LBA extensions, falling back to CHS when the
 # BIOS lacks them (super-floppy media), then jumps. Linked with
-# `ld -m elf_i386 -Ttext 0x7C00 --oformat binary`.
+# `ld -m elf_i386 -Ttext 0x7C00 --oformat binary`. The packager assembles with
+# --defsym HARD_UNIT=1 for the MBR splice (a hard boot may hand a bogus DL) and
+# HARD_UNIT=0 for the floppy image (DL is the real floppy unit).
 #
 # Budget notes: the image body starts at LBA 9 and is <= 321 sectors, so every
 # LBA this stage handles fits in 16 bits; cur_lba/cur_rem and the CHS math are
@@ -30,6 +32,9 @@ _start:
     movw %ax, %es
     movw %ax, %ss
     movw $0x7C00, %sp
+.if HARD_UNIT
+    orb $0x80, %dl               # Phoenix 4.04 on UMC 8881 hands the MBR DL=00;
+.endif                           # the running disk is a hard unit (era idiom)
     movb %dl, boot_drive         # BIOS boot drive, needed by INT 13h and stage2
 
     leaw msg_stage1_ok, %si
