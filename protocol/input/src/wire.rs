@@ -12,6 +12,8 @@ pub const TAG_WATCH: u8 = 6;
 pub const TAG_UNWATCH: u8 = 7;
 pub const TAG_CONTROL: u8 = 8;
 
+pub const CONTROL_C: char = '\x03';
+
 pub fn encode_read() -> [u8; MESSAGE_PAYLOAD_BYTES] {
     encode_tag_only(TAG_READ)
 }
