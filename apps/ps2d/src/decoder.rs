@@ -1,10 +1,11 @@
 pub struct Ps2Decoder {
     shifted: bool,
+    controlled: bool,
 }
 
 impl Ps2Decoder {
     pub fn new() -> Ps2Decoder {
-        Ps2Decoder { shifted: false }
+        Ps2Decoder { shifted: false, controlled: false }
     }
 
     pub fn feed(&mut self, scancode: u8) -> Option<char> {
@@ -17,10 +18,18 @@ impl Ps2Decoder {
                 self.shifted = false;
                 None
             }
+            0x1D => {
+                self.controlled = true;
+                None
+            }
+            0x9D => {
+                self.controlled = false;
+                None
+            }
             raw if raw & 0x80 != 0 => None,
             raw => Key::from_scancode_set1(raw)
                 .ok()
-                .and_then(|key| char_for(key, self.shifted)),
+                .and_then(|key| char_for(key, self.shifted, self.controlled)),
         }
     }
 }
@@ -214,7 +223,7 @@ impl Key {
     }
 }
 
-fn char_for(key: Key, shifted: bool) -> Option<char> {
+fn char_for(key: Key, shifted: bool, controlled: bool) -> Option<char> {
     match key {
         Key::Escape => None,
         Key::Key1 => Some(if shifted { '!' } else { '1' }),
@@ -261,7 +270,7 @@ fn char_for(key: Key, shifted: bool) -> Option<char> {
         Key::Backslash => Some(if shifted { '|' } else { '\\' }),
         Key::Z => Some(if shifted { 'Z' } else { 'z' }),
         Key::X => Some(if shifted { 'X' } else { 'x' }),
-        Key::C => Some(if shifted { 'C' } else { 'c' }),
+        Key::C => Some(if controlled { '\x03' } else if shifted { 'C' } else { 'c' }),
         Key::V => Some(if shifted { 'V' } else { 'v' }),
         Key::B => Some(if shifted { 'B' } else { 'b' }),
         Key::N => Some(if shifted { 'N' } else { 'n' }),
@@ -411,5 +420,45 @@ mod tests {
     fn grave_produces_tilde_only_under_shift() {
         assert_eq!(typed(&[0x29]), Vec::<char>::new());
         assert_eq!(typed(&[0x2A, 0x29]), vec!['~']);
+    }
+
+    #[test]
+    fn ctrl_c_produces_the_interrupt_character() {
+        assert_eq!(typed(&[0x1D, 0x2E]), vec!['\x03']);
+    }
+
+    #[test]
+    fn ctrl_c_ignores_shift() {
+        assert_eq!(typed(&[0x1D, 0x2A, 0x2E]), vec!['\x03']);
+        assert_eq!(typed(&[0x2A, 0x1D, 0x2E]), vec!['\x03']);
+    }
+
+    #[test]
+    fn ctrl_press_and_release_produce_no_char() {
+        assert_eq!(typed(&[0x1D]), Vec::<char>::new());
+        assert_eq!(typed(&[0x9D]), Vec::<char>::new());
+    }
+
+    #[test]
+    fn ctrl_release_clears_the_state() {
+        assert_eq!(typed(&[0x1D, 0x2E, 0xAE, 0x9D, 0x2E]), vec!['\x03', 'c']);
+    }
+
+    #[test]
+    fn repeated_c_presses_under_held_ctrl_keep_interrupting() {
+        assert_eq!(typed(&[0x1D, 0x2E, 0xAE, 0x2E]), vec!['\x03', '\x03']);
+    }
+
+    #[test]
+    fn ctrl_with_other_keys_keeps_plain_characters() {
+        assert_eq!(typed(&[0x1D, 0x1E]), vec!['a']);
+        assert_eq!(typed(&[0x1D, 0x2A, 0x1E]), vec!['A']);
+        assert_eq!(typed(&[0x1D, 0x1C]), vec!['\n']);
+        assert_eq!(typed(&[0x1D, 0x29]), Vec::<char>::new());
+    }
+
+    #[test]
+    fn ctrl_state_survives_release_frames_of_other_keys() {
+        assert_eq!(typed(&[0x1D, 0x1E, 0x9E, 0x2E]), vec!['a', '\x03']);
     }
 }
