@@ -238,11 +238,35 @@ impl Display for TaskExitError {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum TaskKillError {
+    TargetTerminated,
+    TargetRunning,
+}
+
+impl From<ErrorCode> for TaskKillError {
+    fn from(code: ErrorCode) -> Self {
+        match code {
+            ErrorCode::TaskKillTargetRunning => Self::TargetRunning,
+            _ => Self::TargetTerminated,
+        }
+    }
+}
+
+impl Display for TaskKillError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            TaskKillError::TargetTerminated => write!(f, "Task already terminated"),
+            TaskKillError::TargetRunning => write!(f, "Task kill refused the running task"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 26] = [
+    const ALL_ERROR_CODES: [ErrorCode; 28] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -268,6 +292,8 @@ mod tests {
         ErrorCode::PortRangeBusy,
         ErrorCode::PortGrantTableFull,
         ErrorCode::ExitCodeOutOfRange,
+        ErrorCode::TaskKillTargetTerminated,
+        ErrorCode::TaskKillTargetRunning,
         ErrorCode::Unknown,
     ];
 
@@ -282,6 +308,7 @@ mod tests {
             let waitset = WaitsetError::from(code);
             let port = PortError::from(code);
             let task_exit = TaskExitError::from(code);
+            let task_kill = TaskKillError::from(code);
 
             let expected_connection = match code {
                 ErrorCode::IpcConnectionCannotBeEstablished => {
@@ -321,6 +348,10 @@ mod tests {
                 ErrorCode::FutureAlreadyConsumed => TaskExitError::AlreadyConsumed,
                 _ => TaskExitError::NotFound,
             };
+            let expected_task_kill = match code {
+                ErrorCode::TaskKillTargetRunning => TaskKillError::TargetRunning,
+                _ => TaskKillError::TargetTerminated,
+            };
 
             assert_eq!(connection, expected_connection);
             assert_eq!(binding, IpcBindingError::AlreadyBound);
@@ -330,6 +361,7 @@ mod tests {
             assert_eq!(waitset, expected_waitset);
             assert_eq!(port, expected_port);
             assert_eq!(task_exit, expected_task_exit);
+            assert_eq!(task_kill, expected_task_kill);
         }
     }
 
@@ -355,5 +387,6 @@ mod tests {
         assert_eq!(WaitsetError::from(ErrorCode::Unknown), WaitsetError::NotFound);
         assert_eq!(PortError::from(ErrorCode::Unknown), PortError::Invalid);
         assert_eq!(TaskExitError::from(ErrorCode::Unknown), TaskExitError::NotFound);
+        assert_eq!(TaskKillError::from(ErrorCode::Unknown), TaskKillError::TargetTerminated);
     }
 }
