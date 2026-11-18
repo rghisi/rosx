@@ -110,6 +110,10 @@ VGA append lines. QEMU keeps all its gates: SeaBIOS transfers to any conventiona
    stage1's proven read)
 6. `Keep interrupts masked across protected-mode thunk returns` (§5)
 7. `Record the era proof of the relocated staging` (README era note + run directory)
+8. `Record the AMIBIOS era proof beside the Award one` (cross-BIOS sweep, README)
+9. `Reset the controller and retry timed-out INT 13h reads` (§6, the retry replacing the concession)
+10. `Normalize the MBR boot unit behind the HARD_UNIT packaging switch` (§6, the mechanism)
+11. `Record the Phoenix era proof and its DL=0 hand-off` (README era note + run directory)
 
 ## 5. Era round three — Award INT 15h returns with IF set (measured 2026-11-18, instrumented 86Box master)
 
@@ -150,3 +154,39 @@ the fake kernel's `[MEM]` map and `[STAGE2_32] A20=OK THUNK=OK`, then
 **`initrd_crc32: 0x7551f9f4`** with `vm_info` reporting `soft_resets: 0`, on both the
 instrumented and the unmodified emulator builds. The successful run's trace: 1149 POPFDs,
 zero with IF set.
+
+## 6. Era round four — Phoenix hands the MBR a DL of 0 (measured 2026-11-18, INT13-only probe MBR)
+
+The cross-BIOS sweep reached the third vendor: `ecs486` (Phoenix 4.04 PnP, UMC 8881 PCI,
+i486SX). The media that booted on Award and AMI died here with `[ERR] disk 08` — the header
+read at LBA 8 — and a diagnostic stage1 printing the failing INT 13h status byte answered
+`ah=80`, timeout: exactly the failure the stage1 header comment had conceded ("no
+retry/controller-reset loop, QEMU never errors here"). The concession became the era-standard
+loop: every failed read resets the controller (`AH=00h`) and re-issues — three attempts per
+transfer on the LBA face, per sector on the CHS one, where the allowance must re-arm only on
+a successful advance (the first cut armed it at the loop top and re-read a failing sector
+forever, visible only as a silent boot without the terminal `[ERR]`). When the LBA face runs
+out of tries the load restarts once over the geometry path: a faking EDD face now degrades
+instead of dying.
+
+The retry made the failure honest, not cured: `ah=80` survived the resets. A standalone
+one-sector probe MBR sharing nothing with stage1 pinned the mechanism: `PROBE drv=00 g8=1201`.
+**This Phoenix hands the MBR `DL=0x00`** (Award, AMI and SeaBIOS all pass `0x80`), and the
+unit every read then asked was the CMOS-configured 1.44 MB floppy — even the `AH=08h` geometry
+probe answered (18 sectors/track), and reading the empty unit was the motor-wait timeout. The
+UMC IDE path and its EDD extension had done nothing wrong all along.
+
+**Fix**: the era idiom `or dl,0x80`, gated by media type as syslinux gates it (its MBR
+normalizes; its floppy boot sector keeps its unit): the assembler receives
+`--defsym HARD_UNIT=1` from the MBR splice and `HARD_UNIT=0` from `pack_floppy`. The gate is
+load-bearing, not hygiene — the `stage2-floppy-chs` checkpoint, which boots unit `0x00` in
+good faith, failed the moment the normalization was unconditional.
+
+Proof (86Box `ecs486`: Phoenix 4.04, UMC 8881, i486SX 25 MHz, 8 MiB): full boot — `[MEM88]`,
+`[INT13] 992c 16h 63s`, E820 refused and answered through the e801 ladder,
+**`[DISK] media=lba`** — the first era board that actually serves EDD, closing the sweep's
+LBA gap (Award and AMI both refused and forced `media=chs`) — and
+**`initrd_crc32: 0x7551f9f4`**. `vm_info` reads `soft_resets: 1`, and that is this machine's
+power-on baseline, staged reads showing it before the first `[STAGE1]` line
+(`last_reset_ms 5007`, POST-phase, typical Phoenix PnP sequencing); the chain adds nothing
+(run dir `target/86box/runs/20261118T214900Z-ecs486/`).
