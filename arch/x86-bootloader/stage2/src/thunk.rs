@@ -114,6 +114,7 @@ wide_far:
     .code16
 rm_entry:
     cli
+    mov es, [{regs}+16]
     mov ax, [{regs}]
     mov bx, [{regs}+2]
     mov cx, [{regs}+4]
