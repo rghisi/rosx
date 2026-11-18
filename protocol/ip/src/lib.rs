@@ -2,4 +2,5 @@
 
 extern crate alloc;
 
-pub mod arp;
+pub mod client;
+pub mod wire;

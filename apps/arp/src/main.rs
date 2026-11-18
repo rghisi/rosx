@@ -4,8 +4,10 @@ extern crate alloc;
 
 use alloc::format;
 use alloc::string::{String, ToString};
-use arp::arp::{self as wire, ArpError, ArpPacket, IPV4_BYTES, MAC_BYTES};
+use net_protocol::arp::{self, ArpError, Operation, Packet};
 use net_protocol::client::Ne2k;
+use net_protocol::ethernet::{self, MAC_BYTES};
+use net_protocol::ipv4::IPV4_BYTES;
 use net_protocol::wire as net_wire;
 use pci_protocol::wire::SERVICE_NAME as PCI_SERVICE_NAME;
 use usrlib::syscall::Syscall;
@@ -46,17 +48,17 @@ fn describe_error(error: ArpError) -> &'static str {
     }
 }
 
-fn describe_packet(packet: &ArpPacket) -> String {
+fn describe_packet(packet: &Packet) -> String {
     let sender = format!("{} ({})", format_ipv4(packet.sender_ip), format_mac(packet.sender_mac));
     let target = format!("{} ({})", format_ipv4(packet.target_ip), format_mac(packet.target_mac));
     match packet.operation {
-        wire::Operation::Request => format!(
+        Operation::Request => format!(
             "arp request: who-has {} tell {}",
             format_ipv4(packet.target_ip),
             format_ipv4(packet.sender_ip)
         ),
-        wire::Operation::Reply => format!("arp reply: {} is at {}", sender, format_mac(packet.sender_mac)),
-        wire::Operation::Other(code) => format!("arp op {code}: {sender} -> {target}"),
+        Operation::Reply => format!("arp reply: {} is at {}", sender, format_mac(packet.sender_mac)),
+        Operation::Other(code) => format!("arp op {code}: {sender} -> {target}"),
     }
 }
 
@@ -71,12 +73,12 @@ fn watch(nic: &Ne2k, seconds: u64) {
     let mut tally = WatchTally { arp_frames: 0, malformed: 0, other: 0 };
     loop {
         match nic.poll() {
-            Ok(Some(frame)) => match wire::decode_ethernet(&frame) {
+            Ok(Some(frame)) => match ethernet::decode(&frame) {
                 Err(_) => {
                     tally.malformed += 1;
                     println!("arp runt: {} bytes", frame.len());
                 }
-                Ok(header) if header.ethertype != wire::ETHERTYPE_ARP => {
+                Ok(header) if header.ethertype != ethernet::ETHERTYPE_ARP => {
                     tally.other += 1;
                     println!(
                         "arp skip: ethertype {:04x} from {}",
@@ -84,7 +86,7 @@ fn watch(nic: &Ne2k, seconds: u64) {
                         format_mac(header.source)
                     );
                 }
-                Ok(header) => match wire::decode_arp(header.payload) {
+                Ok(header) => match arp::decode(header.payload) {
                     Ok(packet) => {
                         tally.arp_frames += 1;
                         println!("{}", describe_packet(&packet));
@@ -122,7 +124,7 @@ fn announce(nic: &Ne2k, my_ip: [u8; IPV4_BYTES]) {
         println!("arp mac failed");
         return;
     };
-    match nic.send(&wire::gratuitous_reply(mac, my_ip)) {
+    match nic.send(&arp::gratuitous_reply(mac, my_ip)) {
         Ok(()) => println!("arp announced {} is at {}", format_ipv4(my_ip), format_mac(mac)),
         Err(_) => println!("arp send failed"),
     }
@@ -138,16 +140,16 @@ fn respond(nic: &Ne2k, my_ip: [u8; IPV4_BYTES], seconds: u64) {
     loop {
         match nic.poll() {
             Ok(Some(frame)) => {
-                let request = match wire::decode_ethernet(&frame) {
-                    Ok(header) if header.ethertype == wire::ETHERTYPE_ARP => {
-                        wire::decode_arp(header.payload)
+                let request = match ethernet::decode(&frame) {
+                    Ok(header) if header.ethertype == ethernet::ETHERTYPE_ARP => {
+                        arp::decode(header.payload)
                             .ok()
                             .filter(|packet| is_arp_request_for(packet, my_ip))
                     }
                     _ => None,
                 };
                 if let Some(packet) = request {
-                    let answer = wire::reply(mac, my_ip, packet.sender_mac, packet.sender_ip);
+                    let answer = arp::reply(mac, my_ip, packet.sender_mac, packet.sender_ip);
                     if nic.send(&answer).is_ok() {
                         answers += 1;
                         println!(
@@ -177,12 +179,12 @@ fn service_is_live(binding: &str) -> bool {
     Syscall::ipc_connect(binding).is_ok()
 }
 
-fn is_arp_reply_from(packet: &wire::ArpPacket, target: [u8; IPV4_BYTES]) -> bool {
-    packet.operation == wire::Operation::Reply && packet.sender_ip == target
+fn is_arp_reply_from(packet: &Packet, target: [u8; IPV4_BYTES]) -> bool {
+    packet.operation == Operation::Reply && packet.sender_ip == target
 }
 
-fn is_arp_request_for(packet: &wire::ArpPacket, target: [u8; IPV4_BYTES]) -> bool {
-    packet.operation == wire::Operation::Request && packet.target_ip == target
+fn is_arp_request_for(packet: &Packet, target: [u8; IPV4_BYTES]) -> bool {
+    packet.operation == Operation::Request && packet.target_ip == target
 }
 
 fn who_has(nic: &Ne2k, source_ip: [u8; IPV4_BYTES], target_ip: [u8; IPV4_BYTES]) {
@@ -190,7 +192,7 @@ fn who_has(nic: &Ne2k, source_ip: [u8; IPV4_BYTES], target_ip: [u8; IPV4_BYTES])
         println!("arp mac failed");
         return;
     };
-    if nic.send(&wire::request(mac, source_ip, target_ip)).is_err() {
+    if nic.send(&arp::request(mac, source_ip, target_ip)).is_err() {
         println!("arp send failed");
         return;
     }
@@ -203,8 +205,8 @@ fn who_has(nic: &Ne2k, source_ip: [u8; IPV4_BYTES], target_ip: [u8; IPV4_BYTES])
     loop {
         match nic.poll() {
             Ok(Some(frame)) => {
-                let answer = match wire::decode_ethernet(&frame) {
-                    Ok(header) if header.ethertype == wire::ETHERTYPE_ARP => wire::decode_arp(header.payload)
+                let answer = match ethernet::decode(&frame) {
+                    Ok(header) if header.ethertype == ethernet::ETHERTYPE_ARP => arp::decode(header.payload)
                         .ok()
                         .filter(|packet| is_arp_reply_from(packet, target_ip)),
                     _ => None,

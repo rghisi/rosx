@@ -66,6 +66,10 @@ impl Ne2k {
         Err(ClientError::NoConnection)
     }
 
+    pub fn connection(&self) -> UserConnectionHandle {
+        self.connection
+    }
+
     pub fn mac(&self) -> Result<[u8; MAC_BYTES], ClientError> {
         let frame = transact_frame(self.connection, Request::Mac)?;
         match Reply::decode(&frame).map_err(ClientError::Net)? {
@@ -119,6 +123,34 @@ impl Ne2k {
         let frame = transact_frame(self.connection, Request::Stats)?;
         match Reply::decode(&frame).map_err(ClientError::Net)? {
             Reply::Stats(stats) => Ok(stats),
+            Reply::Err { error } => Err(ClientError::Net(error)),
+            _ => Err(ClientError::Protocol),
+        }
+    }
+
+    pub fn watch(&self) -> Result<(), ClientError> {
+        let frame = transact_frame(self.connection, Request::Watch)?;
+        match Reply::decode(&frame).map_err(ClientError::Net)? {
+            Reply::Ack => Ok(()),
+            Reply::Err { error } => Err(ClientError::Net(error)),
+            _ => Err(ClientError::Protocol),
+        }
+    }
+
+    pub fn receive_frame(&self) -> Result<Vec<u8>, ClientError> {
+        let future = Syscall::ipc_receive_message(self.connection).ok_or(ClientError::Transport)?;
+        let received = Syscall::wait_for_message(future).map_err(|_| ClientError::Transport)?;
+        if received.connection().is_none() {
+            return Err(ClientError::NoConnection);
+        }
+        match Reply::decode(received.data()).map_err(ClientError::Net)? {
+            Reply::PushFrame { token, length } => {
+                let payload = drain_data_object(token)?;
+                if payload.len() != length as usize {
+                    return Err(ClientError::Protocol);
+                }
+                Ok(payload)
+            }
             Reply::Err { error } => Err(ClientError::Net(error)),
             _ => Err(ClientError::Protocol),
         }

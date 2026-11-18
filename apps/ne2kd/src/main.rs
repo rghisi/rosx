@@ -12,8 +12,8 @@ use ne2kd::dp8390::{
 };
 use net_protocol::wire::{self, NetError, Reply, Request, Stats};
 use pci_protocol::client::Pci;
-use usrlib::error::{IpcReceiveError, PortError};
-use usrlib::handle::{UserBindingHandle, UserConnectionHandle, UserDataHandle};
+use usrlib::error::{IpcReceiveError, IpcSendError, PortError};
+use usrlib::handle::{UserBindingHandle, UserConnectionHandle, UserDataHandle, UserFutureHandle};
 use usrlib::ipc::ReceivedMessage;
 use usrlib::println;
 use usrlib::syscall::Syscall;
@@ -23,6 +23,7 @@ const RTL8029_DEVICE_ID: u16 = 0x8029;
 const CARD_PORT_SPAN: u16 = 0x1F;
 const ISA_BASES: [u16; 2] = [ISA_DEFAULT_BASE, 0x280];
 const RX_QUEUE_FRAMES: usize = 32;
+const PUSH_HELD_FRAMES: usize = RX_QUEUE_FRAMES;
 const REBIND_DELAY_MS: u64 = 100;
 const IDLE_DELAY_MS: u64 = 10;
 const INCOMING_READ_CHUNK_BYTES: usize = 4096;
@@ -164,6 +165,8 @@ fn stats_of(counters: NicCounters) -> Stats {
         rx_frames: counters.received_frames,
         rx_errors: counters.receive_errors,
         rx_overruns: counters.receive_overruns,
+        watch_pushes: 0,
+        watch_drops: 0,
     }
 }
 
@@ -181,6 +184,10 @@ struct Ne2kServer {
     irq: u32,
     rx_queue: VecDeque<Vec<u8>>,
     held: Vec<(u32, UserDataHandle)>,
+    push_held: Vec<(u32, UserDataHandle)>,
+    watchers: Vec<UserConnectionHandle>,
+    watch_pushes: u32,
+    watch_drops: u32,
 }
 
 impl Ne2kServer {
@@ -190,37 +197,54 @@ impl Ne2kServer {
             irq,
             rx_queue: VecDeque::new(),
             held: Vec::new(),
+            push_held: Vec::new(),
+            watchers: Vec::new(),
+            watch_pushes: 0,
+            watch_drops: 0,
         }
     }
 
     fn serve(&mut self, service: UserBindingHandle, events: Option<UserBindingHandle>) {
+        let mut request_future: Option<UserFutureHandle> = None;
+        let mut event_future: Option<UserFutureHandle> = None;
         loop {
-            let Some(request_future) = Syscall::ipc_accept_message(service) else {
+            if request_future.is_none() {
+                request_future = Syscall::ipc_accept_message(service);
+            }
+            let Some(request) = request_future else {
                 Syscall::sleep(REBIND_DELAY_MS);
                 continue;
             };
             let Ok(set) = Syscall::waitset_create() else {
-                self.serve_accepted(Syscall::wait_for_message(request_future));
+                self.serve_accepted(Syscall::wait_for_message(request));
+                request_future = None;
                 continue;
             };
-            if Syscall::waitset_attach(set, request_future, SERVICE_REQUEST_TAG).is_err() {
+            if Syscall::waitset_attach(set, request, SERVICE_REQUEST_TAG).is_err() {
                 Syscall::waitset_drop(set);
+                request_future = None;
                 Syscall::sleep(IDLE_DELAY_MS);
                 continue;
             }
-            let event_future = events
-                .and_then(Syscall::ipc_accept_message)
-                .filter(|future| Syscall::waitset_attach(set, *future, IRQ_EVENT_TAG).is_ok());
+            if event_future.is_none() {
+                event_future = events.and_then(Syscall::ipc_accept_message);
+            }
+            if let Some(pending_event) = event_future {
+                if Syscall::waitset_attach(set, pending_event, IRQ_EVENT_TAG).is_err() {
+                    event_future = None;
+                }
+            }
             match Syscall::waitset_wait(set) {
                 Ok((child, IRQ_EVENT_TAG)) => {
                     let _ = Syscall::wait_for_message(child);
+                    event_future = None;
                     self.on_irq_event();
                 }
                 Ok((child, _)) => {
+                    request_future = None;
                     self.serve_accepted(Syscall::wait_for_message(child));
                 }
                 Err(_) => {
-                    let _ = event_future;
                     Syscall::sleep(IDLE_DELAY_MS);
                 }
             }
@@ -256,7 +280,18 @@ impl Ne2kServer {
             Request::Mac => Reply::Mac(self.nic.mac()),
             Request::Send { token, length } => self.send_reply(token, length),
             Request::Poll => self.poll_reply(connection, owner),
-            Request::Stats => Reply::Stats(stats_of(self.nic.counters())),
+            Request::Stats => {
+                let mut stats = stats_of(self.nic.counters());
+                stats.watch_pushes = self.watch_pushes;
+                stats.watch_drops = self.watch_drops;
+                Reply::Stats(stats)
+            }
+            Request::Watch => {
+                if !self.watchers.contains(&connection) {
+                    self.watchers.push(connection);
+                }
+                Reply::Ack
+            }
         }
     }
 
@@ -316,8 +351,78 @@ impl Ne2kServer {
             if self.rx_queue.len() == RX_QUEUE_FRAMES {
                 self.rx_queue.pop_front();
             }
+            self.fan_out(&frame);
             self.rx_queue.push_back(frame);
         }
+    }
+
+    fn fan_out(&mut self, frame: &[u8]) {
+        if self.watchers.is_empty() {
+            return;
+        }
+        let mut pushed = 0u32;
+        let mut dropped = 0u32;
+        let mut keep: Vec<UserConnectionHandle> = Vec::new();
+        let subscribers = self.watchers.clone();
+        for connection in subscribers.iter() {
+            let owner = conn_token(*connection);
+            let Ok(mut object) = Syscall::ipc_data_write(*connection, frame) else {
+                dropped += 1;
+                keep.push(*connection);
+                continue;
+            };
+            let notice = Reply::PushFrame {
+                token: data_token(&object),
+                length: frame.len() as u16,
+            };
+            let delivered = match notice.encode() {
+                Ok(notice_frame) => Syscall::ipc_send(*connection, &notice_frame),
+                Err(_) => {
+                    let _ = object.release();
+                    dropped += 1;
+                    keep.push(*connection);
+                    continue;
+                }
+            };
+            match delivered {
+                Ok(()) => {
+                    pushed += 1;
+                    self.hold_push(owner, object);
+                    keep.push(*connection);
+                }
+                Err(IpcSendError::ConnectionNotFound) => {
+                    dropped += 1;
+                }
+                Err(_) => {
+                    let _ = object.release();
+                    dropped += 1;
+                    keep.push(*connection);
+                }
+            }
+        }
+        self.watchers = keep;
+        self.watch_pushes += pushed;
+        self.watch_drops += dropped;
+    }
+
+    fn hold_push(&mut self, owner: u32, object: UserDataHandle) {
+        if self
+            .push_held
+            .iter()
+            .filter(|(held_owner, _)| *held_owner == owner)
+            .count()
+            == PUSH_HELD_FRAMES
+        {
+            if let Some(oldest) = self
+                .push_held
+                .iter()
+                .position(|(held_owner, _)| *held_owner == owner)
+            {
+                let (_, mut stale) = self.push_held.remove(oldest);
+                let _ = stale.release();
+            }
+        }
+        self.push_held.push((owner, object));
     }
 
     fn release_held_for(&mut self, owner: u32) {
