@@ -344,6 +344,7 @@ impl Kernel {
             .notify_with_status(completion, system::exit::interrupted_status());
         services().task_manager.borrow_mut().set_state(owner, Terminated);
         services().future_registry.borrow_mut().discard_waiter(owner);
+        services().ipc_manager.borrow_mut().close_connections_of(owner);
         services().future_registry.borrow_mut().discard_owned(owner, Some(completion));
         crate::platform::portio::revoke(owner);
         let group = services().task_manager.borrow().get_group(owner);
@@ -686,6 +687,66 @@ mod tests {
 
         assert_eq!(services().future_registry.borrow_mut().get(sleeper), None);
         assert_eq!(completion_status(completion), system::exit::interrupted_status());
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn kill_closes_the_victims_ipc_connections() {
+        install_kill_stage();
+        services()
+            .ipc_manager
+            .borrow_mut()
+            .bind_service("KILL-IPC")
+            .expect("bind the kill-ipc service");
+        let (victim, completion) = spawn_paired("[T] kill-ipc");
+        let connection = services()
+            .ipc_manager
+            .borrow_mut()
+            .connect("KILL-IPC", victim)
+            .expect("victim connects");
+        let server = add_created_task("[T] kill-ipc-server");
+
+        assert_eq!(kernel().kill_task(completion), Ok(()));
+
+        assert_eq!(
+            services().ipc_manager.borrow_mut().send_message(
+                server,
+                &system::ipc::Message::new(
+                    connection.pack() as u32,
+                    &[0u8; system::ipc::MESSAGE_PAYLOAD_BYTES]
+                )
+            ),
+            Err(crate::ipc::errors::IpcSendError::ConnectionNotFound)
+        );
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn kill_abandons_the_parked_receive_on_the_victims_connection() {
+        install_kill_stage();
+        services()
+            .ipc_manager
+            .borrow_mut()
+            .bind_service("KILL-PARK")
+            .expect("bind the kill-park service");
+        let (victim, completion) = spawn_paired("[T] kill-park");
+        let connection = services()
+            .ipc_manager
+            .borrow_mut()
+            .connect("KILL-PARK", victim)
+            .expect("victim connects");
+        let parked = services()
+            .ipc_manager
+            .borrow_mut()
+            .receive_message_async(connection, victim);
+        assert_eq!(
+            services().future_registry.borrow_mut().get(parked),
+            Some(false)
+        );
+
+        assert_eq!(kernel().kill_task(completion), Ok(()));
+
+        assert_eq!(services().future_registry.borrow_mut().get(parked), None);
         *KERNEL_PTR.borrow_mut() = null_mut();
     }
 

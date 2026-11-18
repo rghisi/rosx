@@ -22,6 +22,10 @@ impl ForNotifyingFutures for NoopNotifier {
     }
     fn notify(&self, _handle: FutureHandle) {}
     fn complete_ipc_message(&self, _handle: FutureHandle, _message: Message) {}
+    fn abandon(&self, _handle: FutureHandle) {}
+    fn is_live(&self, _handle: FutureHandle) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -60,8 +64,11 @@ impl MailboxManager {
     }
 
     pub(crate) fn remove(&mut self, handle: MailboxHandle) {
+        let parked = self.waiters.remove(&handle).unwrap_or_default();
+        for future in parked {
+            self.notifier.abandon(future);
+        }
         let _ = self.mailboxes.remove(handle);
-        self.waiters.remove(&handle);
     }
 
     pub(crate) fn push_back(&mut self, handle: MailboxHandle, message: Message) -> Result<(), IpcSendError> {
@@ -102,7 +109,9 @@ impl MailboxManager {
     }
 
     fn notify_waiters(&mut self, handle: MailboxHandle) {
+        let notifier = self.notifier;
         if let Some(waiters) = self.waiters.get_mut(&handle) {
+            waiters.retain(|future| notifier.is_live(*future));
             while !waiters.is_empty() {
                 if let Ok(mailbox) = self.mailboxes.borrow_mut(handle) {
                     if let Some(msg) = mailbox.pop_front() {
@@ -128,6 +137,13 @@ mod tests {
     use crate::kernel_services::FutureRegistryNotifierUseCase;
     use crate::ports::driven::ForNotifyingFutures;
     use alloc::boxed::Box;
+
+    fn real_notifier() -> &'static dyn ForNotifyingFutures {
+        init_services();
+        Box::leak(Box::new(FutureRegistryNotifierUseCase {
+            future_registry: services().future_registry,
+        })) as &'static dyn ForNotifyingFutures
+    }
 
     #[test]
     fn test_create_remove() {
@@ -239,5 +255,36 @@ mod tests {
         assert_eq!(manager.push_back(handle, msg), Err(IpcSendError::ConnectionCongested));
         assert!(manager.mailboxes.borrow_mut(handle).unwrap().pop_front().is_some());
         assert_eq!(manager.push_back(handle, msg), Ok(()));
+    }
+
+    #[test]
+    fn remove_consumes_the_futures_parked_on_the_mailbox() {
+        let mut manager = MailboxManager::new_with_notifier(real_notifier());
+        let handle = manager.create();
+        let parked = manager.pop_front_async(handle, TaskHandle::new(7, 0));
+        assert_eq!(services().future_registry.borrow_mut().get(parked), Some(false));
+
+        manager.remove(handle);
+
+        assert_eq!(services().future_registry.borrow_mut().get(parked), None);
+    }
+
+    #[test]
+    fn notify_waiters_prunes_dead_handles_without_swallowing_the_message() {
+        use system::ipc::MESSAGE_PAYLOAD_BYTES;
+        let mut manager = MailboxManager::new_with_notifier(real_notifier());
+        let handle = manager.create();
+        let parked = manager.pop_front_async(handle, TaskHandle::new(7, 0));
+        services().future_registry.borrow_mut().consume(parked).unwrap();
+
+        let msg = Message::new(Handle::new(1, 1).pack() as u32, &[0x4C; MESSAGE_PAYLOAD_BYTES]);
+        assert_eq!(manager.push_back(handle, msg), Ok(()));
+
+        let fresh = manager.pop_front_async(handle, TaskHandle::new(8, 0));
+        let registry = services().future_registry.borrow_mut();
+        let future_box = registry.borrow_mut(fresh).unwrap();
+        let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
+        let delivered = ipc_future.result().unwrap();
+        assert_eq!(delivered.data(), &[0x4C; MESSAGE_PAYLOAD_BYTES]);
     }
 }

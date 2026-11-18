@@ -1,6 +1,7 @@
 use alloc::collections::{BTreeMap};
 use alloc::string::String;
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use crate::collections::arena::GenerationalArena;
 #[cfg(test)]
 use crate::future::Future;
@@ -22,6 +23,10 @@ impl ForNotifyingFutures for NoopIpcNotifier {
     }
     fn notify(&self, _handle: FutureHandle) {}
     fn complete_ipc_message(&self, _handle: FutureHandle, _message: Message) {}
+    fn abandon(&self, _handle: FutureHandle) {}
+    fn is_live(&self, _handle: FutureHandle) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -50,6 +55,7 @@ pub(crate) struct IpcManager {
     bindings: GenerationalArena<IpcServerBinding, 256>,
     mailbox_manager: MailboxManager,
     connections: GenerationalArena<IpcConnection, 256>,
+    by_client: BTreeMap<TaskHandle, Vec<IpcConnectionHandle>>,
     registry: BTreeMap<String, IpcBindingHandle>,
     notifier: &'static dyn ForNotifyingFutures,
     data_manager: IpcDataManager,
@@ -63,6 +69,7 @@ impl IpcManager {
             bindings: GenerationalArena::new(),
             mailbox_manager: MailboxManager::new(),
             connections: GenerationalArena::new(),
+            by_client: BTreeMap::new(),
             registry: BTreeMap::new(),
             notifier: &NOOP_IPC_NOTIFIER,
             data_manager: IpcDataManager::new(),
@@ -74,6 +81,7 @@ impl IpcManager {
             bindings: GenerationalArena::new(),
             mailbox_manager: MailboxManager::new_with_notifier(notifier),
             connections: GenerationalArena::new(),
+            by_client: BTreeMap::new(),
             registry: BTreeMap::new(),
             notifier,
             data_manager: IpcDataManager::new(),
@@ -104,7 +112,9 @@ impl IpcManager {
                     client_task: caller
                 };
                 if let Ok(connection_handle) = self.connections.add(connection) {
-                    Ok(IpcConnectionHandle::from(connection_handle))
+                    let connection_handle = IpcConnectionHandle::from(connection_handle);
+                    self.by_client.entry(caller).or_default().push(connection_handle);
+                    Ok(connection_handle)
                 } else {
                     Err(IpcConnectionError::ConnectionCannotBeEstablished)
                 }
@@ -117,13 +127,27 @@ impl IpcManager {
     }
 
     pub(crate) fn disconnect(&mut self, connection_handle: IpcConnectionHandle) {
-        let client_mailbox = match self.connections.borrow(connection_handle.into()) {
-            Ok(connection) => connection.client_mailbox,
+        let (client_mailbox, client_task) = match self.connections.borrow(connection_handle.into()) {
+            Ok(connection) => (connection.client_mailbox, connection.client_task),
             Err(_) => return,
         };
+        if let Some(handles) = self.by_client.get_mut(&client_task) {
+            handles.retain(|live| *live != connection_handle);
+            if handles.is_empty() {
+                self.by_client.remove(&client_task);
+            }
+        }
         self.mailbox_manager.remove(client_mailbox);
         let _ = self.connections.remove(connection_handle.into());
         self.data_manager.gc_connection(connection_handle);
+    }
+
+    pub(crate) fn close_connections_of(&mut self, task: TaskHandle) {
+        let owned = self.by_client.remove(&task).unwrap_or_default();
+        for connection in owned {
+            self.disconnect(connection);
+        }
+        self.data_manager.gc_task(task);
     }
 
     pub(crate) fn send_message(&mut self, caller: TaskHandle, envelope: &Message) -> Result<(), IpcSendError> {
@@ -528,6 +552,69 @@ mod tests {
             ipc_future.result(),
             Err(IpcReceiveError::ConnectionNotFound)
         ));
+    }
+
+    #[test]
+    fn close_connections_of_closes_only_the_dying_clients_connections() {
+        let mut manager = manager_with_notifier();
+        let (_binding, mine) = bind_and_connect(&mut manager, "CLOSE-PAIR");
+        let theirs = manager.connect("CLOSE-PAIR", INTRUDER).unwrap();
+
+        manager.close_connections_of(CLIENT_TASK);
+
+        assert_eq!(
+            manager.send_message(CLIENT_TASK, &Message::new(mine.pack() as u32, &[0u8; MESSAGE_PAYLOAD_BYTES])),
+            Err(IpcSendError::ConnectionNotFound)
+        );
+        assert_eq!(
+            manager.send_message(INTRUDER, &Message::new(theirs.pack() as u32, &[0u8; MESSAGE_PAYLOAD_BYTES])),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn close_connections_of_abandons_parked_receives() {
+        let mut manager = manager_with_notifier();
+        let (_binding, connection) = bind_and_connect(&mut manager, "CLOSE-PARK");
+        let parked = manager.receive_message_async(connection, CLIENT_TASK);
+        assert_eq!(services().future_registry.borrow_mut().get(parked), Some(false));
+
+        manager.close_connections_of(CLIENT_TASK);
+
+        assert_eq!(services().future_registry.borrow_mut().get(parked), None);
+    }
+
+    #[test]
+    fn close_connections_of_refunds_the_written_budget() {
+        let mut manager = manager_with_notifier();
+        let (_binding, connection) = bind_and_connect(&mut manager, "CLOSE-BUDGET");
+        let chunk = vec![3u8; 64 * 1024];
+        for _ in 0..4 {
+            manager.write_data(CLIENT_TASK, connection, &chunk).unwrap();
+        }
+
+        manager.close_connections_of(CLIENT_TASK);
+
+        let reconnected = manager.connect("CLOSE-BUDGET", CLIENT_TASK).unwrap();
+        for _ in 0..4 {
+            assert!(manager.write_data(CLIENT_TASK, reconnected, &chunk).is_ok());
+        }
+    }
+
+    #[test]
+    fn close_connections_of_reclaims_a_dead_writers_objects_on_foreign_connections() {
+        let mut manager = manager_with_notifier();
+        let (_binding, connection) = bind_and_connect(&mut manager, "CLOSE-WRITER");
+        let token = manager.write_data(SERVER_TASK, connection, b"parked push").unwrap();
+
+        manager.close_connections_of(SERVER_TASK);
+
+        let mut dst = [0u8; 16];
+        assert_eq!(manager.read_data(CLIENT_TASK, token, &mut dst), Err(DataError::NotFound));
+        assert_eq!(
+            manager.send_message(INTRUDER, &Message::new(connection.pack() as u32, &[0u8; MESSAGE_PAYLOAD_BYTES])),
+            Ok(())
+        );
     }
 
     #[test]

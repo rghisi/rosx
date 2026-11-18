@@ -95,6 +95,23 @@ impl IpcDataManager {
         Ok(())
     }
 
+    pub(crate) fn gc_task(&mut self, writer: TaskHandle) {
+        let mut reclaimed: Vec<(Handle, usize)> = Vec::new();
+        for handles in self.by_connection.values() {
+            for handle in handles {
+                if let Ok(object) = self.objects.borrow(*handle) {
+                    if object.writer == writer {
+                        reclaimed.push((*handle, object.payload.len()));
+                    }
+                }
+            }
+        }
+        for (handle, size) in reclaimed {
+            self.refund(writer, size);
+            self.evict(handle);
+        }
+    }
+
     pub(crate) fn gc_connection(&mut self, connection: IpcConnectionHandle) {
         let Some(handles) = self.by_connection.remove(&connection) else {
             return;
@@ -300,6 +317,38 @@ mod tests {
         manager.locate(INTRUDER_TASK, second).unwrap();
         assert_eq!(manager.copy_out(second, &mut dst), 1);
         assert_eq!(dst, [3u8]);
+    }
+
+    #[test]
+    fn gc_task_evicts_only_the_dead_writers_objects_and_refunds() {
+        let mut manager = IpcDataManager::new();
+        let mine_a = manager.write(WRITER_TASK, CONNECTION_A, b"first").unwrap();
+        let mine_b = manager.write(WRITER_TASK, CONNECTION_B, b"second").unwrap();
+        let survivor = manager.write(READER_TASK, CONNECTION_A, b"survivor").unwrap();
+
+        manager.gc_task(WRITER_TASK);
+
+        assert_eq!(manager.locate(READER_TASK, mine_a), Err(DataError::NotFound));
+        assert_eq!(manager.locate(READER_TASK, mine_b), Err(DataError::NotFound));
+        assert_eq!(outstanding(&manager, WRITER_TASK), 0);
+        assert_eq!(manager.locate(WRITER_TASK, survivor), Ok((CONNECTION_A, READER_TASK)));
+        assert_eq!(manager.by_connection.get(&CONNECTION_A).unwrap(), &vec![Handle::from(survivor)]);
+        assert_eq!(manager.by_connection.get(&CONNECTION_B), None);
+        assert_eq!(outstanding(&manager, READER_TASK), b"survivor".len());
+    }
+
+    #[test]
+    fn gc_task_refunds_a_dead_writers_full_budget() {
+        let mut manager = IpcDataManager::new();
+        let chunk = vec![9u8; MAX_DATA_BYTES];
+        for _ in 0..4 {
+            manager.write(WRITER_TASK, CONNECTION_A, &chunk).unwrap();
+        }
+        assert_eq!(manager.write(WRITER_TASK, CONNECTION_A, &chunk), Err(DataError::BudgetExceeded));
+
+        manager.gc_task(WRITER_TASK);
+
+        assert!(manager.write(WRITER_TASK, CONNECTION_A, &chunk).is_ok());
     }
 
     #[test]
