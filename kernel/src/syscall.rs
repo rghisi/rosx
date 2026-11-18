@@ -150,11 +150,11 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             }
         }
         Ok(SyscallNum::IpcReceiveMessage) => match IpcConnectionHandle::from_packed(arg1) {
-            Some(connection_handle) => services().ipc_manager.borrow_mut().receive_message_async(connection_handle).pack(),
+            Some(connection_handle) => services().ipc_manager.borrow_mut().receive_message_async(connection_handle, kernel().execution_state.current_task()).pack(),
             None => ErrorCode::Unknown.to_reg(),
         },
         Ok(SyscallNum::IpcAcceptMessage) => match IpcBindingHandle::from_packed(arg1) {
-            Some(binding_handle) => services().ipc_manager.borrow_mut().accept_message_async(binding_handle).pack(),
+            Some(binding_handle) => services().ipc_manager.borrow_mut().accept_message_async(binding_handle, kernel().execution_state.current_task()).pack(),
             None => ErrorCode::Unknown.to_reg(),
         },
         Ok(SyscallNum::IpcDataWrite) => {
@@ -191,7 +191,8 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             crate::rom::read(arg1 as u64, dst)
         }
         Ok(SyscallNum::WaitsetCreate) => {
-            match services().future_registry.borrow_mut().register(Box::new(WaitsetFuture::new())) {
+            let caller = kernel().execution_state.current_task();
+            match services().future_registry.borrow_mut().register(Box::new(WaitsetFuture::owned_by(caller))) {
                 Some(handle) => handle.pack(),
                 None => ErrorCode::FutureCapacityExhausted.to_reg(),
             }

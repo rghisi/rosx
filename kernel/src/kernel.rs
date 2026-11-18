@@ -213,7 +213,8 @@ impl Kernel {
     }
 
     pub fn sleep(&mut self, millis: u64) {
-        let future = Box::new(TimeFuture::new());
+        let sleeper = self.execution_state.current_task();
+        let future = Box::new(TimeFuture::owned_by(sleeper));
         let handle = services().future_registry
             .borrow_mut()
             .register(future)
@@ -343,6 +344,7 @@ impl Kernel {
             .notify_with_status(completion, system::exit::interrupted_status());
         services().task_manager.borrow_mut().set_state(owner, Terminated);
         services().future_registry.borrow_mut().discard_waiter(owner);
+        services().future_registry.borrow_mut().discard_owned(owner, Some(completion));
         crate::platform::portio::revoke(owner);
         let group = services().task_manager.borrow().get_group(owner);
         if let Some(group) = group {
@@ -579,7 +581,7 @@ mod tests {
         let gate = services()
             .future_registry
             .borrow_mut()
-            .register(Box::new(TimeFuture::new()))
+            .register(Box::new(TimeFuture::owned_by(crate::task::TaskHandle::new(u16::MAX, 0))))
             .expect("register gate future");
         services()
             .future_registry
@@ -636,7 +638,7 @@ mod tests {
         let foreign = services()
             .future_registry
             .borrow_mut()
-            .register(Box::new(TimeFuture::new()))
+            .register(Box::new(TimeFuture::owned_by(crate::task::TaskHandle::new(u16::MAX, 0))))
             .expect("register foreign future");
 
         assert_eq!(
@@ -667,6 +669,23 @@ mod tests {
             Ok(())
         );
         crate::platform::portio::authorize_release(heir, 0x620, 0x62F).ok();
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn kill_discards_the_owners_other_futures_and_spares_the_completion() {
+        install_kill_stage();
+        let (victim, completion) = spawn_paired("[T] kill-swept");
+        let sleeper = services()
+            .future_registry
+            .borrow_mut()
+            .register(Box::new(TimeFuture::owned_by(victim)))
+            .expect("register the victim's sleep future");
+
+        assert_eq!(kernel().kill_task(completion), Ok(()));
+
+        assert_eq!(services().future_registry.borrow_mut().get(sleeper), None);
+        assert_eq!(completion_status(completion), system::exit::interrupted_status());
         *KERNEL_PTR.borrow_mut() = null_mut();
     }
 

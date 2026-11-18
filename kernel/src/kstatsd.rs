@@ -34,17 +34,17 @@ pub fn main() {
         return;
     };
     loop {
+        let self_task = kernel().execution_state.current_task();
         let accepted = services()
             .ipc_manager
             .borrow_mut()
-            .accept_message_async(binding);
+            .accept_message_async(binding, self_task);
         let Some(received) = kernel().wait::<IpcMessageFuture>(accepted) else {
             continue;
         };
         let Ok(request) = received.result() else {
             continue;
         };
-        let self_task = kernel().execution_state.current_task();
         if let Some(KstatsRequest::ProcessTable) = decode_request(request.data()) {
             reply_process_table(request.conn(), self_task);
             continue;
@@ -191,7 +191,7 @@ mod tests {
         let accepted = services()
             .ipc_manager
             .borrow_mut()
-            .accept_message_async(binding);
+            .accept_message_async(binding, server);
         let future = services()
             .future_registry
             .borrow_mut()
@@ -211,7 +211,7 @@ mod tests {
         let pending_reply = services()
             .ipc_manager
             .borrow_mut()
-            .receive_message_async(connection);
+            .receive_message_async(connection, client);
         let future = services()
             .future_registry
             .borrow_mut()

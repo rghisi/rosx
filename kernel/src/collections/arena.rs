@@ -67,15 +67,6 @@ impl<T, const S: usize> GenerationalArena<T, S> {
         Ok(item)
     }
 
-    pub(crate) fn replace(&mut self, handle: Handle, item: T) -> Result<Handle, Error> {
-        let index = handle.index as usize;
-        if index >= self.items.len() || self.generations[index] != handle.generation {
-            return Err(Error::NotFound);
-        }
-        self.items[index] = Some(item);
-        Ok(handle)
-    }
-
     pub(crate) fn any<F: Fn(&T) -> bool>(&self, predicate: F) -> bool {
         self.items.iter().flatten().any(|item| predicate(item))
     }

@@ -3,6 +3,7 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::any::Any;
 use crate::handle::FutureHandle;
+use crate::task::TaskHandle;
 use super::Future;
 use system::waitset::WaitEvent;
 
@@ -32,13 +33,15 @@ pub(crate) enum WaitsetTake {
 pub(crate) struct WaitsetFuture {
     children: Vec<FutureHandle>,
     pending: VecDeque<WaitEvent>,
+    owner: TaskHandle,
 }
 
 impl WaitsetFuture {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn owned_by(owner: TaskHandle) -> Self {
         Self {
             children: Vec::with_capacity(WAITSET_CHILD_CAPACITY),
             pending: VecDeque::with_capacity(WAITSET_CHILD_CAPACITY),
+            owner,
         }
     }
 
@@ -82,6 +85,10 @@ impl Future for WaitsetFuture {
         !self.pending.is_empty()
     }
 
+    fn owner(&self) -> TaskHandle {
+        self.owner
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -106,14 +113,14 @@ mod tests {
 
     #[test]
     fn fresh_waitset_is_not_completed_and_has_no_pending_events() {
-        let mut waitset = WaitsetFuture::new();
+        let mut waitset = WaitsetFuture::owned_by(TaskHandle::new(u16::MAX, 0));
         assert!(!waitset.is_completed());
         assert_eq!(waitset.take_pending(), None);
     }
 
     #[test]
     fn first_record_reports_became_signalled_and_second_does_not() {
-        let mut waitset = WaitsetFuture::new();
+        let mut waitset = WaitsetFuture::owned_by(TaskHandle::new(u16::MAX, 0));
         assert!(waitset.record(WaitEvent { child: 7, tag: 11 }));
         assert!(!waitset.record(WaitEvent { child: 8, tag: 22 }));
         assert!(waitset.is_completed());
@@ -121,7 +128,7 @@ mod tests {
 
     #[test]
     fn take_pending_drains_in_fifo_order() {
-        let mut waitset = WaitsetFuture::new();
+        let mut waitset = WaitsetFuture::owned_by(TaskHandle::new(u16::MAX, 0));
         waitset.record(WaitEvent { child: 1, tag: 10 });
         waitset.record(WaitEvent { child: 2, tag: 20 });
         assert_eq!(waitset.take_pending(), Some(WaitEvent { child: 1, tag: 10 }));
@@ -132,7 +139,7 @@ mod tests {
 
     #[test]
     fn add_child_grows_edges_and_has_child() {
-        let mut waitset = WaitsetFuture::new();
+        let mut waitset = WaitsetFuture::owned_by(TaskHandle::new(u16::MAX, 0));
         let child = handle_at(3, 0);
         assert!(!waitset.has_child(child));
         assert_eq!(waitset.child_count(), 0);
@@ -143,7 +150,7 @@ mod tests {
 
     #[test]
     fn remove_child_drops_edge_and_purges_its_pending_events() {
-        let mut waitset = WaitsetFuture::new();
+        let mut waitset = WaitsetFuture::owned_by(TaskHandle::new(u16::MAX, 0));
         let child = handle_at(4, 2);
         let other = handle_at(5, 0);
         waitset.add_child(child);
@@ -159,13 +166,13 @@ mod tests {
 
     #[test]
     fn remove_child_of_unknown_edge_returns_false() {
-        let mut waitset = WaitsetFuture::new();
+        let mut waitset = WaitsetFuture::owned_by(TaskHandle::new(u16::MAX, 0));
         assert!(!waitset.remove_child(handle_at(40, 0)));
     }
 
     #[test]
     fn remove_child_ignores_recycled_generation_of_same_index() {
-        let mut waitset = WaitsetFuture::new();
+        let mut waitset = WaitsetFuture::owned_by(TaskHandle::new(u16::MAX, 0));
         let child = handle_at(6, 1);
         waitset.add_child(child);
         assert!(!waitset.remove_child(handle_at(6, 2)));
@@ -174,7 +181,7 @@ mod tests {
 
     #[test]
     fn child_handles_lists_attached_edges_in_order() {
-        let mut waitset = WaitsetFuture::new();
+        let mut waitset = WaitsetFuture::owned_by(TaskHandle::new(u16::MAX, 0));
         let first = handle_at(9, 0);
         let second = handle_at(10, 0);
         waitset.add_child(first);

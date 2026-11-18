@@ -10,6 +10,7 @@ use crate::ipc::message_future::IpcMessageFuture;
 use crate::ipc::mailbox::Mailbox;
 use crate::irq_guard::IrqCell;
 use crate::ports::driven::ForNotifyingFutures;
+use crate::task::TaskHandle;
 use system::ipc::Message;
 
 #[cfg(test)]
@@ -78,24 +79,24 @@ impl MailboxManager {
         }
     }
 
-    pub(crate) fn pop_front_async(&mut self, handle: MailboxHandle) -> FutureHandle {
+    pub(crate) fn pop_front_async(&mut self, handle: MailboxHandle, owner: TaskHandle) -> FutureHandle {
         let _section = MAILBOX_SECTION.acquire();
         if let Ok(mailbox) = self.mailboxes.borrow_mut(handle) {
             if let Some(msg) = mailbox.pop_front() {
                 self.notifier
-                    .register(Box::new(IpcMessageFuture::with_message(msg)))
+                    .register(Box::new(IpcMessageFuture::with_message(owner, msg)))
                     .unwrap()
             } else {
                 let fh = self
                     .notifier
-                    .register(Box::new(IpcMessageFuture::new()))
+                    .register(Box::new(IpcMessageFuture::owned_by(owner)))
                     .unwrap();
                 self.waiters.entry(handle).or_default().push(fh);
                 fh
             }
         } else {
             self.notifier
-                .register(Box::new(IpcMessageFuture::with_error(IpcReceiveError::MailboxNotAvailable)))
+                .register(Box::new(IpcMessageFuture::with_error(owner, IpcReceiveError::MailboxNotAvailable)))
                 .unwrap()
         }
     }
@@ -146,7 +147,7 @@ mod tests {
     fn test_ipc_message_future_carries_envelope() {
         use crate::future::Future;
         use system::ipc::MESSAGE_PAYLOAD_BYTES;
-        let mut future = IpcMessageFuture::new();
+        let mut future = IpcMessageFuture::owned_by(TaskHandle::new(7, 0));
         assert!(!future.is_completed());
         let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = core::array::from_fn(|i| (i * 3 + 1) as u8);
         let msg = Message::new(Handle::new(1, 1).pack() as u32, &pattern);
@@ -169,7 +170,7 @@ mod tests {
         let handle = manager.create();
         
         // Case 1: Empty mailbox -> Pending
-        let fh = manager.pop_front_async(handle);
+        let fh = manager.pop_front_async(handle, TaskHandle::new(7, 0));
         
         // Case 2: Data pushed -> Waiter notified
         let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = core::array::from_fn(|i| (i ^ 0x5A) as u8);
@@ -203,7 +204,7 @@ mod tests {
         services().task_manager.borrow_mut().set_state(task_handle, crate::task::TaskState::Blocked);
         
         // 2. pop_front_async to get a future
-        let future_handle = manager.pop_front_async(handle);
+        let future_handle = manager.pop_front_async(handle, TaskHandle::new(7, 0));
         
         // 3. Register task as waiter for that future
         services().future_registry.borrow_mut().register_waiter(future_handle, task_handle);
