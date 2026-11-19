@@ -1,5 +1,15 @@
 # Filesystem engines
 
+## Invariants
+
+- `fs/core` holds the engine treaty (`Engine`, `BlockDevice`, `FsError`) and nothing else; rxfs, rxfat, ramfs and `vfsd` depend on it and no engine depends on another.
+- Engine constructors stay engine-specific; `check()` and volume introspection stay on the concrete types.
+- `rxfs` has no journal: allocation bitmaps hit disk before references and reclamation is deferred until `sync` commits the unlink.
+- `rxfat` has no formatter and answers `Unsupported`/`Corrupt` honestly for FAT12 and foreign boot sectors.
+- `ramfs` carries no daemon policy; those rules stay at the `vfsd` edge.
+
+## Design
+
 `fs/core` — the engine treaty of the `fs/` theme (`Engine` trait, device treaty `BlockDevice`, shared `FsError`/`IoError`, `Kind`, `DirItem`, `MetadataView`), zero deps beyond core/alloc. It is the in-process contract between `vfsd` and any filesystem: `Engine` names the twelve operations (`lookup/open/create/mkdir/rmdir/read/write/stat/close/remove/readdir/sync`) with associated `Handle` and `Metadata` types so each engine keeps its own handle representation and stat shape; `FsError::Unsupported` is the honest answer for a capability an engine lacks. `BlockDevice` is the one block-device contract every engine's constructor takes — rxfs and rxfat keep a `device` module that re-exports it so their local import paths stay put. Constructors stay engine-specific (`format`/`mount` for rxfs, `new` for rxfat and ramfs); `check()` and volume introspection stay on the concrete types. Both engines and `vfsd` depend on this crate and nothing else cross-cuts.
 
 `fs/rxfs` — standalone `no_std` filesystem library (zero third-party deps; links only `fs/core`): 4 KiB blocks, u32 addressing, static inode table with inline extents + spill chains, 255-byte byte-transparent names, Fletcher-32 on superblock and inodes. No journal — leak-safe commit ordering (allocation bitmaps hit disk before references, reclamation is deferred until `sync` commits the unlink), primary + backup superblock, and `check()` fsck-lite that repairs leaks, dangling entries, and double references. Proven by a crash-injection harness (every device-write prefix) and differential property tests; `FileSystem<D>` implements the `fs/core` `Engine` treaty and enters `vfsd` only as a mounted volume — the `Rxfs` arm of the auto-detecting `MountedEngine` (see VFS architecture); `MemoryDevice` is the in-memory `BlockDevice` stand-in the unit tests mount with.
