@@ -12,6 +12,7 @@ pub enum MuxAction<Reader> {
 pub struct InputMux<Reader> {
     pending_reads: VecDeque<Reader>,
     buffered_chars: VecDeque<char>,
+    watcher: Option<Reader>,
 }
 
 impl<Reader: Copy + PartialEq> InputMux<Reader> {
@@ -19,6 +20,7 @@ impl<Reader: Copy + PartialEq> InputMux<Reader> {
         InputMux {
             pending_reads: VecDeque::new(),
             buffered_chars: VecDeque::new(),
+            watcher: None,
         }
     }
 
@@ -40,6 +42,11 @@ impl<Reader: Copy + PartialEq> InputMux<Reader> {
     }
 
     pub fn handle_push(&mut self, c: char) -> Option<MuxAction<Reader>> {
+        if c == wire::CONTROL_C {
+            if let Some(watcher) = self.watcher {
+                return Some(MuxAction::Reply(watcher, wire::encode_control()));
+            }
+        }
         match self.pending_reads.pop_front() {
             Some(reader) => Some(MuxAction::Reply(reader, wire::encode_key(c))),
             None => {
@@ -52,8 +59,22 @@ impl<Reader: Copy + PartialEq> InputMux<Reader> {
         }
     }
 
+    pub fn handle_watch(&mut self, watcher: Reader) {
+        self.watcher = Some(watcher);
+    }
+
+    pub fn handle_unwatch(&mut self, reader: Reader) -> MuxAction<Reader> {
+        if self.watcher == Some(reader) {
+            self.watcher = None;
+        }
+        MuxAction::Reply(reader, wire::encode_unwatched())
+    }
+
     pub fn forget(&mut self, reader: Reader) {
         self.pending_reads.retain(|pending| *pending != reader);
+        if self.watcher == Some(reader) {
+            self.watcher = None;
+        }
     }
 }
 
@@ -188,5 +209,89 @@ mod tests {
         assert_eq!(replied_char(&first_frame), '1');
         assert_eq!(second_reader, 11);
         assert_eq!(replied_char(&second_frame), '2');
+    }
+
+    #[test]
+    fn control_c_with_a_watcher_notifies_the_watcher_and_reaches_no_reader() {
+        let mut mux: InputMux<u32> = InputMux::new();
+        mux.handle_read(7);
+        mux.handle_watch(99);
+        let action = mux.handle_push(wire::CONTROL_C).expect("watcher is notified");
+        let MuxAction::Reply(notified, frame) = action;
+        assert_eq!(notified, 99);
+        assert_eq!(frame_tag(&frame), wire::TAG_CONTROL);
+        let MuxAction::Reply(_, probe) = mux.handle_read_nowait(3).expect("nowait answers");
+        assert_eq!(frame_tag(&probe), TAG_NO_KEY);
+    }
+
+    #[test]
+    fn control_c_without_a_watcher_is_an_ordinary_char() {
+        let mut mux: InputMux<u32> = InputMux::new();
+        mux.handle_read(7);
+        let action = mux.handle_push(wire::CONTROL_C).expect("reader receives the char");
+        let MuxAction::Reply(reader, frame) = action;
+        assert_eq!(reader, 7);
+        assert_eq!(replied_char(&frame), wire::CONTROL_C);
+    }
+
+    #[test]
+    fn watch_replaces_the_previous_watcher() {
+        let mut mux: InputMux<u32> = InputMux::new();
+        mux.handle_watch(11);
+        mux.handle_watch(22);
+        let MuxAction::Reply(notified, frame) =
+            mux.handle_push(wire::CONTROL_C).expect("latest watcher notified");
+        assert_eq!(notified, 22);
+        assert_eq!(frame_tag(&frame), wire::TAG_CONTROL);
+    }
+
+    #[test]
+    fn unwatch_by_the_watcher_returns_control_c_to_the_ordinary_path() {
+        let mut mux: InputMux<u32> = InputMux::new();
+        mux.handle_watch(11);
+        let MuxAction::Reply(acked, frame) = mux.handle_unwatch(11);
+        assert_eq!(acked, 11);
+        assert_eq!(frame_tag(&frame), wire::TAG_UNWATCHED);
+        let MuxAction::Reply(reader, frame) =
+            mux.handle_read_nowait(5).expect("nowait answers before the push");
+        assert_eq!(frame_tag(&frame), TAG_NO_KEY);
+        assert_eq!(reader, 5);
+        assert_eq!(mux.handle_push(wire::CONTROL_C), None);
+        let MuxAction::Reply(_, frame) = mux.handle_read(7).expect("buffered control char");
+        assert_eq!(frame_tag(&frame), TAG_KEY);
+        assert_eq!(frame_char(&frame), Some(wire::CONTROL_C));
+    }
+
+    #[test]
+    fn unwatch_from_another_connection_leaves_the_watcher_in_place() {
+        let mut mux: InputMux<u32> = InputMux::new();
+        mux.handle_watch(11);
+        let MuxAction::Reply(acked, frame) = mux.handle_unwatch(22);
+        assert_eq!(acked, 22);
+        assert_eq!(frame_tag(&frame), wire::TAG_UNWATCHED);
+        let MuxAction::Reply(notified, _) =
+            mux.handle_push(wire::CONTROL_C).expect("watcher survives foreign unwatch");
+        assert_eq!(notified, 11);
+    }
+
+    #[test]
+    fn forget_evicts_a_dead_watcher() {
+        let mut mux: InputMux<u32> = InputMux::new();
+        mux.handle_watch(11);
+        mux.forget(11);
+        assert_eq!(mux.handle_push(wire::CONTROL_C), None);
+        let MuxAction::Reply(reader, frame) = mux.handle_read(7).expect("control char buffered");
+        assert_eq!(reader, 7);
+        assert_eq!(frame_char(&frame), Some(wire::CONTROL_C));
+    }
+
+    #[test]
+    fn ordinary_chars_keep_flowing_while_a_watcher_is_registered() {
+        let mut mux: InputMux<u32> = InputMux::new();
+        mux.handle_watch(99);
+        mux.handle_read(7);
+        let MuxAction::Reply(reader, frame) = mux.handle_push('k').expect("reader served");
+        assert_eq!(reader, 7);
+        assert_eq!(replied_char(&frame), 'k');
     }
 }

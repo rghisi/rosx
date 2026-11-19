@@ -1,7 +1,7 @@
 use crate::arch;
 use crate::error::{
     DataError, IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError, IrqError,
-    PortError, TaskExitError, WaitsetError,
+    PortError, TaskExitError, TaskKillError, WaitsetError,
 };
 use crate::exit::ExitStatus;
 use crate::handle::{UserBindingHandle, UserConnectionHandle, UserDataHandle, UserFutureHandle};
@@ -104,6 +104,15 @@ impl Syscall {
         let result =
             arch::raw_syscall(SyscallNum::IsFutureCompleted as usize, handle.value(), 0, 0);
         result != 0
+    }
+
+    pub fn kill(task_completion: UserFutureHandle) -> Result<(), TaskKillError> {
+        let raw = arch::raw_syscall(SyscallNum::Kill as usize, task_completion.value(), 0, 0);
+        if is_token(raw) {
+            Ok(())
+        } else {
+            Err(TaskKillError::from(ErrorCode::from_code(raw)))
+        }
     }
 
     pub fn print(args: fmt::Arguments) {

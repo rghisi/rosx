@@ -8,6 +8,12 @@ pub const TAG_READ_NOWAIT: u8 = 2;
 pub const TAG_PUSH: u8 = 3;
 pub const TAG_KEY: u8 = 4;
 pub const TAG_NO_KEY: u8 = 5;
+pub const TAG_WATCH: u8 = 6;
+pub const TAG_UNWATCH: u8 = 7;
+pub const TAG_CONTROL: u8 = 8;
+pub const TAG_UNWATCHED: u8 = 9;
+
+pub const CONTROL_C: char = '\x03';
 
 pub fn encode_read() -> [u8; MESSAGE_PAYLOAD_BYTES] {
     encode_tag_only(TAG_READ)
@@ -19,6 +25,22 @@ pub fn encode_read_nowait() -> [u8; MESSAGE_PAYLOAD_BYTES] {
 
 pub fn encode_no_key() -> [u8; MESSAGE_PAYLOAD_BYTES] {
     encode_tag_only(TAG_NO_KEY)
+}
+
+pub fn encode_watch() -> [u8; MESSAGE_PAYLOAD_BYTES] {
+    encode_tag_only(TAG_WATCH)
+}
+
+pub fn encode_unwatch() -> [u8; MESSAGE_PAYLOAD_BYTES] {
+    encode_tag_only(TAG_UNWATCH)
+}
+
+pub fn encode_control() -> [u8; MESSAGE_PAYLOAD_BYTES] {
+    encode_tag_only(TAG_CONTROL)
+}
+
+pub fn encode_unwatched() -> [u8; MESSAGE_PAYLOAD_BYTES] {
+    encode_tag_only(TAG_UNWATCHED)
 }
 
 pub fn encode_push(c: char) -> [u8; MESSAGE_PAYLOAD_BYTES] {
@@ -76,16 +98,45 @@ mod tests {
         assert_eq!(frame_tag(&encode_no_key()), TAG_NO_KEY);
         assert_eq!(frame_tag(&encode_push('a')), TAG_PUSH);
         assert_eq!(frame_tag(&encode_key('a')), TAG_KEY);
+        assert_eq!(frame_tag(&encode_watch()), TAG_WATCH);
+        assert_eq!(frame_tag(&encode_unwatch()), TAG_UNWATCH);
+        assert_eq!(frame_tag(&encode_control()), TAG_CONTROL);
+        assert_eq!(frame_tag(&encode_unwatched()), TAG_UNWATCHED);
     }
 
     #[test]
     fn tag_only_encoders_emit_exactly_one_tag_and_zero_padding() {
-        for data in [encode_read(), encode_read_nowait(), encode_no_key()] {
+        for data in [
+            encode_read(),
+            encode_read_nowait(),
+            encode_no_key(),
+            encode_watch(),
+            encode_unwatch(),
+            encode_control(),
+            encode_unwatched(),
+        ] {
             assert_eq!(nonzero_bytes(&data), vec![data[0]]);
         }
         assert_eq!(
-            [encode_read(), encode_read_nowait(), encode_no_key()].map(|d| frame_tag(&d)),
-            [TAG_READ, TAG_READ_NOWAIT, TAG_NO_KEY]
+            [
+                encode_read(),
+                encode_read_nowait(),
+                encode_no_key(),
+                encode_watch(),
+                encode_unwatch(),
+                encode_control(),
+                encode_unwatched()
+            ]
+            .map(|d| frame_tag(&d)),
+            [
+                TAG_READ,
+                TAG_READ_NOWAIT,
+                TAG_NO_KEY,
+                TAG_WATCH,
+                TAG_UNWATCH,
+                TAG_CONTROL,
+                TAG_UNWATCHED
+            ]
         );
     }
 
@@ -128,5 +179,23 @@ mod tests {
             assert_eq!(scancode_of(&data), scancode);
             assert!(data[1..].iter().all(|b| *b == 0));
         }
+    }
+
+    #[test]
+    fn tag_numbers_are_the_stable_treaty() {
+        assert_eq!(
+            (
+                TAG_READ,
+                TAG_READ_NOWAIT,
+                TAG_PUSH,
+                TAG_KEY,
+                TAG_NO_KEY,
+                TAG_WATCH,
+                TAG_UNWATCH,
+                TAG_CONTROL,
+                TAG_UNWATCHED
+            ),
+            (1, 2, 3, 4, 5, 6, 7, 8, 9)
+        );
     }
 }

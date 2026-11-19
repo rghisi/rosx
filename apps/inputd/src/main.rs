@@ -39,6 +39,11 @@ fn serve_one(mux: &mut InputMux<UserConnectionHandle>, received: &ReceivedMessag
     let action = match wire::frame_tag(received.data()) {
         wire::TAG_READ => mux.handle_read(connection),
         wire::TAG_READ_NOWAIT => mux.handle_read_nowait(connection),
+        wire::TAG_WATCH => {
+            mux.handle_watch(connection);
+            None
+        }
+        wire::TAG_UNWATCH => Some(mux.handle_unwatch(connection)),
         wire::TAG_PUSH => match wire::frame_char(received.data()) {
             Some(c) => mux.handle_push(c),
             None => None,

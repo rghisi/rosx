@@ -1,9 +1,12 @@
-use system::exit::{decode_code, decode_reason, EXIT_REASON_CLEAN, EXIT_REASON_PANICKED};
+use system::exit::{
+    decode_code, decode_reason, EXIT_REASON_CLEAN, EXIT_REASON_INTERRUPTED, EXIT_REASON_PANICKED,
+};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ExitStatus {
     Clean(u32),
     Panicked,
+    Interrupted,
     Unknown { reason: u32, code: u32 },
 }
 
@@ -12,6 +15,7 @@ impl From<i32> for ExitStatus {
         match decode_reason(status) {
             EXIT_REASON_CLEAN => ExitStatus::Clean(decode_code(status)),
             EXIT_REASON_PANICKED => ExitStatus::Panicked,
+            EXIT_REASON_INTERRUPTED => ExitStatus::Interrupted,
             reason => ExitStatus::Unknown { reason, code: decode_code(status) },
         }
     }
@@ -42,9 +46,17 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_status_decodes_to_interrupted() {
+        assert_eq!(
+            ExitStatus::from(system::exit::interrupted_status()),
+            ExitStatus::Interrupted
+        );
+    }
+
+    #[test]
     fn reserved_reason_decodes_to_unknown_carrying_its_fields() {
-        let status = encode(2, 5);
-        assert_eq!(ExitStatus::from(status), ExitStatus::Unknown { reason: 2, code: 5 });
+        let status = encode(3, 5);
+        assert_eq!(ExitStatus::from(status), ExitStatus::Unknown { reason: 3, code: 5 });
     }
 
     #[test]
