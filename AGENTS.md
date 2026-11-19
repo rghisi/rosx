@@ -36,7 +36,7 @@ Each line links the file holding the detail; every file starts with its own inva
 - `kernel/` is platform-agnostic and `no_std`, depends only on `system`; all hardware goes through HAL traits (`Cpu`, `ElfArch`, `PortIo`). — `docs/architecture/scheduling-and-interrupts.md`
 - Kernel code runs with IF=0; level-triggered IRQ lines stay masked until the driver calls `IrqClear`; `Kernel::maybe_resched()` is the only forced context-switch site; `[IRQGUARD]` must stay silent. — `docs/architecture/scheduling-and-interrupts.md`
 - Futures and IPC are notification-driven; the kernel never interprets IPC payloads. — `docs/architecture/ipc-and-futures.md`
-- A task's exit status rides its completion future; future slots are owned by loaded-image groups and swept with the group. — `docs/architecture/exit-status-and-ownership.md`
+- A task's exit status rides its completion future; future slots are owned by loaded-image groups and swept with the group, and a dying task's own futures and connections are reaped on both `Exit` and `Kill`. — `docs/architecture/exit-status-and-ownership.md`
 - User memory is owned by loaded-image groups; task stacks are not freed by group reclaim. — `docs/architecture/memory.md`
 - Boot is plan-driven by `system::boot_plan`; failure policy is log-and-continue. — `docs/architecture/boot-plan.md`
 - Block devices come only from `blockd`; the ATA face is a diagnostic sharp knife; ports are won through `PortAcquire`. — `docs/architecture/disk-and-blockd.md`
@@ -45,6 +45,7 @@ Each line links the file holding the detail; every file starts with its own inva
 - Input policy lives in `inputd`, device semantics in driver daemons. — `docs/architecture/input.md`
 - `kstatsd` is kernel-hosted; the ROM is never a VFS volume. — `docs/architecture/kstatsd-and-rom.md`
 - Shell semantics. — `docs/architecture/shell.md`
+- `ted` is a disk app that saves by delete-then-recreate. — `docs/architecture/text-editor.md`
 - x86_32 stays on the 486 baseline: pinned feature floor, no FP, no `cpuid`, atomics of at most 32 bits. — `docs/architecture/486-baseline.md`; hardware checklist — `docs/architecture/real-hardware-x86_32.md`
 
 ## Architecture principles (who owns what)

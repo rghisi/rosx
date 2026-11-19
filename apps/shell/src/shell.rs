@@ -79,7 +79,7 @@ pub fn main() {
             println!("^C");
             buffer.clear();
             prompt();
-        } else {
+        } else if !input_protocol::wire::is_command_char(c) {
             print!("{}", c);
             buffer.push(c);
         }

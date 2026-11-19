@@ -34,6 +34,35 @@ const SHIFTED_TOKENS: [&str; 26] = [
 
 const DIGIT_TOKENS: [&str; 10] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
+const CONTROL_TOKENS: [&str; 26] = [
+    "ctrl-a",
+    "ctrl-b",
+    "ctrl-c",
+    "ctrl-d",
+    "ctrl-e",
+    "ctrl-f",
+    "ctrl-g",
+    "ctrl-h",
+    "ctrl-i",
+    "ctrl-j",
+    "ctrl-k",
+    "ctrl-l",
+    "ctrl-m",
+    "ctrl-n",
+    "ctrl-o",
+    "ctrl-p",
+    "ctrl-q",
+    "ctrl-r",
+    "ctrl-s",
+    "ctrl-t",
+    "ctrl-u",
+    "ctrl-v",
+    "ctrl-w",
+    "ctrl-x",
+    "ctrl-y",
+    "ctrl-z",
+];
+
 pub fn token_for(c: char) -> Option<&'static str> {
     if c.is_ascii_lowercase() {
         return Some(LOWERCASE_TOKENS[c as usize - 'a' as usize]);
@@ -44,12 +73,25 @@ pub fn token_for(c: char) -> Option<&'static str> {
     if c.is_ascii_digit() {
         return Some(DIGIT_TOKENS[c as usize - '0' as usize]);
     }
+    if matches!(c, '\n' | '\t' | '\x08') {
+        return match c {
+            '\n' => Some("ret"),
+            '\t' => Some("tab"),
+            _ => Some("backspace"),
+        };
+    }
+    if let Some(letter) = (c as u32).checked_sub(1) {
+        if letter < 26 {
+            return Some(CONTROL_TOKENS[letter as usize]);
+        }
+    }
     match c {
-        '\n' => Some("ret"),
         ' ' => Some("spc"),
-        '\t' => Some("tab"),
-        '\x08' => Some("backspace"),
-        '\x03' => Some("ctrl-c"),
+        '\x1b' => Some("esc"),
+        input_protocol::wire::KEY_ARROW_UP => Some("up"),
+        input_protocol::wire::KEY_ARROW_DOWN => Some("down"),
+        input_protocol::wire::KEY_ARROW_RIGHT => Some("right"),
+        input_protocol::wire::KEY_ARROW_LEFT => Some("left"),
         '-' => Some("minus"),
         '_' => Some("shift-minus"),
         '=' => Some("equal"),
@@ -121,5 +163,30 @@ mod tests {
         assert_eq!(token_for('#'), None);
         assert_eq!(token_for('é'), None);
         assert_eq!(token_for('日'), None);
+    }
+
+    #[test]
+    fn control_letters_map_to_ctrl_tokens() {
+        assert_eq!(token_for('\x01'), Some("ctrl-a"));
+        assert_eq!(token_for('\x13'), Some("ctrl-s"));
+        assert_eq!(token_for('\x11'), Some("ctrl-q"));
+        assert_eq!(token_for('\x1a'), Some("ctrl-z"));
+    }
+
+    #[test]
+    fn ret_tab_and_backspace_keep_their_tokens_over_ctrl_aliases() {
+        assert_eq!(token_for('\n'), Some("ret"));
+        assert_eq!(token_for('\t'), Some("tab"));
+        assert_eq!(token_for('\x08'), Some("backspace"));
+    }
+
+    #[test]
+    fn escape_and_arrow_sentinels_map_to_monitor_key_names() {
+        use input_protocol::wire;
+        assert_eq!(token_for('\x1b'), Some("esc"));
+        assert_eq!(token_for(wire::KEY_ARROW_UP), Some("up"));
+        assert_eq!(token_for(wire::KEY_ARROW_DOWN), Some("down"));
+        assert_eq!(token_for(wire::KEY_ARROW_RIGHT), Some("right"));
+        assert_eq!(token_for(wire::KEY_ARROW_LEFT), Some("left"));
     }
 }

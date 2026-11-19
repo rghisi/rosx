@@ -1,0 +1,26 @@
+[package]
+authors = ["Ricardo Ghisi Tobaldini <rghisi@gmail.com>"]
+name = "ted"
+publish = false
+version = "0.1.0"
+edition.workspace = true
+
+[lib]
+name = "ted"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ted"
+bench = false
+test = false
+
+[dependencies]
+input-protocol = { path = "../../protocol/input" }
+usrlib = { path = "../../usrlib" }
+vfs-protocol = { path = "../../protocol/vfs" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+usrlib = { path = "../../usrlib", features = ["runtime"] }
+
+[lints]
+workspace = true

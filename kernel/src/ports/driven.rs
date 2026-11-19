@@ -13,6 +13,7 @@ pub(crate) trait ForNotifyingFutures: Send + Sync {
     fn register(&self, future: Box<dyn Future + Send + Sync>, owner: FutureOwner) -> Option<FutureHandle>;
     fn notify(&self, handle: FutureHandle);
     fn complete_ipc_message(&self, handle: FutureHandle, message: Message);
+    fn abandon(&self, handle: FutureHandle);
     fn is_live(&self, handle: FutureHandle) -> bool;
 }
 

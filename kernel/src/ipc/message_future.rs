@@ -2,24 +2,26 @@ use alloc::boxed::Box;
 use core::any::Any;
 use crate::future::Future;
 use crate::ipc::errors::IpcReceiveError;
+use crate::task::TaskHandle;
 use system::ipc::Message;
 
 pub(crate) struct IpcMessageFuture {
     message: Option<Message>,
     error: Option<IpcReceiveError>,
+    owner: TaskHandle,
 }
 
 impl IpcMessageFuture {
-    pub(crate) fn new() -> Self {
-        Self { message: None, error: None }
+    pub(crate) fn owned_by(owner: TaskHandle) -> Self {
+        Self { message: None, error: None, owner }
     }
 
-    pub(crate) fn with_message(message: Message) -> Self {
-        Self { message: Some(message), error: None }
+    pub(crate) fn with_message(owner: TaskHandle, message: Message) -> Self {
+        Self { message: Some(message), error: None, owner }
     }
 
-    pub(crate) fn with_error(error: IpcReceiveError) -> Self {
-        Self { message: None, error: Some(error) }
+    pub(crate) fn with_error(owner: TaskHandle, error: IpcReceiveError) -> Self {
+        Self { message: None, error: Some(error), owner }
     }
 
     pub(crate) fn complete(&mut self, message: Message) {
@@ -37,6 +39,10 @@ impl IpcMessageFuture {
 impl Future for IpcMessageFuture {
     fn is_completed(&self) -> bool {
         self.message.is_some() || self.error.is_some()
+    }
+
+    fn owner(&self) -> TaskHandle {
+        self.owner
     }
 
     fn as_any(&self) -> &dyn Any {

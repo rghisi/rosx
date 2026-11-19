@@ -35,6 +35,7 @@ members = [
     "apps/snake",
     "apps/tetris",
     "apps/conway",
+    "apps/ted",
     "apps/stress",
     "apps/fsbench",
     "apps/bench",

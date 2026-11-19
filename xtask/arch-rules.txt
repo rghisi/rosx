@@ -55,7 +55,8 @@ snake: system usrlib
 spinner: system usrlib
 stress: system usrlib
 system:
-tests-integration: libc rxpart tempfile x86-runner
+ted: input-protocol usrlib vfs-protocol
+tests-integration: input-protocol libc rxpart tempfile x86-runner
 tetris: system usrlib
 threads: system usrlib
 usrlib: input-protocol system

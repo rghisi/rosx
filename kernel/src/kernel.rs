@@ -225,7 +225,8 @@ impl Kernel {
     }
 
     pub fn sleep(&mut self, millis: u64, owner: FutureOwner) -> Result<(), ()> {
-        let future = Box::new(TimeFuture::new());
+        let sleeper = self.execution_state.current_task();
+        let future = Box::new(TimeFuture::owned_by(sleeper));
         let Some(handle) = services().future_registry.borrow_mut().register(future, owner) else {
             return Err(());
         };
@@ -312,15 +313,18 @@ impl Kernel {
         self.execution_state.preemption_enabled = false;
         if let Some(task_handle) = self.execution_state.current_task.take() {
             let group = services().task_manager.borrow().get_group(task_handle);
-            if let Some(completion_handle) =
-                services().task_manager.borrow().get_completion_future(task_handle)
-            {
+            let completion = services()
+                .task_manager
+                .borrow()
+                .get_completion_future(task_handle);
+            if let Some(completion_handle) = completion {
                 services().future_registry.borrow_mut().notify_with_status(completion_handle, status);
             }
             services()
                 .task_manager
                 .borrow_mut()
                 .set_state(task_handle, Terminated);
+            self.reap_task_resources(task_handle, completion);
             crate::platform::portio::revoke(task_handle);
             if let Some(group) = group {
                 if !services().task_manager.borrow().group_has_live_members(group) {
@@ -332,6 +336,23 @@ impl Kernel {
         }
         self.execution_state.switch_to_scheduler();
         unreachable!()
+    }
+
+    pub(crate) fn reap_task_resources(
+        &mut self,
+        task: TaskHandle,
+        spare_completion: Option<FutureHandle>,
+    ) {
+        services().future_registry.borrow_mut().discard_waiter(task);
+        services().ipc_manager.borrow_mut().close_connections_of(task);
+        let orphaned = services()
+            .future_registry
+            .borrow_mut()
+            .discard_owned(task, spare_completion);
+        if !orphaned.is_empty() {
+            services().ipc_manager.borrow_mut().discard_parked_futures(&orphaned);
+            services().timer_manager.borrow_mut().discard_futures(&orphaned);
+        }
     }
 
     pub(crate) fn kill_task(&mut self, completion: FutureHandle) -> Result<(), KillError> {
@@ -355,7 +376,7 @@ impl Kernel {
             .borrow_mut()
             .notify_with_status(completion, system::exit::interrupted_status());
         services().task_manager.borrow_mut().set_state(owner, Terminated);
-        services().future_registry.borrow_mut().discard_waiter(owner);
+        self.reap_task_resources(owner, Some(completion));
         crate::platform::portio::revoke(owner);
         let group = services().task_manager.borrow().get_group(owner);
         if let Some(group) = group {
@@ -593,7 +614,7 @@ mod tests {
         let gate = services()
             .future_registry
             .borrow_mut()
-            .register(Box::new(TimeFuture::new()), FutureOwner::Kernel)
+            .register(Box::new(TimeFuture::owned_by(crate::task::TaskHandle::new(u16::MAX, 0))), FutureOwner::Kernel)
             .expect("register gate future");
         services()
             .future_registry
@@ -650,7 +671,7 @@ mod tests {
         let foreign = services()
             .future_registry
             .borrow_mut()
-            .register(Box::new(TimeFuture::new()), FutureOwner::Kernel)
+            .register(Box::new(TimeFuture::owned_by(crate::task::TaskHandle::new(u16::MAX, 0))), FutureOwner::Kernel)
             .expect("register foreign future");
 
         assert_eq!(
@@ -711,12 +732,147 @@ mod tests {
         *KERNEL_PTR.borrow_mut() = null_mut();
     }
 
+    #[test]
+    fn kill_discards_the_owners_other_futures_and_spares_the_completion() {
+        install_kill_stage();
+        let (victim, completion) = spawn_paired("[T] kill-swept");
+        let sleeper = services()
+            .future_registry
+            .borrow_mut()
+            .register(Box::new(TimeFuture::owned_by(victim)), FutureOwner::Kernel)
+            .expect("register the victim's sleep future");
+
+        assert_eq!(kernel().kill_task(completion), Ok(()));
+
+        assert_eq!(services().future_registry.borrow_mut().get(sleeper), None);
+        assert_eq!(completion_status(completion), system::exit::interrupted_status());
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn kill_closes_the_victims_ipc_connections() {
+        install_kill_stage();
+        services()
+            .ipc_manager
+            .borrow_mut()
+            .bind_service("KILL-IPC")
+            .expect("bind the kill-ipc service");
+        let (victim, completion) = spawn_paired("[T] kill-ipc");
+        let connection = services()
+            .ipc_manager
+            .borrow_mut()
+            .connect("KILL-IPC", victim)
+            .expect("victim connects");
+        let server = add_created_task("[T] kill-ipc-server");
+
+        assert_eq!(kernel().kill_task(completion), Ok(()));
+
+        assert_eq!(
+            services().ipc_manager.borrow_mut().send_message(
+                server,
+                &system::ipc::Message::new(
+                    connection.pack() as u32,
+                    &[0u8; system::ipc::MESSAGE_PAYLOAD_BYTES]
+                )
+            ),
+            Err(crate::ipc::errors::IpcSendError::ConnectionNotFound)
+        );
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn kill_abandons_the_parked_receive_on_the_victims_connection() {
+        install_kill_stage();
+        services()
+            .ipc_manager
+            .borrow_mut()
+            .bind_service("KILL-PARK")
+            .expect("bind the kill-park service");
+        let (victim, completion) = spawn_paired("[T] kill-park");
+        let connection = services()
+            .ipc_manager
+            .borrow_mut()
+            .connect("KILL-PARK", victim)
+            .expect("victim connects");
+        let parked = services()
+            .ipc_manager
+            .borrow_mut()
+            .receive_message_async(connection, FutureOwner::Kernel, victim)
+            .unwrap();
+        assert_eq!(
+            services().future_registry.borrow_mut().get(parked),
+            Some(false)
+        );
+
+        assert_eq!(kernel().kill_task(completion), Ok(()));
+
+        assert_eq!(services().future_registry.borrow_mut().get(parked), None);
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn the_reap_clears_connections_futures_and_timer_entries_alike() {
+        install_kill_stage();
+        services()
+            .ipc_manager
+            .borrow_mut()
+            .bind_service("REAP-BODY")
+            .expect("bind the reap-body service");
+        let (victim, completion) = spawn_paired("[T] reap-body");
+        let connection = services()
+            .ipc_manager
+            .borrow_mut()
+            .connect("REAP-BODY", victim)
+            .expect("victim connects");
+        let parked = services()
+            .ipc_manager
+            .borrow_mut()
+            .receive_message_async(connection, FutureOwner::Kernel, victim)
+            .unwrap();
+        let sleeper = services()
+            .future_registry
+            .borrow_mut()
+            .register(Box::new(TimeFuture::owned_by(victim)), FutureOwner::Kernel)
+            .expect("register the victim's sleep future");
+        services()
+            .timer_manager
+            .borrow_mut()
+            .add_sleep(0, 10_000, sleeper);
+        let server = add_created_task("[T] reap-body-server");
+
+        services()
+            .task_manager
+            .borrow_mut()
+            .set_state(victim, crate::task::TaskState::Terminated);
+        kernel().reap_task_resources(victim, Some(completion));
+
+        assert_eq!(services().future_registry.borrow_mut().get(parked), None);
+        assert_eq!(services().future_registry.borrow_mut().get(sleeper), None);
+        assert_eq!(completion_status(completion), system::exit::clean_status(0).unwrap());
+        assert_eq!(
+            services().ipc_manager.borrow_mut().send_message(
+                server,
+                &system::ipc::Message::new(
+                    connection.pack() as u32,
+                    &[0u8; system::ipc::MESSAGE_PAYLOAD_BYTES]
+                )
+            ),
+            Err(crate::ipc::errors::IpcSendError::ConnectionNotFound)
+        );
+        assert!(!services()
+            .timer_manager
+            .borrow_mut()
+            .pop_expired(20_000)
+            .is_some_and(|expired| expired.contains(&sleeper)));
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
     fn exhaust_future_registry() -> Vec<FutureHandle> {
         let mut fillers = Vec::new();
         while let Some(handle) = services()
             .future_registry
             .borrow_mut()
-            .register(Box::new(TimeFuture::new()), FutureOwner::Kernel)
+            .register(Box::new(TimeFuture::owned_by(crate::task::TaskHandle::new(u16::MAX, 0))), FutureOwner::Kernel)
         {
             fillers.push(handle);
         }
@@ -733,7 +889,8 @@ mod tests {
     fn sleep_reports_exhaustion_instead_of_panicking() {
         crate::kernel_services::init();
         let scheduler = add_created_task("[T] exhausted-sleep-scheduler");
-        install_stub_kernel(scheduler, None, false, false);
+        let sleeper = add_created_task("[T] exhausted-sleeper");
+        install_stub_kernel(scheduler, Some(sleeper), false, false);
         let fillers = exhaust_future_registry();
         assert_eq!(kernel().sleep(1, FutureOwner::Kernel), Err(()));
         release_future_registry(fillers);
@@ -772,7 +929,7 @@ mod tests {
         let abandoned = services()
             .future_registry
             .borrow_mut()
-            .register(Box::new(TimeFuture::new()), FutureOwner::Group(dying_group))
+            .register(Box::new(TimeFuture::owned_by(crate::task::TaskHandle::new(u16::MAX, 0))), FutureOwner::Group(dying_group))
             .unwrap();
         let report_to_parent = services()
             .future_registry
