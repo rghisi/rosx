@@ -10,7 +10,7 @@
 - Long architecture prose moves to `docs/architecture/<subsystem>.md`; `AGENTS.md` keeps one-line invariants and an index.
 - "No comments" becomes **"no comments except linked rationale doc comments"** (decided 2026-11-19, refining the earlier baseline-only decision): a `///` or `//!` doc comment is allowed only on an item that contains `unsafe`/`asm!`/`global_asm!` (or is an `unsafe fn`/`unsafe impl`), must link a rationale document under `docs/rationale/`, and must be short. Everything else, including every non-doc `//` and `/* */`, is banned. Comments that exist today are frozen in a baseline that only shrinks.
 - The agent commits and pushes to its working branch autonomously when the gate is green. PR creation stays a manual (user-requested) act.
-- The audit findings are recorded as the first entries of `docs/decisions.md`.
+- The audit findings are recorded as the first records in `docs/decisions/`.
 
 ---
 
@@ -32,18 +32,20 @@
 - `AGENTS.md` ≤ ~12 KB: orientation, build/test commands, the `xtask check` contract, the invariant index, the autonomy rule, the decision-log rule.
 - `docs/architecture/*.md`: the moved subsystem prose, trimmed of history, one file per subsystem.
 - `cargo xtask check`: the single gate, identical locally, in the agent stop-hook and in CI.
-- `docs/decisions.md`: the append-only decision/deferral backlog (merges `docs/todo.md`).
+- `docs/decisions/`: one file per decision or deferral, descriptively named (replaces `docs/todo.md`).
 - `CLAUDE.md`, `GEMINI.md` and `.opencode` instructions all defer to `AGENTS.md`; no divergent workflow rules.
 
 ## 3. Execution order
 
 Gates first, so the shortened prose is backed by enforcement before any rule text is deleted. Each step is one commit with no message prefix; the gate must be green before the commit (from step 1 onward).
 
-### Step 0 — Decision log bootstrap
-- Create `docs/decisions.md` with the entry format below and seed it with: the five approvals above (including the rationale-comment rule), the findings in §1 as context, and the items from `docs/todo.md`.
-- Keep `docs/todo.md` as a stub pointing at `decisions.md` until step 9 removes it.
-- Entry format: `## D<n> — <title>` then `Date`, `Status` (open | decided | superseded), `Question`, `Chosen`, `Alternatives`, `Revisit when`.
-- **Done when:** the file exists, entries D1–D4 recorded, todo items migrated with unchanged substance.
+### Step 0 — Decision records bootstrap
+- Create `docs/decisions/` with `README.md` (convention only, no hand-maintained index) and one file per record. Filenames are descriptive kebab-case slugs, no numeric ids, so `ls` and `grep -l` are the search tools: e.g. `rationale-doc-comments-on-unsafe-items.md`, `architecture-prose-moves-to-docs-architecture.md`, `agent-commits-and-pushes-autonomously.md`, `compile-fail-probes-inside-cargo-test.md`, `arch-tests-via-xtask-before-rust-arkitect.md`, `benchkit-shared-benchmark-windows.md`.
+- Each file starts with a front-matter block: `status: open | decided | superseded`, `date: YYYY-MM-DD`, `revisit-when: <trigger or none>`, optional `supersedes: <filename>`; then the sections `Question`, `Chosen`, `Alternatives`, `Consequences`.
+- Seed records: the five approvals above (including the rationale-comment rule), the §1 findings as context, and each item of `docs/todo.md` as its own file with unchanged substance.
+- Keep `docs/todo.md` as a stub pointing at `docs/decisions/` until step 9 removes it.
+- `check-style` (step 3) also validates `docs/decisions/*.md`: kebab-case filename, well-formed front matter, a valid status, and that every `supersedes` target exists. Open records are listed by `cargo xtask decisions` (filters on `status: open`), so deferred items surface in the next review round without a manual index.
+- **Done when:** the directory exists with the seed records, todo items migrated, and the validation passes.
 
 ### Step 1 — `cargo xtask check` skeleton
 - Add `check` to `xtask/src/main.rs` (`usage()` text included). It runs, in order, failing fast with a named stage: `check-style`, `check-arch`, `check-isa` (x86_32), warnings-as-errors build of host surfaces, `run_tests(skip_integration = true)`.
@@ -69,13 +71,13 @@ Gates first, so the shortened prose is backed by enforcement before any rule tex
   3. **`unsafe` count:** per-crate count baselined (kernel has ~289 occurrences today); an increase fails and requires an explicit baseline bump in the same commit (a recorded decision, see §5).
   4. **32-bit hazards:** `f32`/`f64` tokens and `AtomicU64`/`AtomicI64` in `kernel`, `usrlib`, `apps`, `arch/x86_32`, `arch/x86-generic`, except under `cfg(target_pointer_width = "64")`-gated items; baseline any current hits after reviewing each.
 - `*.S` / `global_asm!` bodies are exempt from the comment rule (assembly must be commented).
-- Provide `cargo xtask check-style --update-baseline`, which refuses to raise any count unless `--allow-increase "<reason>"` is given; the reason is appended to `docs/decisions.md` automatically.
+- Provide `cargo xtask check-style --update-baseline`, which refuses to raise any count unless `--allow-increase "<reason>"` is given; the reason is written automatically as a new record in `docs/decisions/` (`gate-baseline-<gate>-raised-<date>.md`).
 - Unit-test the tokenizer, item attachment (doc comment → following item, containment of `unsafe`/`asm!`), link resolution, line cap, orphan detection and baseline comparison with fixtures.
 - **Done when:** a new `// foo` fails the gate; a `///` on a safe item fails; a `///` on an unsafe-bearing item without a valid `docs/rationale/` link fails; the same comment with a valid link passes; an unreferenced rationale file fails; the baseline reflects today's tree exactly.
 
 ### Step 3b — Rationale documents convention
 - Create `docs/rationale/README.md` defining the template: one file per low-level concern (e.g. `x86_32-context-switch.md`, `once-spinlock-ordering.md`), each with `Why this is hard`, `Invariants relied on`, `What breaks if changed`, `Evidence` (test, plan, or hardware note), and `Status`.
-- Rationale documents are distinct from `docs/decisions.md`: decisions record choices and deferrals; rationale records why one piece of low-level code is shaped the way it is. A rationale file may cite decision entries, never the reverse requirement.
+- Rationale documents are distinct from `docs/decisions/`: decisions record choices and deferrals; rationale records why one piece of low-level code is shaped the way it is. A rationale file may cite decision entries, never the reverse requirement.
 - Convert the three or four densest baselined comment clusters (`arch/x86_32/src/cpu.rs`, `arch/x86_32/src/interrupts.rs`, `kernel/src/once.rs`) as the worked examples, extracting wrappers where the comment sat inside a body; this validates the rule on real code before it is documented as policy.
 - **Done when:** the examples pass `check-style` with their baseline entries removed, and the README template exists.
 
@@ -98,7 +100,7 @@ Gates first, so the shortened prose is backed by enforcement before any rule tex
 - Create `docs/architecture/` with one file per subsystem, text moved verbatim then trimmed of history in the same commit pair (move commit first so the diff is reviewable, trim commit second):
   `scheduling-and-interrupts.md`, `ipc-and-futures.md`, `exit-status-and-ownership.md`, `memory.md`, `boot-plan.md`, `disk-and-blockd.md`, `network-and-ip.md`, `vfs.md`, `fs-engines.md`, `kstatsd-and-rom.md`, `input.md`, `real-hardware-x86_32.md` (the seven-item checklist; cross-link `arch/x86-86box/README.md`).
 - Each file begins with the invariants that would silently break if violated, followed by rationale.
-- Do not edit meaning; verify moved facts against code while trimming, and record any discrepancy found as a `docs/decisions.md` entry rather than silently fixing prose or code.
+- Do not edit meaning; verify moved facts against code while trimming, and record any discrepancy found as a `docs/decisions/` record rather than silently fixing prose or code.
 - **Done when:** every paragraph removed from `AGENTS.md` exists in exactly one architecture file.
 
 ### Step 8 — Rewrite `AGENTS.md`
@@ -116,7 +118,7 @@ Remove: the directory tree, the boot-plan listing, the xtask command list, dupli
 
 ### Step 9 — Single instruction source and cleanup
 - `GEMINI.md`: replace the "always check with me before making changes" lines with `@AGENTS.md` only.
-- `.opencode/` agent and command prompts: review each for ask-before-change rules that contradict §4 and either remove them or point at `AGENTS.md`. Record anything that cannot be reconciled in `docs/decisions.md`.
+- `.opencode/` agent and command prompts: review each for ask-before-change rules that contradict §4 and either remove them or point at `AGENTS.md`. Record anything that cannot be reconciled in `docs/decisions/`.
 - Delete the `docs/todo.md` stub; update README links if any point to it.
 - **Done when:** a grep for "check with me", "ask for feedback", "wait for user feedback" over instruction files returns nothing.
 
@@ -130,8 +132,8 @@ Remove: the directory tree, the boot-plan listing, the xtask command list, dupli
 - The agent proceeds without asking whenever a choice is covered by a written invariant, a gate, or an existing pattern in the repo.
 - The agent commits per small, reviewable step when `cargo xtask check` is green, with no message prefix, and pushes to its working branch. It does not create PRs unless asked.
 - The agent stops and asks only for: breaking an invariant or the architecture principles, new third-party dependencies (kernel allows none), ABI/wire changes in `system` or `protocol/*`, widening the 486 feature floor, claims requiring hardware evidence, deleting user data or history, and anything outward-facing beyond its branch.
-- Any decision that is not needed now is appended to `docs/decisions.md` with status `open` and a `Revisit when` trigger, then work continues on the chosen default.
-- Raising a gate baseline (comments, `unsafe`, allow-lists) requires a `docs/decisions.md` entry in the same commit.
+- Any decision that is not needed now is written as a new file in `docs/decisions/` with a descriptive filename, `status: open` and a `revisit-when` trigger, then work continues on the chosen default.
+- Raising a gate baseline (comments, `unsafe`, allow-lists) requires a `docs/decisions/` record in the same commit.
 - Gate failures are fixed at the cause; never skip, loosen or quarantine a gate to get green.
 
 ## 5. Risks and mitigations
@@ -155,5 +157,5 @@ Remove: the directory tree, the boot-plan listing, the xtask command list, dupli
 
 1. `cargo xtask check` is green on the tree and red on each of: new `//` comment, unlinked or over-long doc comment, doc comment on a safe item, orphaned rationale file, new `#[allow]`, new dependency on `system`, widened 486 feature string, interchangeable handle kinds.
 2. `AGENTS.md` ≤ ~12 KB, no content lost (every removed paragraph lives in `docs/architecture/`).
-3. No instruction file asks the agent to wait for approval; `docs/decisions.md` exists with the findings and migrated backlog.
+3. No instruction file asks the agent to wait for approval; `docs/decisions/` exists with the findings and migrated backlog, and `cargo xtask decisions` lists the open ones.
 4. CI runs the same `cargo xtask check` the agent hook runs.
