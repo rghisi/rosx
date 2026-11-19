@@ -80,6 +80,7 @@ Each line links the file holding the detail; every file starts with its own inva
 - Commit per small, reviewable step when `cargo xtask check` is green, with no message prefix, and push to the working branch. Never create a PR unless asked.
 - Stop and ask only for: breaking an invariant or the architecture principles; new third-party dependencies; ABI or wire changes in `system` or `protocol/*`; widening the 486 feature floor; claims that need hardware evidence; deleting user data or history; anything outward-facing beyond the working branch.
 - Gate failures are fixed at the cause; never skip, loosen or quarantine a gate to get green.
+- PR descriptions follow `.github/pull_request_template.md`; creating the PR stays a manual, user-requested act.
 
 ## Decision log
 
