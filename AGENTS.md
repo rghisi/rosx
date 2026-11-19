@@ -20,6 +20,7 @@ cargo xtask build [x86_64|x86_32]    # apps + ROM + kernel + boot artifacts (FAT
 cargo xtask run [x86_64|x86_32]      # boot QEMU to the shell prompt
 cargo xtask test [--skip-integration]
 cargo xtask decisions                # open decisions and every todo, by priority
+cargo xtask install-hooks            # git pre-commit hook running the gate (the Claude Stop hook in .claude/settings.json runs it too)
 ```
 
 - `cargo xtask help` lists every subcommand; CI recipes are in `.github/workflows/ci.yml` and `build-artifacts.yml`.

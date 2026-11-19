@@ -320,6 +320,12 @@ fn check_style_command(extras: &[String]) {
     }
 }
 
+fn install_hooks_command() {
+    let mut cmd = Command::new("git");
+    cmd.args(["config", "core.hooksPath", ".githooks"]).current_dir(workspace_root());
+    run(&mut cmd, "point core.hooksPath at .githooks");
+}
+
 fn decisions_command() {
     match records::list_open(&workspace_root().join("docs")) {
         Ok(lines) => lines.iter().for_each(|line| println!("{line}")),
@@ -437,7 +443,7 @@ fn parse_stages_option(extras: &[String]) -> Result<Option<std::path::PathBuf>, 
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | check-isa bootloader | check-arch | check-style [--update-baseline [--allow-increase <reason>]] | decisions | check | test [--skip-integration] | boot-image [32|64|floppy] | boot-test>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | check-isa bootloader | check-arch | check-style [--update-baseline [--allow-increase <reason>]] | decisions | install-hooks | check | test [--skip-integration] | boot-image [32|64|floppy] | boot-test>"
     );
 }
 
@@ -553,6 +559,10 @@ fn main() {
             run_tests(skip_integration);
         }
         "check-style" => check_style_command(extras),
+        "install-hooks" => {
+            require_no_extras(extras);
+            install_hooks_command();
+        }
         "decisions" => {
             require_no_extras(extras);
             decisions_command();
