@@ -160,3 +160,9 @@ memory group). A killed task additionally leaves behind:
 A `Kill`-aware resource sweep — futures GC'd by owner, connection teardown
 notices to services — is the natural next plan, shared with the `ipc-volume-
 wedge` hygiene work.
+
+**Resolved by `plans/kill-resource-sweep.md`** (evidence log
+`plans/kill-resource-sweep-impl.md`): one reap runs on every death path, futures
+are GC'd by owner, connections close and data refunds follow the dead task, and
+items 1–3 above are closed — services learn of a dead peer through failed sends,
+not a notice opcode.
