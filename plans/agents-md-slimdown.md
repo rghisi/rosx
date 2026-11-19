@@ -32,7 +32,9 @@
 - `AGENTS.md` ≤ ~12 KB: orientation, build/test commands, the `xtask check` contract, the invariant index, the autonomy rule, the decision-log rule.
 - `docs/architecture/*.md`: the moved subsystem prose, trimmed of history, one file per subsystem.
 - `cargo xtask check`: the single gate, identical locally, in the agent stop-hook and in CI.
-- `docs/decisions/`: one file per decision or deferral, descriptively named (replaces `docs/todo.md`).
+- `docs/decisions/`: one file per decision or deliberate deferral, descriptively named; permanent history.
+- `docs/todo/`: one file per pending work or investigation item, descriptively named; deleted when the work lands (replaces `docs/todo.md`).
+- Placement rule: a choice made or consciously postponed with a revisit trigger → `docs/decisions/`; work or investigation still to do → `docs/todo/`. A todo that depends on an open decision links it by filename.
 - `CLAUDE.md`, `GEMINI.md` and `.opencode` instructions all defer to `AGENTS.md`; no divergent workflow rules.
 
 ## 3. Execution order
@@ -40,11 +42,12 @@
 Gates first, so the shortened prose is backed by enforcement before any rule text is deleted. Each step is one commit with no message prefix; the gate must be green before the commit (from step 1 onward).
 
 ### Step 0 — Decision records bootstrap
-- Create `docs/decisions/` with `README.md` (convention only, no hand-maintained index) and one file per record. Filenames are descriptive kebab-case slugs, no numeric ids, so `ls` and `grep -l` are the search tools: e.g. `rationale-doc-comments-on-unsafe-items.md`, `architecture-prose-moves-to-docs-architecture.md`, `agent-commits-and-pushes-autonomously.md`, `compile-fail-probes-inside-cargo-test.md`, `arch-tests-via-xtask-before-rust-arkitect.md`, `benchkit-shared-benchmark-windows.md`.
+- Create `docs/decisions/` with `README.md` (convention only, no hand-maintained index) and one file per record. Filenames are descriptive kebab-case slugs, no numeric ids, so `ls` and `grep -l` are the search tools: e.g. `rationale-doc-comments-on-unsafe-items.md`, `architecture-prose-moves-to-docs-architecture.md`, `agent-commits-and-pushes-autonomously.md`, `compile-fail-probes-inside-cargo-test.md`, `arch-tests-via-xtask-before-rust-arkitect.md`.
 - Each file starts with a front-matter block: `status: open | decided | superseded`, `date: YYYY-MM-DD`, `revisit-when: <trigger or none>`, optional `supersedes: <filename>`; then the sections `Question`, `Chosen`, `Alternatives`, `Consequences`.
-- Seed records: the five approvals above (including the rationale-comment rule), the §1 findings as context, and each item of `docs/todo.md` as its own file with unchanged substance.
-- Keep `docs/todo.md` as a stub pointing at `docs/decisions/` until step 9 removes it.
-- `check-style` (step 3) also validates `docs/decisions/*.md`: kebab-case filename, well-formed front matter, a valid status, and that every `supersedes` target exists. Open records are listed by `cargo xtask decisions` (filters on `status: open`), so deferred items surface in the next review round without a manual index.
+- Seed records: the five approvals above (including the rationale-comment rule) and the §1 findings as context.
+- Migrate `docs/todo.md` with unchanged substance: item 1 (compile-fail probes in `cargo test`) is covered by step 5 and is recorded as a decision pointing at it; item 2 (`rust_arkitect`) becomes a decision record with `status: open` and its revisit trigger (module-level decay inside `kernel/`); item 3 (benchkit shared windows) becomes `docs/todo/benchkit-shared-benchmark-windows.md`. Any further items found in `docs/todo.md` are classified by the placement rule.
+- Keep `docs/todo.md` as a stub pointing at both directories until step 9 removes it.
+- `check-style` (step 3) also validates `docs/decisions/*.md`: kebab-case filename, well-formed front matter, a valid status, and that every `supersedes` target exists; and `docs/todo/*.md`: kebab-case filename, front matter with `priority: high | normal | low`, `date` and `trigger: <condition or none>`, and that any linked decision file exists. Open records are listed by `cargo xtask decisions` (open decision records plus every todo, grouped by priority), so deferred items surface in the next review round without a manual index.
 - **Done when:** the directory exists with the seed records, todo items migrated, and the validation passes.
 
 ### Step 1 — `cargo xtask check` skeleton
@@ -119,7 +122,7 @@ Remove: the directory tree, the boot-plan listing, the xtask command list, dupli
 ### Step 9 — Single instruction source and cleanup
 - `GEMINI.md`: replace the "always check with me before making changes" lines with `@AGENTS.md` only.
 - `.opencode/` agent and command prompts: review each for ask-before-change rules that contradict §4 and either remove them or point at `AGENTS.md`. Record anything that cannot be reconciled in `docs/decisions/`.
-- Delete the `docs/todo.md` stub; update README links if any point to it.
+- Delete the `docs/todo.md` stub (everything already migrated in step 0); update README links if any point to it.
 - **Done when:** a grep for "check with me", "ask for feedback", "wait for user feedback" over instruction files returns nothing.
 
 ### Step 10 — Agent-side gate via hook
@@ -132,7 +135,7 @@ Remove: the directory tree, the boot-plan listing, the xtask command list, dupli
 - The agent proceeds without asking whenever a choice is covered by a written invariant, a gate, or an existing pattern in the repo.
 - The agent commits per small, reviewable step when `cargo xtask check` is green, with no message prefix, and pushes to its working branch. It does not create PRs unless asked.
 - The agent stops and asks only for: breaking an invariant or the architecture principles, new third-party dependencies (kernel allows none), ABI/wire changes in `system` or `protocol/*`, widening the 486 feature floor, claims requiring hardware evidence, deleting user data or history, and anything outward-facing beyond its branch.
-- Any decision that is not needed now is written as a new file in `docs/decisions/` with a descriptive filename, `status: open` and a `revisit-when` trigger, then work continues on the chosen default.
+- Any decision that is not needed now is written as a new file in `docs/decisions/` with a descriptive filename, `status: open` and a `revisit-when` trigger, then work continues on the chosen default. Work noticed but out of the current step's scope is written as a file in `docs/todo/` instead, and the agent deletes the todo file in the commit that completes it.
 - Raising a gate baseline (comments, `unsafe`, allow-lists) requires a `docs/decisions/` record in the same commit.
 - Gate failures are fixed at the cause; never skip, loosen or quarantine a gate to get green.
 
@@ -157,5 +160,5 @@ Remove: the directory tree, the boot-plan listing, the xtask command list, dupli
 
 1. `cargo xtask check` is green on the tree and red on each of: new `//` comment, unlinked or over-long doc comment, doc comment on a safe item, orphaned rationale file, new `#[allow]`, new dependency on `system`, widened 486 feature string, interchangeable handle kinds.
 2. `AGENTS.md` ≤ ~12 KB, no content lost (every removed paragraph lives in `docs/architecture/`).
-3. No instruction file asks the agent to wait for approval; `docs/decisions/` exists with the findings and migrated backlog, and `cargo xtask decisions` lists the open ones.
+3. No instruction file asks the agent to wait for approval; `docs/decisions/` exists with the findings and migrated backlog, and `docs/todo/` holds the pending work, and `cargo xtask decisions` lists the open decisions and todos.
 4. CI runs the same `cargo xtask check` the agent hook runs.
