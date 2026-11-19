@@ -142,7 +142,7 @@ impl Scheduler {
         self.algorithm.should_preempt()
     }
 
-    fn handle_termination(&mut self, handle: TaskHandle) {
+    pub(crate) fn handle_termination(&mut self, handle: TaskHandle) {
         if self.idle_task == Some(handle) {
             self.idle_task = None;
         }

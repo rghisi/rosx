@@ -50,8 +50,9 @@ rosx-x86_32: ata-protocol block-protocol input-protocol kernel pci-protocol spin
 rxfat: fs-core
 rxfs: fs-core
 rxpart:
-shell: system usrlib vfs-protocol
+shell: input-protocol system usrlib vfs-protocol
 snake: system usrlib
+spinner: system usrlib
 stress: system usrlib
 system:
 tests-integration: libc rxpart tempfile x86-runner

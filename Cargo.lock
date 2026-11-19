@@ -847,6 +847,7 @@ dependencies = [
 name = "shell"
 version = "0.1.0"
 dependencies = [
+ "input-protocol",
  "system",
  "usrlib",
  "vfs-protocol",
@@ -873,6 +874,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
 dependencies = [
  "lock_api",
+]
+
+[[package]]
+name = "spinner"
+version = "0.1.0"
+dependencies = [
+ "system",
+ "usrlib",
 ]
 
 [[package]]
