@@ -4,6 +4,7 @@
 extern crate alloc;
 
 pub mod args;
+pub mod boot_disk;
 pub mod boot_info;
 #[cfg(feature = "alloc")]
 pub mod boot_plan;
