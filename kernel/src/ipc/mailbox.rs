@@ -26,4 +26,8 @@ impl Mailbox {
     pub fn pop_front(&mut self) -> Option<Message> {
         self.queue.pop_front()
     }
+
+    pub fn peek_front(&self) -> Option<Message> {
+        self.queue.front().copied()
+    }
 }

@@ -5,6 +5,7 @@ use alloc::vec::Vec;
 use crate::collections::arena::GenerationalArena;
 #[cfg(test)]
 use crate::future::Future;
+use crate::future::FutureOwner;
 use crate::handle::{FutureHandle, IpcBindingHandle, IpcConnectionHandle, IpcDataHandle};
 use crate::ipc::data_manager::IpcDataManager;
 use crate::ipc::errors::{DataError, DeliverError, IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError};
@@ -18,7 +19,11 @@ use crate::task::TaskHandle;
 struct NoopIpcNotifier;
 #[cfg(test)]
 impl ForNotifyingFutures for NoopIpcNotifier {
-    fn register(&self, _future: Box<dyn Future + Send + Sync>) -> Option<FutureHandle> {
+    fn register(
+        &self,
+        _future: Box<dyn Future + Send + Sync>,
+        _owner: FutureOwner,
+    ) -> Option<FutureHandle> {
         None
     }
     fn notify(&self, _handle: FutureHandle) {}
@@ -172,24 +177,36 @@ impl IpcManager {
         self.mailbox_manager.push_back(destination, *envelope)
     }
 
-    pub(crate) fn accept_message_async(&mut self, server_binding_handle: IpcBindingHandle, caller: TaskHandle) -> FutureHandle {
+    pub(crate) fn accept_message_async(
+        &mut self,
+        server_binding_handle: IpcBindingHandle,
+        owner: FutureOwner,
+        caller: TaskHandle,
+    ) -> Option<FutureHandle> {
         if let Ok(server_binding) = self.bindings.borrow(server_binding_handle.into()) {
             let server_mailbox_handle = server_binding.mailbox_handle;
-            self.mailbox_manager.pop_front_async(server_mailbox_handle, caller)
+            self.mailbox_manager.pop_front_async(server_mailbox_handle, owner, caller)
         } else {
-            self.notifier
-                .register(Box::new(IpcMessageFuture::with_error(caller, IpcReceiveError::ConnectionNotFound)))
-                .unwrap()
+            self.notifier.register(
+                Box::new(IpcMessageFuture::with_error(caller, IpcReceiveError::ConnectionNotFound)),
+                owner,
+            )
         }
     }
 
-    pub(crate) fn receive_message_async(&mut self, connection_handle: IpcConnectionHandle, caller: TaskHandle) -> FutureHandle {
+    pub(crate) fn receive_message_async(
+        &mut self,
+        connection_handle: IpcConnectionHandle,
+        owner: FutureOwner,
+        caller: TaskHandle,
+    ) -> Option<FutureHandle> {
         if let Ok(connection) = self.connections.borrow(connection_handle.into()) {
-            self.mailbox_manager.pop_front_async(connection.client_mailbox, caller)
+            self.mailbox_manager.pop_front_async(connection.client_mailbox, owner, caller)
         } else {
-            self.notifier
-                .register(Box::new(IpcMessageFuture::with_error(caller, IpcReceiveError::ConnectionNotFound)))
-                .unwrap()
+            self.notifier.register(
+                Box::new(IpcMessageFuture::with_error(caller, IpcReceiveError::ConnectionNotFound)),
+                owner,
+            )
         }
     }
 
@@ -298,7 +315,7 @@ mod tests {
         let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = core::array::from_fn(|i| (i * 7 + 3) as u8);
         assert_eq!(manager.send_message(CLIENT_TASK, &Message::new(connection.pack() as u32, &pattern)), Ok(()));
 
-        let fh = manager.accept_message_async(binding, SERVER_TASK);
+        let fh = manager.accept_message_async(binding, FutureOwner::Kernel, SERVER_TASK).unwrap();
         let delivered = delivered_message(fh);
         assert_eq!(delivered.conn(), connection.pack() as u32);
         assert_eq!(delivered.data(), &pattern);
@@ -311,14 +328,14 @@ mod tests {
 
         let request_pattern = [0x11u8; MESSAGE_PAYLOAD_BYTES];
         assert_eq!(manager.send_message(CLIENT_TASK, &Message::new(connection.pack() as u32, &request_pattern)), Ok(()));
-        let fh = manager.accept_message_async(binding, SERVER_TASK);
+        let fh = manager.accept_message_async(binding, FutureOwner::Kernel, SERVER_TASK).unwrap();
         let delivered = delivered_message(fh);
         assert_eq!(delivered.conn(), connection.pack() as u32);
 
         let reply_pattern = [0x22u8; MESSAGE_PAYLOAD_BYTES];
         assert_eq!(manager.send_message(SERVER_TASK, &Message::new(delivered.conn(), &reply_pattern)), Ok(()));
 
-        let fh = manager.receive_message_async(connection, CLIENT_TASK);
+        let fh = manager.receive_message_async(connection, FutureOwner::Kernel, CLIENT_TASK).unwrap();
         let reply = delivered_message(fh);
         assert_eq!(reply.conn(), connection.pack() as u32);
         assert_eq!(reply.data(), &reply_pattern);
@@ -372,7 +389,7 @@ mod tests {
         }
         assert_eq!(manager.send_message(CLIENT_TASK, &envelope), Err(IpcSendError::ConnectionCongested));
 
-        let fh = manager.accept_message_async(binding, SERVER_TASK);
+        let fh = manager.accept_message_async(binding, FutureOwner::Kernel, SERVER_TASK).unwrap();
         let consumed = delivered_message(fh);
         assert_eq!(consumed.conn(), connection.pack() as u32);
         assert_eq!(consumed.data(), &[0u8; MESSAGE_PAYLOAD_BYTES]);
@@ -386,7 +403,7 @@ mod tests {
         let mut manager = manager_with_notifier();
         let binding = manager.bind_service("MSG-EARLY").unwrap();
 
-        let fh = manager.accept_message_async(binding, SERVER_TASK);
+        let fh = manager.accept_message_async(binding, FutureOwner::Kernel, SERVER_TASK).unwrap();
         {
             let registry = services().future_registry.borrow_mut();
             let future_box = registry.borrow_mut(fh).unwrap();
@@ -410,7 +427,7 @@ mod tests {
         let (_binding, connection) = bind_and_connect(&mut manager, "MSG-DEADRECV");
         manager.disconnect(connection);
 
-        let fh = manager.receive_message_async(connection, CLIENT_TASK);
+        let fh = manager.receive_message_async(connection, FutureOwner::Kernel, CLIENT_TASK).unwrap();
         let registry = services().future_registry.borrow_mut();
         let future_box = registry.borrow_mut(fh).unwrap();
         let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
@@ -426,7 +443,7 @@ mod tests {
         use crate::future::Future;
         let mut manager = manager_with_notifier();
 
-        let fh = manager.accept_message_async(IpcBindingHandle::new(99, 1), SERVER_TASK);
+        let fh = manager.accept_message_async(IpcBindingHandle::new(99, 1), FutureOwner::Kernel, SERVER_TASK).unwrap();
         let registry = services().future_registry.borrow_mut();
         let future_box = registry.borrow_mut(fh).unwrap();
         let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
@@ -461,7 +478,7 @@ mod tests {
             .borrow_mut()
             .set_state(task_handle, crate::task::TaskState::Blocked);
 
-        let fh = manager.accept_message_async(binding, SERVER_TASK);
+        let fh = manager.accept_message_async(binding, FutureOwner::Kernel, SERVER_TASK).unwrap();
         services()
             .future_registry
             .borrow_mut()
@@ -501,7 +518,7 @@ mod tests {
             Ok(())
         );
 
-        let fh = manager.accept_message_async(binding, SERVER_TASK);
+        let fh = manager.accept_message_async(binding, FutureOwner::Kernel, SERVER_TASK).unwrap();
         let delivered = delivered_message(fh);
         assert_eq!(delivered.conn(), system::ipc::KERNEL_EVENT_CONN);
         assert_eq!(delivered.data(), &pattern);
@@ -520,7 +537,7 @@ mod tests {
             Err(DeliverError::Congested)
         );
 
-        let fh = manager.accept_message_async(binding, SERVER_TASK);
+        let fh = manager.accept_message_async(binding, FutureOwner::Kernel, SERVER_TASK).unwrap();
         assert_eq!(delivered_message(fh).conn(), system::ipc::KERNEL_EVENT_CONN);
         assert_eq!(manager.deliver_to_service("EVT-FLOOD", envelope), Ok(()));
     }
@@ -547,7 +564,7 @@ mod tests {
         );
         manager.disconnect(connection);
 
-        let fh = manager.receive_message_async(connection, CLIENT_TASK);
+        let fh = manager.receive_message_async(connection, FutureOwner::Kernel, CLIENT_TASK).unwrap();
         let registry = services().future_registry.borrow_mut();
         let future_box = registry.borrow_mut(fh).unwrap();
         let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
@@ -580,7 +597,7 @@ mod tests {
     fn close_connections_of_abandons_parked_receives() {
         let mut manager = manager_with_notifier();
         let (_binding, connection) = bind_and_connect(&mut manager, "CLOSE-PARK");
-        let parked = manager.receive_message_async(connection, CLIENT_TASK);
+        let parked = manager.receive_message_async(connection, FutureOwner::Kernel, CLIENT_TASK).unwrap();
         assert_eq!(services().future_registry.borrow_mut().get(parked), Some(false));
 
         manager.close_connections_of(CLIENT_TASK);

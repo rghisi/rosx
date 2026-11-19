@@ -1,3 +1,4 @@
+use crate::future::FutureOwner;
 use crate::handle::{IpcConnectionHandle};
 use crate::ipc::message_future::IpcMessageFuture;
 use crate::irq_guard::IrqCell;
@@ -38,7 +39,11 @@ pub fn main() {
         let accepted = services()
             .ipc_manager
             .borrow_mut()
-            .accept_message_async(binding, self_task);
+            .accept_message_async(binding, FutureOwner::Kernel, self_task);
+        let Some(accepted) = accepted else {
+            kernel().task_yield();
+            continue;
+        };
         let Some(received) = kernel().wait::<IpcMessageFuture>(accepted) else {
             continue;
         };
@@ -191,7 +196,7 @@ mod tests {
         let accepted = services()
             .ipc_manager
             .borrow_mut()
-            .accept_message_async(binding, server);
+            .accept_message_async(binding, FutureOwner::Kernel, server).unwrap();
         let future = services()
             .future_registry
             .borrow_mut()
@@ -211,7 +216,7 @@ mod tests {
         let pending_reply = services()
             .ipc_manager
             .borrow_mut()
-            .receive_message_async(connection, client);
+            .receive_message_async(connection, FutureOwner::Kernel, client).unwrap();
         let future = services()
             .future_registry
             .borrow_mut()

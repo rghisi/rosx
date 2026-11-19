@@ -67,6 +67,15 @@ impl<T, const S: usize> GenerationalArena<T, S> {
         Ok(item)
     }
 
+    pub(crate) fn live_generation(&self, index: u16) -> Option<u16> {
+        let slot = index as usize;
+        if slot < self.items.len() && self.items[slot].is_some() {
+            Some(self.generations[slot])
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn any<F: Fn(&T) -> bool>(&self, predicate: F) -> bool {
         self.items.iter().flatten().any(|item| predicate(item))
     }
@@ -94,6 +103,19 @@ mod visit_tests {
             count += 1;
         });
         assert_eq!((sum, count), (6, 3));
+    }
+
+    #[test]
+    fn live_generation_reports_only_occupied_slots_and_advances_on_remove() {
+        let mut arena: GenerationalArena<i32, 4> = GenerationalArena::new();
+        assert_eq!(arena.live_generation(0), None);
+        let handle = arena.add(7).unwrap();
+        assert_eq!(arena.live_generation(handle.index), Some(handle.generation));
+        arena.remove(handle).unwrap();
+        assert_eq!(arena.live_generation(handle.index), None);
+        let recycled = arena.add(9).unwrap();
+        assert_eq!(arena.live_generation(recycled.index), Some(recycled.generation));
+        assert_eq!(arena.live_generation(99), None);
     }
 
     #[test]

@@ -123,6 +123,50 @@ deterministic; `cpu_family=i486sx`/`fpu_type=none` is the no-FPU floor;
 drive timing; the 993/16/63 geometry is "big enough for the era" and
 inside both BIOS translation limits.
 
+## Bootloader era proof
+
+The era bar for the BIOS-thunk bootloader is the fake-kernel boot of
+`boot32.img`: `cargo xtask boot-image 32`, copied into the VM dir as
+`hdd.img` and grown to 488 MiB, booted on era hardware. The screen must
+render `[DISK]` (`media=chs` on a BIOS without EDD, `media=lba` on one
+that serves it), `[ELF]`, `[INITRD]` and the fake kernel's
+`initrd_crc32: 0x7551f9f4`, and the boot chain itself must add no
+`vm_info` soft reset — real BIOS INT 13h/15h behavior (forced `sti`,
+RAM-driver staging landmine, INT 15h IF-on-return, DL=0 hand-off) makes
+this bar the era's strictest test of the thunk. Measured 2026-11-18,
+three BIOS families, all PASS; Award and AMI take the same image bytes,
+and the Phoenix board is why stage1 now carries a read-retry loop and a
+boot-unit normalization (`plans/bootloader/14-era-thunk-stack.md` §6):
+
+- **Award 4.51 — ASUS PVI-486SP3C (`486sp3c`, i486SX)**: the full-defect
+  board — the three-era-defect chain and its instrumentation method are
+  `plans/bootloader/14-era-thunk-stack.md` (run dir
+  `target/86box/runs/20261118T172136Z-486sp3c/`).
+- **AMIBIOS 4.01 AA.05.00 — HP Vectra 486VL (`vect486vl`, VLSI 82C480,
+  i486SX)**: no-regression and fallback-path proof (run dir
+  `target/86box/runs/20261118T183300Z-vect486vl/`). This BIOS refuses
+  E820 *and* E801, so the boot exercises the `INT 88h` memory-detection
+  fallback for the first time, and the IF-mask fix costs nothing on a
+  BIOS that plays by the rules. CMOS note: bare defaults boot only the
+  floppy — Setup's AUTO DETECT HARD DISK must accept the drive (Type 47,
+  993/16/63) and WRITE TO CMOS AND EXIT once before the disk boots.
+- **Phoenix 4.04 PnP — ECS UM8810P-AIO (`ecs486`, UMC 8881 PCI,
+  i486SX)**: the first era board whose BIOS serves EDD (`media=lba`,
+  closing the sweep's LBA gap), and the board that taught stage1 two
+  era lessons: this BIOS hands the MBR `DL=0x00` (Award and AMI pass
+  `0x80`), so every read — even the geometry probe, answered by the
+  floppy BIOS — went to the configured-but-empty drive A as a
+  motor-wait `AH=80h` timeout until an INT13-only probe MBR pinned it
+  (`PROBE drv=00`), and the era `or dl,0x80` answer must be assembled
+  per media type (`--defsym HARD_UNIT`) because the floppy checkpoint
+  boots unit `0x00` legitimately. CMOS note: Setup → Fixed Disk Setup →
+  IDE Adapter 0 Master → Autotype (Enter) accepts the drive once, then
+  Save Values to CMOS; POST ends at "Incorrect Drive A type — Press
+  F1" and F1 resumes into the MBR. `soft_resets: 1` here is the
+  machine's power-on baseline — already counted on the first POST
+  screen, before `[STAGE1]` — and the chain adds none (run dir
+  `target/86box/runs/20261118T214900Z-ecs486/`).
+
 ## Evidence run
 
 Follow `docs/evidence-checklist.md` — it maps every hardware-checklist

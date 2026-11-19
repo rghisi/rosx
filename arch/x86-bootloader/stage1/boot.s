@@ -1,20 +1,24 @@
 # Stage 1 boot sector (plans/bootloader phases 2-3).
 # MBR-resident: code+data live in bytes 0..445 (the packager splices this
 # into the rxpart-encoded MBR; its own table and signature own 446..512).
-# Brings up COM1, loads the [ROS2 header][stage2 bin] image at LBA 8 into
+# Prints on two channels — port 0xE9 (the emulator verdict stream) and the
+# BIOS teletype on the VGA console (plans/bootloader 13-console.md) — loads
+# the [ROS2 header][stage2 bin] image at LBA 8 into
 # 0x0000:0x7E00 via the INT 13h LBA extensions, falling back to CHS when the
 # BIOS lacks them (super-floppy media), then jumps. Linked with
-# `ld -m elf_i386 -Ttext 0x7C00 --oformat binary`.
+# `ld -m elf_i386 -Ttext 0x7C00 --oformat binary`. The packager assembles with
+# --defsym HARD_UNIT=1 for the MBR splice (a hard boot may hand a bogus DL) and
+# HARD_UNIT=0 for the floppy image (DL is the real floppy unit).
 #
 # Budget notes: the image body starts at LBA 9 and is <= 321 sectors, so every
 # LBA this stage handles fits in 16 bits; cur_lba/cur_rem and the CHS math are
-# 16-bit throughout (native in .code16, no 0x66 prefixes). The CHS path is the
-# documented budget sacrifice: no retry/controller-reset loop (QEMU never
-# errors here); the LBA path and the header validation are kept whole.
+# 16-bit throughout (native in .code16, no 0x66 prefixes). Failed reads reset
+# the controller and re-issue: era firmware (Phoenix 4.04 on UMC 8881) hands
+# the first INT 13h reads after boot a timeout (AH=80h) that QEMU never makes.
 
 .code16
 
-.equ COM1, 0x3F8
+.equ DEBUG_PORT, 0xE9
 .equ HDR_SCRATCH, 0x900          # header sector lands here to be validated
 .equ LOAD_OFF, 0x7E00            # stage2 image destination (physical)
 .equ STAGE2_TOTAL_MAX, 164352    # 160 KiB + 512 (the 0x7E00..0x2FFFF budget)
@@ -28,15 +32,10 @@ _start:
     movw %ax, %es
     movw %ax, %ss
     movw $0x7C00, %sp
+.if HARD_UNIT
+    orb $0x80, %dl               # Phoenix 4.04 on UMC 8881 hands the MBR DL=00;
+.endif                           # the running disk is a hard unit (era idiom)
     movb %dl, boot_drive         # BIOS boot drive, needed by INT 13h and stage2
-
-    movb $0x00, COM1+1           # IER = 0
-    movb $0x80, COM1+3           # LCR: DLAB = 1
-    movb $0x01, COM1+0           # divisor low  = 1  (115200)
-    movb $0x00, COM1+1           # divisor high = 0
-    movb $0x03, COM1+3           # LCR: 8N1, DLAB = 0
-    movb $0x0B, COM1+4           # FCR: enable + reset FIFO
-    movb $0xC7, COM1+2           # MCR: DTR | RTS | OUT2
 
     leaw msg_stage1_ok, %si
     call puts
@@ -84,8 +83,13 @@ read_image:
     ret
 
 # read_sectors: transfer cur_rem sectors at cur_lba into buf_seg:0, picking the
-# LBA or CHS driver from use_lba. Any read failure is a fatal disk error.
+# LBA or CHS driver from use_lba. A failed read resets the controller and
+# re-issues (era timeout discipline); the CHS loop re-arms the count per
+# sector. A timing-out LBA face hands the whole load to the CHS geometry path
+# once before the error becomes fatal.
 read_sectors:
+    movb $3, retries
+drive_once:
     cmpb $0x00, use_lba
     je chs_read
     movw cur_rem, %ax
@@ -98,8 +102,20 @@ read_sectors:
     movb boot_drive, %dl
     leaw dap, %si
     int $0x13
-    jc disk_err
+    jc reset_retry
     ret
+
+reset_retry:
+    decb retries
+    jz lba_or_die
+    movb $0x00, %ah              # reset the controller, as era DOS did
+    movb boot_drive, %dl
+    int $0x13
+    jmp drive_once
+lba_or_die:
+    cmpb $0x00, use_lba
+    jne chs_geom                 # a faking EDD face: restart the load over CHS, once
+    jmp disk_err
 
 # chs_read: read cur_rem sectors from cur_lba into buf_seg:0, one per INT 13h.
 chs_read:
@@ -130,11 +146,12 @@ chs_read:
     movb $0x01, %al              # one sector
     movb $0x02, %ah
     int $0x13
-    jc disk_err
+    jc reset_retry
 
     addw $0x20, buf_seg          # next 512-byte paragraph
     incw cur_lba
     decw cur_rem
+    movb $3, retries             # the allowance is per sector: fresh on every advance
     jmp chs_read
 chs_done:
     ret
@@ -188,16 +205,19 @@ emit_num:
     call putc
     ret
 
+# putc: emit AL on both channels — port 0xE9 carries the test verdict
+# stream (an architecturally harmless no-op on silicon) and the BIOS
+# teletype carries the human VGA stream, BIOS-owned cursor and all. AX is
+# preserved around the INT: put_hex keeps its second nybble in ah, and INT
+# 10h is permitted to destroy AX. DX is clobbered by both channels.
 putc:
     pushw %ax
-    movw $COM1+5, %dx
-putc_wait:
-    inb %dx, %al
-    testb $0x20, %al
-    jz putc_wait
-    popw %ax
-    movw $COM1, %dx
+    movw $DEBUG_PORT, %dx
     outb %al, %dx
+    movb $0x0E, %ah              # teletype output, AL=char
+    xorb %bh, %bh                # page 0
+    int $0x10
+    popw %ax
     ret
 
 msg_stage1_ok:
@@ -212,6 +232,8 @@ chs_sptrack:
 chs_heads:
     .byte 0
 use_lba:
+    .byte 0
+retries:
     .byte 0
 dap:
 dap_size:
