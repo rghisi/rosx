@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use rxpart::mbr::{encode_mbr, Entry, ENTRY_COUNT};
+use system::boot_disk::{apps_in, ALL_DIRECTORIES};
 
 use crate::arch::Arch;
 
@@ -118,16 +119,22 @@ pub fn read_file_from_image(image: &Path, name: &str) -> Vec<u8> {
 
 pub fn create_boot_disk(dir: &Path) -> FatDisk {
     let disk = FatDisk::create(dir, "boot-disk.img", BOOT_DISK_BYTES);
-    let mut args: Vec<String> = vec![
-        "-m".to_string(),
-        "-o".to_string(),
-        "-i".to_string(),
-        disk.target.clone(),
-    ];
-    args.extend(built_els().into_iter().map(|(_, elf)| elf.display().to_string()));
-    args.push("::/".to_string());
-    let arguments: Vec<&str> = args.iter().map(String::as_str).collect();
-    host_run("mcopy", &arguments);
+    for directory in ALL_DIRECTORIES {
+        disk.make_directory(&format!("::/{}", directory.name()));
+        let mut args: Vec<String> = vec![
+            "-m".to_string(),
+            "-o".to_string(),
+            "-i".to_string(),
+            disk.target.clone(),
+        ];
+        args.extend(
+            apps_in(directory)
+                .map(|app| built_elf(app).display().to_string()),
+        );
+        args.push(format!("::/{}/", directory.name()));
+        let arguments: Vec<&str> = args.iter().map(String::as_str).collect();
+        host_run("mcopy", &arguments);
+    }
     disk
 }
 
@@ -149,26 +156,6 @@ fn user_release_dir() -> PathBuf {
         .join("target")
         .join(Arch::current().user_dir_name())
         .join("release")
-}
-
-fn built_els() -> Vec<(String, PathBuf)> {
-    let release = user_release_dir();
-    let entries = std::fs::read_dir(&release)
-        .unwrap_or_else(|err| panic!("cannot read the user release directory: {err}"));
-    let mut elfs: Vec<(String, PathBuf)> = entries
-        .filter_map(|entry| entry.ok())
-        .map(|entry| (entry.file_name().to_string_lossy().into_owned(), entry.path()))
-        .filter(|(name, path)| path.is_file() && !name.contains('.'))
-        .collect();
-    elfs.sort();
-    if elfs.is_empty() {
-        panic!(
-            "no user ELFs in {}; run `cargo xtask build {}` first",
-            release.display(),
-            Arch::current().name()
-        );
-    }
-    elfs
 }
 
 fn host_run(program: &str, args: &[&str]) {
