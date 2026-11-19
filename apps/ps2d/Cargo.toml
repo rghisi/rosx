@@ -14,8 +14,10 @@ name = "ps2d"
 bench = false
 test = false
 
-[target.'cfg(target_os = "none")'.dependencies]
+[dependencies]
 input-protocol = { path = "../../protocol/input" }
+
+[target.'cfg(target_os = "none")'.dependencies]
 usrlib = { path = "../../usrlib", features = ["runtime"] }
 
 [lints]

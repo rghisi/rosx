@@ -75,7 +75,7 @@ pub fn main() {
                 buffer.pop();
                 print!("\x08");
             }
-        } else {
+        } else if !input_protocol::wire::is_command_char(c) {
             print!("{}", c);
             buffer.push(c);
         }

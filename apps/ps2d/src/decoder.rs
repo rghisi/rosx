@@ -1,14 +1,28 @@
 pub struct Ps2Decoder {
     shifted: bool,
+    ctrl: bool,
+    awaiting_extended: bool,
 }
 
 impl Ps2Decoder {
     pub fn new() -> Ps2Decoder {
-        Ps2Decoder { shifted: false }
+        Ps2Decoder {
+            shifted: false,
+            ctrl: false,
+            awaiting_extended: false,
+        }
     }
 
     pub fn feed(&mut self, scancode: u8) -> Option<char> {
+        if self.awaiting_extended {
+            self.awaiting_extended = false;
+            return extended_char(scancode);
+        }
         match scancode {
+            0xE0 => {
+                self.awaiting_extended = true;
+                None
+            }
             0x2A | 0x36 => {
                 self.shifted = true;
                 None
@@ -17,11 +31,32 @@ impl Ps2Decoder {
                 self.shifted = false;
                 None
             }
+            0x1D => {
+                self.ctrl = true;
+                None
+            }
+            0x9D => {
+                self.ctrl = false;
+                None
+            }
             raw if raw & 0x80 != 0 => None,
             raw => Key::from_scancode_set1(raw)
                 .ok()
-                .and_then(|key| char_for(key, self.shifted)),
+                .and_then(|key| char_for(key, self.shifted, self.ctrl)),
         }
+    }
+}
+
+fn extended_char(scancode: u8) -> Option<char> {
+    if scancode & 0x80 != 0 {
+        return None;
+    }
+    match scancode {
+        0x48 => Some(input_protocol::wire::KEY_ARROW_UP),
+        0x50 => Some(input_protocol::wire::KEY_ARROW_DOWN),
+        0x4D => Some(input_protocol::wire::KEY_ARROW_RIGHT),
+        0x4B => Some(input_protocol::wire::KEY_ARROW_LEFT),
+        _ => None,
     }
 }
 
@@ -214,9 +249,21 @@ impl Key {
     }
 }
 
-fn char_for(key: Key, shifted: bool) -> Option<char> {
+fn char_for(key: Key, shifted: bool, ctrl: bool) -> Option<char> {
+    let typed = key_char(key, shifted)?;
+    if ctrl {
+        match typed {
+            'a'..='z' | 'A'..='Z' => Some(((typed as u8) & 0x1F) as char),
+            _ => None,
+        }
+    } else {
+        Some(typed)
+    }
+}
+
+fn key_char(key: Key, shifted: bool) -> Option<char> {
     match key {
-        Key::Escape => None,
+        Key::Escape => Some(input_protocol::wire::KEY_ESCAPE),
         Key::Key1 => Some(if shifted { '!' } else { '1' }),
         Key::Key2 => Some(if shifted { '@' } else { '2' }),
         Key::Key3 => Some(if shifted { '#' } else { '3' }),
@@ -401,10 +448,54 @@ mod tests {
 
     #[test]
     fn non_char_keys_are_silent_shifted_or_not() {
-        for scancode in [0x01u8, 0x1D, 0x38, 0x3A, 0x3B, 0x45, 0x47, 0x52, 0x57, 0x58] {
+        for scancode in [0x1Du8, 0x38, 0x3A, 0x3B, 0x45, 0x47, 0x52, 0x57, 0x58] {
             assert_eq!(typed(&[scancode]), Vec::<char>::new());
             assert_eq!(typed(&[0x2A, scancode]), Vec::<char>::new());
         }
+    }
+
+    #[test]
+    fn escape_delivers_the_escape_code() {
+        assert_eq!(typed(&[0x01]), vec![input_protocol::wire::KEY_ESCAPE]);
+        assert_eq!(typed(&[0x01, 0x81]), vec![input_protocol::wire::KEY_ESCAPE]);
+    }
+
+    #[test]
+    fn ctrl_letters_become_control_codes() {
+        assert_eq!(typed(&[0x1D, 0x1E]), vec!['\x01']);
+        assert_eq!(typed(&[0x1D, 0x2E]), vec!['\x03']);
+        assert_eq!(typed(&[0x1D, 0x20]), vec!['\x04']);
+        assert_eq!(typed(&[0x1D, 0x2A, 0x1E]), vec!['\x01']);
+    }
+
+    #[test]
+    fn ctrl_release_restores_plain_typing() {
+        assert_eq!(typed(&[0x1D, 0x1E, 0x9D, 0x1F]), vec!['\x01', 's']);
+    }
+
+    #[test]
+    fn ctrl_on_punctuation_digits_and_escape_is_silent() {
+        assert_eq!(typed(&[0x1D, 0x02]), Vec::<char>::new());
+        assert_eq!(typed(&[0x1D, 0x0C]), Vec::<char>::new());
+        assert_eq!(typed(&[0x1D, 0x01]), Vec::<char>::new());
+    }
+
+    #[test]
+    fn arrow_transcripts_deliver_sentinels_once_each() {
+        use input_protocol::wire::*;
+        assert_eq!(typed(&[0xE0, 0x48]), vec![KEY_ARROW_UP]);
+        assert_eq!(typed(&[0xE0, 0x48, 0xE0, 0xC8]), vec![KEY_ARROW_UP]);
+        assert_eq!(
+            typed(&[0xE0, 0x4B, 0xE0, 0xCB, 0xE0, 0x4D, 0xE0, 0xCD, 0xE0, 0x50, 0xE0, 0xD0]),
+            vec![KEY_ARROW_LEFT, KEY_ARROW_RIGHT, KEY_ARROW_DOWN]
+        );
+    }
+
+    #[test]
+    fn extended_non_arrow_frames_stay_silent() {
+        assert_eq!(typed(&[0xE0, 0x1C]), Vec::<char>::new());
+        assert_eq!(typed(&[0xE0, 0x9C]), Vec::<char>::new());
+        assert_eq!(typed(&[0xE0, 0x48, 0xE0, 0x1C, 0x1E]), vec![input_protocol::wire::KEY_ARROW_UP, 'a']);
     }
 
     #[test]

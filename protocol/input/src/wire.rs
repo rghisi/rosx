@@ -9,6 +9,20 @@ pub const TAG_PUSH: u8 = 3;
 pub const TAG_KEY: u8 = 4;
 pub const TAG_NO_KEY: u8 = 5;
 
+pub const KEY_ESCAPE: char = '\u{1B}';
+pub const KEY_ARROW_UP: char = '\u{E010}';
+pub const KEY_ARROW_DOWN: char = '\u{E011}';
+pub const KEY_ARROW_RIGHT: char = '\u{E012}';
+pub const KEY_ARROW_LEFT: char = '\u{E013}';
+
+pub fn is_arrow_sentinel(c: char) -> bool {
+    matches!(c, KEY_ARROW_UP | KEY_ARROW_DOWN | KEY_ARROW_RIGHT | KEY_ARROW_LEFT)
+}
+
+pub fn is_command_char(c: char) -> bool {
+    (c < '\u{20}' || c == '\u{7F}') || is_arrow_sentinel(c)
+}
+
 pub fn encode_read() -> [u8; MESSAGE_PAYLOAD_BYTES] {
     encode_tag_only(TAG_READ)
 }
@@ -128,5 +142,28 @@ mod tests {
             assert_eq!(scancode_of(&data), scancode);
             assert!(data[1..].iter().all(|b| *b == 0));
         }
+    }
+
+    #[test]
+    fn arrow_sentinels_are_distinct_pua_codepoints() {
+        let sentinels = [KEY_ARROW_UP, KEY_ARROW_DOWN, KEY_ARROW_RIGHT, KEY_ARROW_LEFT];
+        for (index, sentinel) in sentinels.iter().enumerate() {
+            assert!((0xE010..=0xE013).contains(&(*sentinel as u32)));
+            assert!(!sentinels[..index].contains(sentinel));
+        }
+        assert!(is_arrow_sentinel(KEY_ARROW_UP));
+        assert!(!is_arrow_sentinel('a'));
+    }
+
+    #[test]
+    fn command_chars_cover_control_codes_del_and_sentinels_only() {
+        assert!(is_command_char('\n'));
+        assert!(is_command_char('\x1B'));
+        assert!(is_command_char('\x7F'));
+        assert!(is_command_char(KEY_ARROW_LEFT));
+        assert!(!is_command_char('\u{E0FF}'));
+        assert!(!is_command_char(' '));
+        assert!(!is_command_char('~'));
+        assert!(!is_command_char('é'));
     }
 }
