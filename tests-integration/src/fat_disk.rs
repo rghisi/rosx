@@ -95,6 +95,27 @@ pub fn tools_available() -> bool {
         .is_ok()
 }
 
+pub fn read_file_from_image(image: &Path, name: &str) -> Vec<u8> {
+    let target = format!(
+        "{}@@{}",
+        image.display(),
+        PARTITION_START_LBA as usize * SECTOR_BYTES
+    );
+    let output = Command::new("mtype")
+        .arg("-i")
+        .arg(&target)
+        .arg(format!("::{name}"))
+        .output()
+        .expect("mtype unavailable");
+    assert!(
+        output.status.success(),
+        "mtype ::{name} on {} failed: {}",
+        image.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
+}
+
 pub fn create_boot_disk(dir: &Path) -> FatDisk {
     let disk = FatDisk::create(dir, "boot-disk.img", BOOT_DISK_BYTES);
     let mut args: Vec<String> = vec![

@@ -256,6 +256,11 @@ impl QemuSession {
         child.try_wait().ok().flatten()
     }
 
+    pub fn shutdown(&mut self) {
+        self.quit_qemu();
+        self.reap_child();
+    }
+
     pub fn expect_output(&self, substr: &str, timeout: Duration) {
         self.expect_from_mark(0, substr, timeout);
     }
