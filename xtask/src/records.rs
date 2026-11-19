@@ -146,6 +146,23 @@ pub fn validate_directories(docs: &Path) -> Result<Vec<String>, String> {
     Ok(problems)
 }
 
+pub fn unindexed_architecture_files(names: &[String], agents_text: &str) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| !agents_text.contains(&format!("docs/architecture/{name}")))
+        .map(|name| format!("docs/architecture/{name} is not linked from the AGENTS.md invariant index"))
+        .collect()
+}
+
+pub fn validate_architecture_index(root: &Path) -> Result<Vec<String>, String> {
+    let agents = std::fs::read_to_string(root.join("AGENTS.md")).map_err(|err| format!("AGENTS.md: {err}"))?;
+    let names: Vec<String> = markdown_files(&root.join("docs").join("architecture"))?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    Ok(unindexed_architecture_files(&names, &agents))
+}
+
 pub fn list_open(docs: &Path) -> Result<Vec<String>, String> {
     let mut lines = Vec::new();
     lines.push("open decisions:".to_string());
@@ -224,6 +241,14 @@ mod tests {
         assert!(problems.iter().any(|p| p.contains("invalid priority")));
         assert!(problems.iter().any(|p| p.contains("trigger")));
         assert_eq!(validate_todo("a.md", "no front matter", &|_| true).len(), 1);
+    }
+
+    #[test]
+    fn architecture_files_must_be_indexed() {
+        let names = vec!["vfs.md".to_string(), "lost.md".to_string()];
+        let problems = unindexed_architecture_files(&names, "see docs/architecture/vfs.md");
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains("lost.md"));
     }
 
     #[test]

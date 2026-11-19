@@ -273,6 +273,7 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
     }
     violations.extend(orphan_rationale_files(&survey.rationale, &survey.reports));
     violations.extend(records::validate_directories(&root.join("docs"))?);
+    violations.extend(records::validate_architecture_index(root)?);
     Ok(violations)
 }
 
