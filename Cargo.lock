@@ -922,6 +922,7 @@ version = "0.1.0"
 dependencies = [
  "input-protocol",
  "usrlib",
+ "vfs-protocol",
 ]
 
 [[package]]

@@ -69,6 +69,10 @@ impl Buffer {
         self.modified
     }
 
+    pub fn mark_clean(&mut self) {
+        self.modified = false;
+    }
+
     pub fn insert_byte(&mut self, byte: u8) {
         let col = self.cursor_col.min(self.lines[self.cursor_row].len());
         self.lines[self.cursor_row].insert(col, byte);

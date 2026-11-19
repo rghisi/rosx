@@ -9,9 +9,15 @@ edition.workspace = true
 name = "ted"
 path = "src/lib.rs"
 
+[[bin]]
+name = "ted"
+bench = false
+test = false
+
 [dependencies]
 input-protocol = { path = "../../protocol/input" }
 usrlib = { path = "../../usrlib" }
+vfs-protocol = { path = "../../protocol/vfs" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 usrlib = { path = "../../usrlib", features = ["runtime"] }
