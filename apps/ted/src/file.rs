@@ -10,6 +10,14 @@ pub enum LoadOutcome {
     Absent,
 }
 
+pub fn root_relative(path: &str) -> String {
+    if path.starts_with('/') {
+        String::from(path)
+    } else {
+        format!("/{path}")
+    }
+}
+
 pub fn load(vfs: &Vfs, path: &str) -> Result<LoadOutcome, String> {
     match vfs.read_whole(path) {
         Ok(bytes) => Ok(LoadOutcome::Exists(bytes)),
@@ -43,4 +51,20 @@ pub fn save(
     file.close()
         .map_err(|error| format!("cannot close {path}: {error:?}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::root_relative;
+
+    #[test]
+    fn bare_names_become_root_relative() {
+        assert_eq!(root_relative("notes.txt"), "/notes.txt");
+    }
+
+    #[test]
+    fn absolute_names_are_kept_verbatim() {
+        assert_eq!(root_relative("/hello.txt"), "/hello.txt");
+        assert_eq!(root_relative("/"), "/");
+    }
 }
