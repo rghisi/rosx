@@ -11,11 +11,9 @@ pub struct Once<T> {
     value: UnsafeCell<MaybeUninit<T>>,
 }
 
-// Safety: Once<T> guarantees that the inner value is only written once (during
-// call_once) and all subsequent access is read-only. The AtomicU8 state field
-// provides the synchronization barrier. T must be Send (safe to transfer
-// between threads) and Sync (safe to share references).
+/// Sharing is sound because the value is written once; see docs/rationale/once-initialization-ordering.md.
 unsafe impl<T: Send + Sync> Sync for Once<T> {}
+/// Transfer is sound under the same single-write protocol; see docs/rationale/once-initialization-ordering.md.
 unsafe impl<T: Send> Send for Once<T> {}
 
 impl<T> Once<T> {
@@ -26,6 +24,16 @@ impl<T> Once<T> {
         }
     }
 
+    /// Caller must hold the UNINIT to INITIALIZING transition; see docs/rationale/once-initialization-ordering.md.
+    unsafe fn store_value(&self, value: T) {
+        unsafe { (*self.value.get()).write(value) };
+    }
+
+    /// Caller must have observed READY with Acquire; see docs/rationale/once-initialization-ordering.md.
+    unsafe fn stored_value(&self) -> &T {
+        unsafe { (*self.value.get()).assume_init_ref() }
+    }
+
     pub fn call_once(&self, f: impl FnOnce() -> T) {
         match self.state.compare_exchange(
             UNINIT,
@@ -34,11 +42,8 @@ impl<T> Once<T> {
             Ordering::Acquire,
         ) {
             Ok(_) => {
-                // Safety: we are the only thread that transitioned from UNINIT
-                // to INITIALIZING, so we have exclusive access to the value.
-                unsafe {
-                    (*self.value.get()).write(f());
-                }
+                let value = f();
+                unsafe { self.store_value(value) };
                 self.state.store(READY, Ordering::Release);
             }
             Err(_) => panic!("Once::call_once called more than once"),
@@ -53,11 +58,8 @@ impl<T> Once<T> {
             Ordering::Acquire,
         ) {
             Ok(_) => {
-                // Safety: we are the only thread that transitioned from UNINIT
-                // to INITIALIZING, so we have exclusive access to the value.
-                unsafe {
-                    (*self.value.get()).write(initializer());
-                }
+                let value = initializer();
+                unsafe { self.store_value(value) };
                 self.state.store(READY, Ordering::Release);
             }
             Err(READY) => {}
@@ -67,17 +69,12 @@ impl<T> Once<T> {
                 }
             }
         }
-        // Safety: READY is stored only after the value was written, and the
-        // Acquire ordering pairs with the Release store, so the value is a
-        // valid T and no further mutation occurs.
-        unsafe { (*self.value.get()).assume_init_ref() }
+        unsafe { self.stored_value() }
     }
 
     pub fn get(&self) -> Option<&T> {
         if self.state.load(Ordering::Acquire) == READY {
-            // Safety: state is READY, meaning call_once completed and wrote a
-            // valid T. No further mutation occurs, so a shared reference is safe.
-            Some(unsafe { (*self.value.get()).assume_init_ref() })
+            Some(unsafe { self.stored_value() })
         } else {
             None
         }

@@ -6,7 +6,12 @@ mod arch;
 mod boot_disk;
 mod boot_image;
 mod boot_test;
+mod check_arch;
 mod check_isa;
+mod check_style;
+mod json;
+mod records;
+mod rust_scan;
 
 use arch::{ArchSpec, X86_64, USER_APPS};
 use x86_runner::{BootMedium, LaunchMode};
@@ -220,10 +225,29 @@ fn create_flashable_image(debug: bool, spec: &ArchSpec) {
     }
 }
 
+fn integration_arch() -> &'static ArchSpec {
+    match env::var("ROSX_ARCH") {
+        Ok(name) => arch::find(&name).unwrap_or_else(|| {
+            eprintln!("unsupported ROSX_ARCH: {name}");
+            process::exit(2);
+        }),
+        Err(_) => &X86_64,
+    }
+}
+
 fn run_tests(skip_integration: bool) {
     build_apps(&X86_64);
     pack_rom(&X86_64);
     let mut cmd = cargo();
+    if !skip_integration && env::var_os("ROSX_KERNEL_ELF").is_none_or(|value| value.is_empty()) {
+        let spec = integration_arch();
+        if spec.name != X86_64.name {
+            build_apps(spec);
+            pack_rom(spec);
+        }
+        build_kernel(false, spec);
+        cmd.env("ROSX_KERNEL_ELF", spec.kernel_elf("release"));
+    }
     cmd.arg("test").arg("--workspace");
     let description = if skip_integration {
         cmd.arg("--exclude").arg("tests-integration");
@@ -236,6 +260,96 @@ fn run_tests(skip_integration: bool) {
     if !skip_integration {
         boot_test::run_boot_test();
     }
+}
+
+fn check_arch_command() {
+    match check_arch::run(&workspace_root()) {
+        Err(message) => {
+            eprintln!("error: {message}");
+            process::exit(1);
+        }
+        Ok(violations) if violations.is_empty() => println!("==> check-arch: dependency arrows and 486 feature floor hold"),
+        Ok(violations) => {
+            eprintln!("check-arch violations:");
+            for violation in &violations {
+                eprintln!("  {violation}");
+            }
+            process::exit(1);
+        }
+    }
+}
+
+fn check_style_command(extras: &[String]) {
+    let mut update = false;
+    let mut allow_increase: Option<String> = None;
+    let mut iter = extras.iter();
+    while let Some(flag) = iter.next() {
+        match flag.as_str() {
+            "--update-baseline" => update = true,
+            "--allow-increase" => allow_increase = iter.next().cloned(),
+            other => {
+                eprintln!("unknown flag: {other}");
+                usage();
+                process::exit(2);
+            }
+        }
+    }
+    if update {
+        match check_style::update_baseline(&workspace_root(), allow_increase.as_deref()) {
+            Ok(messages) => messages.iter().for_each(|message| println!("==> {message}")),
+            Err(message) => {
+                eprintln!("error: {message}");
+                process::exit(1);
+            }
+        }
+        return;
+    }
+    match check_style::run(&workspace_root()) {
+        Err(message) => {
+            eprintln!("error: {message}");
+            process::exit(1);
+        }
+        Ok(violations) if violations.is_empty() => println!("==> check-style: comments, #[allow], unsafe, 32-bit hazards and records hold"),
+        Ok(violations) => {
+            eprintln!("check-style violations:");
+            for violation in &violations {
+                eprintln!("  {violation}");
+            }
+            process::exit(1);
+        }
+    }
+}
+
+fn install_hooks_command() {
+    let mut cmd = Command::new("git");
+    cmd.args(["config", "core.hooksPath", ".githooks"]).current_dir(workspace_root());
+    run(&mut cmd, "point core.hooksPath at .githooks");
+}
+
+fn decisions_command() {
+    match records::list_open(&workspace_root().join("docs")) {
+        Ok(lines) => lines.iter().for_each(|line| println!("{line}")),
+        Err(message) => {
+            eprintln!("error: {message}");
+            process::exit(1);
+        }
+    }
+}
+
+fn check_command() {
+    println!("==> check stage: check-style");
+    check_style_command(&[]);
+    println!("==> check stage: check-arch");
+    check_arch_command();
+    println!("==> check stage: check-isa");
+    let spec = arch::find("x86_32").expect("x86_32 is a registered arch");
+    build_apps(spec);
+    pack_rom(spec);
+    build_kernel(false, spec);
+    check_isa_command(spec);
+    println!("==> check stage: tests");
+    run_tests(true);
+    println!("==> check: all stages green");
 }
 
 fn check_isa_command(spec: &ArchSpec) {
@@ -329,7 +443,7 @@ fn parse_stages_option(extras: &[String]) -> Result<Option<std::path::PathBuf>, 
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | check-isa bootloader | test [--skip-integration] | boot-image [32|64|floppy] | boot-test>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | check-isa bootloader | check-arch | check-style [--update-baseline [--allow-increase <reason>]] | decisions | install-hooks | check | test [--skip-integration] | boot-image [32|64|floppy] | boot-test>"
     );
 }
 
@@ -443,6 +557,23 @@ fn main() {
         "test" => {
             let skip_integration = parse_optional_flag(extras, "--skip-integration");
             run_tests(skip_integration);
+        }
+        "check-style" => check_style_command(extras),
+        "install-hooks" => {
+            require_no_extras(extras);
+            install_hooks_command();
+        }
+        "decisions" => {
+            require_no_extras(extras);
+            decisions_command();
+        }
+        "check-arch" => {
+            require_no_extras(extras);
+            check_arch_command();
+        }
+        "check" => {
+            require_no_extras(extras);
+            check_command();
         }
         "boot-image" => {
             if extras.len() != 1 {

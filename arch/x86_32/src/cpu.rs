@@ -45,38 +45,7 @@ impl Cpu for X86_32 {
         param1: usize,
         param2: usize,
     ) -> usize {
-        unsafe {
-            // Align to 16, then subtract 8 so that after swap_context's ret
-            // esp satisfies the System V i386 ABI (esp ≡ 12 mod 16 at task entry).
-            let mut sp = ((stack_pointer & !0xF) - 8) as *mut u32;
-
-            // cdecl arguments (rightmost first, so param1 ends up at [esp+4]).
-            sp = sp.sub(1);
-            *sp = param2 as u32;
-            sp = sp.sub(1);
-            *sp = param1 as u32;
-
-            // Sentinel return address — if the task function ever returns it crashes
-            // visibly rather than executing garbage.
-            sp = sp.sub(1);
-            *sp = 0;
-
-            // swap_context's ret jumps here, starting the task.
-            sp = sp.sub(1);
-            *sp = entry_point as u32;
-
-            // Initial callee-saved register values that swap_context will pop.
-            sp = sp.sub(1);
-            *sp = 0; // ebp
-            sp = sp.sub(1);
-            *sp = 0; // ebx
-            sp = sp.sub(1);
-            *sp = 0; // esi
-            sp = sp.sub(1);
-            *sp = 0; // edi  ← new task's initial esp
-
-            sp as usize
-        }
+        unsafe { seed_task_frame(stack_pointer, entry_point, param1, param2) }
     }
 
     fn swap_context(
@@ -104,6 +73,27 @@ unsafe extern "C" {
     fn swap_context(store: *mut usize, load: usize);
 }
 
+/// Writes the initial frame `swap_context` pops; layout in docs/rationale/x86_32-context-switch.md.
+unsafe fn seed_task_frame(stack_pointer: usize, entry_point: usize, param1: usize, param2: usize) -> usize {
+    unsafe {
+        let mut sp = ((stack_pointer & !0xF) - 8) as *mut u32;
+        sp = sp.sub(1);
+        *sp = param2 as u32;
+        sp = sp.sub(1);
+        *sp = param1 as u32;
+        sp = sp.sub(1);
+        *sp = 0;
+        sp = sp.sub(1);
+        *sp = entry_point as u32;
+        for _ in 0..4 {
+            sp = sp.sub(1);
+            *sp = 0;
+        }
+        sp as usize
+    }
+}
+
+/// Rust half of the `int 0x80` path; interrupt-flag discipline in docs/rationale/x86_32-int80-entry.md.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn syscall_handler(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usize {
     let result = kernel::syscall::handle_syscall(num, arg1, arg2, arg3);
@@ -111,22 +101,22 @@ unsafe extern "C" fn syscall_handler(num: usize, arg1: usize, arg2: usize, arg3:
     result
 }
 
-// swap_context(store: *mut usize, load: usize)
-//
-// Stack on entry (after push of return address by call instruction):
-//   [esp+4]  = store — address where current esp should be saved (may be null)
-//   [esp+8]  = load  — esp value to restore for the next task
-//
-// Arguments are read before any push so that offsets stay fixed at +4/+8.
-// When store is null the current context is abandoned entirely (no save).
-//
-// A suspended task's stack holds (from lowest address):
-//   [sp+0]   edi
-//   [sp+4]   esi
-//   [sp+8]   ebx
-//   [sp+12]  ebp
-//   [sp+16]  return address / task entry point (popped by ret)
 core::arch::global_asm!(
+    // swap_context(store: *mut usize, load: usize)
+    //
+    // Stack on entry (after push of return address by call instruction):
+    //   [esp+4]  = store — address where current esp should be saved (may be null)
+    //   [esp+8]  = load  — esp value to restore for the next task
+    //
+    // Arguments are read before any push so that offsets stay fixed at +4/+8.
+    // When store is null the current context is abandoned entirely (no save).
+    //
+    // A suspended task's stack holds (from lowest address):
+    //   [sp+0]   edi
+    //   [sp+4]   esi
+    //   [sp+8]   ebx
+    //   [sp+12]  ebp
+    //   [sp+16]  return address / task entry point (popped by ret)
     ".global swap_context",
     "swap_context:",
     "    cli",
@@ -148,29 +138,29 @@ core::arch::global_asm!(
     "    ret",                   // jump to next task's saved return address, IF stays 0
 );
 
-// int80_handler — raw entry point for `int 0x80` system calls.
-//
-// Calling convention (matching usrlib/src/arch/x86_32.rs):
-//   eax = syscall number
-//   ebx = arg1
-//   ecx = arg2
-//   edx = arg3
-//   return value: eax
-//
-// The CPU pushes [eip, cs, eflags] before entering. iretd restores them on exit,
-// which means eflags is preserved from the caller's perspective (preserves_flags).
-//
-// The IDT entry is a trap gate, so IF survives entry with the caller's value (1).
-// cli here closes the interrupt window across handle_syscall so a task parking on
-// a future cannot be preempted between blocking and waiter registration — the
-// window SFMASK closes on x86_64. Kernel contexts never re-enable: swap_context
-// leaves IF cleared, so resumed bookkeeping runs masked and interrupts return
-// only with this handler's iretd, which forces IF=1 in the saved eflags (mirrors
-// the or r11,0x200 boundary in x86_64 syscall.S).
-//
-// ebx, ecx, edx are saved/restored so the caller sees them unchanged (mirrors
-// the Linux int 0x80 ABI and matches the usrlib asm declaration).
 core::arch::global_asm!(
+    // int80_handler — raw entry point for `int 0x80` system calls.
+    //
+    // Calling convention (matching usrlib/src/arch/x86_32.rs):
+    //   eax = syscall number
+    //   ebx = arg1
+    //   ecx = arg2
+    //   edx = arg3
+    //   return value: eax
+    //
+    // The CPU pushes [eip, cs, eflags] before entering. iretd restores them on exit,
+    // which means eflags is preserved from the caller's perspective (preserves_flags).
+    //
+    // The IDT entry is a trap gate, so IF survives entry with the caller's value (1).
+    // cli here closes the interrupt window across handle_syscall so a task parking on
+    // a future cannot be preempted between blocking and waiter registration — the
+    // window SFMASK closes on x86_64. Kernel contexts never re-enable: swap_context
+    // leaves IF cleared, so resumed bookkeeping runs masked and interrupts return
+    // only with this handler's iretd, which forces IF=1 in the saved eflags (mirrors
+    // the or r11,0x200 boundary in x86_64 syscall.S).
+    //
+    // ebx, ecx, edx are saved/restored so the caller sees them unchanged (mirrors
+    // the Linux int 0x80 ABI and matches the usrlib asm declaration).
     ".global int80_handler",
     "int80_handler:",
     "    cli",                    // park-registration window must be IRQ-atomic
