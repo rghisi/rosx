@@ -238,6 +238,18 @@ fn run_tests(skip_integration: bool) {
     }
 }
 
+fn check_command() {
+    println!("==> check stage: check-isa");
+    let spec = arch::find("x86_32").expect("x86_32 is a registered arch");
+    build_apps(spec);
+    pack_rom(spec);
+    build_kernel(false, spec);
+    check_isa_command(spec);
+    println!("==> check stage: tests");
+    run_tests(true);
+    println!("==> check: all stages green");
+}
+
 fn check_isa_command(spec: &ArchSpec) {
     if spec.boot != x86_runner::Arch::X86_32 {
         eprintln!("check-isa audits the x86_32 486 baseline; {} carries no such pin", spec.name);
@@ -329,7 +341,7 @@ fn parse_stages_option(extras: &[String]) -> Result<Option<std::path::PathBuf>, 
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | check-isa bootloader | test [--skip-integration] | boot-image [32|64|floppy] | boot-test>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | check-isa bootloader | check | test [--skip-integration] | boot-image [32|64|floppy] | boot-test>"
     );
 }
 
@@ -443,6 +455,10 @@ fn main() {
         "test" => {
             let skip_integration = parse_optional_flag(extras, "--skip-integration");
             run_tests(skip_integration);
+        }
+        "check" => {
+            require_no_extras(extras);
+            check_command();
         }
         "boot-image" => {
             if extras.len() != 1 {
