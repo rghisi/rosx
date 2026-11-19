@@ -5,8 +5,9 @@ use std::process::{self, Command};
 
 use rxpart::mbr::{Entry, ENTRY_COUNT};
 
+use system::boot_disk::{ALL_DIRECTORIES, APP_DIRECTORIES, apps_in};
+
 use crate::arch::ArchSpec;
-use crate::arch::USER_APPS;
 use crate::{check_isa, run, workspace_root};
 
 const SECTOR_BYTES: u64 = 512;
@@ -31,8 +32,8 @@ pub fn create_boot_disk(debug: bool, spec: &ArchSpec) -> PathBuf {
     let path = boot_disk_path(spec);
     let partition_sectors = stamp_mbr(&path);
     mformat_volume(&path, partition_sectors);
-    mmake_boot_directory(&path);
-    mcopy_apps(&path, &spec.user_release_dir());
+    make_directories(&path);
+    mcopy_app_directories(&path, &spec.user_release_dir());
     let kernel = spec.kernel_elf(if debug { "debug" } else { "release" });
     mcopy_boot_files(&path, &kernel, &spec.rom_path());
     println!("==> wrote FAT boot disk {}", path.display());
@@ -54,13 +55,15 @@ fn require_fat_tools() {
 }
 
 fn require_names_fit_8_3() {
-    let offenders: Vec<&str> = USER_APPS
+    let offenders: Vec<&str> = APP_DIRECTORIES
         .into_iter()
+        .map(|(name, _)| name)
+        .chain(ALL_DIRECTORIES.into_iter().map(|directory| directory.name()))
         .filter(|name| name.len() > MAX_FAT_NAME_BYTES)
         .collect();
     if !offenders.is_empty() {
         eprintln!(
-            "the FAT boot disk carries apps by name; these exceed the 8.3 stem: {offenders:?}"
+            "the FAT boot disk carries apps and directories by name; these exceed the 8.3 stem: {offenders:?}"
         );
         process::exit(1);
     }
@@ -101,26 +104,36 @@ fn mformat_volume(image: &Path, partition_sectors: u32) {
     run(&mut cmd, "mformat the boot disk FAT16 volume");
 }
 
-fn mmake_boot_directory(image: &Path) {
-    let mut cmd = Command::new("mmd");
-    cmd.arg(partition_index(image));
-    cmd.arg("::/boot");
-    run(&mut cmd, "mmd the boot disk /boot directory");
+fn make_directories(image: &Path) {
+    for directory in ALL_DIRECTORIES {
+        let mut cmd = Command::new("mmd");
+        cmd.arg(partition_index(image));
+        cmd.arg(format!("::/{}", directory.name()));
+        run(
+            &mut cmd,
+            &format!("mmd the boot disk /{} directory", directory.name()),
+        );
+    }
 }
 
-fn mcopy_apps(image: &Path, release_dir: &Path) {
-    let mut cmd = Command::new("mcopy");
-    cmd.arg("-m").arg("-o").arg(partition_index(image));
-    for name in USER_APPS {
-        let elf = release_dir.join(name);
-        if !elf.is_file() {
-            eprintln!("missing user ELF {}; run `cargo xtask apps` first", elf.display());
-            process::exit(1);
+fn mcopy_app_directories(image: &Path, release_dir: &Path) {
+    for directory in ALL_DIRECTORIES {
+        let mut cmd = Command::new("mcopy");
+        cmd.arg("-m").arg("-o").arg(partition_index(image));
+        for name in apps_in(directory) {
+            let elf = release_dir.join(name);
+            if !elf.is_file() {
+                eprintln!("missing user ELF {}; run `cargo xtask apps` first", elf.display());
+                process::exit(1);
+            }
+            cmd.arg(elf);
         }
-        cmd.arg(elf);
+        cmd.arg(format!("::/{}/", directory.name()));
+        run(
+            &mut cmd,
+            &format!("mcopy the user ELFs to the boot disk /{}", directory.name()),
+        );
     }
-    cmd.arg("::/");
-    run(&mut cmd, "mcopy the user ELFs to the boot disk root");
 }
 
 fn mcopy_boot_files(image: &Path, kernel: &Path, rom: &Path) {

@@ -13,7 +13,7 @@ mod json;
 mod records;
 mod rust_scan;
 
-use arch::{ArchSpec, X86_64, USER_APPS};
+use arch::{ArchSpec, X86_64, user_apps};
 use x86_runner::{BootMedium, LaunchMode};
 
 const UNSTABLE: [&str; 3] = [
@@ -44,7 +44,7 @@ fn run(cmd: &mut Command, description: &str) {
 fn build_apps(spec: &ArchSpec) {
     let mut cmd = cargo();
     cmd.arg("build").arg("--release");
-    for app in USER_APPS {
+    for app in user_apps() {
         cmd.arg("-p").arg(app);
     }
     cmd.arg("--target").arg(spec.user_target_spec);
@@ -357,7 +357,7 @@ fn check_isa_command(spec: &ArchSpec) {
         eprintln!("check-isa audits the x86_32 486 baseline; {} carries no such pin", spec.name);
         process::exit(2);
     }
-    let elfs: Vec<&str> = USER_APPS.to_vec();
+    let elfs: Vec<&str> = user_apps();
     match check_isa::run_check_isa(spec, &elfs) {
         Err(message) => {
             eprintln!("error: {message}");
