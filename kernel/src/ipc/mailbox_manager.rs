@@ -4,6 +4,7 @@ use alloc::boxed::Box;
 use crate::collections::arena::GenerationalArena;
 #[cfg(test)]
 use crate::future::Future;
+use crate::future::FutureOwner;
 use crate::handle::{FutureHandle, Handle};
 use crate::ipc::errors::{IpcReceiveError, IpcSendError};
 use crate::ipc::message_future::IpcMessageFuture;
@@ -16,11 +17,18 @@ use system::ipc::Message;
 struct NoopNotifier;
 #[cfg(test)]
 impl ForNotifyingFutures for NoopNotifier {
-    fn register(&self, _future: Box<dyn Future + Send + Sync>) -> Option<FutureHandle> {
+    fn register(
+        &self,
+        _future: Box<dyn Future + Send + Sync>,
+        _owner: FutureOwner,
+    ) -> Option<FutureHandle> {
         None
     }
     fn notify(&self, _handle: FutureHandle) {}
     fn complete_ipc_message(&self, _handle: FutureHandle, _message: Message) {}
+    fn is_live(&self, _handle: FutureHandle) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -78,43 +86,54 @@ impl MailboxManager {
         }
     }
 
-    pub(crate) fn pop_front_async(&mut self, handle: MailboxHandle) -> FutureHandle {
+    pub(crate) fn pop_front_async(
+        &mut self,
+        handle: MailboxHandle,
+        owner: FutureOwner,
+    ) -> Option<FutureHandle> {
         let _section = MAILBOX_SECTION.acquire();
         if let Ok(mailbox) = self.mailboxes.borrow_mut(handle) {
-            if let Some(msg) = mailbox.pop_front() {
-                self.notifier
-                    .register(Box::new(IpcMessageFuture::with_message(msg)))
-                    .unwrap()
-            } else {
-                let fh = self
+            if let Some(msg) = mailbox.peek_front() {
+                let registered = self
                     .notifier
-                    .register(Box::new(IpcMessageFuture::new()))
-                    .unwrap();
+                    .register(Box::new(IpcMessageFuture::with_message(msg)), owner);
+                if registered.is_some() {
+                    mailbox.pop_front();
+                }
+                registered
+            } else {
+                let fh = self.notifier.register(Box::new(IpcMessageFuture::new()), owner)?;
                 self.waiters.entry(handle).or_default().push(fh);
-                fh
+                Some(fh)
             }
         } else {
-            self.notifier
-                .register(Box::new(IpcMessageFuture::with_error(IpcReceiveError::MailboxNotAvailable)))
-                .unwrap()
+            self.notifier.register(
+                Box::new(IpcMessageFuture::with_error(IpcReceiveError::MailboxNotAvailable)),
+                owner,
+            )
         }
     }
 
     fn notify_waiters(&mut self, handle: MailboxHandle) {
-        if let Some(waiters) = self.waiters.get_mut(&handle) {
-            while !waiters.is_empty() {
-                if let Ok(mailbox) = self.mailboxes.borrow_mut(handle) {
-                    if let Some(msg) = mailbox.pop_front() {
-                        let fh = waiters.remove(0);
-                        self.notifier.complete_ipc_message(fh, msg);
-                        self.notifier.notify(fh);
-                    } else {
-                        break;
-                    }
-                } else {
-                    break;
-                }
+        let Some(waiters) = self.waiters.get_mut(&handle) else {
+            return;
+        };
+        while let Some(&front) = waiters.first() {
+            if !self.notifier.is_live(front) {
+                waiters.remove(0);
+                continue;
             }
+            let Some(msg) = self
+                .mailboxes
+                .borrow_mut(handle)
+                .ok()
+                .and_then(|mailbox| mailbox.pop_front())
+            else {
+                break;
+            };
+            waiters.remove(0);
+            self.notifier.complete_ipc_message(front, msg);
+            self.notifier.notify(front);
         }
     }
 }
@@ -169,7 +188,7 @@ mod tests {
         let handle = manager.create();
         
         // Case 1: Empty mailbox -> Pending
-        let fh = manager.pop_front_async(handle);
+        let fh = manager.pop_front_async(handle, FutureOwner::Kernel).unwrap();
         
         // Case 2: Data pushed -> Waiter notified
         let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = core::array::from_fn(|i| (i ^ 0x5A) as u8);
@@ -203,7 +222,7 @@ mod tests {
         services().task_manager.borrow_mut().set_state(task_handle, crate::task::TaskState::Blocked);
         
         // 2. pop_front_async to get a future
-        let future_handle = manager.pop_front_async(handle);
+        let future_handle = manager.pop_front_async(handle, FutureOwner::Kernel).unwrap();
         
         // 3. Register task as waiter for that future
         services().future_registry.borrow_mut().register_waiter(future_handle, task_handle);
@@ -214,6 +233,45 @@ mod tests {
         assert_eq!(manager.push_back(handle, msg), Ok(()));
 
         assert_eq!(services().task_manager.borrow().get_state(task_handle), crate::task::TaskState::Ready);
+    }
+
+    #[test]
+    fn test_dead_waiter_is_skipped_and_the_message_reaches_the_live_one() {
+        use system::ipc::MESSAGE_PAYLOAD_BYTES;
+        init_services();
+        let notifier: &'static dyn ForNotifyingFutures =
+            Box::leak(Box::new(FutureRegistryNotifierUseCase {
+                future_registry: services().future_registry,
+            })) as &'static dyn ForNotifyingFutures;
+        let mut manager = MailboxManager::new_with_notifier(notifier);
+        let handle = manager.create();
+
+        let abandoned = manager.pop_front_async(handle, FutureOwner::Kernel).unwrap();
+        services().future_registry.borrow_mut().consume(abandoned).unwrap();
+        let live = manager.pop_front_async(handle, FutureOwner::Kernel).unwrap();
+
+        let pattern: [u8; MESSAGE_PAYLOAD_BYTES] = [0x5C; MESSAGE_PAYLOAD_BYTES];
+        let msg = Message::new(Handle::new(1, 1).pack() as u32, &pattern);
+        assert_eq!(manager.push_back(handle, msg), Ok(()));
+
+        let registry = services().future_registry.borrow_mut();
+        let future_box = registry.borrow_mut(live).unwrap();
+        let ipc_future = future_box.as_any().downcast_ref::<IpcMessageFuture>().unwrap();
+        let delivered = ipc_future.result().expect("the live waiter must receive the message");
+        assert_eq!(delivered.conn(), Handle::new(1, 1).pack() as u32);
+        assert_eq!(delivered.data(), &pattern);
+    }
+
+    #[test]
+    fn test_pop_front_without_capacity_fails_directly_and_keeps_the_message() {
+        let mut manager = MailboxManager::new();
+        let handle = manager.create();
+        assert_eq!(manager.pop_front_async(handle, FutureOwner::Kernel), None);
+
+        let msg = Message::new(Handle::new(1, 1).pack() as u32, &[0x11; system::ipc::MESSAGE_PAYLOAD_BYTES]);
+        assert_eq!(manager.push_back(handle, msg), Ok(()));
+        assert_eq!(manager.pop_front_async(handle, FutureOwner::Kernel), None);
+        assert!(manager.mailboxes.borrow(handle).unwrap().peek_front().is_some());
     }
 
     #[test]

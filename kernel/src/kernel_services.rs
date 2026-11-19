@@ -1,4 +1,4 @@
-use crate::future::FutureRegistry;
+use crate::future::{FutureOwner, FutureRegistry};
 use crate::ipc::ipc_manager::IpcManager;
 use crate::kernel_cell::KernelCell;
 use crate::memory::memory_manager::{MEMORY_MANAGER, MemoryManager};
@@ -34,8 +34,12 @@ pub(crate) struct FutureRegistryNotifierUseCase {
 }
 
 impl ForNotifyingFutures for FutureRegistryNotifierUseCase {
-    fn register(&self, future: Box<dyn Future + Send + Sync>) -> Option<FutureHandle> {
-        self.future_registry.borrow_mut().register(future)
+    fn register(
+        &self,
+        future: Box<dyn Future + Send + Sync>,
+        owner: FutureOwner,
+    ) -> Option<FutureHandle> {
+        self.future_registry.borrow_mut().register(future, owner)
     }
 
     fn notify(&self, handle: FutureHandle) {
@@ -48,6 +52,10 @@ impl ForNotifyingFutures for FutureRegistryNotifierUseCase {
                 ipc_future.complete(message);
             }
         }
+    }
+
+    fn is_live(&self, handle: FutureHandle) -> bool {
+        self.future_registry.borrow_mut().is_live(handle)
     }
 }
 
@@ -145,7 +153,7 @@ mod tests {
         let future = alloc::boxed::Box::new(crate::future::TaskCompletionFuture::owned_by(
             crate::task::TaskHandle::new(0, 0),
         ));
-        let fh = s.future_registry.borrow_mut().register(future);
+        let fh = s.future_registry.borrow_mut().register(future, FutureOwner::Kernel);
         assert!(fh.is_some());
     }
 }

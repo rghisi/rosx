@@ -163,3 +163,8 @@ CI gains a `bootloader` job (build all artifacts, run audits, run `cargo xtask b
 - **Era hardware.** Extend the AGENTS.md hardware checklist to the custom chain (real-drive INT 13
   timing margins, A20 via 8042, E820/E801/AH=88 on period BIOSes, 8250-vs-16550 FIFO tolerance);
   decide whether the custom chain replaces GRUB Legacy on 486 silicon.
+- **Console rework.** Planned and executed by `13-console.md`: the verdict stream rides the QEMU
+  debug port (0xE9, architecturally harmless on silicon) instead of the 16550 COM1, and the human
+  stream rides the BIOS VGA text console (INT 10h teletype, with a documented direct-VRAM exception
+  at the BIOS cursor for the post-handoff fake kernels). No scrolling in our code; the checkpoint
+  corpus never moves.

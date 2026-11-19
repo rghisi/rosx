@@ -129,6 +129,7 @@ a20_saved_high:
 
     .code32
 protected_entry:
+    cli
     mov ax, {data_selector}
     mov ds, ax
     mov es, ax

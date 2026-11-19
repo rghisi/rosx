@@ -115,8 +115,8 @@ struct BootCheckpoint {
     media: BootMedia,
     source: ImageSource,
     expected: ExitVerdict,
-    serial_contains: &'static [&'static str],
-    serial_absent: &'static [&'static str],
+    console_contains: &'static [&'static str],
+    console_absent: &'static [&'static str],
     timeout_seconds: u64,
 }
 
@@ -127,8 +127,8 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::HarnessStub(StubVariant::Pass),
         expected: ExitVerdict::Success,
-        serial_contains: &["BOOTLOADER-HARNESS OK"],
-        serial_absent: &["BOOTLOADER-HARNESS FAIL"],
+        console_contains: &["BOOTLOADER-HARNESS OK"],
+        console_absent: &["BOOTLOADER-HARNESS FAIL"],
         timeout_seconds: 5,
     },
     BootCheckpoint {
@@ -137,8 +137,8 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::HarnessStub(StubVariant::Fail),
         expected: ExitVerdict::Failure,
-        serial_contains: &["BOOTLOADER-HARNESS FAIL"],
-        serial_absent: &["BOOTLOADER-HARNESS OK"],
+        console_contains: &["BOOTLOADER-HARNESS FAIL"],
+        console_absent: &["BOOTLOADER-HARNESS OK"],
         timeout_seconds: 5,
     },
     BootCheckpoint {
@@ -147,8 +147,8 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::HarnessStub(StubVariant::Crash),
         expected: ExitVerdict::CrashedBeforeVerdict,
-        serial_contains: &[],
-        serial_absent: &["BOOTLOADER-HARNESS OK", "BOOTLOADER-HARNESS FAIL"],
+        console_contains: &[],
+        console_absent: &["BOOTLOADER-HARNESS OK", "BOOTLOADER-HARNESS FAIL"],
         timeout_seconds: 5,
     },
     BootCheckpoint {
@@ -157,8 +157,8 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::HarnessStub(StubVariant::Hang),
         expected: ExitVerdict::TimedOut,
-        serial_contains: &[],
-        serial_absent: &["BOOTLOADER-HARNESS OK", "BOOTLOADER-HARNESS FAIL"],
+        console_contains: &[],
+        console_absent: &["BOOTLOADER-HARNESS OK", "BOOTLOADER-HARNESS FAIL"],
         timeout_seconds: 2,
     },
     BootCheckpoint {
@@ -167,14 +167,14 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot32),
         expected: ExitVerdict::Success,
-        serial_contains: &[
+        console_contains: &[
             "[STAGE1] OK",
             "[STAGE2_32] A20=OK THUNK=OK",
             "[MEM88]",
             "[INT13]",
             "[DISK] media=lba",
         ],
-        serial_absent: &["BOOTLOADER-HARNESS", "[ERR] disk"],
+        console_absent: &["BOOTLOADER-HARNESS", "[ERR] disk"],
         timeout_seconds: 2,
     },
     BootCheckpoint {
@@ -183,14 +183,14 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot64),
         expected: ExitVerdict::Success,
-        serial_contains: &[
+        console_contains: &[
             "[STAGE1] OK",
             "[STAGE2_64] A20=OK THUNK=OK",
             "[MEM88]",
             "[INT13]",
             "[DISK] media=lba",
         ],
-        serial_absent: &["BOOTLOADER-HARNESS", "[ERR] disk"],
+        console_absent: &["BOOTLOADER-HARNESS", "[ERR] disk"],
         timeout_seconds: 2,
     },
     BootCheckpoint {
@@ -199,13 +199,13 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Floppy,
         source: ImageSource::BootImage(BootImage::Floppy),
         expected: ExitVerdict::Success,
-        serial_contains: &[
+        console_contains: &[
             "[STAGE1] OK",
             "[STAGE2_32] A20=OK THUNK=OK",
             "[MEM88]",
             "[INT13]",
         ],
-        serial_absent: &["BOOTLOADER-HARNESS", "[ERR] disk", "[DISK]"],
+        console_absent: &["BOOTLOADER-HARNESS", "[ERR] disk", "[DISK]"],
         timeout_seconds: 2,
     },
     BootCheckpoint {
@@ -214,13 +214,13 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot32),
         expected: ExitVerdict::Success,
-        serial_contains: &[
+        console_contains: &[
             "[STAGE1] OK",
             "[STAGE2_32] A20=OK THUNK=OK",
             "[MEM] entries=",
             "[DISK] media=lba",
         ],
-        serial_absent: &["BOOTLOADER-HARNESS", "[ERR] disk", "[ERR] memnorm"],
+        console_absent: &["BOOTLOADER-HARNESS", "[ERR] disk", "[ERR] memnorm"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -229,13 +229,13 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot32),
         expected: ExitVerdict::Success,
-        serial_contains: &[
+        console_contains: &[
             "[INITRD] addr=",
             "kernel loaded",
             "arch: x86_32",
             "initrd_crc32: 0x",
         ],
-        serial_absent: &["[FAT-ERR]", "[ERR] mem", "[FK32] violation"],
+        console_absent: &["[FAT-ERR]", "[ERR] mem", "[FK32] violation"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -244,8 +244,8 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot32),
         expected: ExitVerdict::Success,
-        serial_contains: &["[INITRD] addr=0x00101000", "kernel loaded", "initrd_crc32: 0x"],
-        serial_absent: &["[FAT-ERR]", "[ERR] mem", "[FK32] violation"],
+        console_contains: &["[INITRD] addr=0x", "kernel loaded", "initrd_crc32: 0x"],
+        console_absent: &["[FAT-ERR]", "[ERR] mem", "[FK32] violation"],
         timeout_seconds: 4,
     },
     BootCheckpoint {
@@ -254,13 +254,13 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::NoInitrdVolume,
         expected: ExitVerdict::Success,
-        serial_contains: &[
+        console_contains: &[
             "[INITRD] addr=0x00000000 size=0",
             "kernel loaded",
             "arch: x86_32",
             "initrd_crc32: 0x00000000",
         ],
-        serial_absent: &["[FAT-ERR]", "[ERR] mem", "[FK32] violation"],
+        console_absent: &["[FAT-ERR]", "[ERR] mem", "[FK32] violation"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -269,13 +269,13 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot64),
         expected: ExitVerdict::Success,
-        serial_contains: &[
+        console_contains: &[
             "[INITRD] addr=",
             "kernel loaded",
             "arch: x86_64",
             "initrd_crc32: 0x",
         ],
-        serial_absent: &["[FAT-ERR]", "[ERR] mem", "[FK64] violation"],
+        console_absent: &["[FAT-ERR]", "[ERR] mem", "[FK64] violation"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -284,8 +284,8 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot64),
         expected: ExitVerdict::Success,
-        serial_contains: &["[INITRD] addr=", "kernel loaded", "initrd_crc32: 0x"],
-        serial_absent: &["[FAT-ERR]", "[ERR] mem", "[FK64] violation"],
+        console_contains: &["[INITRD] addr=", "kernel loaded", "initrd_crc32: 0x"],
+        console_absent: &["[FAT-ERR]", "[ERR] mem", "[FK64] violation"],
         timeout_seconds: 4,
     },
     BootCheckpoint {
@@ -294,8 +294,8 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::OversizedInitrd,
         expected: ExitVerdict::Failure,
-        serial_contains: &["[ELF]", "[ERR] mem"],
-        serial_absent: &["[ERR] memnorm", "[INITRD]", "kernel loaded", "[STAGE2_32]"],
+        console_contains: &["[ELF]", "[ERR] mem"],
+        console_absent: &["[ERR] memnorm", "[INITRD]", "kernel loaded", "[STAGE2_32]"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -304,8 +304,8 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot64),
         expected: ExitVerdict::Success,
-        serial_contains: &["[INITRD] addr="],
-        serial_absent: &["[FAT-ERR]"],
+        console_contains: &["[INITRD] addr="],
+        console_absent: &["[FAT-ERR]"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -314,8 +314,8 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::ScribbledFatRoot,
         expected: ExitVerdict::Failure,
-        serial_contains: &["[FAT-ERR]"],
-        serial_absent: &["[INITRD]", "[STAGE2_32]"],
+        console_contains: &["[FAT-ERR]"],
+        console_absent: &["[INITRD]", "[STAGE2_32]"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -324,11 +324,11 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot32),
         expected: ExitVerdict::Success,
-        serial_contains: &[
+        console_contains: &[
             "[ELF] arch=X86_32 entry=0x00100000 phys=0x00100000..",
             "kernel loaded",
         ],
-        serial_absent: &["[ERR] elf"],
+        console_absent: &["[ERR] elf"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -337,8 +337,8 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::PatchedKernel(KernelPatch::Elf64Class),
         expected: ExitVerdict::Failure,
-        serial_contains: &["[ERR] elf class"],
-        serial_absent: &["[ELF]", "kernel loaded"],
+        console_contains: &["[ERR] elf class"],
+        console_absent: &["[ELF]", "kernel loaded"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -347,8 +347,8 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::PatchedKernel(KernelPatch::ZeroPhysicalAddress),
         expected: ExitVerdict::Failure,
-        serial_contains: &["[ERR] elf layout"],
-        serial_absent: &["[INITRD]", "kernel loaded"],
+        console_contains: &["[ERR] elf layout"],
+        console_absent: &["[INITRD]", "kernel loaded"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -357,8 +357,8 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::Elf32OnLongMode,
         expected: ExitVerdict::Failure,
-        serial_contains: &["[DISK] media=lba", "[ERR] elf class"],
-        serial_absent: &["[ELF] arch=", "kernel loaded"],
+        console_contains: &["[DISK] media=lba", "[ERR] elf class"],
+        console_absent: &["[ELF] arch=", "kernel loaded"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -367,7 +367,7 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot64),
         expected: ExitVerdict::Success,
-        serial_contains: &[
+        console_contains: &[
             "[STAGE1] OK",
             "[STAGE2_64] A20=OK THUNK=OK",
             "[ELF] arch=X86_64 entry=0xffff800000100000",
@@ -375,7 +375,7 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
             "[PAGETABLE] root=",
             "kernel loaded",
         ],
-        serial_absent: &["[FAT-ERR]", "[ERR]", "[FK64] violation"],
+        console_absent: &["[FAT-ERR]", "[ERR]", "[FK64] violation"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -384,8 +384,8 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot64),
         expected: ExitVerdict::Failure,
-        serial_contains: &["[STAGE1] OK", "[ERR] CPU does not support x86_64 Long Mode"],
-        serial_absent: &["[STAGE2_64]", "[FK64]", "[MEM88]"],
+        console_contains: &["[STAGE1] OK", "[ERR] CPU does not support x86_64 Long Mode"],
+        console_absent: &["[STAGE2_64]", "[FK64]", "[MEM88]"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -394,8 +394,8 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::BootImage(BootImage::Boot64),
         expected: ExitVerdict::Failure,
-        serial_contains: &["[STAGE1] OK", "[ERR] CPU does not support x86_64 Long Mode"],
-        serial_absent: &["[STAGE2_64]", "[FK64]", "[MEM88]"],
+        console_contains: &["[STAGE1] OK", "[ERR] CPU does not support x86_64 Long Mode"],
+        console_absent: &["[STAGE2_64]", "[FK64]", "[MEM88]"],
         timeout_seconds: 3,
     },
     BootCheckpoint {
@@ -404,15 +404,15 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         media: BootMedia::Disk,
         source: ImageSource::CorruptStage2Header,
         expected: ExitVerdict::TimedOut,
-        serial_contains: &["[STAGE1] OK", "[ERR] disk"],
-        serial_absent: &["[STAGE2_32] A20=OK", "BOOTLOADER-HARNESS"],
+        console_contains: &["[STAGE1] OK", "[ERR] disk"],
+        console_absent: &["[STAGE2_32] A20=OK", "BOOTLOADER-HARNESS"],
         timeout_seconds: 2,
     },
 ];
 
 struct BootOutcome {
     verdict: ExitVerdict,
-    serial: String,
+    console: String,
 }
 
 pub fn run_boot_test() {
@@ -427,7 +427,7 @@ pub fn run_boot_test() {
                 failures += 1;
                 println!("FAIL {} — {reason}", checkpoint.name);
                 println!("  outcome: {}", outcome.verdict.describe());
-                dump_serial(&outcome.serial);
+                dump_console(&outcome.console);
             }
         }
     }
@@ -647,13 +647,13 @@ fn boot(
     image: &Path,
     timeout_seconds: u64,
 ) -> BootOutcome {
-    let serial_path = image.with_extension("serial");
-    let _ = fs::remove_file(&serial_path);
+    let console_path = image.with_extension("console");
+    let _ = fs::remove_file(&console_path);
     let drive = match media {
         BootMedia::Disk => format!("format=raw,file={}", image.display()),
         BootMedia::Floppy => format!("format=raw,if=floppy,file={}", image.display()),
     };
-    let serial = format!("file:{}", serial_path.display());
+    let debugcon = format!("file:{}", console_path.display());
     let mut child = Command::new(machine.binary)
         .args([
             "-cpu",
@@ -662,8 +662,8 @@ fn boot(
             machine.ram,
             "-drive",
             &drive,
-            "-serial",
-            &serial,
+            "-debugcon",
+            &debugcon,
             "-display",
             "none",
             "-monitor",
@@ -691,7 +691,7 @@ fn boot(
     };
     BootOutcome {
         verdict,
-        serial: fs::read_to_string(&serial_path).unwrap_or_default(),
+        console: fs::read_to_string(&console_path).unwrap_or_default(),
     }
 }
 
@@ -713,34 +713,34 @@ fn verdict_mismatch(checkpoint: &BootCheckpoint, outcome: &BootOutcome) -> Optio
             outcome.verdict.describe()
         ));
     }
-    for expected_text in checkpoint.serial_contains {
-        if !outcome.serial.contains(expected_text) {
-            return Some(format!("serial output is missing {expected_text:?}"));
+    for expected_text in checkpoint.console_contains {
+        if !outcome.console.contains(expected_text) {
+            return Some(format!("console output is missing {expected_text:?}"));
         }
     }
-    for forbidden_text in checkpoint.serial_absent {
-        if outcome.serial.contains(forbidden_text) {
-            return Some(format!("serial output unexpectedly contains {forbidden_text:?}"));
+    for forbidden_text in checkpoint.console_absent {
+        if outcome.console.contains(forbidden_text) {
+            return Some(format!("console output unexpectedly contains {forbidden_text:?}"));
         }
     }
-    if outcome.serial.contains("[MEM] entries=")
-        && let Some(reason) = verify_memory_map(&outcome.serial, checkpoint.machine.ram_bytes)
+    if outcome.console.contains("[MEM] entries=")
+        && let Some(reason) = verify_memory_map(&outcome.console, checkpoint.machine.ram_bytes)
     {
         return Some(reason);
     }
-    if outcome.serial.contains("kernel loaded")
+    if outcome.console.contains("kernel loaded")
         && let Some(line) = outcome
-            .serial
+            .console
             .lines()
             .find(|line| line.starts_with("[INITRD]"))
-        && let Some(reason) = verify_initrd(line, &outcome.serial)
+        && let Some(reason) = verify_initrd(line, &outcome.console)
     {
         return Some(reason);
     }
     None
 }
 
-fn verify_initrd(line: &str, serial: &str) -> Option<String> {
+fn verify_initrd(line: &str, console: &str) -> Option<String> {
     let mut fields = line.split_whitespace();
     let (_, _) = (fields.next()?, fields.next()?);
     let (Some(addr), Some(size), Some(printed)) = (
@@ -758,7 +758,7 @@ fn verify_initrd(line: &str, serial: &str) -> Option<String> {
         }
         0u64
     } else {
-        let expected_address = if serial.contains("arch: x86_64") {
+        let expected_address = if console.contains("arch: x86_64") {
             fake_kernel64_phys_end()
         } else {
             fake_kernel_phys_end()
@@ -781,7 +781,7 @@ fn verify_initrd(line: &str, serial: &str) -> Option<String> {
             "stage2 crc32 {printed:#010x} differs from the host-seeded {host:#010x}"
         ));
     }
-    let Some(kernel_printed) = serial
+    let Some(kernel_printed) = console
         .lines()
         .find_map(|candidate| candidate.strip_prefix("initrd_crc32: "))
     else {
@@ -867,9 +867,9 @@ fn crc32_ieee(data: &[u8]) -> u32 {
     !accumulator
 }
 
-fn dump_serial(serial: &str) {
-    for line in serial.lines() {
-        println!("  serial | {line}");
+fn dump_console(console: &str) {
+    for line in console.lines() {
+        println!("  console | {line}");
     }
 }
 
@@ -896,7 +896,7 @@ struct Reservation {
     kind: u32,
 }
 
-const RESERVATION_TABLE: [Reservation; 12] = [
+const RESERVATION_TABLE: [Reservation; 11] = [
     Reservation { start: 0x0000_0000, end: 0x0000_0400, kind: 2 },
     Reservation { start: 0x0000_0400, end: 0x0000_0500, kind: 2 },
     Reservation { start: 0x0000_0500, end: 0x0000_0600, kind: 3 },
@@ -905,21 +905,20 @@ const RESERVATION_TABLE: [Reservation; 12] = [
     Reservation { start: 0x0000_7C00, end: 0x0000_7E00, kind: 3 },
     Reservation { start: 0x0000_7E00, end: 0x0003_0000, kind: 3 },
     Reservation { start: 0x0003_0000, end: 0x0003_1000, kind: 2 },
-    Reservation { start: 0x0003_1000, end: 0x0004_0000, kind: 1 },
-    Reservation { start: 0x0004_0000, end: 0x0007_C000, kind: 3 },
+    Reservation { start: 0x0003_1000, end: 0x0007_C000, kind: 1 },
     Reservation { start: 0x0007_C000, end: 0x0008_0000, kind: 2 },
     Reservation { start: 0x0008_0000, end: FIRST_MEBIBYTE, kind: 2 },
 ];
 
-fn verify_memory_map(serial: &str, ram_bytes: u64) -> Option<String> {
-    let rows = parse_map_rows(serial)?;
-    let summary = parse_map_summary(serial)?;
+fn verify_memory_map(console: &str, ram_bytes: u64) -> Option<String> {
+    let rows = parse_map_rows(console)?;
+    let summary = parse_map_summary(console)?;
     if rows.is_empty() {
         return Some("memory map printed no [MEM] region rows".to_string());
     }
     if summary.entries as usize != rows.len() {
         return Some(format!(
-            "summary claims {} entries, serial printed {}",
+            "summary claims {} entries, console printed {}",
             summary.entries,
             rows.len()
         ));
@@ -1037,9 +1036,9 @@ fn parse_hex_value(token: &str) -> Option<u64> {
     u64::from_str_radix(digits, 16).ok()
 }
 
-fn parse_map_rows(serial: &str) -> Option<Vec<MapRow>> {
+fn parse_map_rows(console: &str) -> Option<Vec<MapRow>> {
     let mut rows = Vec::new();
-    for line in serial.lines().map(|line| line.trim_end_matches('\r')) {
+    for line in console.lines().map(|line| line.trim_end_matches('\r')) {
         let Some(rest) = line.strip_prefix("[MEM] base=") else {
             continue;
         };
@@ -1061,8 +1060,8 @@ fn parse_map_rows(serial: &str) -> Option<Vec<MapRow>> {
     Some(rows)
 }
 
-fn parse_map_summary(serial: &str) -> Option<MapSummary> {
-    let line = serial
+fn parse_map_summary(console: &str) -> Option<MapSummary> {
+    let line = console
         .lines()
         .map(|line| line.trim_end_matches('\r'))
         .find(|line| line.starts_with("[MEM] entries="))?;

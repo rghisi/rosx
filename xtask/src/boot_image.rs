@@ -21,7 +21,7 @@ pub const PARTITION_START_LBA: u32 = 2048;
 pub const STAGE2_IMAGE_LBA: u32 = 8;
 pub const STAGE2_HEADER_MAGIC: &[u8; 4] = b"ROS2";
 pub const STAGE2_HEADER_BYTES: usize = SECTOR_BYTES;
-pub const STAGE2_MAX_BIN_BYTES: usize = 160 * 1024;
+pub const STAGE2_MAX_BIN_BYTES: usize = 64 * 1024 + 512;
 
 const BOOTABLE: u8 = 0x80;
 const FAT16_TYPE: u8 = 0x06;
@@ -225,7 +225,7 @@ pub fn build_stage2(object_dir: &Path, flavor: Stage2Flavor) -> Vec<u8> {
     let bin = fs::read(&flat).expect("cannot read the flat stage2 binary");
     assert!(
         !bin.is_empty() && bin.len() <= STAGE2_MAX_BIN_BYTES,
-        "the stage2 image is {} bytes; the 0x7E00..0x2FFFF budget is {STAGE2_MAX_BIN_BYTES}",
+        "the stage2 image is {} bytes; the 0x7E00..0x18000 budget is {STAGE2_MAX_BIN_BYTES}",
         bin.len()
     );
     match flavor {
@@ -252,12 +252,13 @@ pub fn build_stage2(object_dir: &Path, flavor: Stage2Flavor) -> Vec<u8> {
     bin
 }
 
-pub fn build_stage1(object_dir: &Path) -> Vec<u8> {
+pub fn build_stage1(object_dir: &Path, hard_unit: bool) -> Vec<u8> {
     let object = object_dir.join("stage1.o");
     let flat = object_dir.join("stage1.bin");
     let mut assembler = Command::new("as");
     assembler
         .arg("--32")
+        .arg(format!("--defsym=HARD_UNIT={}", u8::from(hard_unit)))
         .arg(workspace_root().join(STAGE1_SOURCE))
         .arg("-o")
         .arg(&object);
@@ -303,7 +304,7 @@ pub fn pack(kind: BootImage) -> PathBuf {
 }
 
 fn pack_partitioned(image: PathBuf, kind: BootImage) {
-    let stage1 = build_stage1(&scratch_dir());
+    let stage1 = build_stage1(&scratch_dir(), true);
 
     let mut entries: [Option<Entry>; ENTRY_COUNT] = [None; ENTRY_COUNT];
     entries[0] = Some(Entry {
@@ -332,7 +333,7 @@ fn pack_partitioned(image: PathBuf, kind: BootImage) {
 }
 
 fn pack_floppy(image: PathBuf) {
-    let stage1 = build_stage1(&scratch_dir());
+    let stage1 = build_stage1(&scratch_dir(), false);
     create_sparse(&image, FLOPPY_IMAGE_BYTES);
     write_at(&image, 0, &stage1);
     let stage2 = build_stage2(&scratch_dir(), Stage2Flavor::Flat32);
