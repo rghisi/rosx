@@ -27,8 +27,8 @@ to cargo against `arch/x86_64/Cargo.toml`.
 
 | Variable | Meaning |
 |---|---|
-| `ROSX_QEMU_PROFILE` | `dev` (default) or `release`; any other value panics |
-| `ROSX_KERNEL_ELF` | absolute path to a prebuilt kernel ELF; skips the kernel build |
+| `ROSX_QEMU_PROFILE` | `dev` or `release`; opt-in kernel build when `ROSX_KERNEL_ELF` is unset (unset both and the harness fails with a message); any other value panics |
+| `ROSX_KERNEL_ELF` | absolute path to a prebuilt kernel ELF; skips the kernel build (`cargo xtask test` builds the release kernel and sets it) |
 | `ROSX_QEMU_KEEP_TMP` | if set to a non-empty value, the session temp dir (disk image, monitor socket) is kept on drop and its path is printed to stderr |
 | `ROSX_BOOT_SAMPLES` | sample count for the boot-to-prompt measurement test (default 5) |
 

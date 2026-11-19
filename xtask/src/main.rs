@@ -225,10 +225,29 @@ fn create_flashable_image(debug: bool, spec: &ArchSpec) {
     }
 }
 
+fn integration_arch() -> &'static ArchSpec {
+    match env::var("ROSX_ARCH") {
+        Ok(name) => arch::find(&name).unwrap_or_else(|| {
+            eprintln!("unsupported ROSX_ARCH: {name}");
+            process::exit(2);
+        }),
+        Err(_) => &X86_64,
+    }
+}
+
 fn run_tests(skip_integration: bool) {
     build_apps(&X86_64);
     pack_rom(&X86_64);
     let mut cmd = cargo();
+    if !skip_integration && env::var_os("ROSX_KERNEL_ELF").is_none_or(|value| value.is_empty()) {
+        let spec = integration_arch();
+        if spec.name != X86_64.name {
+            build_apps(spec);
+            pack_rom(spec);
+        }
+        build_kernel(false, spec);
+        cmd.env("ROSX_KERNEL_ELF", spec.kernel_elf("release"));
+    }
     cmd.arg("test").arg("--workspace");
     let description = if skip_integration {
         cmd.arg("--exclude").arg("tests-integration");

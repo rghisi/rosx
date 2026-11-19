@@ -22,13 +22,21 @@ pub fn kernel_elf() -> PathBuf {
     KERNEL_ELF.get_or_init(build_kernel).clone()
 }
 
+fn profile_directory(requested: Option<&str>) -> Result<&'static str, String> {
+    match requested {
+        None | Some("") => Err("ROSX_KERNEL_ELF is not set, and the harness no longer builds a slow dev kernel on its own: \
+             run `cargo xtask test` (it builds the release kernel and sets the variable), point ROSX_KERNEL_ELF at a \
+             prebuilt release kernel, or opt in to a build with ROSX_QEMU_PROFILE=dev|release"
+            .to_string()),
+        Some("dev") => Ok("debug"),
+        Some("release") => Ok("release"),
+        Some(other) => Err(format!("ROSX_QEMU_PROFILE is set to '{other}'; valid values are: dev, release")),
+    }
+}
+
 fn build_kernel() -> PathBuf {
-    let profile = env::var("ROSX_QEMU_PROFILE").unwrap_or_else(|_| "dev".to_string());
-    let profile_dir = match profile.as_str() {
-        "dev" => "debug",
-        "release" => "release",
-        other => panic!("ROSX_QEMU_PROFILE is set to '{other}'; valid values are: dev, release"),
-    };
+    let profile_dir = profile_directory(env::var("ROSX_QEMU_PROFILE").ok().as_deref())
+        .unwrap_or_else(|message| panic!("{message}"));
 
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let arch = Arch::current();
@@ -84,4 +92,22 @@ fn build_kernel() -> PathBuf {
         );
     }
     artifact
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unset_profile_fails_loudly_instead_of_building_dev() {
+        assert!(profile_directory(None).unwrap_err().contains("cargo xtask test"));
+        assert!(profile_directory(Some("")).is_err());
+    }
+
+    #[test]
+    fn explicit_profiles_select_their_directories() {
+        assert_eq!(profile_directory(Some("dev")), Ok("debug"));
+        assert_eq!(profile_directory(Some("release")), Ok("release"));
+        assert!(profile_directory(Some("fast")).unwrap_err().contains("valid values"));
+    }
 }
