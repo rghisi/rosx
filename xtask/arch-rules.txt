@@ -1,0 +1,67 @@
+arp: net-protocol pci-protocol usrlib vfs-protocol
+ata: ata-protocol system usrlib
+ata-protocol: system usrlib
+atad: ata-protocol block-protocol system usrlib
+attach: block-protocol usrlib
+bench: system usrlib
+block-protocol: usrlib
+blockd: block-protocol rxpart usrlib
+bulk: system usrlib
+conway: system usrlib
+cp: usrlib vfs-protocol
+dummy: system usrlib
+echo: system usrlib
+exiter: system usrlib
+fake-kernel-32: rosx-boot-common system
+fake-kernel-64: rosx-boot-common system
+format: usrlib vfs-protocol
+fs-core:
+fsbench: system usrlib vfs-protocol
+init: system usrlib vfs-protocol
+input-protocol: system
+inputd: input-protocol system usrlib
+ip: ip-protocol net-protocol pci-protocol usrlib vfs-protocol
+ip-protocol: system usrlib
+ipd: ip-protocol net-protocol usrlib
+kernel: system
+leaky: system usrlib
+mem: system usrlib
+mkdir: usrlib vfs-protocol
+mount: usrlib vfs-protocol
+ne2k: net-protocol pci-protocol usrlib vfs-protocol
+ne2kd: net-protocol pci-protocol system usrlib
+net-protocol: system usrlib
+pci: pci-protocol usrlib
+pci-protocol: system usrlib
+pcid: pci-protocol system usrlib
+pi: system usrlib
+ping: system usrlib
+pong: system usrlib
+ps: system usrlib
+ps2d: input-protocol usrlib
+ramfs: fs-core
+randomd: system usrlib
+rm: usrlib vfs-protocol
+rmdir: usrlib vfs-protocol
+rosx: ata-protocol block-protocol bootloader_api input-protocol kernel pci-protocol pic8259 spin system usrlib vfs-protocol volatile x86-generic x86_64
+rosx-boot-common: system
+rosx-stage2: fs-core rosx-boot-common rxfat rxpart system
+rosx-x86_32: ata-protocol block-protocol input-protocol kernel pci-protocol spin system vfs-protocol volatile x86-generic
+rxfat: fs-core
+rxfs: fs-core
+rxpart:
+shell: system usrlib vfs-protocol
+snake: system usrlib
+stress: system usrlib
+system:
+tests-integration: libc rxpart tempfile x86-runner
+tetris: system usrlib
+threads: system usrlib
+usrlib: input-protocol system
+vfs: system usrlib vfs-protocol
+vfs-protocol: system usrlib
+vfsd: block-protocol fs-core rxfat rxfs usrlib vfs-protocol
+waitset: system usrlib
+x86-generic: kernel spin volatile
+x86-runner: anyhow bootloader tempfile
+xtask: rxpart system x86-runner

@@ -6,7 +6,9 @@ mod arch;
 mod boot_disk;
 mod boot_image;
 mod boot_test;
+mod check_arch;
 mod check_isa;
+mod json;
 
 use arch::{ArchSpec, X86_64, USER_APPS};
 use x86_runner::{BootMedium, LaunchMode};
@@ -238,7 +240,26 @@ fn run_tests(skip_integration: bool) {
     }
 }
 
+fn check_arch_command() {
+    match check_arch::run(&workspace_root()) {
+        Err(message) => {
+            eprintln!("error: {message}");
+            process::exit(1);
+        }
+        Ok(violations) if violations.is_empty() => println!("==> check-arch: dependency arrows and 486 feature floor hold"),
+        Ok(violations) => {
+            eprintln!("check-arch violations:");
+            for violation in &violations {
+                eprintln!("  {violation}");
+            }
+            process::exit(1);
+        }
+    }
+}
+
 fn check_command() {
+    println!("==> check stage: check-arch");
+    check_arch_command();
     println!("==> check stage: check-isa");
     let spec = arch::find("x86_32").expect("x86_32 is a registered arch");
     build_apps(spec);
@@ -341,7 +362,7 @@ fn parse_stages_option(extras: &[String]) -> Result<Option<std::path::PathBuf>, 
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | check-isa bootloader | check | test [--skip-integration] | boot-image [32|64|floppy] | boot-test>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | check-isa bootloader | check-arch | check | test [--skip-integration] | boot-image [32|64|floppy] | boot-test>"
     );
 }
 
@@ -455,6 +476,10 @@ fn main() {
         "test" => {
             let skip_integration = parse_optional_flag(extras, "--skip-integration");
             run_tests(skip_integration);
+        }
+        "check-arch" => {
+            require_no_extras(extras);
+            check_arch_command();
         }
         "check" => {
             require_no_extras(extras);
