@@ -1,6 +1,8 @@
 # ted — Full-Screen Text Editor — Implementation Plan
 
-> **Status:** Plan (code starts at M1). Written 2026-11-19 on branch `ted-editor` (base `35b98d4` = `origin/main`).
+> **Status:** Implemented on branch `ted-editor` (M1–M6 complete; evidence and the full decision
+> log in `plans/ted-editor-impl.md`). Originally written 2026-11-19 on branch `ted-editor`
+> (base `35b98d4` = `origin/main`).
 > **Feature:** `ted` — a pico/emacs-lite full-screen single-file text editor: open a path (or an
 > untitled scratch buffer), move, insert, delete, save, quit — with a status line — plus the input
 > amendment it stands on: `ps2d` learns Ctrl-as-control-codes, Escape, and arrow keys, the
@@ -22,7 +24,8 @@
 
 ### Goal
 - v1 delivers on **both x86_64 and x86_32**: `ted /path` edits and saves a file on the mounted FAT
-  root volume; `ted` with no argument edits an untitled buffer bound to `argv[1]` on first save.
+  root volume (a `NotFound` path opens an empty buffer bound to it); `ted` with no argument edits
+  an untitled buffer whose `^S` honestly reports that saving needs a file name.
 - A scripted integration proof: keystrokes in via the QEMU monitor, saved file verified from the
   host through the FAT image.
 - The input amendment is a clean, unit-tested, reusable surface: every future app gets Ctrl/Esc/arrows.
