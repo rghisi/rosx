@@ -207,6 +207,24 @@ pub fn contains_asm_macro(code: &str) -> bool {
         }))
 }
 
+pub fn asm_invocation_ranges(code: &str) -> Vec<(usize, usize)> {
+    let bytes = code.as_bytes();
+    let mut ranges = Vec::new();
+    for name in ["asm", "global_asm", "naked_asm"] {
+        for (start, _) in code.match_indices(name) {
+            let before_ok = start == 0 || !is_identifier_byte(bytes[start - 1]);
+            let after = skip_whitespace(code, start + name.len());
+            if before_ok && bytes.get(after) == Some(&b'!') {
+                let open = skip_whitespace(code, after + 1);
+                if matches!(bytes.get(open), Some(b'(' | b'[' | b'{')) {
+                    ranges.push((open, matching_close(code, open)));
+                }
+            }
+        }
+    }
+    ranges
+}
+
 fn matching_close(code: &str, open: usize) -> usize {
     let bytes = code.as_bytes();
     let mut depth = 0usize;
@@ -339,6 +357,17 @@ mod tests {
         assert!(contains_asm_macro("asm!(\"nop\")"));
         assert!(contains_asm_macro("core::arch::global_asm!(\"x\")"));
         assert!(!contains_asm_macro("fn asmx() {} let y = bad_asm;"));
+    }
+
+    #[test]
+    fn asm_invocation_ranges_cover_the_macro_arguments() {
+        let code = "fn a() {}\nglobal_asm!(\n  \"nop\",\n  ,\n);\nfn b() {}\n";
+        let ranges = asm_invocation_ranges(code);
+        assert_eq!(ranges.len(), 1);
+        let covered = &code[ranges[0].0..ranges[0].1];
+        assert!(covered.starts_with('(') && covered.ends_with(')'));
+        assert!(!covered.contains("fn b"));
+        assert!(asm_invocation_ranges("let asm_x = 1; a != b;").is_empty());
     }
 
     #[test]

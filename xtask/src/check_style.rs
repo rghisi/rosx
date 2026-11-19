@@ -31,7 +31,7 @@ pub fn rationale_links(text: &str) -> Vec<String> {
         let rest = &text[index + RATIONALE_LINK_MARKER.len()..];
         let slug_length = rest
             .bytes()
-            .take_while(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+            .take_while(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(*b, b'-' | b'_'))
             .count();
         if slug_length > 0 && rest[slug_length..].starts_with(".md") {
             links.push(format!("{}.md", &rest[..slug_length]));
@@ -80,8 +80,10 @@ fn qualifies_for_rationale(code: &str, group: &[&Comment]) -> bool {
 pub fn analyze_file(path: &str, source: &str, rationale_exists: &dyn Fn(&str) -> bool) -> FileReport {
     let scanned = rust_scan::scan(source);
     let mut report = FileReport::default();
+    let assembly = rust_scan::asm_invocation_ranges(&scanned.code);
     for comment in &scanned.comments {
-        if matches!(comment.kind, CommentKind::Plain | CommentKind::Block) {
+        let inside_assembly = assembly.iter().any(|&(start, end)| comment.start >= start && comment.start < end);
+        if !inside_assembly && matches!(comment.kind, CommentKind::Plain | CommentKind::Block) {
             report.offending_comment_lines += comment.line_count();
         }
     }
@@ -358,6 +360,12 @@ mod tests {
     }
 
     #[test]
+    fn plain_comments_inside_assembly_invocations_are_exempt() {
+        let source = "core::arch::global_asm!(\n    // register use\n    \"nop\", // tail\n);\n// outside\n";
+        assert_eq!(analyze(source).offending_comment_lines, 1);
+    }
+
+    #[test]
     fn doc_comment_on_safe_item_is_offending() {
         assert_eq!(analyze("/// hello\nfn a() {}\n").offending_comment_lines, 1);
     }
@@ -422,7 +430,7 @@ mod tests {
 
     #[test]
     fn rationale_links_need_a_valid_slug_and_extension() {
-        assert_eq!(rationale_links("docs/rationale/a-b1.md#frag and docs/rationale/x.txt docs/rationale/.md"), vec!["a-b1.md"]);
+        assert_eq!(rationale_links("docs/rationale/a-b1_x.md#frag and docs/rationale/x.txt docs/rationale/.md"), vec!["a-b1_x.md"]);
     }
 
     #[test]
