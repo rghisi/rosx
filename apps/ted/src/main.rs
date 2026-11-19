@@ -14,11 +14,13 @@ use vfs_protocol::client::Vfs;
 use ted::file::{self, LoadOutcome};
 use ted::keys::{self, Command};
 use ted::model::Buffer;
+use ted::prompt::{NamePrompt, PromptStep};
 use ted::screen::{self, Screen, View, COLS, TEXT_ROWS};
 
 enum Mode {
     Edit,
     QuitPrompt,
+    SavePrompt(NamePrompt),
 }
 
 struct Editor {
@@ -27,8 +29,9 @@ struct Editor {
     screen: Screen,
     mode: Mode,
     notice: Option<String>,
-    path: Option<&'static str>,
+    path: Option<String>,
     on_disk: Option<usize>,
+    quit_after_save: bool,
 }
 
 impl Editor {
@@ -49,10 +52,14 @@ impl Editor {
         }
         let status = match &self.notice {
             Some(message) => screen::notice_line(message),
-            None => match self.mode {
+            None => match &self.mode {
                 Mode::QuitPrompt => screen::notice_line("Save modified buffer? (Y/N)"),
+                Mode::SavePrompt(prompt) => screen::notice_line(&format!(
+                    "File Name to Save: {}   (Enter ok, Esc cancel)",
+                    prompt.text()
+                )),
                 Mode::Edit => screen::status_line(
-                    self.path,
+                    self.path.as_deref(),
                     self.buffer.is_modified(),
                     row,
                     display - self.view.left,
@@ -61,16 +68,21 @@ impl Editor {
         };
         let cursor_col = screen::cursor_display_offset(line, self.view.left, col)
             .unwrap_or(COLS - 1);
-        self.screen.repaint(&rows, &status, Some((row, cursor_col)));
+        let cursor = if matches!(self.mode, Mode::SavePrompt(_)) {
+            None
+        } else {
+            Some((row, cursor_col))
+        };
+        self.screen.repaint(&rows, &status, cursor);
     }
 
     fn save_buffer(&mut self) -> Result<(), String> {
-        let Some(path) = self.path else {
-            return Err(String::from("^S needs a file name: run `ted <path>`"));
+        let Some(path) = self.path.clone() else {
+            return Err(String::from("save needs a file name"));
         };
         let vfs = Vfs::connect().map_err(|error| format!("no filesystem service: {error:?}"))?;
         let bytes = self.buffer.to_bytes();
-        let outcome = file::save(&vfs, path, &bytes, self.on_disk);
+        let outcome = file::save(&vfs, &path, &bytes, self.on_disk);
         vfs.disconnect();
         outcome.map(|()| {
             self.on_disk = Some(bytes.len());
@@ -81,15 +93,50 @@ impl Editor {
 
     fn handle(&mut self, c: char) -> bool {
         self.notice = None;
+        let step = match &mut self.mode {
+            Mode::SavePrompt(prompt) => Some(prompt.input(c)),
+            Mode::Edit | Mode::QuitPrompt => None,
+        };
+        if let Some(step) = step {
+            return match step {
+                PromptStep::Continue => false,
+                PromptStep::Cancelled => {
+                    self.mode = Mode::Edit;
+                    self.quit_after_save = false;
+                    false
+                }
+                PromptStep::Committed(name) => {
+                    self.path = Some(file::root_relative(name.trim()));
+                    self.mode = Mode::Edit;
+                    let quit = self.quit_after_save;
+                    self.quit_after_save = false;
+                    match self.save_buffer() {
+                        Ok(()) if quit => true,
+                        Ok(()) => false,
+                        Err(message) => {
+                            self.notice = Some(message);
+                            false
+                        }
+                    }
+                }
+            };
+        }
         if matches!(self.mode, Mode::QuitPrompt) {
             return match c {
-                'y' | 'Y' => match self.save_buffer() {
-                    Ok(()) => true,
-                    Err(message) => {
-                        self.notice = Some(message);
-                        false
+                'y' | 'Y' => {
+                    if self.path.is_none() {
+                        self.mode = Mode::SavePrompt(NamePrompt::new());
+                        self.quit_after_save = true;
+                        return false;
                     }
-                },
+                    match self.save_buffer() {
+                        Ok(()) => true,
+                        Err(message) => {
+                            self.notice = Some(message);
+                            false
+                        }
+                    }
+                }
                 'n' | 'N' | '\x1b' => {
                     self.mode = Mode::Edit;
                     false
@@ -110,7 +157,9 @@ impl Editor {
             Some(Command::LineStart) => self.buffer.line_start(),
             Some(Command::LineEnd) => self.buffer.line_end(),
             Some(Command::Save) => {
-                if let Err(message) = self.save_buffer() {
+                if self.path.is_none() {
+                    self.mode = Mode::SavePrompt(NamePrompt::new());
+                } else if let Err(message) = self.save_buffer() {
                     self.notice = Some(message);
                 }
             }
@@ -129,7 +178,7 @@ impl Editor {
 
 fn main() {
     let arguments = usrlib::args();
-    let path: Option<&'static str> = arguments.get(1).copied();
+    let path: Option<String> = arguments.get(1).map(|name| file::root_relative(name));
     let vfs = match Vfs::connect() {
         Ok(vfs) => vfs,
         Err(error) => {
@@ -137,7 +186,7 @@ fn main() {
             Syscall::exit(1);
         }
     };
-    let (buffer, on_disk) = match path {
+    let (buffer, on_disk) = match &path {
         Some(path) => match file::load(&vfs, path) {
             Ok(LoadOutcome::Exists(bytes)) => (Buffer::from_bytes(&bytes), Some(bytes.len())),
             Ok(LoadOutcome::Absent) => (Buffer::new(), None),
@@ -157,6 +206,7 @@ fn main() {
         notice: None,
         path,
         on_disk,
+        quit_after_save: false,
     };
     print!("\x1B[2J\x1B[H");
     loop {

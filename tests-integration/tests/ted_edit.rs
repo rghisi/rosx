@@ -99,3 +99,58 @@ fn ted_quit_prompt_answers_no_then_yes() {
         b"dirt\n"
     );
 }
+
+#[test]
+fn ted_creates_a_new_file_from_a_bare_name() {
+    let mut session = session_at_prompt();
+    launch_ted(&mut session, "ted notes.txt");
+
+    session.send_text("remember the milk");
+    saved_notice(&mut session, "saved 18 bytes");
+    quit_to_shell(&mut session);
+
+    session.shutdown();
+    let image = session.temp_dir().join("boot-disk.img");
+    assert_eq!(
+        fat_disk::read_file_from_image(&image, "notes.txt"),
+        b"remember the milk\n"
+    );
+}
+
+#[test]
+fn ted_save_as_names_an_untitled_buffer() {
+    let mut session = session_at_prompt();
+    launch_ted(&mut session, "ted");
+
+    session.send_text("named by save-as");
+    send_key_awaited(&mut session, '\x13', "File Name to Save:");
+    session.send_text("/named.txt");
+    send_key_awaited(&mut session, '\n', "saved 17 bytes");
+    quit_to_shell(&mut session);
+
+    session.shutdown();
+    let image = session.temp_dir().join("boot-disk.img");
+    assert_eq!(
+        fat_disk::read_file_from_image(&image, "named.txt"),
+        b"named by save-as\n"
+    );
+}
+
+#[test]
+fn ted_quit_through_the_save_as_prompt_exits_after_saving() {
+    let mut session = session_at_prompt();
+    launch_ted(&mut session, "ted");
+
+    session.send_text("quit save");
+    send_key_awaited(&mut session, '\x11', "Save modified buffer?");
+    send_key_awaited(&mut session, 'y', "File Name to Save:");
+    session.send_text("/qsave.txt");
+    send_key_awaited(&mut session, '\n', "rose>");
+
+    session.shutdown();
+    let image = session.temp_dir().join("boot-disk.img");
+    assert_eq!(
+        fat_disk::read_file_from_image(&image, "qsave.txt"),
+        b"quit save\n"
+    );
+}
