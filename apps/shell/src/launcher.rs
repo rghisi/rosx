@@ -1,8 +1,10 @@
 use crate::command::Command;
 use alloc::format;
+use alloc::string::String;
 use alloc::vec::Vec;
 use input_protocol::wire;
 use system::args::{MAX_ARGUMENT_BYTES, MAX_ARGUMENT_COUNT};
+use system::boot_disk::SEARCH_PATH;
 use usrlib::exit::ExitStatus;
 use usrlib::handle::{UserConnectionHandle, UserFutureHandle};
 use usrlib::println;
@@ -23,10 +25,9 @@ pub fn run(cmd: &Command) -> Option<UserFutureHandle> {
             return None;
         }
     };
-    let program_path = format!("/{}", cmd.name);
-    let entity = match vfs.stat(&program_path) {
-        Ok(entity) => entity,
-        Err(ClientError::Vfs(VfsError::NotFound)) => {
+    let located = match resolve(&vfs, &cmd.name) {
+        Ok(Some(located)) => located,
+        Ok(None) => {
             println!("Unknown command: {}", cmd.name);
             vfs.disconnect();
             return None;
@@ -37,12 +38,12 @@ pub fn run(cmd: &Command) -> Option<UserFutureHandle> {
             return None;
         }
     };
-    if entity.kind == EntityKind::Directory {
+    if located.kind == EntityKind::Directory {
         println!("Not an executable: {}", cmd.name);
         vfs.disconnect();
         return None;
     }
-    let mut file = match vfs.open(program_path.as_str(), 0) {
+    let mut file = match vfs.open(located.path.as_str(), 0) {
         Ok(file) => file,
         Err(ClientError::Vfs(VfsError::NotFound)) => {
             println!("Unknown command: {}", cmd.name);
@@ -55,7 +56,7 @@ pub fn run(cmd: &Command) -> Option<UserFutureHandle> {
             return None;
         }
     };
-    let image = read_whole_file(&mut file, &cmd.name, entity.size);
+    let image = read_whole_file(&mut file, &cmd.name, located.size);
     let _ = file.close();
     vfs.disconnect();
     let Some(image) = image else { return None };
@@ -64,6 +65,41 @@ pub fn run(cmd: &Command) -> Option<UserFutureHandle> {
         return None;
     }
     launch(image, cmd)
+}
+
+struct Located {
+    path: String,
+    kind: EntityKind,
+    size: u64,
+}
+
+fn resolve(vfs: &Vfs, name: &str) -> Result<Option<Located>, ClientError> {
+    if name.starts_with('/') {
+        return match vfs.stat(name) {
+            Ok(entity) => Ok(Some(Located {
+                path: String::from(name),
+                kind: entity.kind,
+                size: entity.size,
+            })),
+            Err(ClientError::Vfs(VfsError::NotFound)) => Ok(None),
+            Err(error) => Err(error),
+        };
+    }
+    for directory in SEARCH_PATH {
+        let path = format!("/{}/{}", directory.name(), name);
+        match vfs.stat(path.as_str()) {
+            Ok(entity) => {
+                return Ok(Some(Located {
+                    path,
+                    kind: entity.kind,
+                    size: entity.size,
+                }));
+            }
+            Err(ClientError::Vfs(VfsError::NotFound)) => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(None)
 }
 
 fn read_whole_file(file: &mut VfsFile, name: &str, size: u64) -> Option<Vec<u8>> {
