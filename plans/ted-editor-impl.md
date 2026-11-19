@@ -96,6 +96,33 @@
     in `Cargo.toml` members + `USER_APPS` (now 42); deliberately **not** in `BOOTSTRAP_APPS` or
     the boot plan.
 
+## Merge reconciliation — origin/main #176 (Ctrl+C) and #177 (kill sweep)
+
+Upstream landed a Ctrl+C interrupt path (ps2d → inputd watcher → shell `Kill`) and the
+kill-aware resource sweep while this branch was open. The decoder files collided; the
+semantics reconcile in one direction:
+
+16. **The general Ctrl rule subsumes the Ctrl+C-only rule.** #176 made *only* Ctrl+C a control
+    code; `ted`'s keymap needs every `Ctrl+[a-z]` (`^A/^B/^D/^E/^F/^N/^P/^Q/^S`). The branch's
+    `char_for` wrapper maps `Ctrl+[a-z]` → `0x01..0x1A`, which decodes Ctrl+C to `0x03` exactly
+    as #176 does, so `inputd`'s watcher routing and the shell's `Kill` path work unchanged.
+    Ctrl+Enter passes `'\n'` through (the code Ctrl+J already produces); Ctrl+punctuation stays
+    silent. #176's table arm on `Key::C` was dropped in favor of the wrapper (it referenced
+    `controlled`, which is not in `key_char` scope).
+17. **Naming adopted from upstream**: the decoder field is `controlled` (not `ctrl`), keeping
+    the merge diff against main minimal. The `0xE0` extended-key state machine coexists with it.
+18. **Rewritten upstream tests**: `ctrl_with_other_keys_keeps_plain_characters` became
+    `ctrl_with_non_letter_keys_keeps_their_own_codes` (Enter keeps `'\n'`, grave stays silent)
+    and `ctrl_state_survives_release_frames_of_other_keys` now expects `['\x01', '\x03']` —
+    the merged doctrine, same state-machine intent. All of #176's Ctrl+C tests pass verbatim.
+19. **Ctrl+C semantics with the editor**: while `ted` runs in the foreground the shell's watcher
+    owns `'\x03'`, so Ctrl+C `Kill`s ted hard with no save prompt — recorded as the norm (pico's
+    own Ctrl+C is not a save key); `^Q` is the guarded exit. At the bare prompt the line-clear
+    branch runs before the `is_command_char` filter.
+20. **Post-merge verification**: unit suite clean; both arches build at zero warnings;
+    `check-isa` passes 43 ELFs; `ctrl_c` (4 tests) and `ted_edit` (3 tests) green on x86_64
+    and x86_32; `USER_APPS` is 43 with both `ted` and `spinner`.
+
 ## Known limits (by decision, not oversight)
 
 - No cut/paste, help overlay, undo, search, word motions, wrap, multi-buffer (each a named
