@@ -1,9 +1,10 @@
 use crate::command::Command;
 use alloc::format;
 use alloc::vec::Vec;
+use input_protocol::wire;
 use system::args::{MAX_ARGUMENT_BYTES, MAX_ARGUMENT_COUNT};
 use usrlib::exit::ExitStatus;
-use usrlib::handle::UserFutureHandle;
+use usrlib::handle::{UserConnectionHandle, UserFutureHandle};
 use usrlib::println;
 use usrlib::syscall::Syscall;
 use vfs_protocol::client::{ClientError, EntityKind, Vfs, VfsFile};
@@ -11,6 +12,8 @@ use vfs_protocol::wire::VfsError;
 
 const ELF_MAGIC: &[u8; 4] = b"\x7fELF";
 const READ_CHUNK_BYTES: usize = 4096;
+const CHILD_EVENT_TAG: u32 = 1;
+const CONTROL_EVENT_TAG: u32 = 2;
 
 pub fn run(cmd: &Command) -> Option<UserFutureHandle> {
     let vfs = match Vfs::connect() {
@@ -104,10 +107,7 @@ fn launch(image: Vec<u8>, cmd: &Command) -> Option<UserFutureHandle> {
     match Syscall::load_with_args(&image, &argv) {
         Some(handle) if cmd.background => Some(handle),
         Some(handle) => {
-            match Syscall::wait_for_exit_status(handle) {
-                Ok(status) => report_exit(&cmd.name, status),
-                Err(error) => println!("Cannot watch {}: {}", cmd.name, error),
-            }
+            wait_for_foreground(handle, &cmd.name);
             None
         }
         None => {
@@ -117,11 +117,88 @@ fn launch(image: Vec<u8>, cmd: &Command) -> Option<UserFutureHandle> {
     }
 }
 
+struct ControlWatcher {
+    connection: UserConnectionHandle,
+}
+
+impl ControlWatcher {
+    fn open() -> Option<ControlWatcher> {
+        let connection = Syscall::ipc_connect(wire::SERVICE_NAME).ok()?;
+        if Syscall::ipc_send(connection, &wire::encode_watch()).is_err() {
+            Syscall::ipc_disconnect(connection);
+            return None;
+        }
+        Some(ControlWatcher { connection })
+    }
+
+    fn close(&self) {
+        let _ = Syscall::ipc_send(self.connection, &wire::encode_unwatch());
+        Syscall::ipc_disconnect(self.connection);
+    }
+}
+
+fn wait_for_foreground(child: UserFutureHandle, name: &str) {
+    let Some(watcher) = ControlWatcher::open() else {
+        report_wait(child, name);
+        return;
+    };
+    let Some(control) = Syscall::ipc_receive_message(watcher.connection) else {
+        watcher.close();
+        report_wait(child, name);
+        return;
+    };
+    let Ok(set) = Syscall::waitset_create() else {
+        watcher.close();
+        report_wait(child, name);
+        return;
+    };
+    if Syscall::waitset_attach(set, child, CHILD_EVENT_TAG).is_err()
+        || Syscall::waitset_attach(set, control, CONTROL_EVENT_TAG).is_err()
+    {
+        Syscall::waitset_drop(set);
+        watcher.close();
+        report_wait(child, name);
+        return;
+    }
+    let mut receive_still_pending = true;
+    loop {
+        let Ok((completed, tag)) = Syscall::waitset_wait(set) else { break };
+        if tag == CHILD_EVENT_TAG {
+            break;
+        }
+        if tag == CONTROL_EVENT_TAG && completed == control {
+            let is_interrupt = Syscall::wait_for_message(control)
+                .map(|message| wire::frame_tag(message.data()) == wire::TAG_CONTROL)
+                .unwrap_or(false);
+            receive_still_pending = false;
+            if is_interrupt {
+                println!("^C");
+                let _ = Syscall::kill(child);
+            }
+        }
+    }
+    Syscall::waitset_drop(set);
+    let unwatch_sent = Syscall::ipc_send(watcher.connection, &wire::encode_unwatch()).is_ok();
+    if receive_still_pending && unwatch_sent {
+        let _ = Syscall::wait_for_message(control);
+    }
+    Syscall::ipc_disconnect(watcher.connection);
+    report_wait(child, name);
+}
+
+fn report_wait(child: UserFutureHandle, name: &str) {
+    match Syscall::wait_for_exit_status(child) {
+        Ok(status) => report_exit(name, status),
+        Err(error) => println!("Cannot watch {}: {}", name, error),
+    }
+}
+
 fn report_exit(name: &str, status: ExitStatus) {
     match status {
         ExitStatus::Clean(0) => {}
         ExitStatus::Clean(code) => println!("{} exited with code {}", name, code),
         ExitStatus::Panicked => println!("{} panicked", name),
+        ExitStatus::Interrupted => {}
         ExitStatus::Unknown { reason, code } => {
             println!("{} exited with reason {} code {}", name, reason, code)
         }

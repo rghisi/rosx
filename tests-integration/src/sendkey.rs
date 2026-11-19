@@ -141,6 +141,7 @@ mod tests {
         assert_eq!(token_for(' '), Some("spc"));
         assert_eq!(token_for('\t'), Some("tab"));
         assert_eq!(token_for('\x08'), Some("backspace"));
+        assert_eq!(token_for('\x03'), Some("ctrl-c"));
         assert_eq!(token_for('-'), Some("minus"));
         assert_eq!(token_for('_'), Some("shift-minus"));
         assert_eq!(token_for('='), Some("equal"));

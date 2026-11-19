@@ -75,6 +75,10 @@ pub fn main() {
                 buffer.pop();
                 print!("\x08");
             }
+        } else if c == '\x03' {
+            println!("^C");
+            buffer.clear();
+            prompt();
         } else if !input_protocol::wire::is_command_char(c) {
             print!("{}", c);
             buffer.push(c);
@@ -102,6 +106,7 @@ fn report_finished(name: &str, status: ExitStatus) {
         ExitStatus::Clean(0) => println!("{} finished", name),
         ExitStatus::Clean(code) => println!("{} exited with code {}", name, code),
         ExitStatus::Panicked => println!("{} panicked", name),
+        ExitStatus::Interrupted => println!("{} interrupted", name),
         ExitStatus::Unknown { reason, code } => {
             println!("{} exited with reason {} code {}", name, reason, code)
         }

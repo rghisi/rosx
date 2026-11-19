@@ -30,6 +30,13 @@ impl TimerManager {
         let handles: Vec<FutureHandle> = expired.into_values().flatten().collect();
         if handles.is_empty() { None } else { Some(handles) }
     }
+
+    pub fn discard_futures(&mut self, handles: &[FutureHandle]) {
+        for queued in self.next.values_mut() {
+            queued.retain(|handle| !handles.contains(handle));
+        }
+        self.next.retain(|_, queued| !queued.is_empty());
+    }
 }
 
 #[cfg(test)]
@@ -75,6 +82,31 @@ mod tests {
         timer.add_sleep(0, 10, handle(1));
         timer.pop_expired(100);
         assert!(timer.pop_expired(100).is_none());
+    }
+
+    #[test]
+    fn discard_futures_removes_named_handles_from_the_queue() {
+        let mut timer = TimerManager::new();
+        timer.add_sleep(0, 10, handle(1));
+        timer.add_sleep(0, 10, handle(2));
+        timer.add_sleep(0, 50, handle(3));
+
+        timer.discard_futures(&[handle(1)]);
+
+        let expired = timer.pop_expired(10).unwrap();
+        assert_eq!(expired, alloc::vec![handle(2)]);
+    }
+
+    #[test]
+    fn discard_futures_drops_deadlines_that_lose_their_last_handle() {
+        let mut timer = TimerManager::new();
+        timer.add_sleep(0, 10, handle(1));
+        timer.add_sleep(0, 50, handle(2));
+
+        timer.discard_futures(&[handle(1)]);
+
+        assert!(timer.pop_expired(10).is_none());
+        assert_eq!(timer.pop_expired(50), Some(alloc::vec![handle(2)]));
     }
 
     #[test]

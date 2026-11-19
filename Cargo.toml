@@ -22,6 +22,7 @@ members = [
     "apps/dummy",
     "apps/pi",
     "apps/exiter",
+    "apps/spinner",
     "apps/randomd",
     "apps/echo",
     "apps/bulk",

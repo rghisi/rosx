@@ -36,6 +36,8 @@ pub enum ErrorCode {
     ExitCodeOutOfRange = 0x0601,
     IrqRequestInvalid = 0x0701,
     IrqControllerUnavailable = 0x0702,
+    TaskKillTargetTerminated = 0x0801,
+    TaskKillTargetRunning = 0x0802,
     Unknown = 0x7FFF_FFFF,
 }
 
@@ -75,6 +77,8 @@ impl ErrorCode {
             0x0601 => ErrorCode::ExitCodeOutOfRange,
             0x0701 => ErrorCode::IrqRequestInvalid,
             0x0702 => ErrorCode::IrqControllerUnavailable,
+            0x0801 => ErrorCode::TaskKillTargetTerminated,
+            0x0802 => ErrorCode::TaskKillTargetRunning,
             _ => ErrorCode::Unknown,
         }
     }
@@ -84,7 +88,7 @@ impl ErrorCode {
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 30] = [
+    const ALL_ERROR_CODES: [ErrorCode; 32] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -114,6 +118,8 @@ mod tests {
         ErrorCode::ExitCodeOutOfRange,
         ErrorCode::IrqRequestInvalid,
         ErrorCode::IrqControllerUnavailable,
+        ErrorCode::TaskKillTargetTerminated,
+        ErrorCode::TaskKillTargetRunning,
         ErrorCode::Unknown,
     ];
 

@@ -35,10 +35,11 @@ pub fn main() {
         return;
     };
     loop {
+        let self_task = kernel().execution_state.current_task();
         let accepted = services()
             .ipc_manager
             .borrow_mut()
-            .accept_message_async(binding, FutureOwner::Kernel);
+            .accept_message_async(binding, FutureOwner::Kernel, self_task);
         let Some(accepted) = accepted else {
             kernel().task_yield();
             continue;
@@ -49,7 +50,6 @@ pub fn main() {
         let Ok(request) = received.result() else {
             continue;
         };
-        let self_task = kernel().execution_state.current_task();
         if let Some(KstatsRequest::ProcessTable) = decode_request(request.data()) {
             reply_process_table(request.conn(), self_task);
             continue;
@@ -196,7 +196,7 @@ mod tests {
         let accepted = services()
             .ipc_manager
             .borrow_mut()
-            .accept_message_async(binding, FutureOwner::Kernel).unwrap();
+            .accept_message_async(binding, FutureOwner::Kernel, server).unwrap();
         let future = services()
             .future_registry
             .borrow_mut()
@@ -216,7 +216,7 @@ mod tests {
         let pending_reply = services()
             .ipc_manager
             .borrow_mut()
-            .receive_message_async(connection, FutureOwner::Kernel).unwrap();
+            .receive_message_async(connection, FutureOwner::Kernel, client).unwrap();
         let future = services()
             .future_registry
             .borrow_mut()

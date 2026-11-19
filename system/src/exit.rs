@@ -1,5 +1,6 @@
 pub const EXIT_REASON_CLEAN: u32 = 0;
 pub const EXIT_REASON_PANICKED: u32 = 1;
+pub const EXIT_REASON_INTERRUPTED: u32 = 2;
 
 pub const MAX_EXIT_CODE: u32 = 0x00FF_FFFF;
 
@@ -19,6 +20,10 @@ pub const fn clean_status(code: u32) -> Option<i32> {
 
 pub const fn panicked_status() -> i32 {
     encode(EXIT_REASON_PANICKED, 0)
+}
+
+pub const fn interrupted_status() -> i32 {
+    encode(EXIT_REASON_INTERRUPTED, 0)
 }
 
 pub const fn status_for_exit_request(code: u32) -> Option<i32> {
@@ -86,9 +91,16 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_status_carries_the_interrupted_reason_and_no_code() {
+        let status = interrupted_status();
+        assert_eq!(decode_reason(status), EXIT_REASON_INTERRUPTED);
+        assert_eq!(decode_code(status), 0);
+    }
+
+    #[test]
     fn reserved_reasons_survive_decoding_instead_of_reading_as_clean() {
-        let status = encode(2, 5);
-        assert_eq!(decode_reason(status), 2);
+        let status = encode(3, 5);
+        assert_eq!(decode_reason(status), 3);
         assert_eq!(decode_code(status), 5);
     }
 
@@ -96,6 +108,7 @@ mod tests {
     fn known_reasons_stay_inside_the_low_reason_band() {
         assert!(encode(EXIT_REASON_CLEAN, MAX_EXIT_CODE) >= 0);
         assert!(encode(EXIT_REASON_PANICKED, MAX_EXIT_CODE) >= 0);
+        assert!(encode(EXIT_REASON_INTERRUPTED, MAX_EXIT_CODE) >= 0);
     }
 
     #[test]
