@@ -2,6 +2,32 @@
 
 > **Date:** 2026-11-20 · **Branch:** `integration-flakiness-audit` · **Base:** `origin/main@0d25ecd`
 > **Scope:** `tests-integration` on x86_64 and x86_32, as CI runs them (`--test-threads=1`, release kernel via `ROSX_KERNEL_ELF`, pure TCG).
+>
+> **Status update (same day): exclusions APPLIED** — `ip_pair`, `ne2k_pair`,
+> `arp_pair`, `ata_env_spike`, `bench_alloc` removed; see
+> `docs/decisions/integration-drop-pair-spike-and-bench-tests.md`.
+>
+> **Evidence-base correction.** The local quiet/load runs and the per-test table
+> below were collected on the snapshot this worktree was created from (older
+> harness: `rxqemu` library, `expect_output_since`, and tests such as
+> `led_check`/`e2e_*`/`chat_pair` later superseded on main), so the "40 % of CI
+> runs" figure is inflated by feature-branch runs. Re-verified against current
+> `main`: in the last 100 runs **23 failures are the deterministic Create
+> Release artifact-path bug** (broken since PR #154 moved artifacts) and **5
+> are Integration-job failures**. Every mechanism cited below still exists on
+> current `main` and was re-confirmed in its code before the removals: the ATA
+> probe is a single shot whose `DriveFault` is discarded
+> (`apps/atad/src/main.rs:72`, `wait_ready(true)` at `apps/atad/src/taskfile.rs:117`);
+> init probes the absent `ne2kd` 100×100 ms (`apps/init/src/main.rs:13,83`);
+> the pair tests assert zero loss over the shared multicast tap; and
+> `run_command` re-types whole commands when the output window clips mid-line
+> (the CI signature `Expected "2 received" … "| 2 receive"`, run 44116127470).
+>
+> **Post-removal verification (quiet host, current tree):** x86_64 66 pass /
+> `fat_partition_flow` timed out once at 75 s; x86_32 76 pass / `kstats_mem`
+> showed the `Unknown command: mem` fallback once. Both failures pass 3/3 in
+> isolated reruns — pre-existing intermittent classes (session pressure and
+> M9-style fallback), unrelated to the removals. `cargo xtask check` green.
 
 ---
 
@@ -221,7 +247,12 @@ is ~15 s/boot, of which ~10 s is the M8 ne2kd probe tax.
 
 ## 4. Recommendations
 
-### Exclude / demote (ordered by payoff)
+### Exclude / demote (ordered by payoff) — **APPLIED 2026-11-20**
+
+All five removals landed on this branch; rationale and consequences are
+recorded in `docs/decisions/integration-drop-pair-spike-and-bench-tests.md`.
+The two `ted_edit` consolidation candidates below were judged keepers of their
+own paths and remain.
 1. **`ip_pair`** — redundant with `ip_inject` + `ip_slirp`, slowest and flakiest
    net test; move its `ip neigh` assertion into `ip_slirp`. Saves ~33 s + one
    proven CI flake source.
