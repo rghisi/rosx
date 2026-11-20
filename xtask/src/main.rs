@@ -235,18 +235,14 @@ fn integration_arch() -> &'static ArchSpec {
     }
 }
 
-fn run_tests(skip_integration: bool) {
-    build_apps(&X86_64);
-    pack_rom(&X86_64);
+fn run_tests(arch: &ArchSpec, skip_integration: bool) {
+    build_apps(arch);
+    pack_rom(arch);
     let mut cmd = cargo();
+    cmd.env("ROSX_ARCH", arch.name);
     if !skip_integration && env::var_os("ROSX_KERNEL_ELF").is_none_or(|value| value.is_empty()) {
-        let spec = integration_arch();
-        if spec.name != X86_64.name {
-            build_apps(spec);
-            pack_rom(spec);
-        }
-        build_kernel(false, spec);
-        cmd.env("ROSX_KERNEL_ELF", spec.kernel_elf("release"));
+        build_kernel(false, arch);
+        cmd.env("ROSX_KERNEL_ELF", arch.kernel_elf("release"));
     }
     cmd.arg("test").arg("--workspace");
     let description = if skip_integration {
@@ -257,9 +253,6 @@ fn run_tests(skip_integration: bool) {
     };
     cmd.arg("--").arg("--test-threads=1");
     run(&mut cmd, description);
-    if !skip_integration {
-        boot_test::run_boot_test();
-    }
 }
 
 fn check_arch_command() {
@@ -336,7 +329,7 @@ fn decisions_command() {
     }
 }
 
-fn check_command() {
+fn gate_stages() {
     println!("==> check stage: check-style");
     check_style_command(&[]);
     println!("==> check stage: check-arch");
@@ -347,9 +340,37 @@ fn check_command() {
     pack_rom(spec);
     build_kernel(false, spec);
     check_isa_command(spec);
+}
+
+fn check_command() {
+    gate_stages();
     println!("==> check stage: tests");
-    run_tests(true);
+    run_tests(&X86_64, true);
     println!("==> check: all stages green");
+}
+
+fn verify_command() {
+    if env::var_os("ROSX_KERNEL_ELF").is_some_and(|value| !value.is_empty()) {
+        eprintln!(
+            "verify builds each arch's kernel itself; unset ROSX_KERNEL_ELF (it exists for the by-hand cargo test flow)"
+        );
+        process::exit(2);
+    }
+    gate_stages();
+    for name in ["x86_64", "x86_32"] {
+        let spec = arch::find(name).expect("verify archs are registered");
+        println!("==> verify stage: build {}", spec.name);
+        build_apps(spec);
+        pack_rom(spec);
+        build_kernel(false, spec);
+        prepare_medium(false, spec);
+        create_boot_disk(false, spec);
+        println!("==> verify stage: integration {}", spec.name);
+        run_tests(spec, false);
+    }
+    println!("==> verify stage: boot-test");
+    boot_test::run_boot_test();
+    println!("==> verify: gate, build, integration on every arch, and boot-test all green");
 }
 
 fn check_isa_command(spec: &ArchSpec) {
@@ -443,7 +464,7 @@ fn parse_stages_option(extras: &[String]) -> Result<Option<std::path::PathBuf>, 
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | check-isa bootloader | check-arch | check-style [--update-baseline [--allow-increase <reason>]] | decisions | install-hooks | check | test [--skip-integration] | boot-image [32|64|floppy] | boot-test>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | check-isa bootloader | check-arch | check-style [--update-baseline [--allow-increase <reason>]] | decisions | install-hooks | check | verify | test [--skip-integration] | boot-image [32|64|floppy] | boot-test>"
     );
 }
 
@@ -556,7 +577,10 @@ fn main() {
         }
         "test" => {
             let skip_integration = parse_optional_flag(extras, "--skip-integration");
-            run_tests(skip_integration);
+            run_tests(&integration_arch(), skip_integration);
+            if !skip_integration {
+                boot_test::run_boot_test();
+            }
         }
         "check-style" => check_style_command(extras),
         "install-hooks" => {
@@ -574,6 +598,10 @@ fn main() {
         "check" => {
             require_no_extras(extras);
             check_command();
+        }
+        "verify" => {
+            require_no_extras(extras);
+            verify_command();
         }
         "boot-image" => {
             if extras.len() != 1 {
