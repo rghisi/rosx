@@ -269,6 +269,12 @@ own paths and remain.
 Net effect: −170 s x86_64 suite, and the three CI-proven flake families shrink
 by their two harvested names plus the `arp_pair` phase risk.
 
+## Friction log
+
+apply exclusions | worktree started at an old snapshot (`78f65ed`, #137-era harness); CI forensics and local suite runs were already measured against it; discovered at deletion time, re-grounded on current `main` | MISSING-FACT | 1 round
+apply exclusions | `gh run list --event push` silently includes pushes to every branch, inflating the "main is 40% red" claim (real: 5/100 integration); must scope with `--branch main` | ENV-TRAP | 1 round
+apply exclusions | `gh run view --log` returned empty for main runs, `gh api .../logs` saved a redirect body, and `unzip` is absent on this host — main-run failure excerpts were unrecoverable | ENV-TRAP | ~15 min
+
 ### Fix, don't exclude (root causes, in payoff order)
 - **M9 (do first):** make atad's boot probe failure visible (print the
   `DriveFault` — it is swallowed today) and re-probe bounded: at daemon start
