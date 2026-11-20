@@ -86,3 +86,10 @@ proved. Host machine: QEMU 10.2.1, rustc 1.101.0-nightly `0abfedbc7` 2026-10-02.
 
 The full integration suite on both arches (CI runs it); the GRUB ISO / era media are
 untouched by this branch and carry no apps.
+
+## Friction log
+
+step 6 | `cargo xtask check` failed `check-arch`: the plan authorized the harness to consume `system::boot_disk` but never listed the `xtask/arch-rules.txt` arrow amendment it requires | PLAN-DEFECT | 1 round
+step 5 | the `vfs` self-test stat'd `/randomd` and `boot_and_shell.rs` expected `tetris` in the root listing: the plan's impact-surface list missed both, caught by the pre-commit grep sweep | MISSING-FACT | 1 round
+verification | `cargo test -p tests-integration disk_boot` filters test-name substrings so 2 of 3 tests were silently skipped, and `| tail -15` cut the target's result lines; re-ran as `--test disk_boot` with full capture | ENV-TRAP | 1 round
+verification | believed `cargo xtask check` covered the QEMU suites; its tests stage runs with integration excluded (`run_tests(true)`) | MISSING-FACT | 0
