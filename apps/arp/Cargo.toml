@@ -13,6 +13,7 @@ test = false
 [dependencies]
 
 [target.'cfg(target_os = "none")'.dependencies]
+system = { path = "../../system" }
 usrlib = { path = "../../usrlib", features = ["runtime"] }
 net-protocol = { path = "../../protocol/net" }
 pci-protocol = { path = "../../protocol/pci" }

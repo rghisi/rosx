@@ -33,9 +33,11 @@ fn build_boot_disk(staging: &Path, with_apps: bool) -> FatDisk {
     disk.make_directory("::/boot");
     disk.write_seed(MENU, "::/boot/menu.txt");
     if with_apps {
-        for app in ["shell", "mkdir", "randomd"] {
+        disk.make_directory("::/bin");
+        disk.make_directory("::/srv");
+        for (app, directory) in [("shell", "bin"), ("mkdir", "bin"), ("randomd", "srv")] {
             let elf = built_elf(app);
-            disk.copy(&elf, &format!("::{app}"));
+            disk.copy(&elf, &format!("::/{directory}/{app}"));
         }
     }
     disk
@@ -53,10 +55,10 @@ fn boot_disk_mounts_the_root_and_hands_off_the_disk_shell() {
     let mut session = QemuSession::spawn_with_master_disk(disk.path());
     session.expect_output("attach registered ATA", BOOT_BUDGET);
     session.expect_output("mount ok device=ata0d0p0 dir=/", BOOT_BUDGET);
-    session.expect_output("[INIT] starting /randomd", BOOT_BUDGET);
+    session.expect_output("[INIT] starting /srv/randomd", BOOT_BUDGET);
     session.expect_output("[INIT] RANDOM ready", BOOT_BUDGET);
-    session.expect_output("[INIT] /echo not available", BOOT_BUDGET);
-    session.expect_output("[INIT] handing over to /shell", BOOT_BUDGET);
+    session.expect_output("[INIT] /srv/echo not available", BOOT_BUDGET);
+    session.expect_output("[INIT] handing over to /bin/shell", BOOT_BUDGET);
     session.expect_output("rose>", BOOT_BUDGET);
 
     let listing = run(&mut session, "ls");
@@ -103,17 +105,17 @@ fn the_built_boot_disk_boots_to_the_disk_shell() {
     };
     let mut session = QemuSession::spawn_with_master_disk(&image);
     session.expect_output("mount ok device=ata0d0p0 dir=/", BOOT_BUDGET);
-    session.expect_output("[INIT] starting /randomd", BOOT_BUDGET);
+    session.expect_output("[INIT] starting /srv/randomd", BOOT_BUDGET);
     session.expect_output("[INIT] RANDOM ready", BOOT_BUDGET);
-    session.expect_output("[INIT] starting /pong", BOOT_BUDGET);
+    session.expect_output("[INIT] starting /srv/pong", BOOT_BUDGET);
     session.expect_output("[INIT] PING ready", BOOT_BUDGET);
-    session.expect_output("[INIT] handing over to /shell", BOOT_BUDGET);
+    session.expect_output("[INIT] handing over to /bin/shell", BOOT_BUDGET);
     session.expect_output("rose>", BOOT_BUDGET);
 
-    let listing = run(&mut session, "ls");
+    let listing = run(&mut session, "ls /games");
     assert!(
         listing.contains("snake") && listing.contains("tetris"),
-        "the built disk carries every app through the root mount: {listing}"
+        "the built disk carries every app under its directory: {listing}"
     );
 }
 
@@ -128,7 +130,7 @@ fn a_mounted_root_without_a_shell_falls_back_to_the_rom_shell() {
 
     let mut session = QemuSession::spawn_with_master_disk(disk.path());
     session.expect_output("mount ok device=ata0d0p0 dir=/", BOOT_BUDGET);
-    session.expect_output("[INIT] hand-off /shell unavailable", BOOT_BUDGET);
+    session.expect_output("[INIT] hand-off /bin/shell unavailable", BOOT_BUDGET);
     session.expect_output("[INIT] handing over to rom:shell", BOOT_BUDGET);
     session.expect_output("rose>", BOOT_BUDGET);
 

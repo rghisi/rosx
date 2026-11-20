@@ -86,12 +86,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         .service("rom:inputd", input_protocol::wire::SERVICE_NAME)
         .service("rom:ps2d", input_protocol::wire::SOURCE_NAME_PS2KEYBOARD)
         .run("rom:mount", &["ata0d0p0", "/"])
-        .service("/randomd", "RANDOM")
-        .service("/echo", "BULKECHO")
-        .service("/pong", "PING")
-        .service("/pcid", pci_protocol::wire::SERVICE_NAME)
-        .service("/ne2kd", "NE2K")
-        .exec("/shell", &[])
+        .service("/srv/randomd", "RANDOM")
+        .service("/srv/echo", "BULKECHO")
+        .service("/srv/pong", "PING")
+        .service("/srv/pcid", pci_protocol::wire::SERVICE_NAME)
+        .service("/srv/ne2kd", "NE2K")
+        .exec("/bin/shell", &[])
         .exec("rom:shell", &[]);
     let _ = kernel.schedule(new_elf_task_with_arguments("init", INIT_ELF, boot_plan.encode()), FutureOwner::Kernel);
 

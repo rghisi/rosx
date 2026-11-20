@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 input-protocol = { path = "../protocol/input" }
 rxpart = { path = "../fs/partition" }
+system = { path = "../system" }
 x86-runner = { path = "../arch/x86-runner" }
 tempfile = "3"
 libc = "0.2"
