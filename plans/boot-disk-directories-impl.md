@@ -60,6 +60,20 @@ proved. Host machine: QEMU 10.2.1, rustc 1.101.0-nightly `0abfedbc7` 2026-10-02.
   `[INIT]` token echo changed (asserted as planned).
 - `cargo xtask check` runs the test stage with integration **excluded**
   (`run_tests(true)`), so the QEMU proof below was run explicitly.
+- **Payload-path consumers survived the launch-path sweep:** four integration suites
+  copy root-level app ELFs as test data (`cp /pi …`, `cp /echo …`) and `fsbench`
+  reads `/snake` — they treat the disk as a byte source, not a launcher, so the plan's
+  impact list (built around command launches and `[INIT]` echoes) missed them. CI
+  integration caught it on `dc9577c` (both arches, `expose_corrupt_hdd`); fixed in
+  `01386fa` to `/stress/pi`, `/srv/echo`, `/games/snake`.
+- **Runtime-built daemon-launch paths survived even the payload sweep:** the `ip`,
+  `ne2k` and `arp` CLIs auto-start missing daemons through
+  `vfs.read_whole(&format!("/{program}"))` — a `format!`-built literal no static
+  grep of app-name strings surfaces. The full local x86_64 run caught it
+  (`ip_inject`: "ipd never answered the injected who-has" — `pcid`/`ne2kd` were plan-
+  started, only `ipd` reached the loader, and it read a missing `/ipd` and failed
+  silently). Fixed in `3c038fa`: the three launchers resolve through
+  `system::boot_disk::directory_of`; the usual dependency arrows joined the rules file.
 
 ## Verification
 
@@ -84,8 +98,22 @@ proved. Host machine: QEMU 10.2.1, rustc 1.101.0-nightly `0abfedbc7` 2026-10-02.
 
 ## Not verified here
 
-The full integration suite on both arches (CI runs it); the GRUB ISO / era media are
-untouched by this branch and carry no apps.
+Hardware. The GRUB ISO / era media are untouched and carry no apps.
+
+## Full-suite closure (post-fix)
+
+- `01386fa` payload-path fix: `expose_corrupt_hdd`, `fat_partition_flow`,
+  `partitioned_hdd_flow`, `vfs_hdd_flow` all green locally on x86_64.
+- `3c038fa` daemon-launch-path fix; `cargo xtask check` green.
+- x86_64 full integration suite (run in two spans after a harness shell died
+  mid-suite, `--no-fail-fast`): every suite green — first half through
+  `future_ownership` (arp/ata/boot/ctrl_c/disk_boot-skip/exit/fat/futures, benches
+  ignored by design) and the 22-suite remainder (ip/ne2k/ipc/iso/kstats/shell/ted/
+  vfs/waitset): **exit 0, 0 failures**.
+- x86_32 full integration suite (`--no-fail-fast`): **102 passed, 0 failed, exit 0**.
+- CI on `3c038fa`: Integration Tests (x86_64) pass 15m32s, Integration Tests
+  (x86_32) pass 18m30s, Unit Tests pass, both kernel builds pass, Custom BIOS
+  Bootloader pass.
 
 ## Friction log
 
@@ -93,3 +121,5 @@ step 6 | `cargo xtask check` failed `check-arch`: the plan authorized the harnes
 step 5 | the `vfs` self-test stat'd `/randomd` and `boot_and_shell.rs` expected `tetris` in the root listing: the plan's impact-surface list missed both, caught by the pre-commit grep sweep | MISSING-FACT | 1 round
 verification | `cargo test -p tests-integration disk_boot` filters test-name substrings so 2 of 3 tests were silently skipped, and `| tail -15` cut the target's result lines; re-ran as `--test disk_boot` with full capture | ENV-TRAP | 1 round
 verification | believed `cargo xtask check` covered the QEMU suites; its tests stage runs with integration excluded (`run_tests(true)`) | MISSING-FACT | 0
+verification | first full CI integration run failed both arches: 4 suites copy root-level ELFs as payload data (`cp /pi`, `cp /echo`) and `fsbench` reads `/snake`; the impact sweep grepped command launches, never absolute data-path literals | PLAN-DEFECT | 1 round + 1 CI cycle
+verification | second CI fail-fast hid it until the local full run: `ip`/`ne2k`/`arp` auto-launch daemons with `format!("/{program}")`, a runtime-built path no static sweep finds; `ip_inject` failed on missing `/ipd` | MISSING-FACT | 1 round
