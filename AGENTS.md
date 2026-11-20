@@ -15,7 +15,7 @@ x86_64 is the starting point due to tooling, not the focus: keep `kernel/` porta
 ## Commands
 
 ```bash
-cargo xtask check                    # THE GATE: check-style, check-arch, check-isa, build surfaces, unit tests
+cargo xtask check                    # THE GATE: check-style, check-arch, check-isa, build surfaces, unit tests (QEMU integration excluded — use cargo xtask test)
 cargo xtask build [x86_64|x86_32]    # apps + ROM + kernel + boot artifacts (FAT boot disk needs mtools)
 cargo xtask run [x86_64|x86_32]      # boot QEMU to the shell prompt
 cargo xtask test [--skip-integration]
