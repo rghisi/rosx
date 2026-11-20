@@ -1,4 +1,4 @@
-arp: net-protocol pci-protocol usrlib vfs-protocol
+arp: net-protocol pci-protocol system usrlib vfs-protocol
 ata: ata-protocol system usrlib
 ata-protocol: system usrlib
 atad: ata-protocol block-protocol system usrlib
@@ -20,7 +20,7 @@ fsbench: system usrlib vfs-protocol
 init: system usrlib vfs-protocol
 input-protocol: system
 inputd: input-protocol system usrlib
-ip: ip-protocol net-protocol pci-protocol usrlib vfs-protocol
+ip: ip-protocol net-protocol pci-protocol system usrlib vfs-protocol
 ip-protocol: system usrlib
 ipd: ip-protocol net-protocol usrlib
 kernel: system
@@ -28,7 +28,7 @@ leaky: system usrlib
 mem: system usrlib
 mkdir: usrlib vfs-protocol
 mount: usrlib vfs-protocol
-ne2k: net-protocol pci-protocol usrlib vfs-protocol
+ne2k: net-protocol pci-protocol system usrlib vfs-protocol
 ne2kd: net-protocol pci-protocol system usrlib
 net-protocol: system usrlib
 pci: pci-protocol usrlib
