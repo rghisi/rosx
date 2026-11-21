@@ -296,3 +296,9 @@ milestone carries its own docs commits; M5 closes the series.
   stub (higher-half link, `bootloader_api` retirement, framebuffer story).
 - **Era-hardware verification** of the custom chain on 86Box/real drives, including the
   recorded thunk geometry defect.
+
+## Friction log
+
+    M1 | /BOOT/KERNEL.ELF (C5) OOMed 5 boot-test rows with [ERR] heap: stage2's bump heap never frees and path depth costs ~10 KiB; F10 claimed volume size was the only heap-relevant axis | MISSING-FACT | ~1h (3 boot-test runs, instrumented peaks, C5 revised)
+    M1 | read boot64.console mid-suite and mistook the lm-guard-486 row's expected [ERR] CPU overwrite for a new stage2-64 defect; checkpoint rows share one console file per image | ENV-TRAP | ~15min
+    M1 | committed the stage2-heap todo without running the gate; check-style rejected priority "medium" afterwards (pre-commit hook not installed in this worktree) | ENV-TRAP | 1 round
