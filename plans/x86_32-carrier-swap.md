@@ -334,3 +334,8 @@ milestone carries its own docs commits; M5 closes the series.
     M1 | /BOOT/KERNEL.ELF (C5) OOMed 5 boot-test rows with [ERR] heap: stage2's bump heap never frees and path depth costs ~10 KiB; F10 claimed volume size was the only heap-relevant axis | MISSING-FACT | ~1h (3 boot-test runs, instrumented peaks, C5 revised)
     M1 | read boot64.console mid-suite and mistook the lm-guard-486 row's expected [ERR] CPU overwrite for a new stage2-64 defect; checkpoint rows share one console file per image | ENV-TRAP | ~15min
     M1 | committed the stage2-heap todo without running the gate; check-style rejected priority "medium" afterwards (pre-commit hook not installed in this worktree) | ENV-TRAP | 1 round
+    M2 | check-style reported an orphan rationale link and stale unsafe counts until the new files were `git add`ed: the scanner enumerates sources via `git ls-files`, so untracked files are invisible | ENV-TRAP | 1 round
+    M2 | the plan asserted "the Once stays idempotent": kernel::once::Once::call_once panics on the second call (already written in docs/rationale/once-initialization-ordering.md), so entry wiring plus bootstrap's re-wire halted the first chain boot | PLAN-DEFECT | ~1 boot cycle
+    M2 | ran the x86_32 integration suite with a relative ROSX_KERNEL_ELF; the harness canonicalizes against the test process cwd, not the workspace, and failed instantly | ENV-TRAP | 1 round
+    M2 | partitioned_hdd_flow stalled 84 s then failed, passed in 42 s on rerun — the Med-rated flake of plans/integration-flakiness-assessment-2026-11-20.md | TASK | 1 rerun
+    M2 | CI x86_64 integration failed elf_arguments with the documented disk-vanish "Unknown command: pi" fallback; the adjacent run on an xtask-only tree diff was green | TASK | 1 CI rerun
