@@ -16,6 +16,7 @@ const COMMAND_PORT: u16 = 0x1F7;
 const ALTERNATE_STATUS_PORT: u16 = 0x3F6;
 
 const STATUS_BUSY: u8 = 0x80;
+const STATUS_DRIVE_PRESENT: u8 = 0x40;
 const STATUS_DATA_REQUEST: u8 = 0x08;
 const STATUS_ERROR: u8 = 0x01;
 
@@ -254,6 +255,9 @@ impl<B: Bus> AtaDrive<B> {
                     .read_byte(ALTERNATE_STATUS_PORT)
                     .map_err(|_| DriveFault::Denied)?;
                 if status & STATUS_BUSY == 0 {
+                    if status & STATUS_DRIVE_PRESENT == 0 {
+                        return Err(DriveFault::NotFound);
+                    }
                     if status & STATUS_ERROR != 0 {
                         let error_register = self
                             .bus
@@ -345,6 +349,8 @@ mod tests {
         fault_status_after_reads: usize,
         fault_status_after_data_writes: usize,
         fault_status: u8,
+        slave_status: Option<u8>,
+        slave_selected: bool,
         data_reads: usize,
         data_writes: usize,
         sleeps: u64,
@@ -367,6 +373,8 @@ mod tests {
                 fault_status_after_reads: usize::MAX,
                 fault_status_after_data_writes: usize::MAX,
                 fault_status: READY_WITH_DRQ,
+                slave_status: None,
+                slave_selected: false,
                 data_reads: 0,
                 data_writes: 0,
                 sleeps: 0,
@@ -379,6 +387,8 @@ mod tests {
         fn alternate_status(&self) -> u8 {
             if self.busy_stuck {
                 STATUS_BUSY
+            } else if self.slave_selected {
+                self.slave_status.unwrap_or(READY_WITH_DRQ)
             } else if self.data_reads >= self.fault_status_after_reads {
                 self.fault_status
             } else if self.data_writes >= self.fault_status_after_data_writes {
@@ -412,6 +422,9 @@ mod tests {
         fn write_byte(&mut self, port: u16, value: u8) -> Result<(), PortError> {
             if self.deny_writes {
                 return Err(PortError::Denied);
+            }
+            if port == DRIVE_HEAD_PORT {
+                self.slave_selected = value & 0x10 != 0;
             }
             self.ops.push(Op::Out(port, value));
             Ok(())
@@ -512,6 +525,46 @@ mod tests {
         bus.command_status = FLOATING_BUS_BYTE;
         let mut drive = drive_on(bus);
         assert_eq!(drive.probe(), Err(DriveFault::NotFound));
+    }
+
+    #[test]
+    fn absent_slave_on_a_controller_that_does_not_float_is_not_found_without_sleeping() {
+        let mut bus = MockBus::ready();
+        bus.slave_status = Some(0x00);
+        let mut drive = AtaDrive::new(bus, 1);
+        assert_eq!(drive.probe(), Err(DriveFault::NotFound));
+        assert_eq!(drive.bus.sleeps, 0);
+        assert!(drive.bus.ops.contains(&Op::Out(DRIVE_HEAD_PORT, 0xB0)));
+    }
+
+    #[test]
+    fn slave_busy_forever_is_bounded_to_busy() {
+        let mut bus = MockBus::ready();
+        bus.slave_status = Some(STATUS_BUSY);
+        let mut drive = AtaDrive::new(bus, 1);
+        assert_eq!(drive.probe(), Err(DriveFault::Busy));
+        assert_eq!(drive.bus.sleeps, SLEEP_TICKS_BEFORE_BUSY);
+    }
+
+    #[test]
+    fn present_slave_probes_like_a_master() {
+        let mut bus = MockBus::ready();
+        bus.slave_status = Some(READY_WITH_DRQ);
+        bus.disk_words.extend(identify_block_words());
+        let mut drive = AtaDrive::new(bus, 1);
+        let identity = drive.probe().unwrap();
+        assert_eq!(identity.model, "QEMU HARDDISK");
+        assert_eq!(identity.sectors, 7106);
+    }
+
+    #[test]
+    fn drdy_lost_during_read_surfaces_as_not_found() {
+        let mut drive = probed_drive();
+        drive.bus.disk_words.extend(sector_words(0));
+        drive.bus.fault_status_after_reads = 1;
+        drive.bus.fault_status = 0x00;
+        let mut buffer = vec![0u8; SECTOR_BYTES];
+        assert_eq!(drive.read_sectors(0, SECTOR_ONE, &mut buffer), Err(DriveFault::NotFound));
     }
 
     #[test]
