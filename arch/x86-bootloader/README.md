@@ -9,13 +9,15 @@ higher half. Blueprint: `plans/bootloader/` (00-overview + phases 01–12);
 the checkpoint suite and media packer live in `xtask` (`boot_image.rs`,
 `boot_test.rs`, `check_isa.rs`).
 
-**Positioning:** the production boot stack is untouched — the OS still boots
-via the `bootloader` crate / GRUB media and QEMU `-kernel`. This chain is
-proven here in QEMU (the `bootloader` CI job: `cargo xtask boot-test` +
-`cargo xtask check-isa bootloader`); real-kernel integration, the carrier
-swap, rom.img-as-initrd and era-hardware verification are the recorded
-follow-on stubs (`00-overview.md` §9). Nothing goes green on hardware
-without the AGENTS.md hardware evidence rules.
+**Positioning:** x86_32 boots production through this chain — stage1 and
+stage2-32 on the unified FAT boot disk (`plans/x86_32-carrier-swap.md`). The
+x86_64 production boot stack is untouched — it still boots via the
+`bootloader` crate. The chain is proven in QEMU (the `bootloader` CI job:
+`cargo xtask boot-test` + `cargo xtask check-isa bootloader`, including the
+`real-kernel-boot32` checkpoint that boots the real kernel off the built
+disk); x86_64 real-kernel integration, rom.img-as-initrd and era-hardware
+verification are the recorded follow-on stubs (`00-overview.md` §9). Nothing
+goes green on hardware without the AGENTS.md hardware evidence rules.
 
 ## Layout
 

@@ -156,8 +156,13 @@ CI gains a `bootloader` job (build all artifacts, run audits, run `cargo xtask b
   VGA-text fallback — either stage2 grows a VESA VBE mode-set filling `DisplayKind::LinearFramebuffer`,
   or the port gains VGA text). x86_32: dual-magic entry (EAX `0x2BADB002` → Multiboot path, EAX
   `BOOT_INFO_MAGIC` → `BootInfo` path), Multiboot header kept for coexistence.
+  **x86_32 half closed 2026-11-21** by `plans/x86_32-carrier-swap.md`: the dual-magic entry is
+  live and chain-boots `BootInfo`; the header stays until `docs/todo/multiboot-retirement.md`.
 - **Carrier swap.** `x86-runner` `BootMedium` for both arches, `-kernel` retirement decision,
   `tests-integration` re-wiring, GRUB ISO + era-media disposition.
+  **x86_32 half closed 2026-11-21** by the same plan: `BootMedium::BootDisk`, `-kernel` retired,
+  `tests-integration` re-wired to chain-boot the unified disk, GRUB ISO retired; era media
+  untouched. x86_64 half stays open.
 - **rom.img as initrd** (decision D5): load `/boot/rom.img` from disk, kernel registers the ROM
   from the initrd, drop the `include_bytes!` coupling and the build-order asserts.
 - **Era hardware.** Extend the AGENTS.md hardware checklist to the custom chain (real-drive INT 13

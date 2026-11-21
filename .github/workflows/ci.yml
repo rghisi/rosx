@@ -97,7 +97,7 @@ jobs:
           arch/x86-86box/scripts/fetch-grub-legacy.sh
           arch/x86-86box/scripts/check-isa-boot.sh
 
-      - name: Upload multiboot kernel
+      - name: Upload kernel and ROM
         if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
