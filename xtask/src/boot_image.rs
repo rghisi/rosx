@@ -8,6 +8,7 @@ use rxpart::mbr::SECTOR_BYTES;
 use x86_runner::chain;
 
 pub use x86_runner::chain::PARTITION_START_LBA;
+pub use x86_runner::chain::STAGE2_HEADER_MAGIC;
 pub use x86_runner::chain::STAGE2_IMAGE_LBA;
 
 use crate::check_isa::on_path;

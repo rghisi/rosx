@@ -506,18 +506,49 @@ fn prepare_image(source: &ImageSource) -> Prepared {
         ImageSource::OversizedInitrd => Prepared::Image(pack_oversized_initrd_image()),
         ImageSource::NoInitrdVolume => Prepared::Image(pack_no_initrd_image()),
         ImageSource::BuiltBootDisk => match built_boot_disk() {
-            Some(image) => Prepared::Image(image),
-            None => Prepared::Skipped(
+            BuiltDisk::Chain(image) => Prepared::Image(image),
+            BuiltDisk::Stale => Prepared::Skipped(
+                "target/rosx-i486-boot-disk.img carries no boot chain (cargo caches a pre-chain image); run `cargo xtask build x86_32` first",
+            ),
+            BuiltDisk::Absent => Prepared::Skipped(
                 "no target/rosx-i486-boot-disk.img for the real kernel; run `cargo xtask build x86_32` first",
             ),
         },
     }
 }
 
-fn built_boot_disk() -> Option<PathBuf> {
+enum BuiltDisk {
+    Chain(PathBuf),
+    Stale,
+    Absent,
+}
+
+fn built_boot_disk() -> BuiltDisk {
     let spec = crate::arch::find("x86_32").expect("x86_32 is a registered arch");
     let disk = crate::boot_disk::boot_disk_path(spec);
-    disk.is_file().then_some(disk)
+    if !disk.is_file() {
+        return BuiltDisk::Absent;
+    }
+    if carries_boot_chain(&disk) {
+        BuiltDisk::Chain(disk)
+    } else {
+        BuiltDisk::Stale
+    }
+}
+
+fn carries_boot_chain(disk: &Path) -> bool {
+    let Ok(head) = fs::read(disk) else {
+        return false;
+    };
+    let slice_lba = 446 + 8;
+    let first_slice = head
+        .get(slice_lba..slice_lba + 4)
+        .is_some_and(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()) == boot_image::PARTITION_START_LBA);
+    let stage2 = boot_image::STAGE2_IMAGE_LBA as usize * boot_image::BOOT_SECTOR_BYTES;
+    first_slice
+        && head
+            .get(stage2..stage2 + boot_image::STAGE2_HEADER_MAGIC.len())
+            .is_some_and(|magic| magic == boot_image::STAGE2_HEADER_MAGIC)
 }
 
 fn pack_corrupt_header_image() -> PathBuf {
