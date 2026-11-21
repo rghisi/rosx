@@ -36,6 +36,13 @@ const BIOS_32_512: BootMachine = BootMachine {
     ram_bytes: 512 * MEBIBYTE,
 };
 
+const BIOS_32_128: BootMachine = BootMachine {
+    binary: "qemu-system-i386",
+    cpu: "486",
+    ram: "128M",
+    ram_bytes: 128 * MEBIBYTE,
+};
+
 const BIOS_32_8: BootMachine = BootMachine {
     binary: "qemu-system-i386",
     cpu: "486",
@@ -80,6 +87,7 @@ enum ImageSource {
     Elf32OnLongMode,
     OversizedInitrd,
     NoInitrdVolume,
+    BuiltBootDisk,
 }
 
 #[derive(Clone, Copy)]
@@ -120,7 +128,7 @@ struct BootCheckpoint {
     timeout_seconds: u64,
 }
 
-const CHECKPOINTS: [BootCheckpoint; 24] = [
+const CHECKPOINTS: [BootCheckpoint; 25] = [
     BootCheckpoint {
         name: "harness-pass",
         machine: &BIOS_32,
@@ -408,6 +416,23 @@ const CHECKPOINTS: [BootCheckpoint; 24] = [
         console_absent: &["[STAGE2_32] A20=OK", "BOOTLOADER-HARNESS"],
         timeout_seconds: 2,
     },
+    BootCheckpoint {
+        name: "real-kernel-boot32",
+        machine: &BIOS_32_128,
+        media: BootMedia::Disk,
+        source: ImageSource::BuiltBootDisk,
+        expected: ExitVerdict::TimedOut,
+        console_contains: &[
+            "[STAGE1] OK",
+            "[STAGE2_32] A20=OK THUNK=OK",
+            "[BOOTINFO] regions=",
+            "[KERNEL] Bootstrapped",
+            "[KERNEL] Initializing",
+            "[KERNEL] Starting",
+        ],
+        console_absent: &["!!! PANIC !!!", "bad Multiboot magic", "unknown boot magic"],
+        timeout_seconds: 5,
+    },
 ];
 
 struct BootOutcome {
@@ -418,8 +443,16 @@ struct BootOutcome {
 pub fn run_boot_test() {
     require_host_tools();
     let mut failures = 0;
+    let mut skipped = 0;
     for checkpoint in &CHECKPOINTS {
-        let image = prepare_image(&checkpoint.source);
+        let image = match prepare_image(&checkpoint.source) {
+            Prepared::Image(image) => image,
+            Prepared::Skipped(reason) => {
+                skipped += 1;
+                println!("SKIP {} — {reason}", checkpoint.name);
+                continue;
+            }
+        };
         let outcome = boot(checkpoint.machine, checkpoint.media, &image, checkpoint.timeout_seconds);
         match verdict_mismatch(checkpoint, &outcome) {
             None => println!("PASS {} — {}", checkpoint.name, outcome.verdict.describe()),
@@ -432,9 +465,10 @@ pub fn run_boot_test() {
         }
     }
     println!(
-        "==> boot-test: {} checkpoints, {} failures",
+        "==> boot-test: {} checkpoints, {} failures, {} skipped",
         CHECKPOINTS.len(),
-        failures
+        failures,
+        skipped
     );
     if failures > 0 {
         process::exit(1);
@@ -456,17 +490,34 @@ fn require_host_tools() {
     }
 }
 
-fn prepare_image(source: &ImageSource) -> PathBuf {
+enum Prepared {
+    Image(PathBuf),
+    Skipped(&'static str),
+}
+
+fn prepare_image(source: &ImageSource) -> Prepared {
     match source {
-        ImageSource::HarnessStub(variant) => pack_harness_stub_image(*variant),
-        ImageSource::BootImage(kind) => boot_image::pack(*kind),
-        ImageSource::CorruptStage2Header => pack_corrupt_header_image(),
-        ImageSource::ScribbledFatRoot => pack_scribbled_fat_root_image(),
-        ImageSource::PatchedKernel(patch) => pack_patched_kernel_image(*patch),
-        ImageSource::Elf32OnLongMode => pack_elf32_on_long_mode_image(),
-        ImageSource::OversizedInitrd => pack_oversized_initrd_image(),
-        ImageSource::NoInitrdVolume => pack_no_initrd_image(),
+        ImageSource::HarnessStub(variant) => Prepared::Image(pack_harness_stub_image(*variant)),
+        ImageSource::BootImage(kind) => Prepared::Image(boot_image::pack(*kind)),
+        ImageSource::CorruptStage2Header => Prepared::Image(pack_corrupt_header_image()),
+        ImageSource::ScribbledFatRoot => Prepared::Image(pack_scribbled_fat_root_image()),
+        ImageSource::PatchedKernel(patch) => Prepared::Image(pack_patched_kernel_image(*patch)),
+        ImageSource::Elf32OnLongMode => Prepared::Image(pack_elf32_on_long_mode_image()),
+        ImageSource::OversizedInitrd => Prepared::Image(pack_oversized_initrd_image()),
+        ImageSource::NoInitrdVolume => Prepared::Image(pack_no_initrd_image()),
+        ImageSource::BuiltBootDisk => match built_boot_disk() {
+            Some(image) => Prepared::Image(image),
+            None => Prepared::Skipped(
+                "no target/rosx-i486-boot-disk.img for the real kernel; run `cargo xtask build x86_32` first",
+            ),
+        },
     }
+}
+
+fn built_boot_disk() -> Option<PathBuf> {
+    let spec = crate::arch::find("x86_32").expect("x86_32 is a registered arch");
+    let disk = crate::boot_disk::boot_disk_path(spec);
+    disk.is_file().then_some(disk)
 }
 
 fn pack_corrupt_header_image() -> PathBuf {
