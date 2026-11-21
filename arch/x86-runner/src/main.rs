@@ -13,7 +13,9 @@ fn main() {
 
     if !no_run {
         let mut command = x86_runner::qemu_command(arch, &medium, x86_runner::LaunchMode::Interactive);
-        x86_runner::attach_fat_boot_disk(&mut command, &kernel_binary);
+        if !matches!(medium, x86_runner::BootMedium::BootDisk(_)) {
+            x86_runner::attach_fat_boot_disk(&mut command, &kernel_binary);
+        }
         x86_runner::attach_persistent_hdd(&mut command);
         let status = command
             .status()

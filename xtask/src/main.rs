@@ -66,15 +66,15 @@ fn build_kernel(debug: bool, spec: &ArchSpec) {
 
 fn prepare_medium(debug: bool, spec: &ArchSpec) -> BootMedium {
     let kernel = spec.kernel_elf(if debug { "debug" } else { "release" });
-    let medium = x86_runner::prepare_run_medium(&kernel, spec.boot)
-        .expect("failed to prepare boot medium");
+    let medium =
+        x86_runner::prepare_run_medium(&kernel, spec.boot).expect("failed to prepare boot medium");
     match &medium {
         BootMedium::DiskImage(_) => println!("==> created {} disk image", spec.name),
-        BootMedium::MultibootKernel(elf) => {
-            println!("==> bootable multiboot artifact: {}", elf.display())
+        BootMedium::BootDisk(disk) => {
+            println!("==> boot medium: the unified disk {}", disk.display())
         }
         BootMedium::CdImage(_) => {
-            unreachable!("prepare_run_medium only yields a disk image or the multiboot kernel")
+            unreachable!("prepare_run_medium never yields a CD image")
         }
     }
     medium
@@ -82,7 +82,7 @@ fn prepare_medium(debug: bool, spec: &ArchSpec) -> BootMedium {
 
 fn launch(medium: &BootMedium, spec: &ArchSpec) {
     let mut cmd = x86_runner::qemu_command(spec.boot, medium, LaunchMode::Interactive);
-    if spec.fat_boot_disk {
+    if spec.fat_boot_disk && !matches!(medium, BootMedium::BootDisk(_)) {
         let disk = boot_disk::boot_disk_path(spec);
         cmd.arg("-drive")
             .arg(format!("if=ide,index=0,media=disk,format=raw,file={}", disk.display()));
@@ -244,6 +244,9 @@ fn run_tests(arch: &ArchSpec, skip_integration: bool) {
         build_kernel(false, arch);
         cmd.env("ROSX_KERNEL_ELF", arch.kernel_elf("release"));
     }
+    if !skip_integration && arch.boot == x86_runner::Arch::X86_32 {
+        boot_image::stage_boot32_artifacts();
+    }
     cmd.arg("test").arg("--workspace");
     let description = if skip_integration {
         cmd.arg("--exclude").arg("tests-integration");
@@ -363,8 +366,8 @@ fn verify_command() {
         build_apps(spec);
         pack_rom(spec);
         build_kernel(false, spec);
-        prepare_medium(false, spec);
         create_boot_disk(false, spec);
+        prepare_medium(false, spec);
         println!("==> verify stage: integration {}", spec.name);
         run_tests(spec, false);
     }
@@ -520,8 +523,8 @@ fn main() {
             build_apps(spec);
             pack_rom(spec);
             build_kernel(debug, spec);
-            prepare_medium(debug, spec);
             create_boot_disk(debug, spec);
+            prepare_medium(debug, spec);
         }
         "run" => {
             let (spec, rest) = split_arch(extras);
@@ -529,8 +532,8 @@ fn main() {
             build_apps(spec);
             pack_rom(spec);
             build_kernel(debug, spec);
-            let medium = prepare_medium(debug, spec);
             create_boot_disk(debug, spec);
+            let medium = prepare_medium(debug, spec);
             launch(&medium, spec);
         }
         "image" => {

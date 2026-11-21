@@ -37,7 +37,7 @@ impl Arch {
 #[derive(Debug)]
 pub enum BootMedium {
     DiskImage(PathBuf),
-    MultibootKernel(PathBuf),
+    BootDisk(PathBuf),
     CdImage(PathBuf),
 }
 
@@ -61,15 +61,29 @@ impl fmt::Display for ImageError {
 
 impl std::error::Error for ImageError {}
 
-pub fn run_medium(kernel_elf: &Path, arch: Arch) -> BootMedium {
+pub fn run_medium(kernel_elf: &Path, arch: Arch) -> Result<BootMedium, ImageError> {
     match arch {
-        Arch::X86_64 => BootMedium::DiskImage(bios_disk_image_path(kernel_elf)),
-        Arch::X86_32 => BootMedium::MultibootKernel(kernel_elf.to_path_buf()),
+        Arch::X86_64 => Ok(BootMedium::DiskImage(bios_disk_image_path(kernel_elf))),
+        Arch::X86_32 => {
+            let disk = boot_disk_image(kernel_elf).ok_or_else(|| {
+                ImageError(anyhow::anyhow!(
+                    "cannot derive the unified boot disk path from {}",
+                    kernel_elf.display()
+                ))
+            })?;
+            if !disk.is_file() {
+                return Err(ImageError(anyhow::anyhow!(
+                    "the x86_32 boot medium {} does not exist; run `cargo xtask build x86_32` first",
+                    disk.display()
+                )));
+            }
+            Ok(BootMedium::BootDisk(disk))
+        }
     }
 }
 
 pub fn prepare_run_medium(kernel_elf: &Path, arch: Arch) -> Result<BootMedium, ImageError> {
-    let medium = run_medium(kernel_elf, arch);
+    let medium = run_medium(kernel_elf, arch)?;
     if let BootMedium::DiskImage(_) = medium {
         create_bios_disk_image(kernel_elf)?;
     }
@@ -87,7 +101,10 @@ pub fn prepare_run_medium_in(
             create_bios_disk_image_to(kernel_elf, &image)?;
             Ok(BootMedium::DiskImage(image))
         }
-        Arch::X86_32 => Ok(BootMedium::MultibootKernel(kernel_elf.to_path_buf())),
+        Arch::X86_32 => Err(ImageError(anyhow::anyhow!(
+            "x86_32 boots from the unified boot disk, which the caller must stamp; \
+             prepare_run_medium_in serves only the x86_64 carrier"
+        ))),
     }
 }
 
@@ -205,8 +222,13 @@ pub fn qemu_command(arch: Arch, medium: &BootMedium, mode: LaunchMode) -> Comman
                 .arg("-device")
                 .arg("ide-hd,drive=rosxboot,bus=ide.1,unit=0,bootindex=1");
         }
-        BootMedium::MultibootKernel(kernel) => {
-            command.arg("-kernel").arg(kernel);
+        BootMedium::BootDisk(disk) => {
+            command
+                .arg("-drive")
+                .arg(format!("if=none,id=rosxboot,format=raw,file={}", disk.display()));
+            command
+                .arg("-device")
+                .arg("ide-hd,drive=rosxboot,bus=ide.0,unit=0,bootindex=1");
         }
         BootMedium::CdImage(iso) => {
             command.arg("-cdrom").arg(iso);
@@ -354,7 +376,7 @@ mod tests {
     fn x86_64_runs_from_a_bios_disk_image_beside_the_kernel() {
         let kernel = Path::new("/build/target/rosx/release/rosx");
         match run_medium(kernel, Arch::X86_64) {
-            BootMedium::DiskImage(image) => {
+            Ok(BootMedium::DiskImage(image)) => {
                 assert_eq!(image, Path::new("/build/target/rosx/release/rosx-x86_64.img"));
             }
             other => panic!("expected a disk image, got {other:?}"),
@@ -362,11 +384,23 @@ mod tests {
     }
 
     #[test]
-    fn x86_32_runs_from_the_multiboot_kernel_itself() {
+    fn x86_32_runs_from_the_unified_boot_disk_and_refuses_its_absence() {
         let kernel = Path::new("/build/target/rosx-i486/release/rosx-x86_32");
-        match run_medium(kernel, Arch::X86_32) {
-            BootMedium::MultibootKernel(runs) => assert_eq!(runs, kernel),
-            other => panic!("expected the multiboot kernel, got {other:?}"),
+        let missing = run_medium(kernel, Arch::X86_32).expect_err("the disk does not exist");
+        assert!(
+            missing.to_string().contains("rosx-i486-boot-disk.img")
+                && missing.to_string().contains("cargo xtask build x86_32"),
+            "the refusal must name the artifact and the recipe: {missing}"
+        );
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let kernel = dir.path().join("target/rosx-i486/release/rosx-x86_32");
+        std::fs::create_dir_all(kernel.parent().unwrap()).expect("kernel tree");
+        let disk = dir.path().join("target/rosx-i486-boot-disk.img");
+        std::fs::write(&disk, b"mbr").expect("boot disk");
+        match run_medium(&kernel, Arch::X86_32).expect("the disk now exists") {
+            BootMedium::BootDisk(runs) => assert_eq!(runs, disk),
+            other => panic!("expected the unified boot disk, got {other:?}"),
         }
     }
 
@@ -385,11 +419,21 @@ mod tests {
 
     #[test]
     fn interactive_x86_32_uses_the_window_without_reset_diagnostics() {
-        let medium = BootMedium::MultibootKernel(PathBuf::from("/tmp/rosx-x86_32"));
+        let medium = BootMedium::BootDisk(PathBuf::from("/tmp/rosx-i486-boot-disk.img"));
         let command = qemu_command(Arch::X86_32, &medium, LaunchMode::Interactive);
         assert_eq!(command.get_program(), "qemu-system-i386");
         let args = args_of(&command);
-        assert!(contains(&args, "-kernel"));
+        assert!(contains_pair(
+            &args,
+            "-drive",
+            "if=none,id=rosxboot,format=raw,file=/tmp/rosx-i486-boot-disk.img"
+        ));
+        assert!(contains_pair(
+            &args,
+            "-device",
+            "ide-hd,drive=rosxboot,bus=ide.0,unit=0,bootindex=1"
+        ));
+        assert!(!contains(&args, "-kernel"));
         assert!(contains(&args, "-no-shutdown"));
         assert!(contains_pair(&args, "-cpu", "486"));
         assert!(!contains(&args, "cpu_reset"));
@@ -522,7 +566,7 @@ mod tests {
             (Arch::X86_64, BootMedium::DiskImage(PathBuf::from("/tmp/a.img"))),
             (
                 Arch::X86_32,
-                BootMedium::MultibootKernel(PathBuf::from("/tmp/b")),
+                BootMedium::BootDisk(PathBuf::from("/tmp/rosx-i486-boot-disk.img")),
             ),
         ] {
             let args = args_of(&qemu_command(arch, &medium, LaunchMode::Headless));
