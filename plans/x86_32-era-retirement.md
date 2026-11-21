@@ -1,11 +1,19 @@
 # x86_32 era verification and GRUB Legacy retirement — plan for later execution
 
-Status: **plan only, not executed** (opened 2026-11-21). The groundwork rehearsal
-ran on 2026-11-21 and its evidence lives in `target/86box/runs/20261121T152239Z-486sp3c-chain/`.
-This plan designs two future phases — **V** (era verification of the production
-chain, still required) and **R** (the `docs/todo/multiboot-retirement.md` C2
-sweep, still gated) — so that a later session can execute them without re-deriving
-anything. Nothing here has been executed beyond the rehearsal.
+Status: **phase V executed 2026-11-21** (V1/V2/V3 green, V4 not run —
+optional, does not gate R). V1: AMI `vect486vl`
+(`target/86box/runs/20261121T231200Z-vect486vl/`) — e820+e801 refused,
+INT 88h synthesis proven; first boot exposed the VLSI phantom-slave
+defect, fixed in atad (DRDY presence rule, commit `2c2cf95`). V2:
+Phoenix `ecs486` (`target/86box/runs/20261121T233107Z-ecs486/`) —
+`DL=0x00` survived, `media=lba`, e801 synthesis proven. V3: the
+un-grown 64 MiB artifact boots as built on Award
+(`target/86box/runs/20261121T234310Z-486sp3c-ungrown/`). The growth
+step is confirmed a rehearsal artifact. The earlier groundwork
+rehearsal evidence lives in
+`target/86box/runs/20261121T152239Z-486sp3c-chain/`. Phase R remains
+executed only when the trigger fires; with V1+V2 green it is honest
+(AGENTS.md silicon checklist still open).
 
 ## 1. Context
 
