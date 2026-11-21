@@ -2,6 +2,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub mod chain;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Arch {
     X86_64,
