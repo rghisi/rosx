@@ -225,6 +225,38 @@ milestone carries its own docs commits; M5 closes the series.
 - Gate: `cargo xtask check`, full x86_32 integration suite (still `-kernel`), `boot-test`
   including the new row.
 
+**M2 execution record (2026-11-21):**
+- The consumer landed in `kernel/src/platform/bootinfo.rs` (9 host unit tests), **not**
+  next to `trim_to_safe_memory` as the bullet assumed: `kernel` carries its
+  `panic_handler`/`alloc_error_handler` under `not(test)`, so no other crate's host tests
+  can link kernel types at all — the same constraint that shaped `multiboot.rs`'s neutral
+  types. The kernel depends only on `system` (arrows untouched), and the architecture
+  principle "the kernel is the single authority on invariants" owns BootInfo
+  interpretation kernel-side anyway; `kernel_main` keeps the magic branch and the
+  `[BOOTINFO]` facts line. Rationale: `docs/rationale/x86-bootinfo-consumer.md`.
+- Console-first worked — and exposed two facts: `kernel::once::Once::call_once` panics on
+  the second call (unlike std's), so the entry wiring plus `bootstrap()`'s re-wire halted
+  the kernel; `setup_default_output` is now `pub` and first-writer-wins. The unknown-magic
+  panic is loud on both console streams (VGA + 0xe9).
+- BootInfo is consumed per the frozen treaty: header and map parsed via `offset_of!` with
+  width-exact little-endian copies — no wire enum discriminant is ever interpreted — and
+  validated once: magic, version, arch, `memory_map_entry_size`, `memory_map_len` ≤ 64,
+  non-null addressable `memory_map_ptr`, plus the plan's assert-not-derive rule:
+  `DisplayKind::VgaText` at `0xB8000`. `Usable`-only regions, clipped at `kernel_end`;
+  the 32-block cap, unaddressable and empty regions are dropped **and reported** in the
+  facts.
+- **Measured on `-cpu 486` with the real kernel (128 MiB):** POST → `[KERNEL] Starting`
+  in **437 ms** — the 768 KiB image adds nothing measurable, `PLACEMENT_WINDOW` untouched.
+  The full OS boots the chain: `[BOOTINFO] regions=10 usable=0x7e69000 blocks=1
+  clipped=1 dropped=0`, then the 14-step boot plan, `ata0d0p0` mounted at `/`, services
+  running to the shell.
+- The new checkpoint is `real-kernel-boot32` (the plan drafted `real-kernel-handoff32`) and
+  rides the **built unified disk**, stronger evidence than a repacked fake medium.
+  `boot-test` gained a `SKIP` verdict (loud reason, exit-clean) used when no built disk
+  exists, keeping the CI `bootloader` job kernel-free (F12).
+- The Multiboot branch keeps its memory logic verbatim — only the console wiring moved
+  ahead of the branch for both paths.
+
 ### M3 — The disk is the medium
 - `run_medium(X86_32)` returns the unified disk image; `BootMedium::MultibootKernel` is
   deleted; `qemu_command` attaches the boot disk at `ide,index=0` with `bootindex=1` (C6);
