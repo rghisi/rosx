@@ -341,6 +341,29 @@ milestone carries its own docs commits; M5 closes the series.
   `arch/x86-bootloader/README.md` **Positioning** paragraph: the production-stack-untouched
   sentence becomes x86_64-only. Retro per the retro skill, reported with the final commit.
 
+**M5 execution record (2026-11-21):**
+- `docs/architecture/boot-media-and-harness.md` rewritten for the new x86_32 story: the
+  unified disk as medium-and-root (stage1 LBA 0, `ROS2` blob at LBA 8, slice at LBA 2048,
+  `KERNEL.ELF` at the volume root and the heap reason), `bootindex` as a device property,
+  stage banners sharing the 0xe9 debug stream, `boot-artifacts` staging for the by-hand
+  `ROSX_KERNEL_ELF` flow, and the harness copy-before-stamp + MBR-read volume discovery.
+  The x86_64 carrier and forward-looking-volume lines stay, now explicitly x86_64-scoped.
+- AGENTS.md: the x86_32 port line reads "custom BIOS chain on the unified boot disk"; the
+  "No bootimage" line splits per arch. `arch/x86-bootloader/README.md` **Positioning**:
+  x86_32 boots production through this chain; the untouched claim narrows to x86_64.
+- `plans/bootloader/00-overview.md` §9: the x86_32 halves of *Real-kernel integration* and
+  *Carrier swap* are marked closed with this plan's reference; the x86_64 halves and the
+  rom.img-as-initrd stub stay. `docs/todo/multiboot-retirement.md` records the C2 sweep —
+  the `.multiboot` header, the `0x2BADB002` branch and `x86_generic::multiboot` stay because
+  GRUB Legacy era media boot through them; the trigger is era media leaving the support matrix.
+- The root README's carrier story followed (it had pre-existing "Multiboot2" misnomers for
+  the v1 header): `image x86_32` no longer needs grub tooling, and the releases section
+  boots the `rosx-x86_32-boot-disk` artifact as a disk instead of the retired ISO.
+- Deliberate-failure proof (the verification law): scribbling the `ROS2` magic at LBA 8 of a
+  copy of the built unified disk yields `[STAGE1] OK` then `[ERR] disk 08` and a hang
+  (timeout verdict) — stage1 rejects the blob loudly; the boot disk is load-bearing and
+  fails visibly.
+
 ---
 
 ## 4. Risks & mitigations
