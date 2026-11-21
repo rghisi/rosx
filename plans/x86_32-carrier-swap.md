@@ -253,7 +253,10 @@ milestone carries its own docs commits; M5 closes the series.
 - The new checkpoint is `real-kernel-boot32` (the plan drafted `real-kernel-handoff32`) and
   rides the **built unified disk**, stronger evidence than a repacked fake medium.
   `boot-test` gained a `SKIP` verdict (loud reason, exit-clean) used when no built disk
-  exists, keeping the CI `bootloader` job kernel-free (F12).
+  exists **or the file cannot prove it is a chain disk** — slice at LBA 2048 plus the `ROS2`
+  blob: the first CI run restored a pre-chain `rosx-i486-boot-disk.img` from the
+  `Cargo.lock`-keyed actions cache and booted it silently with an empty console. Keeps the
+  CI `bootloader` job kernel-free (F12).
 - The Multiboot branch keeps its memory logic verbatim — only the console wiring moved
   ahead of the branch for both paths.
 
@@ -269,6 +272,40 @@ milestone carries its own docs commits; M5 closes the series.
   banners share `-debugcon stdio` with kernel output — verify the output matchers are
   prefix-safe (they are by construction, but this is where reality gets to disagree).
 - Gate: `ROSX_ARCH=x86_32 cargo xtask test`, then full `cargo xtask verify`.
+
+**M3 execution record (2026-11-21):**
+- `BootMedium::MultibootKernel` is gone; `BootMedium::BootDisk` attaches as
+  `-drive if=none,id=rosxboot,format=raw,file=…` plus
+  `-device ide-hd,drive=rosxboot,bus=ide.0,unit=0,bootindex=1` — QEMU 10 rejects `bootindex`
+  as a `-drive` block option ("Block format 'raw' does not support the option 'bootindex'"),
+  because boot order is a *device* property: C6's shape is the two-part form the x86_64 carrier
+  already used, now on the primary master.
+- `run_medium(X86_32)` resolves the unified disk beside the kernel and refuses loudly, naming
+  both the artifact and `cargo xtask build x86_32`, when it is absent; `prepare_run_medium_in`
+  now errors for x86_32 — stamping the session master is the caller's job.
+- Interactive-flow audit: `arch/x86_32/run.sh` execs the runner binary, whose `main` skips
+  `attach_fat_boot_disk` when the medium already **is** the boot disk (it would otherwise
+  attach the same file twice); an absent disk surfaces the loud refusal above. xtask reorders
+  `build`/`run`/`verify` to `create_boot_disk` before `prepare_medium`, `launch` applies the
+  same skip, and `run_tests` stages the `target/boot32` chain bins (F9) so x86_32 integration
+  runs even when `ROSX_KERNEL_ELF` is handed in by hand.
+- Harness masters are chain-stamped: `fat_disk::create_bootable` builds a disk with the slice
+  at LBA 2048 directly (stage1 MBR code, `ROS2` blob at LBA 8, FAT16 volume); `stamp_bootable`
+  parses the image's own MBR, patches slice/bootable and the blob, and copies `KERNEL.ELF` to
+  the volume root; `create_boot_master` composes apps + kernel on a bootable disk. Every
+  x86_32 session (`session_command`) boots from one as its medium; the x86_64 wiring is
+  untouched.
+- F7 in place — and the first M3 run proved the *name* matters too: `spawn_with_master_disk`
+  copies the caller's image into the session tempdir as `boot-disk.img` **before** stamping,
+  because ted_edit inspects `session.temp_dir().join("boot-disk.img")` after the reboot; a
+  renamed master failed six tests reading a path that no longer existed.
+- `read_file_from_image` no longer assumes the volume starts at LBA 63: `volume_start_lba`
+  reads the offset from the image's own MBR, so host-side cross-checks follow the chain volume
+  wherever the disk places it.
+- Matcher reality-check, the plan's predicted friction point: stage banners on the shared
+  `-debugcon stdio` broke no output matcher — 98 x86_32 sessions agreed (one
+  `fat_partition_flow` stall, the Med flake rated in `plans/integration-flakiness-assessment-2026-11-20.md`
+  before this milestone existed, passed in 35 s on rerun). `cargo xtask check` green.
 
 ### M4 — GRUB software retirement
 - `cargo xtask image x86_32` → the unified disk (C7). Delete `create_grub_image`, `GrubTooling`,
@@ -339,3 +376,7 @@ milestone carries its own docs commits; M5 closes the series.
     M2 | ran the x86_32 integration suite with a relative ROSX_KERNEL_ELF; the harness canonicalizes against the test process cwd, not the workspace, and failed instantly | ENV-TRAP | 1 round
     M2 | partitioned_hdd_flow stalled 84 s then failed, passed in 42 s on rerun — the Med-rated flake of plans/integration-flakiness-assessment-2026-11-20.md | TASK | 1 rerun
     M2 | CI x86_64 integration failed elf_arguments with the documented disk-vanish "Unknown command: pi" fallback; the adjacent run on an xtask-only tree diff was green | TASK | 1 CI rerun
+    M3 | attached the boot disk with bootindex inline on -drive per C6; QEMU 10 fails every spawn with "Block format 'raw' does not support the option 'bootindex'" — boot order is a device property, so the shape must be -drive if=none + -device ide-hd,…,bootindex=1 | PLAN-DEFECT | 1 smoke round (375 s)
+    M3 | renamed the session master to boot-master.img and moved the volume to LBA 2048 without auditing the host-side readers: seven tests inspect session.temp_dir().join("boot-disk.img") via read_file_from_image, which hard-coded LBA 63 | MISSING-FACT | 1 suite round (~40 min)
+    M3 | fat_partition_flow stalled once on the full run (empty output tail after mark), passed in 35 s on rerun — the Med flake rated in plans/integration-flakiness-assessment-2026-11-20.md | TASK | 1 rerun
+    M3 | CI bootloader job failed real-kernel-boot32 with an empty console: actions/cache restores target/ under a Cargo.lock-only key, so a pre-chain rosx-i486-boot-disk.img from an older run satisfied the checkpoint's "file exists" gate — a chain disk must now prove itself (slice at LBA 2048 + ROS2 blob) or the row SKIPs | MISSING-FACT | 1 CI round
