@@ -89,7 +89,7 @@
 | D2 | The UART implementation uses a stdio chardev, not a Unix socket | maintainer |
 | D3 | No throughput spike before RISC-V work; the risk is accepted and recorded (§7) | maintainer |
 | D4 | x86 keeps debugcon + `sendkey`; moving it to a UART is a later, recorded decision | default under the autonomy rules |
-| D5 | The UART implementation is specified here but built with its first caller, not in this plan | default under the no-test-only-surface rule |
+| D5 | The UART implementation is specified here but built with its first caller, not in this plan | maintainer (accepted 2026-11-21), per the no-test-only-surface rule |
 
 ### 3.1 Why two seams
 Today's x86 pair is (debugcon out, PS/2 in). RISC-V is (UART out, UART in). A third pairing —

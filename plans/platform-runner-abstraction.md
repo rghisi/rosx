@@ -113,9 +113,9 @@
 | D1 | A new arch-neutral core crate holds the abstraction | maintainer |
 | D2 | `arch/x86-runner` is kept and adapted as the x86 implementation, not renamed | maintainer |
 | D3 | Implementations live per arch family under `arch/`; the RISC-V runner arrives with the RISC-V port | maintainer |
-| D4 | A registry crate selects a runner by name (the core cannot depend on implementations) | proposal, flagged for review |
-| D5 | `BootMedium::MultibootKernel` becomes `DirectKernel` (QEMU `-kernel`), the mechanism-neutral name | proposal |
-| D6 | Sessions are described by an abstract `SessionSpec`; capabilities are a small fixed enum | proposal |
+| D4 | A registry crate selects a runner by name (the core cannot depend on implementations) | maintainer (accepted 2026-11-21) |
+| D5 | `BootMedium::MultibootKernel` becomes `DirectKernel` (QEMU `-kernel`), the mechanism-neutral name | maintainer (accepted 2026-11-21) |
+| D6 | Sessions are described by an abstract `SessionSpec`; capabilities are a small fixed enum | maintainer (accepted 2026-11-21) |
 
 ### 3.1 Crates
 
