@@ -313,6 +313,24 @@ milestone carries its own docs commits; M5 closes the series.
   requirement outside `require_era_tools` (F12). Era media and scripts untouched.
 - Gate: `cargo xtask check`, `cargo xtask verify`.
 
+**M4 execution record (2026-11-21):**
+- `BootMedium::CdImage`, `create_grub_image`, `GrubTooling` (with its `Display`/`Error`
+  impls), `resolve_grub_mkrescue`, `missing_tooling`, `install_hint`, `grub_cfg_contents`
+  and the grub-only `on_path` are deleted from x86-runner, along with their tests; the
+  harness lost `spawn_cdrom` and `tests-integration/tests/iso_boot.rs`. `tempfile` demotes
+  to a dev-dependency — the production crate no longer stages anything.
+- `cargo xtask image x86_32` (C7) now yields the unified boot disk: the arm already builds
+  apps, ROM and kernel, so `create_flashable_image` delegates to `boot_disk::create_boot_disk`;
+  proven by booting the produced image (`[STAGE1] OK` → `[BOOTINFO]` → mount at `/`).
+  The usage line already reads `image [x86_64|x86_32]` and stays.
+- `build-artifacts.yml` drops the "Install GRUB toolchain" and "Build GRUB image" steps —
+  `cargo xtask build x86_32` alone produces everything the job uploads — and the ISO
+  artifact becomes `rosx-x86_32-boot-disk` at `target/rosx-i486-boot-disk.img` (nothing
+  downloaded the old `rosx-x86_32-iso`, so the rename is safe). Mislabelled
+  "Upload multiboot kernel" steps become "Upload kernel and ROM" (artifact names kept).
+- Untouched, per plan: `require_era_tools` (the era ISO genuinely needs xorriso), all
+  GRUB-Legacy era media and scripts, and every x86_64 flow.
+
 ### M5 — Close-out
 - `plans/bootloader/00-overview.md` §9: mark the x86_32 halves of *Real-kernel integration* and
   *Carrier swap* closed here (x86_64 halves stay). `docs/todo/multiboot-retirement.md`: the
@@ -381,3 +399,5 @@ milestone carries its own docs commits; M5 closes the series.
     M3 | fat_partition_flow stalled once on the full run (empty output tail after mark), passed in 35 s on rerun — the Med flake rated in plans/integration-flakiness-assessment-2026-11-20.md | TASK | 1 rerun
     M3 | CI bootloader job failed real-kernel-boot32 with an empty console: actions/cache restores target/ under a Cargo.lock-only key, so a pre-chain rosx-i486-boot-disk.img from an older run satisfied the checkpoint's "file exists" gate — a chain disk must now prove itself (slice at LBA 2048 + ROS2 blob) or the row SKIPs | MISSING-FACT | 1 CI round
     M3 | verify's status was read through a grep|tail wrapper, so the pipeline's exit code masked cargo's: the run had actually aborted on the documented shell_background "Unknown command: exiter" disk-vanish flake (5/5 ok standalone) and the milestone gate had to rerun | ENV-TRAP | 1 verify round
+    M4 | the first smoke invoked --test shell_flow, a target that does not exist (guessed name; the suite names it boot_and_shell), and --no-run was passed to cargo build instead of cargo test — first-execution failures of acceptance commands | TASK | 2 commands
+    M4 | full-suite flakes traced to two orphan CPU burners: the flakiness assessment's own Nov-20 load experiment started six "while :; do :; done" loops and its cleanup killed only jobs -p tail -4, so two spun for 1.5 days at 2 of 4 cores — enough load to fire the disk-vanish family on every full run (5 different rows) while CI stayed green; killed, and full suites must not be trusted while uptime load approaches nproc | MISSING-FACT | 3 verify rounds

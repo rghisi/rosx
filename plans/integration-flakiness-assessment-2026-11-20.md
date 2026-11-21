@@ -269,6 +269,17 @@ own paths and remain.
 Net effect: −170 s x86_64 suite, and the three CI-proven flake families shrink
 by their two harvested names plus the `arp_pair` phase risk.
 
+## Erratum (2026-11-21)
+
+The load experiment above leaked: it started six `while :; do :; done` CPU burners and
+its cleanup (`kill $(jobs -p | tail -4)`) reclaimed only four. The two orphans held
+2 of 4 cores for a day and a half, and during that window every full-suite run on this
+machine produced one or more disk-vanish-family flakes on a different row each time
+(`elf_arguments`, `register_format_and_carve`, `shell_background`, `ata_read`,
+`arp_slirp`) while the same commits went green on CI. The burners were killed on
+Nov 21. Rule learned: before trusting a full-suite verdict, check `uptime` against
+`nproc` — a loaded box turns Med-rated flakes near-certain.
+
 ## Friction log
 
 apply exclusions | worktree started at an old snapshot (`78f65ed`, #137-era harness); CI forensics and local suite runs were already measured against it; discovered at deletion time, re-grounded on current `main` | MISSING-FACT | 1 round
