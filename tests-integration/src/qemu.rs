@@ -145,14 +145,6 @@ impl QemuSession {
         Self::spawn_capturing(command, temp_dir)
     }
 
-    pub fn spawn_cdrom(cdrom: &Path) -> QemuSession {
-        let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
-        let medium = x86_runner::BootMedium::CdImage(cdrom.to_path_buf());
-        let command =
-            x86_runner::qemu_command(Arch::current().boot(), &medium, x86_runner::LaunchMode::Headless);
-        Self::spawn_capturing(command, temp_dir)
-    }
-
     fn spawn_capturing(mut command: Command, temp_dir: tempfile::TempDir) -> QemuSession {
         let monitor_socket = temp_dir.path().join("monitor.sock");
         let mut child = command

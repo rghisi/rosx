@@ -73,9 +73,6 @@ fn prepare_medium(debug: bool, spec: &ArchSpec) -> BootMedium {
         BootMedium::BootDisk(disk) => {
             println!("==> boot medium: the unified disk {}", disk.display())
         }
-        BootMedium::CdImage(_) => {
-            unreachable!("prepare_run_medium never yields a CD image")
-        }
     }
     medium
 }
@@ -215,12 +212,8 @@ fn create_flashable_image(debug: bool, spec: &ArchSpec) {
             println!("==> created x86_64 disk image {}", image.display());
         }
         x86_runner::Arch::X86_32 => {
-            let image = kernel.with_extension("img");
-            x86_runner::create_grub_image(&kernel, &image).unwrap_or_else(|err| {
-                eprintln!("error: {err}");
-                process::exit(1);
-            });
-            println!("==> created x86_32 GRUB image {}", image.display());
+            let image = boot_disk::create_boot_disk(debug, spec);
+            println!("==> created x86_32 unified boot disk {}", image.display());
         }
     }
 }
