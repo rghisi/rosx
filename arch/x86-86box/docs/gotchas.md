@@ -100,6 +100,13 @@ hour, not a CI failure — CI cannot see any of this.
 - On the i386 grub shell never use `--privileged` and never need a loop
   device: `device (hd0) /path/to/image` maps a BIOS disk onto a plain
   file.
+- The VLSI 82C480 (vect486vl) does NOT float an absent IDE slave: status
+  reads `0x00`, not `0xFF`, so the floating-bus guard never fires and the
+  phantom passes the signature check. Only the DrivePresent rule (`!BSY
+  && !DRDY` = nothing attached) declares it absent fast — without it the
+  probe spins its DRQ budget past init's 10 s service wait and the boot
+  falls back to the ROM shell (measured 2026-11-21, run
+  `20261121T231200Z-vect486vl`; the fix lives in `apps/atad`).
 
 ## Multiboot boundary observation
 

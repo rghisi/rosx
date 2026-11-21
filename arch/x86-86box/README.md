@@ -167,6 +167,23 @@ boot-unit normalization (`plans/bootloader/14-era-thunk-stack.md` §6):
   screen, before `[STAGE1]` — and the chain adds none (run dir
   `target/86box/runs/20261118T214900Z-ecs486/`).
 
+## Production chain on era media (phase V)
+
+Distinct bar from the `boot32.img` fake-kernel proof above: here the
+**shipped artifact** — the unified disk (`target/rosx-i486-boot-disk.img`,
+grown to the cfg geometry for the big-CMOS boards) with stage1 + stage2 +
+`KERNEL.ELF` and the real release kernel — boots to `rose>`.
+
+| board | media | verdict | run dir |
+|---|---|---|---|
+| Award 4.51 `486sp3c` | unified disk, 512 MB grown | `media=chs`, E820 accepted, `rose>` x3 | `target/86box/runs/20261121T152239Z-486sp3c-chain/` |
+| AMI 4.01 `vect486vl` | unified disk, 512 MB grown | `media=chs`, **e820+e801 refused — INT 88h synthesis proven**; first boot exposed the VLSI phantom-slave defect (fixed in atad, see `docs/gotchas.md`), `rose>` x3 | `target/86box/runs/20261121T231200Z-vect486vl/` |
+
+AMI bring-up notes: the 32 MB template against the 2026-11-18 8 MB primed
+NVR halts with `CMOS memory size mismatch` once — SETUP -> STANDARD CMOS
+SETUP -> WRITE TO CMOS AND EXIT (Y) fixes it permanently. Template:
+`configs/ami-486-vectra.cfg`.
+
 ## Evidence run
 
 Follow `docs/evidence-checklist.md` — it maps every hardware-checklist
