@@ -45,7 +45,17 @@ hour, not a CI failure — CI cannot see any of this.
   breakpoint fires on the next boot; just `run_until_break` again.
 - `screenshot` returns the frame to the agent inline, never a file. For the
   evidence directory's `screenshot.png`: `record_start(directory=…, sound:false)`
-  → `step ms:600` → `record_stop`, then copy one frame PNG.
+  → `step ms:600` → `record_stop`, then copy one frame PNG. (As of 2026-11-21
+  `record_start` raises a NumPy C-extension ImportError in the 86box-mcp
+  server venv; until that env is fixed, the inline `screenshot` stands as the
+  run's visual and `screen.txt` is the primary artifact.)
+- In the production-chain real-kernel boot, stage2's ELF-load window is ~3–4 s
+  of emulated time after the `[DISK]` banner, then `[ELF]` through `[BOOTINFO]`
+  all print inside ~150 ms — a 1000 ms capture cadence scrolls the entire
+  handoff away between two frames. Poll until `[DISK]` appears, then step 100 ms.
+- `fpu_registers` reports `no FPU` by **raising** — on an i486SX floor machine
+  that error is the pass result. Run it alone, last: the raise aborts any
+  combined probe call that shares it.
 - `write_memory` takes the bytes as `hex_bytes` (a string like
   `"01 00 00 00"`); `data`/`value`-style arguments fail with
   "give hex_bytes or value".
@@ -79,6 +89,9 @@ hour, not a CI failure — CI cannot see any of this.
 - Size partitions and FATs from the CHS count (993/16/63 → 1000944
   sectors), never from the image file size: 86Box's disk file is slightly
   larger than its CHS count.
+- mtools `@@` offsets are BYTES, not sectors: the unified boot disk's FAT
+  slice at LBA 2048 is inspected with `mdir -i disk.img@@1048576 ::`;
+  `@@2048` answers "non DOS media" and reads like a corrupt image.
 - The [SiS 496] ASUS PVI-486SP3 BIOS has no El Torito (Boot Sequence C,A
   only), so the era CD path cannot boot there — that is a property of the
   board, not of the image: the same El Torito ISO and the stock GRUB-2 ISO

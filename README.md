@@ -9,7 +9,7 @@ RosX is a multi-platform operating system written in Rust from scratch. It is de
 ### What's Working
 
 - **x86_64 Platform:** Full implementation with preemptive multitasking, ELF loading, interrupt handling, and console output
-- **x86_32 Platform:** Complete port supporting 32-bit x86 processors via Multiboot2
+- **x86_32 Platform:** Complete port supporting 32-bit x86 processors, chain-booting a unified FAT boot disk from the custom BIOS stages (legacy GRUB media can still boot it through its kept Multiboot header)
 - **Multi-platform Architecture:** Clean separation between platform-agnostic kernel and architecture-specific code
 - **Preemptive Multitasking:** MLFQ scheduler with interrupt-driven task switching
 - **ELF Binary Support:** Loads both 32-bit and 64-bit ELF binaries with relocation support
@@ -43,7 +43,7 @@ Platform-agnostic code that forms the core OS functionality:
 ### Architecture Layer (`arch/`)
 Platform-specific implementations that provide hardware support:
 - **x86_64:** Full implementation with IDT/PIC setup, interrupt handlers, VGA/framebuffer output
-- **x86_32:** Multiboot2-compliant port using 32-bit protected mode
+- **x86_32:** BIOS chain-boot port using 32-bit protected mode
 - **Future Platforms:** ARM, RISC-V, m68k designed to follow the same pattern
 
 ### Hardware Abstraction Layer (HAL)
@@ -76,9 +76,9 @@ The current bootstrap platform provides a complete implementation:
 - **System Calls:** Basic infrastructure in place
 
 ### x86_32 Platform (Complete)
-Full 32-bit x86 support via Multiboot2:
+Full 32-bit x86 support:
 
-- **Multiboot2 Bootloader Interface:** Standard GRUB-compatible entry point
+- **Dual boot entry:** the custom BIOS chain's `BootInfo` handoff (primary), or the Multiboot v1 handoff from GRUB Legacy era media
 - **32-bit ELF Support:** Loads both 32-bit and 64-bit ELF binaries
 - **PIC and PIT:** 8259A PIC and 8254 PIT configuration
 - **System V i386 ABI:** Proper calling convention for task contexts
@@ -142,9 +142,9 @@ The x86_32 platform runs on older 32-bit processors.
    cargo xtask run x86_32
    ```
 
-3. **Bootable GRUB image (optional):**
+3. **Flashable boot disk (optional):**
    ```bash
-   cargo xtask image x86_32    # needs grub-mkrescue, xorriso, mtools
+   cargo xtask image x86_32    # the unified boot disk at target/rosx-i486-boot-disk.img; needs mtools
    ```
 
 ### Testing
@@ -157,7 +157,7 @@ ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1      # QEMU
 
 ### More detail
 
-The commands above are enough to get a boot. For the full flow — the custom runner and disk-image creation, the standalone user-space ELF apps, and the x86_32 bootable ISO — see **[AGENTS.md](AGENTS.md) → *Build & Run***.
+The commands above are enough to get a boot. For the full flow — the custom runner and disk-image creation, the standalone user-space ELF apps, and the x86_32 unified boot disk — see **[AGENTS.md](AGENTS.md) → *Build & Run***.
 
 ## Development
 
@@ -167,7 +167,7 @@ The commands above are enough to get a boot. For the full flow — the custom ru
 rosx/
 ├── arch/                    # Architecture-specific implementations
 │   ├── x86_64/             # 64-bit x86 implementation
-│   ├── x86_32/             # 32-bit x86 implementation (Multiboot2)
+│   ├── x86_32/             # 32-bit x86 implementation (BIOS chain boot)
 │   └── ...                 # Future platforms (ARM, RISC-V, m68k)
 ├── kernel/                 # Platform-agnostic kernel code
 │   ├── src/
@@ -209,7 +209,7 @@ rosx/
 - **`kernel/src/task.rs`** - Task management and context switching
 - **`kernel/src/scheduler/`** - Scheduler implementations (MLFQ, FIFO)
 - **`arch/x86_64/src/main.rs`** - x86_64 entry point and initialization
-- **`arch/x86_32/src/boot.S`** - Multiboot2 bootloader assembly
+- **`arch/x86_32/src/boot.S`** - Boot assembly: stack setup plus the Multiboot v1 header kept for GRUB Legacy era media
 
 ### Development Guidelines
 
@@ -244,20 +244,21 @@ qemu-system-x86_64 \
   -no-reboot -no-shutdown
 ```
 
-### x86_32 — GRUB bootable ISO (`rosx-x86_32-iso` artifact)
+### x86_32 — unified boot disk (`rosx-x86_32-boot-disk` artifact)
 
-The image is an ISO despite the `.img` extension, so it boots as a CD-ROM:
+The disk is both boot medium and root volume: stage1 chain-loads stage2, which loads
+`KERNEL.ELF` off the FAT volume.
 
 ```bash
 qemu-system-i386 -cpu 486 \
-  -cdrom rosx-x86_32.img -boot order=d \
+  -drive format=raw,file=rosx-i486-boot-disk.img \
   -debugcon stdio \
   -no-reboot -no-shutdown
 ```
 
 ### x86_32 — bare Multiboot kernel ELF (`rosx-x86_32` artifact)
 
-Boots without a bootloader via QEMU's `-kernel`. No ROM flag is needed: the kernel embeds the ROM image at link time.
+Boots without a bootloader via QEMU's `-kernel` on the kernel's Multiboot v1 branch. No ROM flag is needed: the kernel embeds the ROM image at link time.
 
 ```bash
 qemu-system-i386 -cpu 486 \

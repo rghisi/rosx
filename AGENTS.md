@@ -7,7 +7,7 @@
 **RosX** is a learning/hobby OS in Rust (edition 2024, nightly, minimal assembly), aiming at diverse hardware and a multi-purpose OS that can eventually run network applications. Scope today: scheduling, interrupts, IPC, ELF user space, block/VFS/filesystem stack, an Ethernet/ARP/IP stack.
 
 - **x86_64** — bootstrap platform, complete.
-- **x86_32** — complete (Multiboot v1/GRUB, `arch/x86_32/`); 486-class hardware is a maintained baseline.
+- **x86_32** — complete (custom BIOS chain on the unified boot disk, `arch/x86_32/`); 486-class hardware is a maintained baseline.
 - **ARM, RISC-V, m68k** — future; no `arch/` directories yet.
 
 x86_64 is the starting point due to tooling, not the focus: keep `kernel/` portable. The workspace layout is `Cargo.toml` plus the directory names (`kernel`, `system`, `usrlib`, `protocol/*`, `fs/*`, `arch/*`, `apps/*`).
@@ -95,5 +95,5 @@ Each line links the file holding the detail; every file starts with its own inva
 ## Toolchain notes
 
 - `rust-toolchain.toml` pins **nightly** with `rust-src`; custom targets live in `arch/x86_64/` (`rosx.json`, `rosx-user.json`) and `arch/x86_32/` (`rosx-i486.json`, `rosx-i486-user.json`).
-- No bootimage: the disk image comes from `arch/x86-runner` (the `bootloader` crate).
+- No bootimage: the x86_64 disk image comes from `arch/x86-runner` (the `bootloader` crate); x86_32 chain-boots the unified disk that `arch/x86-runner` packs from `arch/x86-bootloader`'s stage1/stage2.
 - `gh pr edit` on `rghisi/rosx` fails with a Projects (classic) GraphQL error; update PRs through the REST API: `gh api -X PATCH repos/rghisi/rosx/pulls/<n> -f title="..." -F body=@<file>`.

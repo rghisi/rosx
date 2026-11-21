@@ -40,14 +40,17 @@ fn panic(info: &PanicInfo) -> ! {
 const MULTIBOOT_MAGIC: u32 = 0x2BADB002;
 
 #[unsafe(no_mangle)]
-extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
-    if multiboot_magic != MULTIBOOT_MAGIC {
-        panic!("bad Multiboot magic: {:#x}", multiboot_magic);
-    }
-
+extern "C" fn kernel_main(loader_magic: u32, loader_info: u32) -> ! {
     x86_generic::vga_buffer::init(0);
-    let raw_blocks = unsafe { x86_generic::multiboot::usable_memory(multiboot_info as *const u8) };
-    let memory_blocks = trim_to_safe_memory(raw_blocks);
+    kernel::platform::output::setup_default_output(&MULTIPLEXED_OUTPUT);
+    let memory_blocks = if loader_magic == system::boot_info::BOOT_INFO_MAGIC {
+        boot_info_memory(loader_info as usize)
+    } else if loader_magic == MULTIBOOT_MAGIC {
+        let raw_blocks = unsafe { x86_generic::multiboot::usable_memory(loader_info as *const u8) };
+        trim_to_safe_memory(raw_blocks)
+    } else {
+        panic!("unknown boot magic: {loader_magic:#010x}");
+    };
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kernel::kprintln!("[KERNEL] Initializing");
 
@@ -82,12 +85,44 @@ unsafe extern "C" {
     static kernel_end: u8;
 }
 
-fn trim_to_safe_memory(raw: x86_generic::multiboot::BootMemory) -> MemoryBlocks {
+fn boot_info_memory(address: usize) -> MemoryBlocks {
     let safe_start = core::ptr::addr_of!(kernel_end) as usize;
-    let mut out = MemoryBlocks {
+    let mut blocks = empty_blocks();
+    match unsafe {
+        kernel::platform::bootinfo::usable_blocks(
+            address,
+            system::boot_info::BootArch::X86_32,
+            safe_start,
+            &mut blocks,
+        )
+    } {
+        Ok(facts) => {
+            kernel::kprintln!(
+                "[BOOTINFO] regions={} usable={:#x} blocks={} clipped={} dropped={}",
+                facts.regions, facts.usable_bytes, facts.accepted, facts.clipped, facts.dropped
+            );
+            if facts.dropped > 0 {
+                kernel::kprintln!(
+                    "[BOOTINFO] warning: {} usable regions dropped for addressability or the {}-block cap",
+                    facts.dropped, kernel::memory::MAX_MEMORY_BLOCKS
+                );
+            }
+        }
+        Err(error) => panic!("boot info at {address:#x} refused: {error:?}"),
+    }
+    blocks
+}
+
+fn empty_blocks() -> MemoryBlocks {
+    MemoryBlocks {
         blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),
         count: 0,
-    };
+    }
+}
+
+fn trim_to_safe_memory(raw: x86_generic::multiboot::BootMemory) -> MemoryBlocks {
+    let safe_start = core::ptr::addr_of!(kernel_end) as usize;
+    let mut out = empty_blocks();
     for region in raw.regions() {
         if out.count == out.blocks.len() {
             break;

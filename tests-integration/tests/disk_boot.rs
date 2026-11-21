@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tests_integration::arch::Arch;
-use tests_integration::fat_disk::{built_elf, tools_available, FatDisk};
+use tests_integration::fat_disk::{built_elf, create_bootable, tools_available, FatDisk};
 use tests_integration::qemu::QemuSession;
 
 const BOOT_BUDGET: Duration = Duration::from_secs(120);
@@ -28,7 +28,7 @@ fn run(session: &mut QemuSession, command: &str) -> String {
 }
 
 fn build_boot_disk(staging: &Path, with_apps: bool) -> FatDisk {
-    let disk = FatDisk::create(staging, "boot-disk.img", DISK_BYTES);
+    let disk = create_bootable(staging, "boot-disk.img", DISK_BYTES);
     disk.write_seed(GREETING, "::greeting.txt");
     disk.make_directory("::/boot");
     disk.write_seed(MENU, "::/boot/menu.txt");

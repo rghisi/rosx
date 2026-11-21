@@ -2,6 +2,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub mod chain;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Arch {
     X86_64,
@@ -35,8 +37,7 @@ impl Arch {
 #[derive(Debug)]
 pub enum BootMedium {
     DiskImage(PathBuf),
-    MultibootKernel(PathBuf),
-    CdImage(PathBuf),
+    BootDisk(PathBuf),
 }
 
 pub const HDD_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
@@ -59,15 +60,29 @@ impl fmt::Display for ImageError {
 
 impl std::error::Error for ImageError {}
 
-pub fn run_medium(kernel_elf: &Path, arch: Arch) -> BootMedium {
+pub fn run_medium(kernel_elf: &Path, arch: Arch) -> Result<BootMedium, ImageError> {
     match arch {
-        Arch::X86_64 => BootMedium::DiskImage(bios_disk_image_path(kernel_elf)),
-        Arch::X86_32 => BootMedium::MultibootKernel(kernel_elf.to_path_buf()),
+        Arch::X86_64 => Ok(BootMedium::DiskImage(bios_disk_image_path(kernel_elf))),
+        Arch::X86_32 => {
+            let disk = boot_disk_image(kernel_elf).ok_or_else(|| {
+                ImageError(anyhow::anyhow!(
+                    "cannot derive the unified boot disk path from {}",
+                    kernel_elf.display()
+                ))
+            })?;
+            if !disk.is_file() {
+                return Err(ImageError(anyhow::anyhow!(
+                    "the x86_32 boot medium {} does not exist; run `cargo xtask build x86_32` first",
+                    disk.display()
+                )));
+            }
+            Ok(BootMedium::BootDisk(disk))
+        }
     }
 }
 
 pub fn prepare_run_medium(kernel_elf: &Path, arch: Arch) -> Result<BootMedium, ImageError> {
-    let medium = run_medium(kernel_elf, arch);
+    let medium = run_medium(kernel_elf, arch)?;
     if let BootMedium::DiskImage(_) = medium {
         create_bios_disk_image(kernel_elf)?;
     }
@@ -85,96 +100,11 @@ pub fn prepare_run_medium_in(
             create_bios_disk_image_to(kernel_elf, &image)?;
             Ok(BootMedium::DiskImage(image))
         }
-        Arch::X86_32 => Ok(BootMedium::MultibootKernel(kernel_elf.to_path_buf())),
+        Arch::X86_32 => Err(ImageError(anyhow::anyhow!(
+            "x86_32 boots from the unified boot disk, which the caller must stamp; \
+             prepare_run_medium_in serves only the x86_64 carrier"
+        ))),
     }
-}
-
-#[derive(Debug)]
-pub struct GrubTooling {
-    missing: Vec<String>,
-    install_hint: &'static str,
-}
-
-impl fmt::Display for GrubTooling {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "missing required tools: {}", self.missing.join(", "))?;
-        writeln!(f)?;
-        write!(f, "  {}", self.install_hint)
-    }
-}
-
-impl std::error::Error for GrubTooling {}
-
-pub fn create_grub_image(kernel_elf: &Path, out: &Path) -> Result<(), GrubTooling> {
-    let probe = |name: &str| on_path(name).is_some();
-    let mkrescue = resolve_grub_mkrescue(&probe).ok_or_else(|| missing_tooling(&probe))?;
-    if !probe("xorriso") || !probe("mformat") {
-        return Err(missing_tooling(&probe));
-    }
-
-    let work = tempfile::tempdir().expect("failed to create grub image staging directory");
-    std::fs::create_dir_all(work.path().join("boot/grub")).expect("failed to stage boot/grub");
-    std::fs::copy(kernel_elf, work.path().join("boot/kernel"))
-        .expect("failed to stage kernel into the grub image");
-    std::fs::write(work.path().join("boot/grub/grub.cfg"), grub_cfg_contents())
-        .expect("failed to write grub.cfg");
-
-    let status = Command::new(mkrescue)
-        .arg("-o")
-        .arg(out)
-        .arg(work.path())
-        .status()
-        .expect("failed to run grub-mkrescue");
-    if !status.success() {
-        panic!("grub-mkrescue exited with {:?}", status.code());
-    }
-    Ok(())
-}
-
-fn resolve_grub_mkrescue(probe: &impl Fn(&str) -> bool) -> Option<&'static str> {
-    ["grub-mkrescue", "grub2-mkrescue"]
-        .into_iter()
-        .find(|tool| probe(tool))
-}
-
-fn missing_tooling(probe: &impl Fn(&str) -> bool) -> GrubTooling {
-    let mut missing = Vec::new();
-    if resolve_grub_mkrescue(probe).is_none() {
-        missing.push("grub-mkrescue".to_string());
-    }
-    if !probe("xorriso") {
-        missing.push("xorriso".to_string());
-    }
-    if !probe("mformat") {
-        missing.push("mformat (mtools)".to_string());
-    }
-    GrubTooling {
-        missing,
-        install_hint: install_hint(probe),
-    }
-}
-
-fn install_hint(probe: &impl Fn(&str) -> bool) -> &'static str {
-    if probe("apt-get") {
-        "sudo apt install grub-pc-bin grub-common xorriso mtools"
-    } else if probe("dnf") {
-        "sudo dnf install grub2-tools xorriso mtools"
-    } else if probe("pacman") {
-        "sudo pacman -S grub xorriso mtools"
-    } else {
-        "Install: grub (grub-pc-bin), xorriso, mtools"
-    }
-}
-
-fn grub_cfg_contents() -> String {
-    "set timeout=0\nset default=0\n\nmenuentry \"rosx\" {\n    multiboot /boot/kernel\n    boot\n}\n".to_string()
-}
-
-fn on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(name))
-        .find(|candidate| candidate.is_file())
 }
 
 pub fn create_bios_disk_image(kernel_elf: &Path) -> Result<PathBuf, ImageError> {
@@ -203,12 +133,13 @@ pub fn qemu_command(arch: Arch, medium: &BootMedium, mode: LaunchMode) -> Comman
                 .arg("-device")
                 .arg("ide-hd,drive=rosxboot,bus=ide.1,unit=0,bootindex=1");
         }
-        BootMedium::MultibootKernel(kernel) => {
-            command.arg("-kernel").arg(kernel);
-        }
-        BootMedium::CdImage(iso) => {
-            command.arg("-cdrom").arg(iso);
-            command.arg("-boot").arg("order=d");
+        BootMedium::BootDisk(disk) => {
+            command
+                .arg("-drive")
+                .arg(format!("if=none,id=rosxboot,format=raw,file={}", disk.display()));
+            command
+                .arg("-device")
+                .arg("ide-hd,drive=rosxboot,bus=ide.0,unit=0,bootindex=1");
         }
     }
     command.arg("-debugcon").arg("stdio").arg("-no-reboot");
@@ -352,7 +283,7 @@ mod tests {
     fn x86_64_runs_from_a_bios_disk_image_beside_the_kernel() {
         let kernel = Path::new("/build/target/rosx/release/rosx");
         match run_medium(kernel, Arch::X86_64) {
-            BootMedium::DiskImage(image) => {
+            Ok(BootMedium::DiskImage(image)) => {
                 assert_eq!(image, Path::new("/build/target/rosx/release/rosx-x86_64.img"));
             }
             other => panic!("expected a disk image, got {other:?}"),
@@ -360,11 +291,23 @@ mod tests {
     }
 
     #[test]
-    fn x86_32_runs_from_the_multiboot_kernel_itself() {
+    fn x86_32_runs_from_the_unified_boot_disk_and_refuses_its_absence() {
         let kernel = Path::new("/build/target/rosx-i486/release/rosx-x86_32");
-        match run_medium(kernel, Arch::X86_32) {
-            BootMedium::MultibootKernel(runs) => assert_eq!(runs, kernel),
-            other => panic!("expected the multiboot kernel, got {other:?}"),
+        let missing = run_medium(kernel, Arch::X86_32).expect_err("the disk does not exist");
+        assert!(
+            missing.to_string().contains("rosx-i486-boot-disk.img")
+                && missing.to_string().contains("cargo xtask build x86_32"),
+            "the refusal must name the artifact and the recipe: {missing}"
+        );
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let kernel = dir.path().join("target/rosx-i486/release/rosx-x86_32");
+        std::fs::create_dir_all(kernel.parent().unwrap()).expect("kernel tree");
+        let disk = dir.path().join("target/rosx-i486-boot-disk.img");
+        std::fs::write(&disk, b"mbr").expect("boot disk");
+        match run_medium(&kernel, Arch::X86_32).expect("the disk now exists") {
+            BootMedium::BootDisk(runs) => assert_eq!(runs, disk),
+            other => panic!("expected the unified boot disk, got {other:?}"),
         }
     }
 
@@ -383,27 +326,25 @@ mod tests {
 
     #[test]
     fn interactive_x86_32_uses_the_window_without_reset_diagnostics() {
-        let medium = BootMedium::MultibootKernel(PathBuf::from("/tmp/rosx-x86_32"));
+        let medium = BootMedium::BootDisk(PathBuf::from("/tmp/rosx-i486-boot-disk.img"));
         let command = qemu_command(Arch::X86_32, &medium, LaunchMode::Interactive);
         assert_eq!(command.get_program(), "qemu-system-i386");
         let args = args_of(&command);
-        assert!(contains(&args, "-kernel"));
+        assert!(contains_pair(
+            &args,
+            "-drive",
+            "if=none,id=rosxboot,format=raw,file=/tmp/rosx-i486-boot-disk.img"
+        ));
+        assert!(contains_pair(
+            &args,
+            "-device",
+            "ide-hd,drive=rosxboot,bus=ide.0,unit=0,bootindex=1"
+        ));
+        assert!(!contains(&args, "-kernel"));
         assert!(contains(&args, "-no-shutdown"));
         assert!(contains_pair(&args, "-cpu", "486"));
         assert!(!contains(&args, "cpu_reset"));
         assert!(!contains(&args, "-display"));
-    }
-
-    #[test]
-    fn cd_image_medium_boots_from_the_drive() {
-        let medium = BootMedium::CdImage(PathBuf::from("/tmp/rosx-grub.iso"));
-        let command = qemu_command(Arch::X86_32, &medium, LaunchMode::Headless);
-        assert_eq!(command.get_program(), "qemu-system-i386");
-        let args = args_of(&command);
-        assert!(contains(&args, "-cdrom"));
-        assert!(contains_pair(&args, "-cpu", "486"));
-        let boot_at = args.iter().position(|arg| arg == "-boot").expect("missing -boot");
-        assert_eq!(args[boot_at + 1], "order=d");
     }
 
     #[test]
@@ -463,38 +404,6 @@ mod tests {
     }
 
     #[test]
-    fn grub_mkrescue_resolution_prefers_then_falls_back() {
-        assert_eq!(
-            resolve_grub_mkrescue(&|n| n == "grub-mkrescue"),
-            Some("grub-mkrescue")
-        );
-        assert_eq!(
-            resolve_grub_mkrescue(&|n| n == "grub2-mkrescue"),
-            Some("grub2-mkrescue")
-        );
-        assert_eq!(resolve_grub_mkrescue(&|_| false), None);
-    }
-
-    #[test]
-    fn grub_config_multiboots_the_staged_kernel() {
-        assert_eq!(
-            grub_cfg_contents(),
-            "set timeout=0\nset default=0\n\nmenuentry \"rosx\" {\n    multiboot /boot/kernel\n    boot\n}\n"
-        );
-    }
-
-    #[test]
-    fn missing_grub_tooling_reports_every_gap_with_a_hint() {
-        let probe = |name: &str| name == "grub2-mkrescue";
-        let error = missing_tooling(&probe);
-        assert_eq!(error.missing, vec!["xorriso".to_string(), "mformat (mtools)".to_string()]);
-        assert_eq!(
-            error.to_string(),
-            "missing required tools: xorriso, mformat (mtools)\n\n  Install: grub (grub-pc-bin), xorriso, mtools"
-        );
-    }
-
-    #[test]
     fn hdd_image_is_created_at_exact_size_and_never_reopened_shrinking() {
         let dir = tempfile::tempdir().expect("tempdir");
         let image = ensure_hdd_image(dir.path()).expect("image must provision");
@@ -520,7 +429,7 @@ mod tests {
             (Arch::X86_64, BootMedium::DiskImage(PathBuf::from("/tmp/a.img"))),
             (
                 Arch::X86_32,
-                BootMedium::MultibootKernel(PathBuf::from("/tmp/b")),
+                BootMedium::BootDisk(PathBuf::from("/tmp/rosx-i486-boot-disk.img")),
             ),
         ] {
             let args = args_of(&qemu_command(arch, &medium, LaunchMode::Headless));
