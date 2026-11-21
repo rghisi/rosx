@@ -18,3 +18,9 @@ Sweep when era media leave the support matrix (the 86Box `b32` / real-silicon ve
 AGENTS.md hardware rules): delete all three, make `BOOT_INFO_MAGIC` the only accepted entry
 with a loud panic otherwise, and fold `trim_to_safe_memory`'s kernel-end clip into the
 `kernel::platform::bootinfo` consumer that already performs one.
+
+Verdict progress (emulator evidence): the production chain (unified disk, real kernel,
+BootInfo) booted the Award board `486sp3c` to `rose>` three times on 2026-11-21 —
+`target/86box/runs/20261121T152239Z-486sp3c-chain/`, `media=chs` proven; the AMI
+(E820-synthesis) and Phoenix (`DL=0x00`) chain branches remain unproven on era firmware.
+Execution plan for the remaining verdicts (V) and this sweep (R): `plans/x86_32-era-retirement.md`.
