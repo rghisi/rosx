@@ -21,8 +21,9 @@
 ### Goal
 - `cargo xtask build x86_32` writes `target/rosx-i486-boot-disk.img` as a **bootable unified
   disk**: MBR carrying stage1 boot code, the stage2 blob (`ROS2` image) at LBA 8, one bootable
-  FAT16 slice at LBA 2048 (moved from 63) carrying every user ELF at the FAT root plus
-  `BOOT/KERNEL.ELF` and `/boot/rom.img`.
+  FAT16 slice at LBA 2048 (moved from 63) carrying every user ELF at the FAT root plus the
+  chain kernel `KERNEL.ELF` — at the root, exactly where stage2 already looks (F15) — and
+  `/boot/rom.img`.
 - The x86_32 kernel grows a **dual-magic entry**: `EAX == BOOT_INFO_MAGIC` (`'ROSX'`) walks the
   `BootInfo` path (normalized `MemoryRegion[]` → `MemoryBlocks`); `EAX == 0x2BADB002` keeps
   today's Multiboot path byte-for-byte.
@@ -84,9 +85,10 @@ Cited against `54034e0`.
   therefore a data choice, not a chain change.
 - **F5** stage2 looks for `KERNEL.ELF` at the volume root (`stage2/src/elf32.rs:23`) and
   tolerates an absent `/INITRD.BIN` (`stage2/src/fat.rs:14–33`, checkpoint
-  `handoff32-no-initrd`). Path lookup is case-insensitive 8.3 (`fs/fat/src/dir.rs:47`), so a
-  `/BOOT/KERNEL.ELF` lookup finds the boot disk's `boot/kernel.elf` without touching the
-  8.3 discipline both packers already enforce (`xtask/src/boot_disk.rs:56–67`).
+  `handoff32-no-initrd`). Path lookup is case-insensitive 8.3 (`fs/fat/src/dir.rs:47`); the
+  unified disk stages the real kernel at the root under that exact name (C5, F15), and the
+  8.3 discipline both packers enforce (`xtask/src/boot_disk.rs:56–67`) keeps every name
+  legal — `KERNEL.ELF` collides with no `USER_APPS` stem.
 - **F6** The FAT boot disk today is 64 MiB, MBR stamped by `rxpart::mbr::encode_mbr` (generic
   code, partition table, signature — **no bootable stage1 code**) with the FAT16 slice at
   **LBA 63** (`xtask/src/boot_disk.rs:15,69–86`). The stage2 blob region (LBA 8–~328) lives
@@ -109,9 +111,9 @@ Cited against `54034e0`.
   lock would deadlock the session). stage1/stage2 binaries must be **pre-staged artifacts**,
   exactly like `ROSX_KERNEL_ELF` pre-stages the kernel.
 - **F10** The stage2-32 `rxfat` engine is a one-sector-per-FAT-copy LRU cache with a cluster
-  memo (`fs/fat/src/fat.rs:39,103–152`), so the 64 KiB stage2 heap
-  (`arch/x86-bootloader/common/src/biosdisk.rs:7–8`) does **not** scale with volume size:
-  growing the boot volume from the 16 MiB test media to 64 MiB costs read **time**, not heap.
+  memo (`fs/fat/src/fat.rs:39,103–152`): FAT-table caching does **not** scale with volume
+  size. But per-lookup directory reads allocate `Vec`s the bump heap never reclaims (F15) —
+  volume size is free, path depth is not.
 - **F11** The verdict law and its timeout class exist (`plans/bootloader/00-overview.md` §7;
   `stage2-corrupt-header` is a checkpoint that passes **on** timeout), and the checkpoint
   verifiers already read stage banners off the debug-port stream — the plumbing a gated
@@ -128,6 +130,14 @@ Cited against `54034e0`.
   (`docs/architecture/boot-media-and-harness.md:5`). The unified disk **keeps that topology
   identical** — the kernel merely starts from the MBR of the very volume the plan mounts; the
   secondary-bus carrier invariant is x86_64's and is unaffected.
+- **F15** (measured at M1, 2026-11-21) stage2's bump allocator has a **no-op `dealloc`**
+  (`arch/x86-bootloader/stage2/src/heap.rs:41`), so every transient `rxfat` directory-read
+  `Vec` leaks for the whole boot: peaks are **39,296 / 65,536 bytes** on the Flat32 disk-boot
+  flow and **55,552 / 65,536** on stage-64 — an extra path component (`/BOOT/KERNEL.ELF`)
+  costs ~10 KiB and OOMs the 64-bit chain with `[ERR] heap`. The window cannot grow: the heap
+  already ends exactly at the `0x30000` linker `ASSERT` bound. Recorded as
+  `docs/todo/stage2-bump-heap-never-frees.md`. Consequence: **the chain kernel stays at the
+  volume root** (C5, revised) and future stage2 lookups must budget for F15.
 
 ---
 
@@ -139,7 +149,7 @@ Cited against `54034e0`.
 | C2 | Multiboot disposition | **Dual-magic now, retire later.** The kernel keeps the `.multiboot` header and the Multiboot memory path as a documented fallback; deletion is a follow-on sweep recorded in `docs/todo/` once the chain has soaked in. |
 | C3 | Initrd | **None yet.** No `INITRD.BIN` on the carrier (`handoff32-no-initrd` path); `include_bytes!` coupling and D5 stay open as their own successor. |
 | C4 | Stage-binary staging | `cargo xtask build x86_32` stages `target/boot32/{stage1.bin,stage2-32.bin}` (the same binaries `boot-image`/`boot-test` consume, built once). `cargo xtask test` and `verify` build them before handing off to `cargo test`; the by-hand `ROSX_KERNEL_ELF=…` flow runs `cargo xtask boot-artifacts` (new subcommand) first, and `x86-runner`'s image builder fails loudly naming that command when the staged bins are missing. Never cargo from inside the harness (F9). |
-| C5 | Kernel path on the volume | stage2's constant becomes `/BOOT/KERNEL.ELF`, keeping the cross-arch boot-disk layout parity (`/boot/kernel.elf` + `/boot/rom.img`, `x86_64-boot-from-disk` parity recipe) intact. Case-insensitive lookup makes this exact-match-safe (F5); the chain's boot-test packer stages the fake kernel to the same path. The **frozen ABI is untouched** — file layout is media convention, not handoff contract. |
+| C5 | Kernel path on the volume | **Revised at M1 (F15): the kernel lives at the FAT root as `KERNEL.ELF`** — stage2's existing constant, so **no bootloader change at all**; the unified disk stages the real kernel there (apps and the kernel share the root, `KERNEL` collends with no `USER_APPS` name). The `/BOOT/KERNEL.ELF` variant this plan first specified was implemented and **measured to OOM the stage-64 chain** (F15), so it is rejected; x86_32 therefore drops the `/boot/kernel.elf` copy (the root file is the mechanism), while `/boot/rom.img` staging and the x86_64 `/boot/kernel.elf` forward-looking artifact stay untouched. The frozen ABI is untouched either way. |
 | C6 | Boot order determinism | The harness carves persistent HDD images carrying an MBR signature (`tests-integration/src/qemu.rs:45–56`), so the boot disk attaches with an explicit `bootindex=1` — mirroring the x86_64 carrier's explicitness rather than trusting SeaBIOS drive order. |
 | C7 | Flashable image | `cargo xtask image x86_32` **is** the unified disk (single artifact). Without apps on the volume the boot plan already falls through to `exec rom:shell`, the same posture today's kernel-only GRUB ISO gives. |
 
@@ -157,7 +167,8 @@ milestone carries its own docs commits; M5 closes the series.
   `boot-test` corpus must stay green off the shared code, unchanged.
 - `create_boot_disk` gains the boot stamp: stage1 code + one bootable FAT16 0x06 entry at LBA
   2048 (via the `rxpart` layout `boot_image.rs` already uses), blob write at LBA 8 before
-  `mformat`, kernel + ROM staged at `/boot`, apps at the root (F6).
+  `mformat`, the kernel staged at the FAT root as `KERNEL.ELF` (C5 revised, F15),
+  `/boot/rom.img` and apps per the existing conventions (F6).
 - Stage `target/boot32/{stage1.bin,stage2-32.bin}` as `cargo xtask build x86_32` artifacts
   (C4).
 - **Spike proof (F3 unverified → measured):** boot `target/rosx-i486-boot-disk.img` on
@@ -227,7 +238,7 @@ milestone carries its own docs commits; M5 closes the series.
 | Slice move 63 → 2048 breaks images built by older trees | dev machines | Boot disks are build products (regenerated by `cargo xtask build`); the plan records no data-preservation law for them. Harness masters are per-session tempdirs. |
 | SeaBIOS boots a carved signature-carrying index-1 disk instead of the boot disk | M3 | Explicit `bootindex=1` on the boot disk (C6). |
 | Nested cargo deadlock if the builder ever shells to cargo (F9) | every session | Structurally excluded: builder consumes pre-staged files only and errors by name (C4). |
-| stage2 heap under a 64 MiB FAT16 | — | Already de-risked by F10: cached sector-at-a-time, heap is volume-size-independent; M1's real disk is the proof. |
+| stage2 heap: path depth, not volume size, costs (F15) | any stage2 lookup change | Kernel stays at the volume root (C5 revised); boot64 peak measured at 55.5/64 KiB — `docs/todo/stage2-bump-heap-never-frees.md` tracks the reclaim design before stage2 grows any new lookup. |
 
 ## 5. Verification law
 
