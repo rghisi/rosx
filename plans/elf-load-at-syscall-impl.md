@@ -103,3 +103,44 @@ tests each carry one `unsafe` block (the tested functions are `unsafe fn`), rais
 `unsafe` ratchet 300 -> 302; decision record
 `docs/decisions/gate-baseline-unsafe-raised-2026-11-21-2.md` was written by
 `cargo xtask check-style --update-baseline --allow-increase`.
+
+## M1 — Two-phase pure loader (`elf::inspect` + `elf::load_into`)
+
+`kernel/src/elf/mod.rs` rewritten:
+
+- `inspect(bytes) -> Result<ElfLayout, ElfError>` validates the header, bounds-checks the phdr
+  table itself (the old code read `e_phoff`-derived pointers unguarded), and for every PT_LOAD
+  checks `p_filesz <= p_memsz`, `p_offset + p_filesz <= file` (checked), `p_vaddr + p_memsz`
+  overflow-free, and `e_entry < span`; returns `{ span, align, entry_offset, class }` before any
+  allocation (threat T3). New variants `MalformedSegment`, `SpanTooLarge`.
+- Span cap: `MAX_IMAGE_SPAN = 4 MiB` — decision record `docs/decisions/elf-image-span-cap-4mib.md`.
+- Alignment contract exactly as M0 recorded: `align = clamp(max power-of-two PT_LOAD p_align, 16,
+  4096)`; non-power-of-two or < 2 p_align falls back to the floor. (Not consumed until M2.)
+- `load_into(bytes, dst, layout, arch) -> Result<usize /*entry*/, ElfError>` copies PT_LOADs with
+  slice ops and applies PT_DYNAMIC relocations **against `dst.as_ptr()`**, with every raw read and
+  every relocation write target bounds-checked against `dst` (the old code could read the dynamic
+  table or patch outside the image). `load_into` requires `dst.len() == layout.span` and zeroed
+  (debug-asserted; slice checks make release misuse an `Err`, never UB).
+- All raw reads go through one safe helper `read_at::<T>` — the crate's only new `unsafe` site;
+  the old nine scattered `unsafe` blocks are gone and the elf module's total `unsafe` tokens
+  stayed at 16, so the 302 ratchet is unchanged.
+- `load_elf`/`Image` survive as a thin wrapper over `inspect` + `load_into` (still the production
+  path from `elf_task_wrapper`); they are deleted in M3 when the wrapper's caller migrates —
+  never left as a test-only item.
+
+Test-1 note on the plan's list: "`p_vaddr + p_filesz` past `span`" is not constructible once
+`p_filesz <= p_memsz` holds and `span = max(p_vaddr + p_memsz)`; the hostile ELF it describes is
+rejected by the `p_memsz < p_filesz` check (`MalformedSegment`). Subsumed case, recorded here per
+the plan's M0 amendment duty; both are `Err`, neither a panic.
+
+Tests (plan test 1 and 2): 16 new unit tests — rejections (`TooSmall`, magic, class,
+`NoLoadSegments` via `inspect` directly; beyond-file, `filesz > memsz`, overflowing bounds, phdr
+table beyond EOF, span cap, entry at-or-past span, huge `r_offset`, rela table past span),
+byte-identical `load_into` output for the ELF32 and ELF64 fixtures, relocations addressed against
+the caller's `dst`, layout fields and alignment clamp. `cargo test -p kernel`: 495 passed; full
+`cargo xtask check` green.
+
+## Friction log
+
+M0 | test import of `BLOCK_ALIGN` failed E0603 — constant is private, visibility not a plan fact | MISSING-FACT | 1 round
+M0 | first `cargo xtask check` failed `unsafe: kernel has 302, baseline allows 300` — new cfg(test) code counts toward the ratchet | MISSING-FACT | 1 round + decision record
