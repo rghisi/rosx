@@ -733,6 +733,60 @@ mod tests {
     }
 
     #[test]
+    fn kill_drops_the_task_whose_stack_bytes_the_sweep_never_frees() {
+        install_kill_stage();
+        let (victim, completion) = spawn_paired("[T] kill-stack-drop");
+        let group = services()
+            .task_manager
+            .borrow()
+            .get_group(victim)
+            .expect("the victim has a group");
+        assert!(
+            services().memory_manager.group_bytes(group.value()) > 0,
+            "the victim's stack is accounted to its group"
+        );
+
+        assert_eq!(kernel().kill_task(completion), Ok(()));
+
+        assert_eq!(
+            services().memory_manager.group_bytes(group.value()),
+            0,
+            "deallocate_by_owner never matches Stack: only the dying Task's field drops free it"
+        );
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn exit_drops_the_task_when_the_scheduler_removes_it() {
+        install_kill_stage();
+        let (victim, _completion) = spawn_paired("[T] exit-stack-drop");
+        let group = services()
+            .task_manager
+            .borrow()
+            .get_group(victim)
+            .expect("the victim has a group");
+        kernel().execution_state.current_task = Some(victim);
+
+        let terminated = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            kernel().terminate_with_status(system::exit::clean_status(0).unwrap())
+        }));
+        assert!(terminated.is_err());
+        assert!(
+            services().memory_manager.group_bytes(group.value()) > 0,
+            "the dying task's stack outlives the group sweep: its Task is still in the arena"
+        );
+
+        services().scheduler.borrow_mut().handle_termination(victim);
+
+        assert_eq!(
+            services().memory_manager.group_bytes(group.value()),
+            0,
+            "handle_termination removes the Task and its field drops free the stack block"
+        );
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
     fn kill_discards_the_owners_other_futures_and_spares_the_completion() {
         install_kill_stage();
         let (victim, completion) = spawn_paired("[T] kill-swept");
