@@ -146,7 +146,17 @@ Out of scope for R: x86_64 (its GRUB removal completed in swap M4); QEMU suites;
 - **Disk growth step** (image → cfg geometry) is a rehearsal artifact; V3 removes
   it from the critical path, and R never depends on grown images.
 
-## 6. Friction log (rehearsal, 2026-11-21)
+## Friction log
+
+    rehearsal | `mdir -i hdd.img@@2048 ::` said "non DOS media"; @@ offset is bytes (LBA 2048 = @@1048576), not sectors | ENV-TRAP | 1 round
+    rehearsal | stage2 banner burst scrolled off between two 1000 ms steps; needed a third boot pass at 100 ms | MISSING-FACT | 1 extra boot pass
+    rehearsal | `record_start` ImportError: NumPy C-extension broken in the 86box-mcp server venv | ENV-TRAP | 0
+    rehearsal | `fpu_registers` reports `no FPU` by raising, aborting a combined probe call | ENV-TRAP | 1 round
+    rehearsal | `nm ... | grep ' SYSTEM_TIME_MS$'` (evidence-checklist.md) finds nothing — symbol is mangled in today's build | STALE-DOC | 1 round
+    rehearsal | README era bar (2026-11-18, fake kernel) reads as if the production chain were era-verified | STALE-DOC | 0
+
+### Rehearsal notes (prose)
+
 
 - `gotchas.md` did its job: container launcher `binary=`, strays check, primed NVR
   — zero surprises on that axis.
