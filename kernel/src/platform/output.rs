@@ -22,8 +22,10 @@ pub trait KernelOutput: Send + Sync {
 }
 
 #[cfg(not(test))]
-pub(crate) fn setup_default_output(output: &'static dyn KernelOutput) {
-    DEFAULT_OUTPUT.call_once(|| output);
+pub fn setup_default_output(output: &'static dyn KernelOutput) {
+    if DEFAULT_OUTPUT.get().is_none() {
+        DEFAULT_OUTPUT.call_once(|| output);
+    }
 }
 
 pub struct MultiplexOutput {
