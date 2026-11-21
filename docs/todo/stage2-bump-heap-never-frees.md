@@ -1,5 +1,5 @@
 ---
-priority: medium
+priority: normal
 date: 2026-11-21
 trigger: any stage2 change that adds a heap allocation (a new file lookup, a deeper path, a bigger read window, or x86_64-flavor work)
 ---

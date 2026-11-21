@@ -1,6 +1,7 @@
 # x86_32 Carrier Swap — GRUB out, Custom Chain In on a Unified Boot Disk
 
-> **Status:** Open. Written 2026-11-21 on branch `replace-grub-x8632` at HEAD `54034e0`.
+> **Status:** Executing. Written 2026-11-21 on branch `replace-grub-x8632` at HEAD `54034e0`;
+> M1 executed 2026-11-21 (see its execution record; §5 verification law met per milestone).
 > **Goal:** retire GRUB and QEMU `-kernel` as the x86_32 boot path. The x86_32 kernel boots
 > through the custom chain of `arch/x86-bootloader/` (stage1 MBR → stage2 → ELF32 load →
 > `BootInfo` handoff) from the **unified 64 MiB FAT boot disk** — the same image the boot plan
@@ -178,7 +179,34 @@ milestone carries its own docs commits; M5 closes the series.
   its entry. Record measured kernel-ELF load time in the milestone notes.
 - Gate: `cargo xtask check`, `cargo xtask boot-test`, manual QEMU boot above.
 
+**M1 execution record (2026-11-21):**
+- Lift landed in `arch/x86-runner/src/chain.rs` (ROS2 blob, stage1-MBR splice + guards,
+  sparse/write, mtools wrappers) with 9 unit tests; `boot_image.rs`, `boot_disk.rs` and
+  `boot_test.rs` call it; `x86-runner` gained a workspace `rxpart` dependency (arch-rules
+  updated); `boot-test` 24/24 green off the shared code, unchanged.
+- `cargo xtask build x86_32` now stages `target/boot32/{stage1.bin,stage2-32.bin}` and writes
+  the bootable unified disk (stage1 MBR, `ROS2` blob at LBA 8, slice at LBA 2048, kernel at
+  volume root as `KERNEL.ELF`, apps + `/boot/rom.img` as before); new
+  `cargo xtask boot-artifacts x86_32` stages the chain binaries for the by-hand flow (C4).
+- **Spike measured, `-cpu 486` -m 128M:** the chain loaded the real kernel ELF —
+  `[ELF] arch=X86_32 entry=0x00101000 phys=0x00100000..0x001c0000` (a 768 KiB image; the
+  phdr table fits the 4 KiB header window, **F3 closed**) — absent-initrd path clean, and
+  handed off `[STAGE2_32] A20=OK THUNK=OK` in **437 ms POST → handoff** (boot-time risk
+  closed).
+- The jump **lands**: the QEMU monitor shows the CPU executing with the kernel's own GDT
+  installed (`GDT=0x00126000`, CS 0x08/DS 0x10, CR0.PE=1 PG=0). The bad-magic panic does not
+  print: `kprintln!` unwraps `Err` while `DEFAULT_OUTPUT` is unwired (`bootstrap()` wires it
+  after the magic check), so the panic handler recurses into silent stack ruin. **M2 must
+  wire the console (VGA init + default output) as the first act of `kernel_main`, before the
+  magic branch** — recorded in M2 below.
+
 ### M2 — Kernel dual-magic entry (x86_32)
+- **Console first:** `kernel_main`'s first act is `vga init` + wiring the default kernel output
+  (M1 found the panic-before-`bootstrap` silent-recursion hole); the unknown-magic failure must
+  be loud on both console streams. This needs `setup_default_output` reachable from the arch
+  crate (`kernel/src/platform/output.rs`, `pub(crate)` → `pub`; both branches then pass the
+  same `MULTIPLEXED_OUTPUT` static to `bootstrap`, so the `Once` stays idempotent and x86_64
+  behavior is untouched).
 - `kernel_main` branches on the magic; new `BootInfo` → `MemoryBlocks` consumer next to
   `trim_to_safe_memory`: walk `memory_map_ptr[..len]` (stride-checked against
   `memory_map_entry_size`), keep `Usable` regions only, cap at `MemoryBlocks` capacity

@@ -464,7 +464,7 @@ fn parse_stages_option(extras: &[String]) -> Result<Option<std::path::PathBuf>, 
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | check-isa bootloader | check-arch | check-style [--update-baseline [--allow-increase <reason>]] | decisions | install-hooks | check | verify | test [--skip-integration] | boot-image [32|64|floppy] | boot-test>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | era-image x86_32 [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 [--stages <dir>] | check-isa bootloader | check-arch | check-style [--update-baseline [--allow-increase <reason>]] | decisions | install-hooks | check | verify | test [--skip-integration] | boot-image [32|64|floppy] | boot-test | boot-artifacts x86_32>"
     );
 }
 
@@ -614,6 +614,18 @@ fn main() {
         "boot-test" => {
             require_no_extras(extras);
             boot_test::run_boot_test();
+        }
+        "boot-artifacts" => {
+            let (spec, rest) = split_arch(extras);
+            require_no_extras(rest);
+            if spec.boot != x86_runner::Arch::X86_32 {
+                eprintln!(
+                    "boot-artifacts stages the x86_32 boot chain (stage1, stage2-32); {} boots differently",
+                    spec.name
+                );
+                process::exit(2);
+            }
+            boot_image::stage_boot32_artifacts();
         }
         "help" | "--help" | "-h" => usage(),
         other => {
