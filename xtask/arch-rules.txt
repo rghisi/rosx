@@ -65,5 +65,5 @@ vfs-protocol: system usrlib
 vfsd: block-protocol fs-core rxfat rxfs usrlib vfs-protocol
 waitset: system usrlib
 x86-generic: kernel spin volatile
-x86-runner: anyhow bootloader tempfile
+x86-runner: anyhow bootloader rxpart tempfile
 xtask: rxpart system x86-runner
