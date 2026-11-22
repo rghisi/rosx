@@ -97,7 +97,7 @@ Each line links the file holding the detail; every file starts with its own inva
 ## Toolchain notes
 
 - `rust-toolchain.toml` pins **nightly** with `rust-src`; custom targets live in `arch/x86_64/` (`rosx.json`, `rosx-user.json`) and `arch/x86_32/` (`rosx-i486.json`, `rosx-i486-user.json`).
-- No bootimage: the x86_64 disk image comes from `arch/x86-runner` (the `bootloader` crate); x86_32 chain-boots the unified disk that `arch/x86-runner` packs from `arch/x86-bootloader`'s stage1/stage2.
+- No bootimage and no carrier: both arches chain-boot the unified disk that `arch/x86-runner` packs from `arch/x86-bootloader`'s stage1/stage2 (per-arch stage2 flavor), attached at IDE index 0 with `bootindex=1`.
 - `gh pr edit` on `rghisi/rosx` fails with a Projects (classic) GraphQL error; update PRs through the REST API: `gh api -X PATCH repos/rghisi/rosx/pulls/<n> -f title="..." -F body=@<file>`.
 - Run `cargo xtask test` and `cargo xtask verify` one at a time: the QEMU suites share `target/` and contend with any suite already running.
 - `cargo xtask verify` needs a quiet host: its integration boots are load-sensitive (the flake rows catalogued in `plans/integration-flakiness-assessment-2026-11-20.md` fail only under contention). Before trusting a verdict, confirm no other suite is live (`pgrep -f 'cargo test|xtask test|qemu-system'`, load average against `nproc`); when the box is busy, chain verify behind a quiet-machine wait instead of rerunning into contention.

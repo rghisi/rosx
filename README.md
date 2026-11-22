@@ -235,11 +235,14 @@ See `AGENTS.md` for detailed development guidelines and coding standards.
 
 Ready-to-use binary images are available in the [Releases](https://github.com/rghisi/rosx/releases) section of the GitHub repository. The CI `Build Artifacts` workflow (manual dispatch) also publishes them as run artifacts, downloadable with `gh run download <run-id> -n <artifact-name>` (artifacts are kept for one day). Boot any of them directly in QEMU:
 
-### x86_64 — BIOS disk image (`rosx-x86_64` artifact)
+### x86_64 — unified boot disk (`rosx-x86_64` artifact)
+
+The disk is both boot medium and root volume: stage1 chain-loads stage2-64, which loads
+`KERNEL.ELF` off the FAT volume into long mode.
 
 ```bash
 qemu-system-x86_64 \
-  -drive format=raw,file=rosx-x86_64.img \
+  -drive format=raw,file=rosx-boot-disk.img \
   -debugcon stdio \
   -no-reboot -no-shutdown
 ```
@@ -263,7 +266,7 @@ To exercise `ata list` → `attach <dev-id> ATA 1` → `format <dev-id>` → `mk
 ```bash
 truncate -s 50M hdd.img
 qemu-system-x86_64 \
-  -drive format=raw,file=rosx-x86_64.img \
+  -drive format=raw,file=rosx-boot-disk.img \
   -drive if=ide,index=1,media=disk,format=raw,file=hdd.img \
   -debugcon stdio \
   -no-reboot -no-shutdown
