@@ -92,6 +92,11 @@ hour, not a CI failure — CI cannot see any of this.
   probe spins its DRQ budget past init's 10 s service wait and the boot
   falls back to the ROM shell (measured 2026-11-21, run
   `20261121T231200Z-vect486vl`; the fix lives in `apps/atad`).
+  Scope discipline (measured 2026-11-22, QEMU regression + re-verify run
+  `20261122T011200Z-vect486vl-scoped-atad`): apply the rule ONLY while
+  waiting for DRQ — during reset/select windows a present drive
+  legitimately reads `!BSY && !DRDY`, and checking there refuses real
+  drives and drops every boot to the ROM shell.
 
 ## Boot-handoff observation
 

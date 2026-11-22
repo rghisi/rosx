@@ -255,7 +255,7 @@ impl<B: Bus> AtaDrive<B> {
                     .read_byte(ALTERNATE_STATUS_PORT)
                     .map_err(|_| DriveFault::Denied)?;
                 if status & STATUS_BUSY == 0 {
-                    if status & STATUS_DRIVE_PRESENT == 0 {
+                    if require_data_request && status & STATUS_DRIVE_PRESENT == 0 {
                         return Err(DriveFault::NotFound);
                     }
                     if status & STATUS_ERROR != 0 {
@@ -561,7 +561,7 @@ mod tests {
     fn drdy_lost_during_read_surfaces_as_not_found() {
         let mut drive = probed_drive();
         drive.bus.disk_words.extend(sector_words(0));
-        drive.bus.fault_status_after_reads = 1;
+        drive.bus.fault_status_after_reads = 0;
         drive.bus.fault_status = 0x00;
         let mut buffer = vec![0u8; SECTOR_BYTES];
         assert_eq!(drive.read_sectors(0, SECTOR_ONE, &mut buffer), Err(DriveFault::NotFound));
