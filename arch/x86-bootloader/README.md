@@ -9,15 +9,15 @@ higher half. Blueprint: `plans/bootloader/` (00-overview + phases 01–12);
 the checkpoint suite and media packer live in `xtask` (`boot_image.rs`,
 `boot_test.rs`, `check_isa.rs`).
 
-**Positioning:** x86_32 boots production through this chain — stage1 and
-stage2-32 on the unified FAT boot disk (`plans/x86_32-carrier-swap.md`). The
-x86_64 production boot stack is untouched — it still boots via the
-`bootloader` crate. The chain is proven in QEMU (the `bootloader` CI job:
-`cargo xtask boot-test` + `cargo xtask check-isa bootloader`, including the
-`real-kernel-boot32` checkpoint that boots the real kernel off the built
-disk); x86_64 real-kernel integration, rom.img-as-initrd and era-hardware
-verification are the recorded follow-on stubs (`00-overview.md` §9). Nothing
-goes green on hardware without the AGENTS.md hardware evidence rules.
+**Positioning:** both ports boot production through this chain — stage1 and
+the per-arch stage2 (stage2-32 / stage2-64) on the unified FAT boot disk
+(`plans/x86_32-carrier-swap.md`, `plans/x86_64-carrier-swap.md`). The chain
+is proven in QEMU (the `bootloader` CI job: `cargo xtask boot-test` +
+`cargo xtask check-isa bootloader`, including the `real-kernel-boot32` and
+`real-kernel-boot64` checkpoints that boot the real kernels off the built
+disks); rom.img-as-initrd and era-hardware verification are the recorded
+follow-on stubs (`00-overview.md` §9). Nothing goes green on hardware without
+the AGENTS.md hardware evidence rules.
 
 ## Layout
 
@@ -43,7 +43,9 @@ fake-kernel-64/ ELF64 smoke kernel, linked at 0xFFFF800000100000
 scripts/       harness_stub.s — the harness self-test stubs (pass/fail/crash/hang)
 rosx-boot-i486.json   custom target: 486 floor, features pin
                -mmx,-sse,-sse2,-cmov,-fxsr,-cx8 (same floor as the x86_32 port)
-rosx-boot-x86_64.json custom target: kernel code model, -mmx,-sse,+soft-float
+               (the 64-bit target spec is the kernel's own arch/x86_64/rosx.json:
+               large code model, -mmx,-sse,+soft-float — fake-kernel-64 and the
+               production kernel link the same shape)
 ```
 
 ## Media layout
@@ -103,7 +105,7 @@ Host tools: `qemu-system-i386`, `qemu-system-x86_64`, mtools
 cargo xtask boot-image 32       # target/boot32.img  (stage2 Flat32 + fake-kernel-32)
 cargo xtask boot-image 64       # target/boot64.img  (stage2 stage-64 + fake-kernel-64)
 cargo xtask boot-image floppy   # target/floppy.img (CHS path)
-cargo xtask boot-test           # 24 checkpoints, both binaries + negative guards
+cargo xtask boot-test           # 26 checkpoints, both binaries + negative guards
 cargo xtask check-isa bootloader  # 486 audit: fake-kernel-32 + stage2 (.text under
                                   # the i386 deny-list; .longmode.text under the
                                   # x86-64 decoder admitting exactly cpuid/rdmsr/wrmsr)
@@ -125,7 +127,7 @@ cases: patched ELFs, scribbled FAT root, corrupt stage2 header, oversized /
 absent initrd) under `target/boot-test/`; boot any of them with the same
 command line.
 
-## Checkpoints (24)
+## Checkpoints (26)
 
 | Row | Machine | Proves |
 |---|---|---|
@@ -146,6 +148,8 @@ command line.
 | `lm-smoke` | qemu64 | long-mode entry: ELF64 load, page tables, kernel banner |
 | `lm-guard-486`, `lm-guard-nolm` | 486 / `-lm` | the CPU guard exits 3, never a `#UD` |
 | `stage2-corrupt-header` | 486 | a bogus ROS2 magic hangs stage1 (timed-out verdict) |
+| `real-kernel-boot32` | 486 128M | the real kernel off the built `target/rosx-i486-boot-disk.img`: stage banners, BootInfo, kernel bootstrap (timed-out verdict) |
+| `real-kernel-boot64` | qemu64 128M | the real kernel off the built `target/rosx-boot-disk.img`: ELF64 load, BootInfo, kernel bootstrap (timed-out verdict) |
 
 The generic verifiers read `[MEM] entries=` and `[INITRD] addr=` off the
 debug-port stream: the published map must re-derive from the host-computed seed,

@@ -6,7 +6,8 @@ set architecture i386:x86-64
 # Connect to QEMU GDB server
 target remote localhost:1234
 
-# Load kernel symbols from ELF binary
+# Load kernel symbols from the debug ELF (linked at 0xFFFF800000100000; the
+# RosX chain loads it there, so symbol addresses match the live addresses)
 symbol-file ../../target/rosx/debug/rosx
 
 # Disable pagination for cleaner output

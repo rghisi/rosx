@@ -1,5 +1,5 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 
 mod arch;
@@ -14,7 +14,7 @@ mod records;
 mod rust_scan;
 
 use arch::{ArchSpec, X86_64, USER_APPS};
-use x86_runner::{BootMedium, LaunchMode};
+use x86_runner::LaunchMode;
 
 const UNSTABLE: [&str; 3] = [
     "-Zbuild-std=core,alloc,compiler_builtins",
@@ -64,26 +64,18 @@ fn build_kernel(debug: bool, spec: &ArchSpec) {
     run(&mut cmd, &format!("build {} kernel", spec.name));
 }
 
-fn prepare_medium(debug: bool, spec: &ArchSpec) -> BootMedium {
+fn prepare_medium(debug: bool, spec: &ArchSpec) -> PathBuf {
     let kernel = spec.kernel_elf(if debug { "debug" } else { "release" });
-    let medium =
-        x86_runner::prepare_run_medium(&kernel, spec.boot).expect("failed to prepare boot medium");
-    match &medium {
-        BootMedium::DiskImage(_) => println!("==> created {} disk image", spec.name),
-        BootMedium::BootDisk(disk) => {
-            println!("==> boot medium: the unified disk {}", disk.display())
-        }
-    }
-    medium
+    let disk = x86_runner::run_medium(&kernel, spec.boot).unwrap_or_else(|err| {
+        eprintln!("error: {err}");
+        process::exit(1);
+    });
+    println!("==> boot medium: the unified disk {}", disk.display());
+    disk
 }
 
-fn launch(medium: &BootMedium, spec: &ArchSpec) {
-    let mut cmd = x86_runner::qemu_command(spec.boot, medium, LaunchMode::Interactive);
-    if spec.fat_boot_disk && !matches!(medium, BootMedium::BootDisk(_)) {
-        let disk = boot_disk::boot_disk_path(spec);
-        cmd.arg("-drive")
-            .arg(format!("if=ide,index=0,media=disk,format=raw,file={}", disk.display()));
-    }
+fn launch(disk: &Path, spec: &ArchSpec) {
+    let mut cmd = x86_runner::qemu_command(spec.boot, disk, LaunchMode::Interactive);
     x86_runner::attach_persistent_hdd(&mut cmd);
     x86_runner::attach_ne2k_pci(&mut cmd);
     run(&mut cmd, &format!("boot {} in qemu", spec.name));
@@ -112,26 +104,12 @@ fn pack_rom(spec: &ArchSpec) {
 }
 
 fn create_boot_disk(debug: bool, spec: &ArchSpec) {
-    if spec.fat_boot_disk {
-        boot_disk::create_boot_disk(debug, spec);
-    }
+    boot_disk::create_boot_disk(debug, spec);
 }
 
 fn create_flashable_image(debug: bool, spec: &ArchSpec) {
-    let kernel = spec.kernel_elf(if debug { "debug" } else { "release" });
-    match spec.boot {
-        x86_runner::Arch::X86_64 => {
-            let image = x86_runner::create_bios_disk_image(&kernel).unwrap_or_else(|err| {
-                eprintln!("error: {err}");
-                process::exit(1);
-            });
-            println!("==> created x86_64 disk image {}", image.display());
-        }
-        x86_runner::Arch::X86_32 => {
-            let image = boot_disk::create_boot_disk(debug, spec);
-            println!("==> created x86_32 unified boot disk {}", image.display());
-        }
-    }
+    let image = boot_disk::create_boot_disk(debug, spec);
+    println!("==> created the {} unified boot disk {}", spec.name, image.display());
 }
 
 fn integration_arch() -> &'static ArchSpec {
@@ -153,8 +131,8 @@ fn run_tests(arch: &ArchSpec, skip_integration: bool) {
         build_kernel(false, arch);
         cmd.env("ROSX_KERNEL_ELF", arch.kernel_elf("release"));
     }
-    if !skip_integration && arch.boot == x86_runner::Arch::X86_32 {
-        boot_image::stage_boot32_artifacts();
+    if !skip_integration {
+        boot_image::stage_chain_artifacts(boot_image::Stage2Flavor::for_arch(arch.boot));
     }
     cmd.arg("test").arg("--workspace");
     let description = if skip_integration {
@@ -335,7 +313,7 @@ fn check_isa_bootloader_command() {
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 | check-isa bootloader | check-arch | check-style [--update-baseline [--allow-increase <reason>]] | decisions | install-hooks | check | verify | test [--skip-integration] | boot-image [32|64|floppy] | boot-test | boot-artifacts x86_32>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 | check-isa bootloader | check-arch | check-style [--update-baseline [--allow-increase <reason>]] | decisions | install-hooks | check | verify | test [--skip-integration] | boot-image [32|64|floppy] | boot-test | boot-artifacts [x86_64|x86_32]>"
     );
 }
 
@@ -401,8 +379,8 @@ fn main() {
             pack_rom(spec);
             build_kernel(debug, spec);
             create_boot_disk(debug, spec);
-            let medium = prepare_medium(debug, spec);
-            launch(&medium, spec);
+            let disk = prepare_medium(debug, spec);
+            launch(&disk, spec);
         }
         "image" => {
             let (spec, rest) = split_arch(extras);
@@ -469,14 +447,7 @@ fn main() {
         "boot-artifacts" => {
             let (spec, rest) = split_arch(extras);
             require_no_extras(rest);
-            if spec.boot != x86_runner::Arch::X86_32 {
-                eprintln!(
-                    "boot-artifacts stages the x86_32 boot chain (stage1, stage2-32); {} boots differently",
-                    spec.name
-                );
-                process::exit(2);
-            }
-            boot_image::stage_boot32_artifacts();
+            boot_image::stage_chain_artifacts(boot_image::Stage2Flavor::for_arch(spec.boot));
         }
         "help" | "--help" | "-h" => usage(),
         other => {

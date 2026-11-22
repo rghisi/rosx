@@ -16,6 +16,14 @@
 > the one shared file.
 > **Method:** every repo fact below was verified against this working tree (paths cited).
 > Commands this plan cannot prove green are marked **`unverified`**.
+> 
+> **Fact refresh (2026-11-22):** the carrier swap (`plans/x86_64-carrier-swap.md`) retired the
+> `bootloader`-crate carrier and with it `BootMedium`, `prepare_run_medium`,
+> `prepare_run_medium_in`, `create_bios_disk_image*` and `attach_fat_boot_disk`;
+> `x86_runner::run_medium(kernel, arch)` now derives the unified boot-disk path for **both**
+> arches (the `<kernel_dir_name>-boot-disk.img` rule the §2.3 complaint counted three times
+> now lives in exactly two places) and `qemu_command` is a single boot-disk arm. The plan
+> stands — on a simpler base.
 
 ---
 

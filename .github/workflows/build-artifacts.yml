@@ -35,7 +35,6 @@ jobs:
         with:
           name: rosx-x86_64
           path: |
-            target/rosx/release/rosx-x86_64.img
             target/rosx-boot-disk.img
           if-no-files-found: error
           retention-days: 1
