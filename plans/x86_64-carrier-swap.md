@@ -1,7 +1,9 @@
 # x86_64 Carrier Swap — `bootloader` crate out, Custom Chain In on the Unified Boot Disk
 
-> **Status:** Planned, not started. Written 2026-11-22 on branch `x86_64-custom-bootloader` at
+> **Status:** Complete. Written 2026-11-22 on branch `x86_64-custom-bootloader` at
 > `origin/main` = `c1a1d8a` (#192, the x86_32 era verification and GRUB Legacy retirement).
+> M1–M4 and V executed 2026-11-22 (execution records below; `cargo xtask verify` exit 0,
+> boot-test 26/26, deliberate-failure proof done).
 > **Goal:** retire the `bootloader` crate as the x86_64 boot path. The x86_64 kernel boots
 > through the custom chain of `arch/x86-bootloader/` (stage1 MBR → stage2-64 → ELF64 load →
 > long-mode `BootInfo` handoff) from the **unified 64 MiB FAT boot disk** — the same image the
@@ -392,3 +394,10 @@ root README, the boot-reader README positioning with a 26-row checkpoint table (
 plan refreshed. Decision records `bootloader-crate-retirement`, `x86-64-console-vga-text`,
 `x86-64-link-code-model-large` and todo `vesa-framebuffer-successor.md` filed; the records
 validator keeps filenames kebab.
+
+V execution record (2026-11-22): quiet-host verified (load 0.14, no live suites) before
+`cargo xtask verify` — exit 0: gate green, x86_64 build + integration, x86_32 build +
+integration, boot-test 26/26, 208 suite-result lines zero failures. Deliberate-failure proof:
+scribbling `ROS2`→`XXXX` at LBA 8 of the production `target/rosx-boot-disk.img` left stage1
+printing `[ERR] disk 08` with zero `[STAGE2_64]` output and a timed-out verdict — the disk is
+the only medium — and the disk restored bit-identical afterwards.
