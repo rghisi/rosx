@@ -126,7 +126,7 @@ jobs:
         run: cargo xtask build
 
       - name: Integration suite on x86_64
-        run: ROSX_KERNEL_ELF=$GITHUB_WORKSPACE/target/rosx/release/rosx cargo test -p tests-integration -- --test-threads=1
+        run: ROSX_KERNEL_ELF=$GITHUB_WORKSPACE/target/rosx/release/rosx cargo test --no-fail-fast -p tests-integration -- --test-threads=1
 
   test-x86_32-integration:
     name: Integration Tests (x86_32)
@@ -152,7 +152,7 @@ jobs:
         run: cargo xtask build x86_32
 
       - name: Integration suite on x86_32
-        run: ROSX_ARCH=x86_32 ROSX_KERNEL_ELF=$GITHUB_WORKSPACE/target/rosx-i486/release/rosx-x86_32 cargo test -p tests-integration -- --test-threads=1
+        run: ROSX_ARCH=x86_32 ROSX_KERNEL_ELF=$GITHUB_WORKSPACE/target/rosx-i486/release/rosx-x86_32 cargo test --no-fail-fast -p tests-integration -- --test-threads=1
 
   bootloader:
     name: Custom BIOS Bootloader
