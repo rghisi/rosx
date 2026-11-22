@@ -342,3 +342,17 @@ Closes: §9 *Real-kernel integration* (x86_64 half) and *Carrier swap* (x86_64 h
 `plans/x86_64-boot-from-disk.md`; the `bootloader`-crate dependency.
 Stays open: D5 rom.img-as-initrd; era-hardware verification (both arches); VESA framebuffer
 successor; `plans/platform-runner-abstraction.md` (trait plan, now on a simpler base).
+
+---
+
+## Friction log
+
+    M1 | x86_64 integration run piped to tail -20, cargo's exit code masked; full suite rerun (~30 min) to capture exit-code evidence | ENV-TRAP | 1 round (~30 min)
+    M1 | `cargo xtask check` output piped through grep|head -30 cut the verdict line; rerun needed to confirm all-green | ENV-TRAP | 1 round (~4 min cached)
+    M1 | ad-hoc python MBR stamp check raised struct.unpack ValueError (wrong entry format); fixed second run | TASK | 0
+
+M1 execution record (2026-11-22, commit `3cbfb8b`): the re-stamped index-0 disk stayed out of
+the boot order — the bootindex=1 carrier won, SeaBIOS never touched the new bootable MBR — and
+the kernel mounted `ata0d0p0` from the LBA-2048 slice to the disk shell (boot-plan green,
+`rose>` reached, zero PANIC on a headless reproduction of the `cargo xtask run x86_64`
+topology). Gate, both integration suites (40/40 each) and all 25 boot-test rows green.
