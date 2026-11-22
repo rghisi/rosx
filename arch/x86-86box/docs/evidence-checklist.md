@@ -1,4 +1,4 @@
-# Evidence checklist — M5 items and their emulator analogs
+# Evidence checklist — hardware-checklist analogs on the production chain
 
 One structured 86Box run produces the emulator-side analog of every AGENTS.md
 hardware-checklist item that has one. **An emulator run never flips a silicon
@@ -7,74 +7,54 @@ names below are MCP tools (`tools["86box"].*`); run held (server default).
 
 ## Run protocol
 
-Machine: `configs/486sx-pvi486sp3.cfg` (486sp3c, i486SX-25, no FPU, 32 MB,
-primed NVR). Media: the GRUB-Legacy HDD image from
-`scripts/build-legacy-hdd.sh` (copy it into the VM directory as `hdd.img`).
-Two boot scenarios, two run dirs:
-
-- **run A — stock boot**: exercises items 2-7 and captures the stock
-  Multiboot handoff.
-- **run B — FLAGS-patched boot**: the mmap-less-bootloader scenario
-  (item 1's fallback branch), via the boundary-probe stop.
-
-Setup for both (and teardown, per gotchas.md): clean strays →
-`vm_create(config=...)` → place media → `vm_start(held=true, binary=<86box-mcp>/docker/86box.sh)`
-— the `binary` argument must be the container launcher, not the ELF path
-(gotchas.md), and one `486sp3c` VM can serve both runs back-to-back
-(`reset(kind:"hard")` between them; the entry breakpoint survives it).
+Machine: a template from `configs/` (baseline `486sx-pvi486sp3.cfg` —
+486sp3c, i486SX-25, no FPU, primed NVR). Media: the **production unified
+disk** — `target/rosx-i486-boot-disk.img` from `cargo xtask build x86_32`,
+copied into the VM directory as the file the cfg names in `hdd_01_fn`. One
+run per board covers every item; phase V measured AMI (`vect486vl`),
+Phoenix (`ecs486`) and Award (`486sp3c`, grown 512 MB **and** the un-grown
+64 MiB artifact booting as-is).
 
 Derived inputs, never hardcoded — read them from the exact shipped ELF:
 
 ```sh
-nm target/rosx-i486/release/rosx-x86_32 | grep ' SYSTEM_TIME_MS$'   # PIT counter
-readelf -h target/rosx-i486/release/rosx-x86_32 | grep Entry         # breakpoint addr
+nm target/rosx-i486/release/rosx-x86_32 | grep SYSTEM_TIME_MS   # PIT counter
 ```
 
-Run directory per §5 of the plan — `target/86box/runs/<UTC>-<machine>/`:
+The symbol is Rust-mangled (trailing `17<hash>` part) — match without an
+end anchor and take the printed address.
+
+Run directory per the plan — `target/86box/runs/<UTC>-<machine>/`:
 
 | file | produced by | when |
 |---|---|---|
-| `screen.txt` | `screen_text` | POST, bootloader banner, kernel banner, `rose>` |
-| `screenshot.png` | `record_start(directory, sound:false)` → `step ms:600` → `record_stop`; copy one frame (`screenshot` alone returns the image inline, never a file) | at `rose>` |
+| `screen.txt` | `screen_text` | POST, stage banner burst, kernel banner, `rose>` |
+| `screenshot.png` | `screenshot` (inline frame; `record_start` is broken in the server venv — see gotchas.md) | at `rose>` |
 | `vm-info.json` | `vm_info` | boot start and end (`hard_resets` both ends) |
-| `mbi.hex` | `read_memory` at `%ebx` (run B only needs none — run A's stop) | first-instruction stop |
-| `facts.md` | written last | observation table keyed to M5 items |
+| `facts.md` | written last | observation table keyed to the items below |
 
 ## Item → analog → tool sequence
 
-### 1. Memory detection through a v1 bootloader (fallback branch)
+### 1. Memory detection with synthesis fallbacks
 
-Analog: a GRUB build that lacks the mmap buffer, synthesized at the true
-handoff point. **run B sequence:**
-
-```
-vm_start(held=true, debugger=true, binary=<86box-mcp>/docker/86box.sh)
-breakpoint_set(addr=<ELF entry>, kind="exec")
-run_until_break  — repeat; each call covers ~10 s of emulated time, the
-                   handoff lands near t≈15.5 s (Award POST + 5 s GRUB menu)
-registers                      → %eax must be 0x2BADB002; %ebx = MBI pointer
-read_memory(addr=%ebx, len=56) → decode FLAGS; record original (0x3E7)
-write_memory(addr=%ebx, hex_bytes="01 00 00 00")   → sizes-only MBI
-debug_continue
-wait_for_text("rose>", timeout_ms=180000)
-screen_text                    → [MEMORY] Region/Total sized from mem_upper
-```
-
-Pass: `[MEMORY] Total:` plausible for a 4-64 MB board and boot completes to
-`rose>` (`mem` app: allocator healthy). run A records the complementary
-fact — stock GRUB Legacy 0.97 passes `FLAGS=0x3E7` with a real e820 map, so
-the same code takes the `mmap` branch; `mbi.hex` is that evidence.
+The production chain probes E820, then E801, then INT 88h; the BIOS decides
+which branch runs. Pass on every board: the `[BOOTINFO] regions=… usable=…`
+banner is plausible for the machine's RAM and boot completes to `rose>`.
+Measured branch coverage: Award accepts E820; Phoenix refuses E820 (E801
+synthesis proven); AMI Vectra refuses E820 **and** E801 (INT 88h synthesis
+proven) — the fallback branches need no patching trick, the firmware walks
+them natively.
 
 ### 2. PAUSE-as-NOP (no `#UD` at `Once` contention)
 
 Analog: early boot contains the spin paths; a `#UD` on `f3 90` would
-triple-fault the machine before `rose>`. run A: boot completes **and**
+triple-fault the machine before `rose>`. Boot completes **and**
 `vm_info.hard_resets` did not increment by itself. Record boot-to-`rose>`
 completion + the hard_resets delta as the analog.
 
 ### 3. PIT 100 Hz / 8259A cascade timing
 
-Analog: the SiS 496's 8253/8259A plumbing driven in held time. run A, at
+Analog: the era chipset's 8253/8259A plumbing driven in held time. At
 `rose>`:
 
 ```
@@ -88,18 +68,18 @@ Pass: `t2 - t1 == 1000` exactly (1:1). Then shell echo works:
 
 ### 4. 16-bit IDE PIO on a real drive
 
-Analog: the era-chipset IDE controller. run A: the boot log shows
+Analog: the era-chipset IDE controller. The boot log shows
 `[ATAD] ata0 drive0 ready: … sectors=…` (identify through 16-bit PIO);
 then `type_text("ata\n")`, `step ms:3000`, `screen_text` — the `ata` app's
-`mbr signature 55AA ok` line is the LBA-read evidence (the MBR was written
-by sfdisk + GRUB setup, contents known).
+`mbr signature 55AA ok` line is the LBA-read evidence (the MBR is stage1,
+written by the unified-disk build, contents known).
 
 ### 5. VGA text console standalone (0xE9 writes harmless)
 
 Analog: 86Box does not model the QEMU 0xE9 debug port — every kernel
 debug-console write on this machine lands on an unclaimed port, so booting
 to `rose>` with `screen_text` carrying the full banner **is** the check:
-writes were harmless and VGA alone sufficed. Record with run A's captures.
+writes were harmless and VGA alone sufficed. Record with the run's captures.
 
 ### 6. The `rep bsf` idiom executes as BSF
 
@@ -112,7 +92,7 @@ analog honestly.
 
 ### 7. 486SX sub-case — no FPU present
 
-Analog: the baseline machine *is* the sub-case. run A:
+Analog: the baseline machine *is* the sub-case.
 `vm_info` shows `i486SX`, `fpu_registers` returns `no FPU`, and the kernel
 ran FP-free end to end to `rose>`.
 
@@ -121,14 +101,15 @@ ran FP-free end to end to `rose>`.
 ```
 Emulator runs never flip a silicon checkbox; the seven hardware items
 close on silicon only. This file is emulator evidence for the 486-class
-contract (machine 486sp3c, emulated i486SX-25, no FPU).
+contract (machine <id>, emulated i486SX-25, no FPU).
 
-- POST: 80486SX CPU at 25MHz / Memory Test: 32768K OK        [screen.txt]
+- POST: 80486SX CPU at 25MHz / Memory Test: <n>K OK              [screen.txt]
+- chain: [STAGE1] … [DISK] media=<chs|lba> … [BOOTINFO] regions=… usable=…
+- memory branch: <e820 | e801-synthesized | e88-synthesized>
 - hard_resets: <start> → <end> (delta explained: <who typed what>)
 - PIT: SYSTEM_TIME_MS <t1> → <t2> over step ms:1000 (delta = <n>)
 - ATAD: <identify line> ; ata app: <55AA line>
 - mem app: <total/free>
-- MBI: FLAGS=<hex> mem_lower=<h> mem_upper=<h> e820@<addr> (<n> entries)
-- boot media matrix row: <GRUB Legacy 0.97-67 HDD | stock|FLAGS-patched>
-- M5 analogs covered: <item numbers> — status per item above
+- media: target/rosx-i486-boot-disk.img <as-shipped | grown to <bytes>>
+- analogs covered: <item numbers> — status per item above
 ```

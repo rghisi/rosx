@@ -430,7 +430,7 @@ const CHECKPOINTS: [BootCheckpoint; 25] = [
             "[KERNEL] Initializing",
             "[KERNEL] Starting",
         ],
-        console_absent: &["!!! PANIC !!!", "bad Multiboot magic", "unknown boot magic"],
+        console_absent: &["!!! PANIC !!!", "unknown boot magic"],
         timeout_seconds: 5,
     },
 ];

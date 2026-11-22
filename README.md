@@ -9,7 +9,7 @@ RosX is a multi-platform operating system written in Rust from scratch. It is de
 ### What's Working
 
 - **x86_64 Platform:** Full implementation with preemptive multitasking, ELF loading, interrupt handling, and console output
-- **x86_32 Platform:** Complete port supporting 32-bit x86 processors, chain-booting a unified FAT boot disk from the custom BIOS stages (legacy GRUB media can still boot it through its kept Multiboot header)
+- **x86_32 Platform:** Complete port supporting 32-bit x86 processors, chain-booting a unified FAT boot disk from the custom BIOS stages
 - **Multi-platform Architecture:** Clean separation between platform-agnostic kernel and architecture-specific code
 - **Preemptive Multitasking:** MLFQ scheduler with interrupt-driven task switching
 - **ELF Binary Support:** Loads both 32-bit and 64-bit ELF binaries with relocation support
@@ -78,7 +78,7 @@ The current bootstrap platform provides a complete implementation:
 ### x86_32 Platform (Complete)
 Full 32-bit x86 support:
 
-- **Dual boot entry:** the custom BIOS chain's `BootInfo` handoff (primary), or the Multiboot v1 handoff from GRUB Legacy era media
+- **Boot entry:** the custom BIOS chain's `BootInfo` handoff — the only loader the kernel accepts
 - **32-bit ELF Support:** Loads both 32-bit and 64-bit ELF binaries
 - **PIC and PIT:** 8259A PIC and 8254 PIT configuration
 - **System V i386 ABI:** Proper calling convention for task contexts
@@ -209,7 +209,7 @@ rosx/
 - **`kernel/src/task.rs`** - Task management and context switching
 - **`kernel/src/scheduler/`** - Scheduler implementations (MLFQ, FIFO)
 - **`arch/x86_64/src/main.rs`** - x86_64 entry point and initialization
-- **`arch/x86_32/src/boot.S`** - Boot assembly: stack setup plus the Multiboot v1 header kept for GRUB Legacy era media
+- **`arch/x86_32/src/boot.S`** - Boot assembly: GDT install, boot stack, and the stage2 handoff into `kernel_main`
 
 ### Development Guidelines
 
@@ -252,17 +252,6 @@ The disk is both boot medium and root volume: stage1 chain-loads stage2, which l
 ```bash
 qemu-system-i386 -cpu 486 \
   -drive format=raw,file=rosx-i486-boot-disk.img \
-  -debugcon stdio \
-  -no-reboot -no-shutdown
-```
-
-### x86_32 — bare Multiboot kernel ELF (`rosx-x86_32` artifact)
-
-Boots without a bootloader via QEMU's `-kernel` on the kernel's Multiboot v1 branch. No ROM flag is needed: the kernel embeds the ROM image at link time.
-
-```bash
-qemu-system-i386 -cpu 486 \
-  -kernel rosx-x86_32 \
   -debugcon stdio \
   -no-reboot -no-shutdown
 ```

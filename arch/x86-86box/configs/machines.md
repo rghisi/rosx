@@ -16,39 +16,30 @@ Selection criteria (plan §2.4), applied before spending any bring-up time:
 
 | id | machine | BIOS | CPU | FPU | RAM | IDE | CD boot | primed NVR | status |
 |---|---|---|---|---|---|---|---|---|---|
-| `486sp3c` | [SiS 496] ASUS PVI-486SP3 | Award PCI, 06/25/96 | i486SX-25 | none | 32 MB (template) | yes | **no** — Boot Sequence C,A only, no El Torito | yes | **verified baseline**: GRUB Legacy 0.97-67 HDD boots RosX to `rose>`; GRUB floppy chain boots; `fpu_registers` reports `no FPU` while the kernel runs FP-free |
+| `486sp3c` | [SiS 496] ASUS PVI-486SP3 | Award PCI, 06/25/96 | i486SX-25 | none | 32 MB (template) | yes | **no** — Boot Sequence C,A only, no El Torito | yes | **verified baseline**: production unified disk boots RosX to `rose>` (grown 512 MB and the un-grown 64 MiB artifact as-is); E820 accepted; `fpu_registers` reports `no FPU` while the kernel runs FP-free |
+| `vect486vl` | HP Vectra 486VL | AMIBIOS 4.01 AA.05.00 (VLSI 82C480) | i486SX | none | template | yes | no | template `ami-486-vectra.cfg` | production unified disk boots to `rose>`; refuses E820 *and* E801 — INT 88h synthesis proven; VLSI phantom-slave defect (gotchas.md) |
+| `ecs486` | ECS UM8810P-AIO | Phoenix 4.04 PnP (UMC 8881 PCI) | i486SX | none | template | yes | no | template `phoenix-486-ecs.cfg` | production unified disk boots to `rose>` via EDD (`media=lba`); `DL=0x00` hand-off survives |
 
 BIOS-era findings on `486sp3c` (settled by evidence, plan §2.4):
 
 - The 1996 Award BIOS offers `Boot Sequence` C,A only — no El Torito. The
   CD cannot boot on this board.
-- GRUB Legacy 0.97-67 cannot reach the ATAPI CD as a disk device either:
-  a live `grub>` shell on the emulator returned `Error 23` for `root (cd)`
-  (0.97 reads ISOs only through `stage2_eltorito`'s own boot-info table,
-  which needs the El Torito boot the BIOS lacks).
 - Era conclusion: on a board of this vintage **the HDD is the authentic
-  RosX boot medium** — the AGENTS.md hardware recipe, scripted by
-  `scripts/build-legacy-hdd.sh`. The BIOS falls through blank-C to A:, so
-  the boot floppy is the era-authentic rescue path.
+  RosX boot medium** — literally true now: the production chain boots the
+  unified MBR disk (`target/rosx-i486-boot-disk.img`) written whole. The
+  BIOS falls through blank-C to A:, so the boot floppy stays the
+  era-authentic rescue path.
 
-## Phase D candidates (era CD boot on a later-486 board)
+## Era CD boot (retired wish)
 
-The CD wish survives on late-486 PCI boards whose Award/AMI BIOSes gained
-`Boot Device: ATAPI CD-ROM` — all SiS 496 / VIA-chipset 1997-98 designs,
-all vetted as i486SX-accepting with IDE:
+Late-486 PCI boards with `Boot Device: ATAPI CD-ROM` (Zida Tomato 4DPS,
+Rise R418, FIC 486-VIP-IO2) were scoped to boot a `stage2_eltorito` ISO.
+That media retired with the GRUB Legacy tooling
+(`docs/decisions/multiboot-era-media-retirement-trigger-fired.md`), and the
+production chain's stage1 is MBR-only, so era CD boot is not a boot
+requirement — phase V4 was explored and skipped. The candidates stay as
+historical notes only.
 
-| id (86Box) | machine | expectation | primed NVR | verification |
-|---|---|---|---|---|
-| `4dps` | Zida Tomato 4DPS (SiS 496/497) | El Torito capable BIOS | no — needs one SETUP automation (F1 at checksum-error halt, set boot order, F10) | open |
-| (TBD) | Rise R418 | El Torito capable BIOS | no | open |
-| (TBD) | FIC 486-VIP-IO2 | El Torito capable BIOS | no | open |
-
-Once the SETUP automation runs, 86Box saves the NVR and the board is as
-reproducible as `486sp3c`. Success criterion: `rose>` reached from the
-`stage2_eltorito` ISO (sizes-only MBI **without** a FLAGS patch), captured
-with the §2.6 breakpoint flow; then this table gains the board's real BIOS
-capabilities.
-
-A Phase D template differs from `486sx-pvi486sp3.cfg` only in `machine =`
+A future template differs from `486sx-pvi486sp3.cfg` only in `machine =`
 (e.g. `machine = 4dps` for the Zida board); keep one template file per
 machine, added only once its bring-up is verified.
