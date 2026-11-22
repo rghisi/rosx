@@ -403,21 +403,29 @@ noted in `plans/rom-filesystem-vfs.md`, decision `kernel-parses-the-initrd-rom`,
 `init-program-name-as-a-kernel-parameter`.
 
 V execution record (2026-11-22): quiet host verified (load 0.37 on 4 cores, no live suites;
-re-confirmed by process name — `pgrep -x 'qemu-system-x86'`, since comm truncates at 15 chars so
-the full-binary `pgrep -x` form is vacuous) before `cargo xtask verify` — exit 0: gate green,
-build + integration on both arches, boot-test
-26 checkpoints / 0 failures / 0 skipped, `real-kernel-boot32` and `real-kernel-boot64` both
-PASS (verdict read from the log file, rc recorded separately). Deliberate-failure proofs, each
-on a copy of the built production disk (originals untouched): deleting `INITRD.BIN` from the
-x86_64 disk → stage2 `[INITRD] addr=0x00000000 size=0`, kernel panics
+re-confirmed by process name — `pgrep -x 'qemu-system-x86'`, since comm truncates at 15 chars
+so the full-binary `pgrep -x` form is vacuous) before `cargo xtask verify` — exit 0: gate
+green, build + integration on both arches, boot-test 26 checkpoints / 0 failures / 0 skipped,
+`real-kernel-boot32` and `real-kernel-boot64` both PASS (verdict read from the log file, rc
+recorded separately). Deliberate-failure proofs, each on a copy of the built production disk
+(originals untouched): deleting `INITRD.BIN` from the x86_64 disk → stage2
+`[INITRD] addr=0x00000000 size=0`, kernel panics
 `no initrd (INITRD.BIN missing on the boot volume)`; scribbling the ROM magic
 (`ROSXROM1`→`XXXXXXXX`) → the image loads (`[INITRD] addr=0x00146000 size=573449`) and the
 kernel panics `initrd is not a ROM image: BadMagic`; the same deletion on the x86_32 disk →
-the same missing-initrd panic. CI finding: the PR's bootloader job failed —
-`real-kernel-boot32` ran a cargo-cached disk from an earlier commit (no `[ROM]` banner) and
-`real-kernel-boot64` skipped for lack of a chain, because `cargo xtask boot-test` never built
-the media its real-kernel rows boot; fixed at the cause by building both production disks in
-that job before the suite.
+the same missing-initrd panic. CI finding on the pre-merge head: the PR's bootloader job
+failed — `real-kernel-boot32` ran a cargo-cached disk from an earlier commit (no `[ROM]`
+banner) and `real-kernel-boot64` skipped for lack of a chain, because `cargo xtask boot-test`
+never built the media its real-kernel rows boot; fixed at the cause by building both
+production disks in that job before the suite. Main moved during V (`x86-64-bg-reap-timing`
+#200 merged as `358e55a`), making the PR DIRTY; the merge keeps both stories in the harness
+paragraph (our `INITRD.BIN` disk roster, #200's prompt-boundary notice sentence) and the gate
+is green on the merged tree. CI on the merged head `ebc469c` is fully green — unit, both
+builds, both integration suites, and the Custom BIOS Bootloader job now running both
+real-kernel rows with no skip — after one rerun of the catalogued Med flake
+`register_format_and_carve_directories_on_the_hard_disk_volume` (row 34 of
+`plans/integration-flakiness-assessment-2026-11-20.md`), which timed out on `rose>` at 60 s
+under CI contention and passed standalone locally in 13.2 s on the merged tree.
 
 ---
 
@@ -433,3 +441,6 @@ step S3 | one x86_64 integration flake — `a_corrupt_partition_table_exposes_th
 step S4 | an app-touch/relink probe first pointed at wrong paths (`apps/bass`, `target/.../bin/bass.bin` — no such app; the real set is `USER_APPS`); confirmed the decoupling against `apps/randomd/src/main.rs` and the release dir instead | MISSING-FACT | 1 round, cheap
 step S4 | editing the CI workflow files from remembered text missed on exact whitespace twice; re-read both files, then the retitles landed | DOC-BOOKKEEPING | 1 round
 step V | CI's `bootloader` job boots the real-kernel rows from the *cargo-cached* production disk; after S3 tightened `real-kernel-boot32` to require `[ROM] `, the pre-flip cached image fails the row (and `real-kernel-boot64` skips for no chain) — `cargo xtask boot-test` never builds the media its own rows boot; fixed at the cause by building both production disks in that job first, which the local `verify` always did | TASK | 1 round, caught by the PR check, green after
+step V | main landed #200 mid-V, turning the PR DIRTY on the harness paragraph this plan had just rewritten; merged keeping both stories. A push to a DIRTY PR reported *no checks at all* on its head — the check suite only appeared once the merge commit moved the head | ENV-TRAP | 1 merge, 0 rework
+step V | #200's new quiet-host rule (`pgrep -x qemu-system-x86_64`) is vacuous: Linux comm truncates at 15 chars, pgrep warns and matches nothing — `pgrep -x 'qemu-system-x86'` is the working form | MISSING-FACT | correction proposed, awaiting approval
+step V | merged-head CI failed once on the catalogued Med flake `register_format_and_carve_directories_on_the_hard_disk_volume` (zero-echo family); passed standalone locally (13.2 s) before the CI rerun turned the job green | ENV-TRAP | 1 rerun
