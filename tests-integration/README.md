@@ -45,14 +45,43 @@ cargo test -p tests-integration --test measure_boot -- --ignored --nocapture
 The measured baseline and the speed-up plan built on it live in
 `plans/integration-baseline-2026-11-07.md`.
 
-## Tests (`tests/boot_and_shell.rs`)
+## Shared sessions
 
-| Test | Purpose |
+A plain `QemuSession` is one boot: its whole value is the running shell, so a second test in the same
+binary pays for another boot. `tests_integration::shared::SharedSession` fixes that: one binary owns one
+VM and runs a fixed list of named cases on it, paying for a single boot.
+
+```rust
+let mut group = SharedSession::spawn("my_group");
+group.case("name_a", case_a);
+group.case("name_b", case_b);
+```
+
+- Cases run in the listed order on one session, so a case sees what the earlier ones did: order by the
+  boot sequence, prompt state and `ps` set, not by convenience.
+- After every case except the last, `SharedSession` resets the machine: Ctrl-C, a fresh prompt, and a
+  process-set compare against the boot baseline. A failed reset is a hard failure naming the group and
+  the last case, because the next case's failure would otherwise be a mystery.
+- A case that never returns control (it loops, or waits on something that never happens) must be ordered
+  last, where no reset follows it.
+- The last `case` call returns the group by value; dropping it quits and reaps QEMU, so a panicking case
+  cannot leak a VM.
+
+Grouped cases keep their old test names inside `case("...")`, so coverage stays readable in the file.
+Assertions that measure absolute bytes across many cycles (the `kstats_mem` erosion tests) stay on their
+own VMs: they are the measurements a reset would contaminate.
+
+## Tests
+
+| File | Shape |
 |---|---|
-| `kernel_boots` | boot reaches `[KERNEL] Initializing` and `[KERNEL] Starting` |
-| `shell_banner_and_prompt` | shell prints `ROSE Shell` and the `rose>` prompt |
-| `shell_echoes_keystrokes` | typed text (`hello`) is echoed back by the shell |
-| `shell_ls_and_unknown_command` | `ls` lists apps (`snake`, `tetris`) and `foo` yields `Unknown command: foo`; assertions scan only output appended after a captured mark |
+| `boot_and_exit_status.rs` | one VM: boot and disk-mount proof, the memory snapshot table, NIC-less init diagnostics, shell echo/`ls`/unknown command, and the exit-status family (11 cases) |
+| `ctrl_c.rs` | one VM: Ctrl-C kills the foreground app, redraws at a bare prompt, discards a partial line, spares background jobs (4 cases; the spinner loop is last) |
+| `ps_listing.rs` | one VM: the four `ps` table cases (4 cases) |
+| `shell_background.rs` | one VM: background launch, foreground-waits, panic report, built-in ignored, reap-exactly-once (5 cases) |
+| `shell_single_shots.rs` | one VM: cases that need a pristine prompt and nothing else — the `mem` snapshot, `pi` argv paths, `leaky` future forfeiture, `waitset` composition (5 cases) |
+| `kstats_mem.rs` | two VMs: used-bytes erosion across repeated `mem` runs and load-run-kill cycles |
+| the remaining files | one VM per `#[test]`, as before |
 
 ## How it works
 
@@ -65,6 +94,7 @@ The measured baseline and the speed-up plan built on it live in
   its echo on the debug console before the next one is sent, and resent up to
   three times before the test panics; `send_line` finishes with a plain
   (un-echoed) Enter.
-- Each test owns its `QemuSession`: private temp dir (disk image + monitor
-  socket) and private QEMU child; on drop the session sends monitor `quit`,
-  reaps the child, and deletes the temp dir unless `ROSX_QEMU_KEEP_TMP` is set.
+- Each `#[test]` owns its `QemuSession` (a `SharedSession` owns exactly one): private temp dir (disk image
+  + monitor socket) and private QEMU child; on drop the session sends monitor `quit`, reaps the child, and
+  deletes the temp dir unless `ROSX_QEMU_KEEP_TMP` is set. Run the suite with `--no-fail-fast` to see every
+  group's verdict in one pass.

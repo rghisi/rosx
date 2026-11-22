@@ -220,7 +220,48 @@ prompt, `ps` set-compare against the boot baseline) between cases.
 
 ## Step 4 measurement (remaining shell-only groups, appended)
 
-_To be appended: `ctrl_c`, `shell_background`, `ps_listing`, the
-`shell_single_shots` merge (mem snapshot + both pi-argument cases +
-future-ownership + waitset-or) on shared sessions; expected ~24 boots
-removed per arch._
+`ctrl_c` (4 cases), `ps_listing` (4), `shell_background` (5) and the new
+`shell_single_shots` (5: the `mem` snapshot table, both `pi` argument cases, the
+`leaky` future-forfeiture case, `waitset` composition) each run on one shared VM;
+`kstats_mem` keeps its two erosion tests on their own VMs. 20 per-test VMs became
+6 group VMs, and integration tests per arch went 51 → 37 (the 48 lib unit tests are
+unchanged). One clean pass per group, quiet host, gate green:
+
+| Group (cases) | x86_64 | x86_32 | floor cost as separate VMs |
+|---|---|---|---|
+| `boot_and_exit_status` (11) | 10.79 s | 7.40 s | ~49 s / ~20 s |
+| `ctrl_c` (4) | 8.76 s | 5.77 s | ~18 s / ~7 s |
+| `ps_listing` (4) | 5.65 s | 2.94 s | ~18 s / ~7 s |
+| `shell_background` (5) | 8.65 s | 5.83 s | ~23 s / ~9 s |
+| `shell_single_shots` (5) | 6.86 s | 4.14 s | ~23 s / ~9 s |
+| **total** | **40.71 s** | **26.08 s** | ~131 s / ~52 s |
+
+The last column is the Step 1 simple-test floor (≈4.4 s x86_64, ≈1.8 s x86_32) times
+the case count, so it is a lower bound on what the separate-VM form costs. 0 flakes
+in these 10 runs; the reset-after-each-case check (`ps` set vs the boot baseline)
+never fired.
+
+## Final numbers (steps 1–5, appended)
+
+Same protocol and quiet-host gate as Step 0. Windows: x86_64 suite 12:15–12:19,
+x86_32 suite 12:19–12:21, boot samples 12:21–12:24, each started behind an empty
+`pgrep 'qemu-system|cargo test'`.
+
+| Metric | Step 0 baseline | Final | Δ |
+|---|---|---|---|
+| suite wall x86_64 | 15 m 07 s (907 s) | **4 m 06 s (246 s)** | **−73 %** |
+| suite wall x86_32 | 11 m 47 s (707 s) | **2 m 29 s (149 s)** | **−79 %** |
+| test sum x86_64 | 895.8 s | 245.4 s | −73 % |
+| test sum x86_32 | 706.9 s | 148.4 s | −79 % |
+| boot-to-prompt median x86_64 | 14.69 s | 4.31 s | −71 % |
+| boot-to-prompt median x86_32 | 11.64 s | 1.68 s | −86 % |
+| integration tests per arch | 60 | 37 | 60 VMs → 37 VMs (5 group VMs carry 29 cases) |
+| flakes in the measured run | 1 | 0 | the Step 0 `ctrl_c` flake did not recur |
+
+- Where the time went: the probe-tax fix removed ~10 s from every boot (Step 1);
+  shared sessions removed 35 boots per arch across Steps 3 and 4.
+- CI runs the suite with `--no-fail-fast`, so one failing group no longer hides the
+  rest of the binaries.
+- Coverage: every old test name still runs, either as a `case("…")` inside a group or
+  unchanged in its own file; nothing was `#[ignore]`d or deleted with its assertions.
+
