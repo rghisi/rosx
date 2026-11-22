@@ -5,6 +5,15 @@ use tests_integration::shared::SharedSession;
 const BOOT_TIMEOUT: Duration = Duration::from_secs(90);
 const EXIT_TIMEOUT: Duration = Duration::from_secs(15);
 const SHELL_TIMEOUT: Duration = Duration::from_secs(10);
+const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(30);
+const REPORT_LINES: [&str; 6] = [
+    "KSTATSD memory snapshot",
+    "used:",
+    "free:",
+    "total:",
+    "largest free block:",
+    "free blocks:",
+];
 
 #[test]
 fn boot_shell_and_exit_status_share_one_session() {
@@ -12,6 +21,7 @@ fn boot_shell_and_exit_status_share_one_session() {
 
     group.case("kernel_boots", kernel_boots);
     group.case("shell_banner_and_prompt", shell_banner_and_prompt);
+    group.case("mem_snapshot_reports_its_lines", mem_snapshot_reports_its_lines);
     group.case("nic_less_boot_reports_the_exited_network_service", nic_less_boot_reports_the_exited_network_service);
     group.case("shell_echoes_keystrokes", shell_echoes_keystrokes);
     group.case("shell_ls_and_unknown_command", shell_ls_and_unknown_command);
@@ -25,6 +35,17 @@ fn boot_shell_and_exit_status_share_one_session() {
 fn kernel_boots(session: &mut QemuSession) {
     session.expect_output("[KERNEL] Initializing", BOOT_TIMEOUT);
     session.expect_output("[KERNEL] Starting", BOOT_TIMEOUT);
+    session.expect_disk_boot();
+}
+
+fn mem_snapshot_reports_its_lines(session: &mut QemuSession) {
+    let mark = session.mark();
+    session.send_line("mem");
+    for needle in REPORT_LINES {
+        session.expect_output_since(mark, needle, SNAPSHOT_TIMEOUT);
+    }
+    let after_report = session.mark();
+    session.expect_output_since(after_report, "rose>", SNAPSHOT_TIMEOUT);
 }
 
 fn shell_banner_and_prompt(session: &mut QemuSession) {
