@@ -1,7 +1,9 @@
 # ROM as initrd — the kernel image sheds its user space
 
-> **Status:** Executed 2026-11-22 on branch `rom-as-initrd`, pushed to `ccr-1c338027-ychzpi`; S0–S5 landed, V (full verify) in progress. Written 2026-11-22 on branch `ccr-1c338027-ychzpi` at `origin/main` =
-> `5b56908` (#196).
+> **Status:** Complete. Written 2026-11-22 on branch `ccr-1c338027-ychzpi` at `origin/main` =
+> `5b56908` (#196). S0–S5 and V executed 2026-11-22 on branch `rom-as-initrd` (execution records
+> below; `cargo xtask verify` exit 0, boot-test 26/26 0 skipped, deliberate-failure proofs done —
+> the three named panics fired exactly).
 > **Goal:** the kernel ELF carries no user-space bytes. The ROM image (and with it `init`)
 > arrives as the bootloader's **initrd** — `BootInfo.initrd_addr/initrd_size`, already placed,
 > memory-carved by stage2 on both arches — and the kernel loads `init` out of it.
@@ -400,6 +402,21 @@ S5, commit (this one): docs and records — AGENTS.md invariant, `kstatsd-and-ro
 noted in `plans/rom-filesystem-vfs.md`, decision `kernel-parses-the-initrd-rom`, todo
 `init-program-name-as-a-kernel-parameter`.
 
+V execution record (2026-11-22): quiet host verified (load 0.37 on 4 cores, no live suites)
+before `cargo xtask verify` — exit 0: gate green, build + integration on both arches, boot-test
+26 checkpoints / 0 failures / 0 skipped, `real-kernel-boot32` and `real-kernel-boot64` both
+PASS (verdict read from the log file, rc recorded separately). Deliberate-failure proofs, each
+on a copy of the built production disk (originals untouched): deleting `INITRD.BIN` from the
+x86_64 disk → stage2 `[INITRD] addr=0x00000000 size=0`, kernel panics
+`no initrd (INITRD.BIN missing on the boot volume)`; scribbling the ROM magic
+(`ROSXROM1`→`XXXXXXXX`) → the image loads (`[INITRD] addr=0x00146000 size=573449`) and the
+kernel panics `initrd is not a ROM image: BadMagic`; the same deletion on the x86_32 disk →
+the same missing-initrd panic. CI finding: the PR's bootloader job failed —
+`real-kernel-boot32` ran a cargo-cached disk from an earlier commit (no `[ROM]` banner) and
+`real-kernel-boot64` skipped for lack of a chain, because `cargo xtask boot-test` never built
+the media its real-kernel rows boot; fixed at the cause by building both production disks in
+that job before the suite.
+
 ---
 
 ## Friction log
@@ -413,3 +430,4 @@ step S3 | the deliberate-failure proof needs `-monitor none -serial none -parall
 step S3 | one x86_64 integration flake — `a_corrupt_partition_table_exposes_the_whole_drive_for_rescue` timed out under a busy host, passed standalone (4.6 s) and on the full rerun; the quiet-host rule (load vs `nproc`) explains it, verdict taken from the file not the truncation | ENV-TRAP | 1 rerun
 step S4 | an app-touch/relink probe first pointed at wrong paths (`apps/bass`, `target/.../bin/bass.bin` — no such app; the real set is `USER_APPS`); confirmed the decoupling against `apps/randomd/src/main.rs` and the release dir instead | MISSING-FACT | 1 round, cheap
 step S4 | editing the CI workflow files from remembered text missed on exact whitespace twice; re-read both files, then the retitles landed | DOC-BOOKKEEPING | 1 round
+step V | CI's `bootloader` job boots the real-kernel rows from the *cargo-cached* production disk; after S3 tightened `real-kernel-boot32` to require `[ROM] `, the pre-flip cached image fails the row (and `real-kernel-boot64` skips for no chain) — `cargo xtask boot-test` never builds the media its own rows boot; fixed at the cause by building both production disks in that job first, which the local `verify` always did | TASK | 1 round, caught by the PR check, green after

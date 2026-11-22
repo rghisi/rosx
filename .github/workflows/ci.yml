@@ -175,7 +175,14 @@ jobs:
       - name: Install QEMU x86 targets and mtools
         run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 mtools
 
-      - name: Build boot images and run the checkpoint suite
+      - name: Build the production media the real-kernel rows boot
+        # real-kernel-boot32/64 boot target/rosx-boot-disk.img and
+        # target/rosx-i486-boot-disk.img as they are; the shared cargo cache can
+        # hand back an image from an earlier commit, and those rows must describe
+        # the tree they run in, so build both disks first.
+        run: cargo xtask build x86_64 && cargo xtask build x86_32
+
+      - name: Run the checkpoint suite
         run: cargo xtask boot-test
 
       - name: Audit the bootloader ELFs against the 486 baseline
