@@ -41,7 +41,8 @@
   x86_32 pattern) multiplexed with the 0xE9 debug console. `framebuffer.rs`/`terminal_fonts.rs`
   are **retained in the tree but detached** (decision D1): compiled, unreferenced,
   `#[expect(dead_code)]` with a reason, revival routed to a successor plan.
-- `arch/x86-runner` keeps **one boot medium**: `BootMedium::BootDisk`. `BootMedium::DiskImage`
+- `arch/x86-runner` keeps **one boot medium**: `run_medium` hands back the unified disk
+  `PathBuf` (the `BootMedium` enum died with its second variant). `BootMedium::DiskImage`
   (the carrier on `ide.1`), `create_bios_disk_image*`, `prepare_run_medium_in` and
   `attach_fat_boot_disk` are deleted; the secondary-IDE-bus invariant of
   `plans/x86_64-boot-from-disk.md` retires; both arches attach the unified disk at
@@ -179,18 +180,22 @@ All re-verified against `origin/main` `c1a1d8a`.
   addresses; the higher-half window is used only by kernel text/data (`linker.ld` VMA). No
   page-table construction, no CR3 work: the kernel keeps inheriting the chain set, as it does
   with the `bootloader` crate today.
-- **D4 — Link recipe = the `fake-kernel-64` recipe, verbatim.** `arch/x86_64/rosx.json` gains
-  `"code-model": "kernel"`; `arch/x86_64/linker.ld` maps `.text/.rodata/.data/.bss` at
+- **D4 — Link recipe = the `fake-kernel-64` recipe, with one corrected difference (M2).**
+  `arch/x86_64/rosx.json` gains `"code-model": "large"`, not `kernel`: the `kernel` and
+  `medium` models address data through the 32-bit sign-extended range, and the window base
+  `0xFFFF800000000000` has low-32 `0x00100000` — not sign-extending — so their 32-bit data
+  relocations cannot hold a window address (`fake-kernel-64` escaped this only because it
+  stores no static pointers). `large` reaches every address via `movabs`; the cost is wider
+  encodings, acceptable here. `arch/x86_64/linker.ld` maps `.text/.rodata/.data/.bss` at
   `0xFFFF800000100000 AT(… - 0xFFFF800000000000)` with `kernel_end` (virtual) and
   `kernel_phys_end` (for the `usable_blocks` clip, which compares against *physical* map
   regions); `build.rs` adds `cargo::rustc-link-arg=-T…/linker.ld` and
   `-z max-page-size=0x100000`. The §9 "spike first" is satisfied by `fake-kernel-64`'s proven
-  recipe plus the first real-kernel link/boot in M2; anything the spike cannot prove
-  (rust-lld behaviour on the full kernel with all its sections) is **unverified** and is the
-  first act of M2, before anything else moves.
+  recipe plus the first real-kernel link/boot in M2, before anything else moves.
 - **D5 — `rosx-boot-x86_64.json` merges into `arch/x86_64/rosx.json`** (M3). After the swap
   the two specs must never differ (the fake kernel exists to prove the real kernel's link
-  shape); one file, one truth. `boot_image::build_fake_kernel64` and the README's layout
+  shape); one file, one truth — the merged spec carries `large` (D4's correction), which the
+  fake kernel also links under. `boot_image::build_fake_kernel64` and the README's layout
   table follow; `target/rosx/release/fake-kernel-64` becomes its output path.
 - **D6 — `cargo xtask image x86_64` = the unified disk** (C7 analog) and CI publishes
   `target/rosx-boot-disk.img` in place of `rosx-x86_64.img` (user decision).
@@ -350,6 +355,18 @@ successor; `plans/platform-runner-abstraction.md` (trait plan, now on a simpler 
     M1 | x86_64 integration run piped to tail -20, cargo's exit code masked; full suite rerun (~30 min) to capture exit-code evidence | ENV-TRAP | 1 round (~30 min)
     M1 | `cargo xtask check` output piped through grep|head -30 cut the verdict line; rerun needed to confirm all-green | ENV-TRAP | 1 round (~4 min cached)
     M1 | ad-hoc python MBR stamp check raised struct.unpack ValueError (wrong entry format); fixed second run | TASK | 0
+    M2 | boot.S absolute data references emitted R_X86_64_32 relocations; the `kernel`-model link failure was misread as Rust codegen before the asm was blamed (fake-kernel-64 hid both defects) | TASK | 2 link rounds (~5 min)
+    M2 | first chain boot reached kernel_main with magic 0x10: boot.S reused rax — the magic carrier — for the far-reload target and the selector load, ignoring the 32-bit template's register discipline | TASK | 1 boot round
+
+M2 execution record (2026-11-22, commit `9052850`): the real kernel now boots from the unified
+disk through stage1→stage2-64 (standalone: `[BOOTINFO] regions=11`, mount `ata0d0p0`, `rose>`,
+zero PANIC; no `[ERR] heap` — R1 did not fire). ELF audit: entry `0xffff800000100000`, every
+PT_LOAD at `p_paddr = p_vaddr − 0xFFFF800000000000` (rust-lld's orphan placement of
+`.ltext/.lrodata/.ldata/.lbss` keeps the constant VMA−LMA offset), `kernel_phys_end` correct.
+x86_64 never needed a TSS — `syscall.S` returns to ring 0 ("we don't support Ring 3 yet") and
+the carrier never loaded one either, so the chain inherits an already-TSS-free kernel.
+`real-kernel-boot64` added as boot-test row 26; gate green with the unsafe/comments ratchet
+down; both integration suites 40/40 (all x86_64 sessions now boot chain-stamped masters).
 
 M1 execution record (2026-11-22, commit `3cbfb8b`): the re-stamped index-0 disk stayed out of
 the boot order — the bootindex=1 carrier won, SeaBIOS never touched the new bootable MBR — and
