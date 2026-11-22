@@ -39,6 +39,7 @@ Each line links the file holding the detail; every file starts with its own inva
 - Futures and IPC are notification-driven; the kernel never interprets IPC payloads. — `docs/architecture/ipc-and-futures.md`
 - A task's exit status rides its completion future; future slots are owned by loaded-image groups and swept with the group, and a dying task's own futures and connections are reaped on both `Exit` and `Kill`. — `docs/architecture/exit-status-and-ownership.md`
 - User memory is owned by loaded-image groups; task stacks are not freed by group reclaim. — `docs/architecture/memory.md`
+- The ELF image and argv are group-owned, loaded eagerly at the load call; the kernel retains no ELF bytes after a load. — `docs/architecture/memory.md`
 - Boot is plan-driven by `system::boot_plan`; failure policy is log-and-continue. — `docs/architecture/boot-plan.md`
 - Block devices come only from `blockd`; the ATA face is a diagnostic sharp knife; ports are won through `PortAcquire`. — `docs/architecture/disk-and-blockd.md`
 - `vfsd` owns no storage and speaks the `Engine` treaty; the mount table is the root. — `docs/architecture/vfs.md`; engines — `docs/architecture/fs-engines.md`
