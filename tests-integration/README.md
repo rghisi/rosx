@@ -33,6 +33,7 @@ selected port's kernel crate; `ROSX_KERNEL_ELF` skips that build entirely.
 | `ROSX_KERNEL_ELF` | absolute path to a prebuilt kernel ELF; skips the kernel build (`cargo xtask test` builds the release kernel and sets it) |
 | `ROSX_QEMU_KEEP_TMP` | if set to a non-empty value, the session temp dir (disk image, monitor socket) is kept on drop and its path is printed to stderr |
 | `ROSX_BOOT_SAMPLES` | sample count for the boot-to-prompt measurement test (default 5) |
+| `ROSX_SHARED_TIMING` | if set to a non-empty value, every shared-session case prints its own body duration and the reset that preceded it to stderr, so one slow case cannot hide in a group total (libtest captures stderr, so pass `--nocapture` to see them) |
 
 ## Measuring boot time
 

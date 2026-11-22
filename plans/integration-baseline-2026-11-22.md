@@ -288,3 +288,39 @@ The carrier swap took the rest of the x86_64 boot gap away, so the two ports now
 removed by the five shared-session groups, and no boot pays the ~10 s dead-service probe — with the
 prompt at ~1.7 s, that tax would now dominate a simple test's cost.
 
+## Follow-up: the 10 s that was a wait, not a boot (`x86-64-bg-reap-timing`)
+
+Every table above carries one anomaly: `shell_background` at ~15.7 s on x86_64 against ~5.8 s on
+x86_32, which made the carrier swap the suspect. It was not the guest at all — the harness was
+sleeping past a report the guest already had, in `reap_pass_until`, a helper that predates both
+this branch and the carrier swap (`c197733`, #169).
+
+`docs/architecture/shell.md` fixes the contract: a background job's notice surfaces at the next
+prompt boundary and never asynchronously. `reap_pass_until` honoured the prompt but not the
+cadence — one Enter, then up to 10 s of waiting with no prompt in flight — so a job that finished
+just after a prompt's reap sat pending for the whole pass. Repeating the case 8× per arch with the
+pre-fix cadence:
+
+| repetition | x86_64 | x86_32 |
+|---|---|---|
+| report taken at the first Enter | 7 of 8, in 7.4–8.0 ms | 8 of 8, in 7.3–8.2 ms |
+| first pass spent the whole budget | 1: 10.000 s, then 11 ms at the next Enter | none |
+
+The asymmetry is only in how often the window is hit; the cost is identical on both arches and was
+always the pass timeout, which is why the in-suite rows looked like a deterministic x86_64
+regression. The fix is to prompt *while* waiting: 400 ms per pass inside a 15 s overall budget, so
+the worst case stays bounded by the budget while a normal reap lands on the first pass.
+
+| | pre-fix | post-fix |
+|---|---|---|
+| `shell_background` x86_64 | 15.66–15.77 s, in all 7 group runs measured since the carrier swap | **5.64 / 6.12 / 5.66 s** |
+| `shell_background` x86_32 | 5.70–5.82 s | 5.70 / 5.82 / 5.72 s |
+| cost when the window is hit | +10.0 s | +0.4 s (one 400 ms pass) |
+| 12× panic-report repeats | — | 24 of 24 taken on pass 1, both arches |
+| suite x86_64 | 155 s wall (sum 154.2 s) | 145 s wall (sum 145.1 s) |
+| suite x86_32 | 148 s wall | 149 s wall |
+
+Both ports now run the group in ~5.7 s and the x86_64 suite sum is 145.1 s. The knob that localized
+this — `ROSX_SHARED_TIMING=1`, per-case body and reset timings on stderr — stays in the harness: a
+group total hides a single slow case, which is exactly how this one hid for two PRs.
+
