@@ -227,7 +227,6 @@ fn gate_stages() {
     println!("==> check stage: check-isa");
     let spec = arch::find("x86_32").expect("x86_32 is a registered arch");
     build_apps(spec);
-    pack_rom(spec);
     build_kernel(false, spec);
     check_isa_command(spec);
 }

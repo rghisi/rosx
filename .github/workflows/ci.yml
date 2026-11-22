@@ -91,7 +91,9 @@ jobs:
       - name: ISA audit (486 baseline)
         run: cargo xtask check-isa x86_32
 
-      - name: Upload kernel and ROM
+      - name: Upload kernel ELF and ROM image
+        # The ROM is the boot disk's INITRD.BIN content; the unified boot disk
+        # is the artifact that boots on both arches, and the kernel embeds neither.
         if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
