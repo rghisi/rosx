@@ -165,7 +165,32 @@ prompt-driven test is ≈11.8 s.
 |---|---|---|
 | x86_64 | `ctrl_c::ctrl_c_kills_the_running_foreground_app` (33.7 s, FAILED) | Timed out (30 s) waiting for `spinner ready`. Transcript shows the line echoed intact — `spinner` → `Unknown command: spinner` → prompt. A shell VFS name lookup missed the ROM-resident `spinner` app once. Echo was acknowledged (not M2); the sibling test in the same binary that launches `spinner &` passed, and the same test passed on x86_32 minutes later. **Confirmed flake by immediate x86_64 re-run: all 4 `ctrl_c` tests passed (62.9 s).** One occurrence — closest to M9 (volume state), no mechanism claim from a single sample. |
 
-## Step 1 measurement (appended by the probe-tax fix)
+## Step 1 measurement (probe-tax fix, appended)
 
-_To be appended after Step 1 lands: the same protocol re-run, per-arch floor
-and wall deltas, and whether `arp_watch`/flows shift as predicted._
+Same protocol, same host, quiet gate (commit `ad1868a`, kernels rebuilt from
+the final tree). The fix: `init` attaches each service's completion future
+to a waitset and lets the 100 ms probe sleep bound the watch, so a service
+that dies (like `ne2kd` with no NIC) stops the probe loop at once with
+`[INIT] <probe> service exited before ready`.
+
+| Metric | before | after | Δ |
+|---|---|---|---|
+| boot-to-prompt median x86_64 | 14.69 s | **4.33 s** | **−71 %** |
+| boot-to-prompt median x86_32 | 11.64 s | **1.74 s** | **−85 %** |
+| suite wall x86_64 | 15 m 07 s | **5 m 40 s** | **−63 %** |
+| suite wall x86_32 | 11 m 47 s | **3 m 04 s** | **−74 %** |
+| test sum x86_64 | 895.8 s | 339.8 s | −62 % |
+| test sum x86_32 | 706.9 s | 184.1 s | −74 % |
+| simple-test floor x86_64 | ≈15.0 s | ≈4.4–4.6 s | |
+| simple-test floor x86_32 | ≈11.8 s | ≈1.8 s | |
+
+- 60 tests per arch now (the new `boot_and_shell::nic_less_boot_reports_the_exited_network_service`
+  asserts the exit line and the prompt with a generous 60 s budget).
+- 0 flakes in both re-runs, including `ctrl_c` (the Step 0 flake did not recur).
+- NIC-attached tests unchanged (`ne2k_smoke` 8.2 s / 5.3 s): a present NIC is
+  still probed to `ready`.
+- The remaining boot leg is the real service bring-up (~1.4 s init work on
+  top of the 2.9 s x86_64 SeaBIOS+stage2 carrier, 0.44 s on x86_32) — what
+  Steps 2–4 (shared sessions) remove for shell-only groups.
+- `cargo xtask verify` green on the fix (gate + integration both arches +
+  boot-test 25/25).
