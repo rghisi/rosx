@@ -194,3 +194,33 @@ that dies (like `ne2kd` with no NIC) stops the probe loop at once with
   Steps 2–4 (shared sessions) remove for shell-only groups.
 - `cargo xtask verify` green on the fix (gate + integration both arches +
   boot-test 25/25).
+
+## Step 3 measurement (shared-session pilot, appended)
+
+Same protocol. `exit_status` (5) + `boot_and_shell` (5) merged into one
+binary on one VM (`boot_and_exit_status`) with `reset()` (Ctrl-C, fresh
+prompt, `ps` set-compare against the boot baseline) between cases.
+
+| Metric | Step 1 after | Step 3 after | Δ |
+|---|---|---|---|
+| suite wall x86_64 | 5 m 40 s | **5 m 05 s** | −10 % |
+| suite wall x86_32 | 3 m 04 s | **2 m 51 s** | −7 % |
+| tests per arch | 60 | 51 | 10 VMs → 1 |
+| group time x86_64 | ~45 s (10 boots) | 10.5 s | |
+| group time x86_32 | ~59 s (10 boots) | 7.1 s | |
+
+- 0 flakes in both suite runs; `cargo xtask verify` green (boot-test 25/25).
+- One-off on the pilot's very first x86_32 run (37 s, panic text lost to
+  output truncation); the next 5 consecutive runs passed clean (7.1–7.2 s).
+  Signature not characterized — watching for recurrence through the rest of
+  the plan.
+- The merged binary replaces two files: `boot_and_shell.rs` and
+  `exit_status.rs` → `boot_and_exit_status.rs` (cases keep their names, run
+  in a fixed order; the group reads boot-transcript cases first).
+
+## Step 4 measurement (remaining shell-only groups, appended)
+
+_To be appended: `ctrl_c`, `shell_background`, `ps_listing`, the
+`shell_single_shots` merge (mem snapshot + both pi-argument cases +
+future-ownership + waitset-or) on shared sessions; expected ~24 boots
+removed per arch._
