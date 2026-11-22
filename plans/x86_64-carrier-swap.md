@@ -254,7 +254,7 @@ branch move **together** — between them the tree does not boot.
   `OUTPUTS`.
 - `arch/x86_64/Cargo.toml`: delete `bootloader_api`; `arch/x86-runner/Cargo.toml`: delete
   `bootloader`.
-- `arch/x86-runner/src/lib.rs`: `BootMedium` becomes `BootDisk(PathBuf)` only; `run_medium`
+- `arch/x86-runner/src/lib.rs`: `BootMedium` is deleted; `run_medium`
   derives `target/<kernel_dir_name>-boot-disk.img` for both arches and refuses by name when
   absent; delete `prepare_run_medium`, `prepare_run_medium_in`, `create_bios_disk_image*`,
   `bios_disk_image_name/path`, `attach_fat_boot_disk`; `qemu_command` single medium branch

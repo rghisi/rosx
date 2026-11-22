@@ -43,7 +43,9 @@ fake-kernel-64/ ELF64 smoke kernel, linked at 0xFFFF800000100000
 scripts/       harness_stub.s — the harness self-test stubs (pass/fail/crash/hang)
 rosx-boot-i486.json   custom target: 486 floor, features pin
                -mmx,-sse,-sse2,-cmov,-fxsr,-cx8 (same floor as the x86_32 port)
-rosx-boot-x86_64.json custom target: kernel code model, -mmx,-sse,+soft-float
+               (the 64-bit target spec is the kernel's own arch/x86_64/rosx.json:
+               large code model, -mmx,-sse,+soft-float — fake-kernel-64 and the
+               production kernel link the same shape)
 ```
 
 ## Media layout

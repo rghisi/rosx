@@ -34,8 +34,8 @@ impl Arch {
     }
 }
 
-pub const HDD_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
-pub const HDD_IMAGE_NAME: &str = "rosx-hdd.img";
+const HDD_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
+const HDD_IMAGE_NAME: &str = "rosx-hdd.img";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LaunchMode {
@@ -54,7 +54,7 @@ impl fmt::Display for ImageError {
 
 impl std::error::Error for ImageError {}
 
-pub fn boot_disk_image(kernel_elf: &Path) -> Option<PathBuf> {
+fn boot_disk_image(kernel_elf: &Path) -> Option<PathBuf> {
     let kernel_dir = kernel_elf.parent()?.parent()?;
     let target_dir = kernel_dir.parent()?;
     let dir_name = kernel_dir.file_name()?;
@@ -119,7 +119,7 @@ pub fn attach_ne2k_pci(command: &mut Command) {
     command.arg("-device").arg("ne2k_pci,netdev=rosxnet");
 }
 
-pub fn persistent_hdd_image() -> Option<PathBuf> {
+fn persistent_hdd_image() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     ensure_hdd_image(&PathBuf::from(home).join("tmp"))
 }

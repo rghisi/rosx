@@ -32,7 +32,7 @@ const KERNEL_LOCAL_NAME: &str = "kernel.elf";
 pub const KERNEL_VOLUME_NAME: &str = "KERNEL.ELF";
 pub const FAKE_KERNEL_CRATE: &str = "fake-kernel-32";
 pub const FAKE_KERNEL_64_CRATE: &str = "fake-kernel-64";
-pub const FAKE_KERNEL_64_TARGET_SPEC: &str = "arch/x86-bootloader/rosx-boot-x86_64.json";
+pub const FAKE_KERNEL_64_TARGET_SPEC: &str = "arch/x86_64/rosx.json";
 
 pub const INITRD_SEED: u64 = 0xB007_7E73_2026_1107;
 pub const INITRD_BYTES: usize = 64 * 1024;
@@ -387,7 +387,7 @@ pub fn build_fake_kernel64() -> Vec<u8> {
     run(&mut builder, "build the fake-kernel-64 smoke kernel");
     let elf = workspace_root()
         .join("target")
-        .join("rosx-boot-x86_64")
+        .join("rosx")
         .join("release")
         .join(FAKE_KERNEL_64_CRATE);
     fs::read(&elf).expect("cannot read the fake-kernel-64 ELF")
