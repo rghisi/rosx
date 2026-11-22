@@ -1,7 +1,10 @@
 # Integration-suite speed-up — NIC-less boot tax, then shared sessions
 
 > **Date:** 2026-11-22 · **Branch:** `ccr-297312b4-26oajz` · **Base:** `origin/main@c1a1d8a`
-> **Status:** proposal, approved in discussion; steps land one commit each.
+> **Status:** done on branch `integration-speedup` (2026-11-22). Steps 0–6 landed; the measured
+> result is in `plans/integration-baseline-2026-11-22.md` — suite wall 907 s → 246 s (x86_64) and
+> 707 s → 149 s (x86_32), 60 QEMU boots → 37 per arch, boot-to-prompt median 14.69 s → 4.31 s and
+> 11.64 s → 1.68 s, 0 flakes in the measured runs.
 > **Evidence base:** `plans/integration-baseline-2026-11-07.md` (boot-to-prompt
 > distribution, cost model) and `plans/integration-flakiness-assessment-2026-11-20.md`
 > (mechanisms M1–M9, per-test value). Nothing here was measured on the authoring
