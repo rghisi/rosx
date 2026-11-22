@@ -32,6 +32,7 @@ fn build_boot_disk(staging: &Path, with_apps: bool) -> FatDisk {
     disk.write_seed(GREETING, "::greeting.txt");
     disk.make_directory("::/boot");
     disk.write_seed(MENU, "::/boot/menu.txt");
+    disk.install_initrd();
     if with_apps {
         for app in ["shell", "mkdir", "randomd"] {
             let elf = built_elf(app);

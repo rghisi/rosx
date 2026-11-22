@@ -88,7 +88,6 @@ fn create_bootable_disk(debug: bool, spec: &ArchSpec, path: &Path) {
 }
 
 fn fill_volume(path: &Path, partition_start_lba: u32, debug: bool, spec: &ArchSpec) {
-    chain::mmd_directory(path, partition_start_lba, "::/boot");
     let release_dir = spec.user_release_dir();
     for name in USER_APPS {
         let elf = release_dir.join(name);
@@ -101,7 +100,7 @@ fn fill_volume(path: &Path, partition_start_lba: u32, debug: bool, spec: &ArchSp
     let kernel = spec.kernel_elf(if debug { "debug" } else { "release" });
     for (source, destination) in [
         (kernel, format!("::/{KERNEL_VOLUME_NAME}")),
-        (spec.rom_path(), "::/boot/rom.img".to_string()),
+        (spec.rom_path(), format!("::/{}", boot_image::INITRD_VOLUME_NAME)),
     ] {
         if !source.is_file() {
             eprintln!("missing boot file {}", source.display());
