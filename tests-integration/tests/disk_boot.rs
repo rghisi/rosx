@@ -128,6 +128,7 @@ fn a_mounted_root_without_a_shell_falls_back_to_the_rom_shell() {
     let disk = build_boot_disk(staging.path(), false);
 
     let mut session = QemuSession::spawn_with_master_disk(disk.path());
+    session.expect_output("[ROM] ", BOOT_BUDGET);
     session.expect_output("mount ok device=ata0d0p0 dir=/", BOOT_BUDGET);
     session.expect_output("[INIT] hand-off /shell unavailable", BOOT_BUDGET);
     session.expect_output("[INIT] handing over to rom:shell", BOOT_BUDGET);
@@ -137,5 +138,23 @@ fn a_mounted_root_without_a_shell_falls_back_to_the_rom_shell() {
     assert!(
         listing.contains("greeting.txt"),
         "the fallback shell still sees the mounted FAT root: {listing}"
+    );
+}
+
+#[test]
+fn a_disk_without_an_initrd_panics_naming_the_missing_rom() {
+    if !tools_available() {
+        eprintln!("skipped: mtools not installed, skipping the absent-initrd flow");
+        return;
+    }
+    let staging = tempfile::tempdir().expect("tempdir for the initrd-less disk");
+    let disk = create_bootable(staging.path(), "no-initrd.img", DISK_BYTES);
+
+    let session = QemuSession::spawn_with_master_disk(disk.path());
+    session.expect_output("no initrd (INITRD.BIN missing on the boot volume)", BOOT_BUDGET);
+    let transcript = session.content_since(0);
+    assert!(
+        !transcript.contains("rose>"),
+        "a kernel without its ROM must never reach a shell: {transcript}"
     );
 }
