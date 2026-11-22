@@ -45,7 +45,7 @@ Each line links the file holding the detail; every file starts with its own inva
 - `vfsd` owns no storage and speaks the `Engine` treaty; the mount table is the root. — `docs/architecture/vfs.md`; engines — `docs/architecture/fs-engines.md`
 - Ethernet lives in `ne2kd`, L3 in `ipd`; pushed data handles stay parked until read. — `docs/architecture/network-and-ip.md`
 - Input policy lives in `inputd`, device semantics in driver daemons. — `docs/architecture/input.md`
-- `kstatsd` is kernel-hosted; the ROM is never a VFS volume. — `docs/architecture/kstatsd-and-rom.md`
+- `kstatsd` is kernel-hosted; the ROM is never a VFS volume, and the ROM is not embedded in the kernel — it ships as `INITRD.BIN` on the boot volume and the kernel boots its `init` from it. — `docs/architecture/kstatsd-and-rom.md`
 - Shell semantics. — `docs/architecture/shell.md`
 - `ted` is a disk app that saves by delete-then-recreate. — `docs/architecture/text-editor.md`
 - x86_32 stays on the 486 baseline: pinned feature floor, no FP, no `cpuid`, atomics of at most 32 bits. — `docs/architecture/486-baseline.md`; hardware checklist — `docs/architecture/real-hardware-x86_32.md`

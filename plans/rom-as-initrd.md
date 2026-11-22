@@ -1,7 +1,7 @@
 # ROM as initrd — the kernel image sheds its user space
 
-> **Status:** Proposed. Written 2026-11-22 on branch `ccr-1c338027-ychzpi` at `origin/main` =
-> `5b56908` (#196). Nothing here has been executed.
+> **Status:** Executed 2026-11-22 on branch `rom-as-initrd`, pushed to `ccr-1c338027-ychzpi`; S0–S5 landed, V (full verify) in progress. Written 2026-11-22 on branch `ccr-1c338027-ychzpi` at `origin/main` =
+> `5b56908` (#196).
 > **Goal:** the kernel ELF carries no user-space bytes. The ROM image (and with it `init`)
 > arrives as the bootloader's **initrd** — `BootInfo.initrd_addr/initrd_size`, already placed,
 > memory-carved by stage2 on both arches — and the kernel loads `init` out of it.
@@ -349,6 +349,67 @@ as a todo); `rom:` → `initrd:` naming; VESA framebuffer successor.
 
 ---
 
+## Execution records (2026-11-22)
+
+S0 baseline (no commit): on production media, before any change — `rom.img` 513,916 B (x86_64) /
+495,740 B (x86_32); kernel ELF 1,919,232 B / 800,540 B; stage2-banner → `[KERNEL] Starting`
+0.032 s / 0.030 s (QEMU, the R2 caveat); stage2 heap peak with the kernel loaded 63,471 / 55,279
+of 65,536 — already within 2 KiB of the ceiling on x86_64, which is why S2b found no room (below).
+
+S1, commit `07a3b02`: `kernel::platform::bootinfo::initrd()` — ABI row, containment against the
+memory map, `KernelAndModules` overlap refusal, width check (`usize::MAX` of the compiled target;
+host-vacuous on 64-bit, recorded per R4 in `docs/rationale/x86-bootinfo-consumer.md`), higher-half
+translation — plus `kernel::rom::program()/validate()` over `system::rom::RomImage`, host tests,
+and the kernel unsafe ratchet 295→299 recorded in `docs/decisions/gate-baseline-unsafe-raised-2026-11-22.md`.
+
+S2a, commit `0d0e10d`: the stage2 crc32 handshake is gone — the `[INITRD]` banner now reports
+`addr=`/`size=` only, and boot_test checks the payload two ways (host seed vs the fake kernel's
+`initrd_crc32:` line). Deliberate-failure proof: corrupting the seed made every affected row
+fail (10 FAIL rows observed, then restored). `verify_initrd`'s dead malformed-branch was found
+and fixed in the same commit. Superseded note filed in `plans/bootloader/09-initrd-crc.md`.
+
+Heap cure, commit `484d95b` (inserted before S2b to keep every commit bootable): stage2's bump
+allocator freed nothing but whole tail allocations, and loading a ROM-sized second file pushed
+past 65,536 (`[ERR] heap` on production media — R1 fired on real disks, not on the 64 KiB
+handoff-rig seed). `dealloc` now releases the tail LIFO; with the cure, loading the production
+initrd peaks at 62,640 / 58,544 of 65,536; `docs/todo/stage2-bump-heap-never-frees.md` retired.
+
+S2b, commit `2d4ae38`: the data plane. `BOOTSTRAP_APPS` gained `init` (9 programs); production
+disks ship `::/INITRD.BIN` (the `/boot` directory is gone); the harness master installs the same
+file (`FatDisk::install_initrd`, `CHAIN_INITRD_VOLUME_NAME`), so every session chain-loads it.
+Fake-kernel boot-test rows verify `addr=` containment against the published map.
+
+S3, commit `6e5957d`: the flip. Both arch mains boot from the initrd: `[ROM] addr=… size=… files=9`
+(`addr=0xffff800000146000` higher-half on x86_64, `addr=0x13a000` on x86_32), with the named
+panics for missing/refused/non-ROM/no-init. `include_bytes!` is gone from both worlds; the
+build.rs files keep only the linker `-T` wiring. Kernel ELF after: 1,347,504 B / 248,652 B
+(−571,728 / −551,888); ROM on disk 573,449 B / 550,689 B. Boot-test real-kernel rows require
+`[ROM] ` and forbid the four panic texts; new arch-agnostic integration test
+`a_disk_without_an_initrd_panics_naming_the_missing_rom`. Integration 86 passed / 0 failed on
+both arches; both production disks reach `rose>`. Arch unsafe baselines +1 each
+(`docs/decisions/gate-baseline-unsafe-raised-2026-11-22-2.md`).
+
+S4, commit `1522609`: `pack_rom` is out of `gate_stages` (check-isa needs the app ELFs and the
+kernel, not the ROM); `cargo xtask check` green without it. Decoupling proof: touching
+`apps/randomd/src/main.rs` leaves `target/rosx/release/rosx` byte-identical-mtime while the app
+relinks. CI upload steps re-titled: the unified disk boots, the staged kernel/ROM are its content.
+
+S5, commit (this one): docs and records — AGENTS.md invariant, `kstatsd-and-rom.md`,
+`boot-media-and-harness.md`, `boot-plan.md`, the bootloader README already carried the
+`INITRD.BIN` story, §9 D5 stub closed in `plans/bootloader/00-overview.md`, LD4 supersession
+noted in `plans/rom-filesystem-vfs.md`, decision `kernel-parses-the-initrd-rom`, todo
+`init-program-name-as-a-kernel-parameter`.
+
+---
+
 ## Friction log
 
-(empty — filled during execution, one line per friction: `step | what | class | cost`)
+step S1 | x86_32 range-check host tests are vacuous by construction: the test crate builds on the 64-bit host, so `usize::MAX` is the *host* width and the overflow path is exercised only by value, never by a real 32-bit `usize` — the D3/R4 risk was structural, not a bug; recorded the limitation in `docs/rationale/x86-bootinfo-consumer.md` and leaned on the QEMU x86_32 boot as the real proof | MISSING-FACT | 1 round, doc note
+step S1 | kernel `unsafe` count rose 295→299 (the initrd slice + its tests); the ratchet needs a decision record in the same commit, and `check-style` only counts a *new* file toward it after `git add` — the first gate run under-counted until the rationale doc and record were staged | ENV-TRAP | 1 round
+step S2b | the production disk shipped `INITRD.BIN` at the volume root, but stage2's bump heap never frees the directory-read `Vec`s, so a second root file at ROM size tipped the last kernel-load over 65,536 on real media (not on the smaller handoff-rig seed): `[ERR] heap` at the exact `[INITRD]` step | DESIGN | ~half a session — LIFO tail-free `dealloc` fix landed as its own commit *before* the data-plane commit so every commit stayed bootable
+step S2b | the `docs/todo/stage2-bump-heap-never-frees.md` it retired is cross-referenced from three older carrier-swap/flakiness plan rows; only the completion commit may delete the todo, so the plan references stay as historical citations | DOC-BOOKKEEPING | 0 (left as-is, correct)
+step S2a | boot_test `verify_initrd` had a malformed-input branch that was dead: the `?`-chain short-circuited before reaching it, so a deliberately corrupt initrd silently passed | TEST | 1 round — rewrote the parser to read `addr=`/`size=` by token position, proved it by seeding 10 FAIL rows and watching each fire
+step S3 | the deliberate-failure proof needs `-monitor none -serial none -parallel none` on a direct QEMU boot: the default monitor is muxed on stdio and swallows the 0xe9 debugcon stream, which first masqueraded as a "boot silent after `[KERNEL] Starting`" regression that was not one | ENV-TRAP | ~15 min chasing a non-regression
+step S3 | one x86_64 integration flake — `a_corrupt_partition_table_exposes_the_whole_drive_for_rescue` timed out under a busy host, passed standalone (4.6 s) and on the full rerun; the quiet-host rule (load vs `nproc`) explains it, verdict taken from the file not the truncation | ENV-TRAP | 1 rerun
+step S4 | an app-touch/relink probe first pointed at wrong paths (`apps/bass`, `target/.../bin/bass.bin` — no such app; the real set is `USER_APPS`); confirmed the decoupling against `apps/randomd/src/main.rs` and the release dir instead | MISSING-FACT | 1 round, cheap
+step S4 | editing the CI workflow files from remembered text missed on exact whitespace twice; re-read both files, then the retitles landed | DOC-BOOKKEEPING | 1 round
