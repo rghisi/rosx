@@ -87,8 +87,23 @@ enum ImageSource {
     Elf32OnLongMode,
     OversizedInitrd,
     NoInitrdVolume,
-    BuiltBootDisk,
+    BuiltBootDisk(&'static BuiltDiskSpec),
 }
+
+struct BuiltDiskSpec {
+    arch: &'static str,
+    image: &'static str,
+}
+
+const BUILT_X86_32: BuiltDiskSpec = BuiltDiskSpec {
+    arch: "x86_32",
+    image: "target/rosx-i486-boot-disk.img",
+};
+
+const BUILT_X86_64: BuiltDiskSpec = BuiltDiskSpec {
+    arch: "x86_64",
+    image: "target/rosx-boot-disk.img",
+};
 
 #[derive(Clone, Copy)]
 enum KernelPatch {
@@ -128,7 +143,7 @@ struct BootCheckpoint {
     timeout_seconds: u64,
 }
 
-const CHECKPOINTS: [BootCheckpoint; 25] = [
+const CHECKPOINTS: [BootCheckpoint; 26] = [
     BootCheckpoint {
         name: "harness-pass",
         machine: &BIOS_32,
@@ -420,11 +435,29 @@ const CHECKPOINTS: [BootCheckpoint; 25] = [
         name: "real-kernel-boot32",
         machine: &BIOS_32_128,
         media: BootMedia::Disk,
-        source: ImageSource::BuiltBootDisk,
+        source: ImageSource::BuiltBootDisk(&BUILT_X86_32),
         expected: ExitVerdict::TimedOut,
         console_contains: &[
             "[STAGE1] OK",
             "[STAGE2_32] A20=OK THUNK=OK",
+            "[BOOTINFO] regions=",
+            "[KERNEL] Bootstrapped",
+            "[KERNEL] Initializing",
+            "[KERNEL] Starting",
+        ],
+        console_absent: &["!!! PANIC !!!", "unknown boot magic"],
+        timeout_seconds: 5,
+    },
+    BootCheckpoint {
+        name: "real-kernel-boot64",
+        machine: &BIOS_64,
+        media: BootMedia::Disk,
+        source: ImageSource::BuiltBootDisk(&BUILT_X86_64),
+        expected: ExitVerdict::TimedOut,
+        console_contains: &[
+            "[STAGE1] OK",
+            "[STAGE2_64] A20=OK THUNK=OK",
+            "[ELF] arch=X86_64",
             "[BOOTINFO] regions=",
             "[KERNEL] Bootstrapped",
             "[KERNEL] Initializing",
@@ -492,7 +525,7 @@ fn require_host_tools() {
 
 enum Prepared {
     Image(PathBuf),
-    Skipped(&'static str),
+    Skipped(String),
 }
 
 fn prepare_image(source: &ImageSource) -> Prepared {
@@ -505,14 +538,16 @@ fn prepare_image(source: &ImageSource) -> Prepared {
         ImageSource::Elf32OnLongMode => Prepared::Image(pack_elf32_on_long_mode_image()),
         ImageSource::OversizedInitrd => Prepared::Image(pack_oversized_initrd_image()),
         ImageSource::NoInitrdVolume => Prepared::Image(pack_no_initrd_image()),
-        ImageSource::BuiltBootDisk => match built_boot_disk() {
+        ImageSource::BuiltBootDisk(built) => match built_boot_disk(built) {
             BuiltDisk::Chain(image) => Prepared::Image(image),
-            BuiltDisk::Stale => Prepared::Skipped(
-                "target/rosx-i486-boot-disk.img carries no boot chain (cargo caches a pre-chain image); run `cargo xtask build x86_32` first",
-            ),
-            BuiltDisk::Absent => Prepared::Skipped(
-                "no target/rosx-i486-boot-disk.img for the real kernel; run `cargo xtask build x86_32` first",
-            ),
+            BuiltDisk::Stale => Prepared::Skipped(format!(
+                "{} carries no boot chain (cargo caches a pre-chain image); run `cargo xtask build {}` first",
+                built.image, built.arch
+            )),
+            BuiltDisk::Absent => Prepared::Skipped(format!(
+                "no {} for the real kernel; run `cargo xtask build {}` first",
+                built.image, built.arch
+            )),
         },
     }
 }
@@ -523,8 +558,8 @@ enum BuiltDisk {
     Absent,
 }
 
-fn built_boot_disk() -> BuiltDisk {
-    let spec = crate::arch::find("x86_32").expect("x86_32 is a registered arch");
+fn built_boot_disk(built: &BuiltDiskSpec) -> BuiltDisk {
+    let spec = crate::arch::find(built.arch).expect("the checkpoint names a registered arch");
     let disk = crate::boot_disk::boot_disk_path(spec);
     if !disk.is_file() {
         return BuiltDisk::Absent;

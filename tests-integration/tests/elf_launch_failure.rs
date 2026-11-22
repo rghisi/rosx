@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::time::Duration;
-use tests_integration::arch::Arch;
-use tests_integration::fat_disk::{create_boot_disk, create_boot_master, tools_available, FatDisk};
+use tests_integration::fat_disk::{create_boot_master, tools_available, FatDisk};
 use tests_integration::kernel_build::kernel_elf;
 use tests_integration::qemu::QemuSession;
 
@@ -18,10 +17,7 @@ fn skip_reason() -> Option<&'static str> {
 }
 
 fn seeded_boot_disk(staging: &Path) -> FatDisk {
-    let disk = match Arch::current() {
-        Arch::X86_32 => create_boot_master(staging, &kernel_elf()),
-        _ => create_boot_disk(staging),
-    };
+    let disk = create_boot_master(staging, &kernel_elf());
     disk.write_seed(NOTES, "::notes.txt");
     disk.write_seed(CORRUPT_ELF, "::corrupt.elf");
     disk

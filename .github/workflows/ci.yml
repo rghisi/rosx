@@ -62,7 +62,6 @@ jobs:
         with:
           name: rosx-x86_64
           path: |
-            target/rosx/release/rosx-x86_64.img
             target/rosx-boot-disk.img
           if-no-files-found: error
 
@@ -200,11 +199,11 @@ jobs:
           name: rosx-x86_64
 
       - name: Compress artifacts
-        run: gzip -9 rosx-x86_64.img
+        run: gzip -9 rosx-boot-disk.img
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.date.outputs.date_tag }}
           name: ${{ steps.date.outputs.date_name }}
-          files: rosx-x86_64.img.gz
+          files: rosx-boot-disk.img.gz
