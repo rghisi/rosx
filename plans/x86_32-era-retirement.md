@@ -1,19 +1,30 @@
-# x86_32 era verification and GRUB Legacy retirement — plan for later execution
+# x86_32 era verification and GRUB Legacy retirement — EXECUTED 2026-11-22
 
-Status: **phase V executed 2026-11-21** (V1/V2/V3 green, V4 not run —
-optional, does not gate R). V1: AMI `vect486vl`
-(`target/86box/runs/20261121T231200Z-vect486vl/`) — e820+e801 refused,
-INT 88h synthesis proven; first boot exposed the VLSI phantom-slave
-defect, fixed in atad (DRDY presence rule, commit `2c2cf95`). V2:
-Phoenix `ecs486` (`target/86box/runs/20261121T233107Z-ecs486/`) —
-`DL=0x00` survived, `media=lba`, e801 synthesis proven. V3: the
-un-grown 64 MiB artifact boots as built on Award
-(`target/86box/runs/20261121T234310Z-486sp3c-ungrown/`). The growth
-step is confirmed a rehearsal artifact. The earlier groundwork
-rehearsal evidence lives in
-`target/86box/runs/20261121T152239Z-486sp3c-chain/`. Phase R remains
-executed only when the trigger fires; with V1+V2 green it is honest
-(AGENTS.md silicon checklist still open).
+Status: **both phases executed; `cargo xtask verify` fully green** (gate,
+builds, x86_32 + x86_64 integration, boot-test 25/25).
+
+Phase V (2026-11-21): V1/V2/V3 green, V4 not run — optional, does not
+gate R. V1: AMI `vect486vl` (`target/86box/runs/20261121T231200Z-vect486vl/`)
+— e820+e801 refused, INT 88h synthesis proven; first boot exposed the VLSI
+phantom-slave defect, fixed in atad. V2: Phoenix `ecs486`
+(`target/86box/runs/20261121T233107Z-ecs486/`) — `DL=0x00` survived,
+`media=lba`, e801 synthesis proven. V3: the un-grown 64 MiB artifact boots
+as built on Award (`target/86box/runs/20261121T234310Z-486sp3c-ungrown/`);
+the growth step is a rehearsal artifact. Groundwork rehearsal evidence:
+`target/86box/runs/20261121T152239Z-486sp3c-chain/`.
+
+Phase R (2026-11-22, trigger fired — decision record + annotated tag
+`last-multiboot-kernel`): R1 `c8b522d`; R2 `2061b5a` (era-media tooling:
+`era-image`, `--stages`, GRUB scripts, CI step — production stage audits
+kept in `check-isa bootloader` and the unified-disk build); R3 `b379586`
+(Multiboot header/branch/`multiboot.rs` deleted, `BOOT_INFO_MAGIC` the
+only entry, unsafe baselines 25→22 and 31→30); R4 `9c7172a` (docs tell
+the chain-only story); `4db7e44` (verify caught the unscoped DrivePresent
+rule refusing real drives in QEMU — scoped to DRQ waits, re-verified on
+vect486vl `target/86box/runs/20261122T011200Z-vect486vl-scoped-atad/`
+and both arches); R5 closes this plan and deletes
+`docs/todo/multiboot-retirement.md`. The AGENTS.md silicon checklist
+stays open — nothing here claims silicon evidence.
 
 ## 1. Context
 
@@ -162,6 +173,9 @@ Out of scope for R: x86_64 (its GRUB removal completed in swap M4); QEMU suites;
     rehearsal | `fpu_registers` reports `no FPU` by raising, aborting a combined probe call | ENV-TRAP | 1 round
     rehearsal | `nm ... | grep ' SYSTEM_TIME_MS$'` (evidence-checklist.md) finds nothing — symbol is mangled in today's build | STALE-DOC | 1 round
     rehearsal | README era bar (2026-11-18, fake kernel) reads as if the production chain were era-verified | STALE-DOC | 0
+    R2 | edit oldStrings rebuilt from memory missed (run_check_stages body differed; one inverted edit added instead of deleted; a `- D` typo landed in the README) - read the exact region before editing | MISSING-FACT | 2 rounds
+    verify | atad 2c2cf95 (era-found DrivePresent rule) broke QEMU x86_32+x86_64 disk boot: reset/select windows read !BSY && !DRDY on present drives. 86Box AMI proof, unit tests and the gate all stayed silent; first caught by the branch's first cargo xtask verify. Scoped to DRQ waits, re-verified vect486vl + both arches (4db7e44, run 20261122T011200Z-vect486vl-scoped-atad) | UNGUARDED | 1 verify cycle (~45 min)
+    verify | four verify legs died on different rows (arp_slirp first: real atad bug above; then expose_corrupt_hdd x2, exit_status, vfs_hdd_flow) that each pass alone on both arches - a sibling OpenCode session ran cargo xtask test / cargo test --workspace on the same 4-core host; its QEMU bursts starved the boots (same failure family as the flakiness-erratum burners). Final verify chained behind a 2-min-quiet-machine guard and went fully green | ENV-TRAP | 4 verify cycles
 
 ### Rehearsal notes (prose)
 
