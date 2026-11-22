@@ -231,6 +231,16 @@ M4 gate: `cargo xtask test` green on x86_64 (exit 0, boot-test 25 checkpoints 0 
 three kstats tests and both `elf_launch_failure` tests in-suite) and green on x86_32 (exit 0,
 boot-test 25/25, same tests passing).
 
+## Verify — final merge evidence (`cargo xtask verify`)
+
+- Run 1: exit 101 — a single failure, `ted_shrink_save_rewrites_the_shorter_file`
+  (`send_key_awaited` never saw ted's `^S Save` after 4 attempts). Repro afterwards was green:
+  new kernel 8/9 `ted_edit` binary runs, pre-change kernel 6/6, isolated test 5/5 — a pre-existing
+  keystroke-delivery flake, not attributable to this plan; recorded in
+  `docs/todo/ted-edit-keystroke-ack-flake.md`.
+- Run 2 on `b14bbbc`: **exit 0** — gate, integration x86_64, integration x86_32 and
+  boot-test (25 checkpoints, 0 failures) all green.
+
 ## Friction log
 
 M0 | test import of `BLOCK_ALIGN` failed E0603 — constant is private, visibility not a plan fact | MISSING-FACT | 1 round
@@ -239,3 +249,4 @@ M2+M3 | plan's types-only M2 commit cannot pass the gate (unused=deny + no-test-
 M2+M3 | check-style reported "302 → 292" while `program_memory.rs` was untracked — survey scans `git ls-files`, so new files only count after `git add` | MISSING-FACT | 1 round
 M2+M3 | `NonNull::addr()` returns `NonZero<usize>` on this nightly — needs `.get()` for plain `usize` | MISSING-FACT | 1 round
 M4 | tail of a still-running `cargo xtask test` log read as completion; the x86_32 suite started alongside the live x86_64 one and the two QEMU runs shared `target/` until killed | ENV-TRAP | 1 kill + full x86_32 rerun; trust only the completion notification
+Verify | first `cargo xtask verify` failed only the pre-existing `ted_edit` keystroke flake (reproduced green 8/9 new-kernel and 6/6 baseline runs afterwards) | TASK | 1 full verify rerun (~45 min); todo filed with trigger
