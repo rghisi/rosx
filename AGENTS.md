@@ -40,7 +40,7 @@ Each line links the file holding the detail; every file starts with its own inva
 - A task's exit status rides its completion future; future slots are owned by loaded-image groups and swept with the group, and a dying task's own futures and connections are reaped on both `Exit` and `Kill`. — `docs/architecture/exit-status-and-ownership.md`
 - User memory is owned by loaded-image groups; task stacks are not freed by group reclaim. — `docs/architecture/memory.md`
 - Boot is plan-driven by `system::boot_plan`; failure policy is log-and-continue. — `docs/architecture/boot-plan.md`
-- Block devices come only from `blockd`; the ATA face is a diagnostic sharp knife; ports are won through `PortAcquire`. — `docs/architecture/disk-and-blockd.md`
+- Block devices come only from `blockd`; the ATA face is a diagnostic sharp knife; ports are won through `PortAcquire`; the probe's DrivePresent rule (`!BSY && !DRDY` = nothing attached) is judged only while waiting for DRQ — during reset/select a present drive reads the same and must not be refused. — `docs/architecture/disk-and-blockd.md`
 - `vfsd` owns no storage and speaks the `Engine` treaty; the mount table is the root. — `docs/architecture/vfs.md`; engines — `docs/architecture/fs-engines.md`
 - Ethernet lives in `ne2kd`, L3 in `ipd`; pushed data handles stay parked until read. — `docs/architecture/network-and-ip.md`
 - Input policy lives in `inputd`, device semantics in driver daemons. — `docs/architecture/input.md`
@@ -97,3 +97,4 @@ Each line links the file holding the detail; every file starts with its own inva
 - `rust-toolchain.toml` pins **nightly** with `rust-src`; custom targets live in `arch/x86_64/` (`rosx.json`, `rosx-user.json`) and `arch/x86_32/` (`rosx-i486.json`, `rosx-i486-user.json`).
 - No bootimage: the x86_64 disk image comes from `arch/x86-runner` (the `bootloader` crate); x86_32 chain-boots the unified disk that `arch/x86-runner` packs from `arch/x86-bootloader`'s stage1/stage2.
 - `gh pr edit` on `rghisi/rosx` fails with a Projects (classic) GraphQL error; update PRs through the REST API: `gh api -X PATCH repos/rghisi/rosx/pulls/<n> -f title="..." -F body=@<file>`.
+- `cargo xtask verify` needs a quiet host: its integration boots are load-sensitive (the flake rows catalogued in `plans/integration-flakiness-assessment-2026-11-20.md` fail only under contention). Before trusting a verdict, confirm no other suite is live (`pgrep -f 'cargo test|xtask test|qemu-system'`, load average against `nproc`); when the box is busy, chain verify behind a quiet-machine wait instead of rerunning into contention.
