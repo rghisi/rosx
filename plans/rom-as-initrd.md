@@ -4,7 +4,7 @@
 > `5b56908` (#196). Nothing here has been executed.
 > **Goal:** the kernel ELF carries no user-space bytes. The ROM image (and with it `init`)
 > arrives as the bootloader's **initrd** — `BootInfo.initrd_addr/initrd_size`, already placed,
-> CRC'd and memory-carved by stage2 on both arches — and the kernel loads `init` out of it.
+> memory-carved by stage2 on both arches — and the kernel loads `init` out of it.
 > This is the "rom.img as initrd" item (decision D5/D7) that `plans/x86_32-carrier-swap.md`
 > and `plans/x86_64-carrier-swap.md` left open, and the last open §9 stub of
 > `plans/bootloader/00-overview.md` besides era hardware.
@@ -45,13 +45,13 @@
 - **No `BootInfo` change.** `initrd_addr/initrd_size` already carry what is needed
   (`system/src/boot_info.rs:83-84`; ABI row `plans/bootloader/00-boot-abi.md:113`); no CRC
   field is added (that is an ABI change — stop-and-ask territory).
-- **No stage2 functional change** unless R1/R2 below fire and prove it necessary.
+- **No stage2 functional change beyond dropping its CRC32** (D6) — unless R1 fires and proves a heap fix necessary.
 - **No `rom:` → `initrd:` rename.** Token grammar, `ROM_SOURCE_PREFIX`, `RomRead`, `kernel::rom`
   and the `rom` wording stay; "rom" is now simply the initrd's content format. A rename is a
   separate cosmetic task.
 - **No VFS exposure.** The ROM is still never a VFS volume; `init` is still its only user-space
   reader (`docs/architecture/kstatsd-and-rom.md`).
-- **No era-hardware claim** (AGENTS.md hardware-evidence rule); the 486 timing note in §4 R2 is
+- **No era-hardware claim** (AGENTS.md hardware-evidence rule); the QEMU timing note in §4 R2 is
   QEMU-only evidence.
 
 ---
@@ -68,7 +68,7 @@ All re-verified against `5b56908`.
   and `rerun-if-changed` them (x86_64 also lists `randomd`/`echo`/`pong`/`vfsd`/`shell` sources
   and ELFs — leftovers of the pre-ROM era).
 - **The channel is already built, tested and unused by the kernel.** `stage2` streams
-  `/INITRD.BIN` to `kernel_phys_end` page-aligned, prints `[INITRD] addr=… size=… crc32=…`,
+  `/INITRD.BIN` to `kernel_phys_end` page-aligned, prints `[INITRD] addr=… size=… crc32=…` (the CRC dies in S2a, D6),
   carves `[kernel_phys_start .. initrd_end]` (x86_64: `.. page_tables_end`) as
   `KernelAndModules`, and writes `initrd_addr/initrd_size` into `BootInfo`
   (`stage2/src/fat.rs:27-80`, `stage2/src/main.rs:105-140`). x86_64 adds
@@ -110,9 +110,13 @@ All re-verified against `5b56908`.
   `cargo xtask build` (apps + ROM + kernel + disk) and upload the disks; the x86_32 job also
   uploads `rosx-x86_32` + `rom.img` as separate artifacts; integration jobs run
   `cargo xtask build` first, then the suite with a prebuilt kernel.
-- **stage2 CRC32 is a bitwise table-less loop** (`common/src/crc32.rs:3-14`, 8 iterations per
-  byte), computed over the in-memory initrd (`fat.rs:78`). Today it only ever sees 64 KiB test
-  payloads or nothing; with a real ROM it sees the full image. Cost: **unverified** (R2).
+- **stage2 CRC32 exists only to prove the bootloader read the payload.** It is a bitwise
+  table-less loop (`common/src/crc32.rs:3-14`, 8 iterations per byte) over the in-memory initrd
+  (`fat.rs:43,78`), printed in `[INITRD]`; consumers are `boot_test.rs:866-910` (host seed ==
+  stage2 banner == fake-kernel recompute) and the two fake kernels, which recompute
+  independently (`fake-kernel-{32,64}/src/main.rs`). With a real ROM it would run over the
+  full image on every boot — cost **unverified**, and pure overhead once the kernel's own
+  parse is the real proof.
 - **Unsafe ledger.** `check-style` baselines `unsafe` per crate in `xtask/style-baseline.txt`;
   raising a count requires a decision record in the same commit
   (`check-style --update-baseline --allow-increase "<reason>"`).
@@ -151,9 +155,15 @@ All re-verified against `5b56908`.
   before `/` exists. `rom_apps` keeps its per-arch field; both arches still pack the same set.
   `/init` stays in `USER_APPS` (built, copied to the disk root as today); only the kernel's
   copy moves.
-- **D6 — Verification evidence for the CRC cost, no pre-emptive fix.** Stage2's bitwise CRC is
-  kept as is until measured (R2). A faster table/nibble CRC is the recorded contingency, not
-  part of the plan.
+- **D6 — stage2 drops its CRC32 (user decision).** The CRC existed to prove the bootloader
+  really read the images. The proof is kept where it is independent: the fake kernels still
+  recompute CRC32 over the initrd they receive and print `initrd_crc32:`, and `boot-test`
+  asserts that equals the host-seeded payload's CRC (two-way: host == kernel view). Stage2
+  prints `[INITRD] addr=… size=…` only; `fat.rs` loses its `crc32` calls and the `report`
+  checksum parameter; the `boot_test.rs` stage2-banner-CRC leg goes. `crc32` stays in
+  `rosx-boot-common` (its remaining users are the fake kernels and `boot_test`'s host side).
+  The real kernel's proof is behavioural: the D3 range check, `RomImage::parse`, and `init`
+  loading. No `BootInfo` field, no ABI change.
 - **D7 — One constant, one place.** `INITRD_VOLUME_NAME` (`boot_image.rs`) is the single name
   for the root file; `boot_disk.rs` and the harness reuse it (the harness crate cannot depend
   on xtask — it mirrors the constant behind the same `CHAIN_KERNEL_VOLUME_NAME` pattern it
@@ -196,7 +206,26 @@ mode reported with the step's commit. No PR unless asked.
 - Proof: `cargo xtask check`; `cargo test -p kernel -- --test-threads=1`. Nothing boots
   differently.
 
-### S2 — Data plane: the disk carries `INITRD.BIN` (kernel still embeds; both paths coexist)
+### S2 — Drop stage2's CRC, then the data plane: the disk carries `INITRD.BIN`
+Two commits (each green): **S2a** the CRC removal, **S2b** the data plane.
+
+**S2a — stage2 without CRC32 (D6)**
+- `stage2/src/fat.rs`: remove the `crc32` import/calls and the `report` checksum argument and
+  the ` crc32=` print; `[INITRD] addr=… size=…` stays (also for the absent case).
+- `xtask/src/boot_test.rs`: drop the stage2-banner CRC parse/compare (`~866-900`); keep the
+  host-seed == fake-kernel `initrd_crc32:` comparison (`~894-910`); adjust any row expectation
+  matching `crc32=` text. `handoff32-no-initrd` keeps its empty-payload
+  `initrd_crc32: 0x00000000` from the fake kernel.
+- Docs: `arch/x86-bootloader/README.md` (lines 38, 42, 140-141, 156: "three ways" →
+  "two ways, host seed against the kernel's recompute"); `plans/bootloader/09-initrd-crc.md`
+  gets a short superseded note; `arch/x86-86box/README.md:124` re-read (it names the fake
+  kernel's `initrd_crc32`, so likely untouched).
+- Proof: `cargo xtask check`; `cargo xtask boot-test` all rows PASS with the two-way check; a
+  deliberate-failure proof that the check still bites (perturb the host seed, expect the
+  comparison row to fail); `check-isa bootloader`; stage2 size/heap margins re-read (they
+  should only shrink).
+
+**S2b — data plane** (kernel still embeds; both paths coexist)
 - `xtask/src/arch.rs`: `BOOTSTRAP_APPS` gains `"init"` (`[&str; 9]`, D5).
 - `xtask/src/boot_disk.rs::fill_volume`: copy `spec.rom_path()` to
   `::/{INITRD_VOLUME_NAME}`; delete the `::/boot` directory creation and the
@@ -208,10 +237,10 @@ mode reported with the step's commit. No PR unless asked.
   build`").
 - Inert for the kernel: it still embeds and ignores `INITRD.BIN`, so stage2 now really loads a
   ROM-sized initrd on every production boot while behaviour is otherwise unchanged. That makes
-  S2 the isolated proof of R1/R2 (stage2 heap and timing with a real payload) **before** the
+  S2 the isolated proof of R1 (stage2 heap with a real payload) **before** the
   kernel depends on it.
 - Proof: `cargo xtask check`; `cargo xtask build` both arches; both real-kernel boot-test rows
-  show `[INITRD] addr=… size=<rom size> crc32=…` and still reach `rose>`; the production disk
+  show `[INITRD] addr=… size=<rom size>` and still reach `rose>`; the production disk
   `mdir` lists `INITRD.BIN` and no `boot`; full integration suites unchanged.
 
 ### S3 — The flip: kernel boots from the initrd (one commit, both arches)
@@ -266,8 +295,7 @@ the tree does not boot.
 - Decision records: `docs/decisions/kernel-parses-the-initrd-rom.md` (D2, LD4 supersession,
   `status: decided`), the unsafe-baseline record from S1 (already filed).
 - `docs/todo/`: `init-program-name-as-a-kernel-parameter.md` (user's future item; trigger:
-  a second program wants to be init, or a command-line/BootInfo extension exists) and, only if
-  R2 fires and is deferred, `stage2-crc32-table-driven.md`. Existing
+  a second program wants to be init, or a command-line/BootInfo extension exists) (no CRC todo: removed). Existing
   `rom-app-names-revert-underscore-free.md` untouched.
 - Proof: `cargo xtask check`; the docs-verification pass the repo already does for
   architecture docs (`docs/decisions/architecture-docs-verification-findings.md`) re-run on the
@@ -293,13 +321,9 @@ the tree does not boot.
   S2 isolates it: if `[ERR] heap` appears, the todo's cure (LIFO tail-free bump) lands as its own
   commit before S3 — a stage2 change without ABI impact, and the one authorised exception to
   "no stage2 change".
-- **R2 — Bitwise CRC cost on slow CPUs.** ~8 loop iterations per ROM byte, now over the whole
-  ROM on every boot. Expected seconds-scale at 486 clock rates for a ~1 MiB ROM (**unverified**;
-  estimate only, QEMU under TCG cannot confirm real silicon). S0/S2 record the QEMU `[INITRD]`
-  to next-banner delta; if material, the contingency is a 16-entry nibble-table CRC in
-  `rosx-boot-common` (64 bytes, still 486-safe, identical output proven by the existing
-  `"123456789" → 0xCBF43926` vector). It is not part of this plan's scope unless measured as a
-  regression (D6).
+- **R2 — (retired by D6).** The bitwise CRC over a ~1 MiB ROM was the one boot-time cost this
+  change would have added on 486-class CPUs; it no longer exists. S0/S2 still record the
+  `[INITRD]`-to-next-banner delta in QEMU as before/after evidence, labelled QEMU-only.
 - **R3 — Memory floor and map arithmetic.** The initrd lives right after the kernel and before
   the x86_64 page tables; with a larger payload the `place_payload` refusal (`[ERR] mem`) can
   fire on small `-m`. Current harness/boot-test machines are ≥ 32 MiB (`-m 32M` rows exist for
