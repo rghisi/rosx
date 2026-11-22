@@ -20,6 +20,7 @@ const KEY_ATTEMPTS: usize = 3;
 const DROP_QUIT_CAP: Duration = Duration::from_secs(5);
 const DROP_REAP_CAP: Duration = Duration::from_secs(5);
 const DROP_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const DISK_MOUNT_BUDGET: Duration = Duration::from_secs(90);
 const SCRATCH_DISK_BYTES: usize = 1024 * 1024;
 const MBR_SIGNATURE_OFFSET: usize = 510;
 const MBR_PARTITION_TABLE_OFFSET: usize = 446;
@@ -217,6 +218,10 @@ impl QemuSession {
 
     pub fn expect_output(&self, substr: &str, timeout: Duration) {
         self.expect_from_mark(0, substr, timeout);
+    }
+
+    pub fn expect_disk_boot(&self) {
+        self.expect_output("mount ok device=ata0d0p0 dir=/", DISK_MOUNT_BUDGET);
     }
 
     pub fn mark(&self) -> usize {

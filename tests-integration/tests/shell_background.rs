@@ -1,7 +1,7 @@
 use std::time::Duration;
 use tests_integration::qemu::QemuSession;
+use tests_integration::shared::SharedSession;
 
-const BOOT_TIMEOUT: Duration = Duration::from_secs(90);
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(15);
 const REAP_PASS_TIMEOUT: Duration = Duration::from_secs(10);
 const REAP_PASSES: usize = 5;
@@ -26,10 +26,31 @@ fn reap_pass_until(session: &mut QemuSession, from: usize, needle: &str) {
 }
 
 #[test]
-fn background_launch_announces_start_and_finishes_on_a_later_prompt() {
-    let mut session = QemuSession::spawn();
-    session.expect_output("rose>", BOOT_TIMEOUT);
+fn shell_background_cases_share_one_session() {
+    let mut group = SharedSession::spawn("shell_background");
+    group.case(
+        "background_launch_announces_start_and_finishes_on_a_later_prompt",
+        background_launch_announces_start_and_finishes_on_a_later_prompt,
+    );
+    group.case(
+        "a_foreground_command_still_waits_while_a_background_job_runs",
+        a_foreground_command_still_waits_while_a_background_job_runs,
+    );
+    group.case(
+        "a_panicking_background_job_is_reported_at_a_later_prompt",
+        a_panicking_background_job_is_reported_at_a_later_prompt,
+    );
+    group.case(
+        "a_built_in_announces_that_the_background_request_is_ignored",
+        a_built_in_announces_that_the_background_request_is_ignored,
+    );
+    group.case(
+        "repeated_background_launches_are_each_reaped_exactly_once",
+        repeated_background_launches_are_each_reaped_exactly_once,
+    );
+}
 
+fn background_launch_announces_start_and_finishes_on_a_later_prompt(session: &mut QemuSession) {
     let from = session.mark();
     session.send_line("exiter 5 &");
     session.expect_output_since(from, "exiter started", LAUNCH_TIMEOUT);
@@ -40,14 +61,10 @@ fn background_launch_announces_start_and_finishes_on_a_later_prompt() {
         session.content_since(from)
     );
 
-    reap_pass_until(&mut session, from, "exiter exited with code 5");
+    reap_pass_until(session, from, "exiter exited with code 5");
 }
 
-#[test]
-fn a_foreground_command_still_waits_while_a_background_job_runs() {
-    let mut session = QemuSession::spawn();
-    session.expect_output("rose>", BOOT_TIMEOUT);
-
+fn a_foreground_command_still_waits_while_a_background_job_runs(session: &mut QemuSession) {
     let from = session.mark();
     session.send_line("exiter 5 &");
     session.expect_output_since(from, "exiter started", LAUNCH_TIMEOUT);
@@ -57,30 +74,22 @@ fn a_foreground_command_still_waits_while_a_background_job_runs() {
     session.expect_output_since(from, "exiter exited with code 3", LAUNCH_TIMEOUT);
     session.expect_output_since(from, "rose>", LAUNCH_TIMEOUT);
 
-    reap_pass_until(&mut session, from, "exiter exited with code 5");
+    reap_pass_until(session, from, "exiter exited with code 5");
     let report = session.content_since(from);
     assert_eq!(report.matches("exited with code 3").count(), 1, "got:\n{report}");
     assert_eq!(report.matches("exited with code 5").count(), 1, "got:\n{report}");
 }
 
-#[test]
-fn a_panicking_background_job_is_reported_at_a_later_prompt() {
-    let mut session = QemuSession::spawn();
-    session.expect_output("rose>", BOOT_TIMEOUT);
-
+fn a_panicking_background_job_is_reported_at_a_later_prompt(session: &mut QemuSession) {
     let from = session.mark();
     session.send_line("exiter panic &");
     session.expect_output_since(from, "exiter started", LAUNCH_TIMEOUT);
     session.expect_output_since(from, "rose>", LAUNCH_TIMEOUT);
 
-    reap_pass_until(&mut session, from, "exiter panicked");
+    reap_pass_until(session, from, "exiter panicked");
 }
 
-#[test]
-fn a_built_in_announces_that_the_background_request_is_ignored() {
-    let mut session = QemuSession::spawn();
-    session.expect_output("rose>", BOOT_TIMEOUT);
-
+fn a_built_in_announces_that_the_background_request_is_ignored(session: &mut QemuSession) {
     let after_builtin = session.mark();
     session.send_line("sleep &");
     session.expect_output_since(
@@ -91,11 +100,7 @@ fn a_built_in_announces_that_the_background_request_is_ignored() {
     session.expect_output_since(after_builtin, "rose>", LAUNCH_TIMEOUT);
 }
 
-#[test]
-fn repeated_background_launches_are_each_reaped_exactly_once() {
-    let mut session = QemuSession::spawn();
-    session.expect_output("rose>", BOOT_TIMEOUT);
-
+fn repeated_background_launches_are_each_reaped_exactly_once(session: &mut QemuSession) {
     let from = session.mark();
     for code in 1..=3 {
         let after_launch = session.mark();
@@ -105,7 +110,7 @@ fn repeated_background_launches_are_each_reaped_exactly_once() {
     }
 
     for code in 1..=3 {
-        reap_pass_until(&mut session, from, &format!("exiter exited with code {code}"));
+        reap_pass_until(session, from, &format!("exiter exited with code {code}"));
     }
     let report = session.content_since(from);
     assert_eq!(

@@ -1,8 +1,17 @@
 use std::time::Duration;
 use tests_integration::qemu::QemuSession;
+use tests_integration::shared::SharedSession;
 
-const BOOT_BUDGET: Duration = Duration::from_secs(90);
 const TABLE_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[test]
+fn ps_listing_cases_share_one_session() {
+    let mut group = SharedSession::spawn("ps_listing");
+    group.case("ps_reports_a_process_table_over_ipc", ps_reports_a_process_table_over_ipc);
+    group.case("ps_lists_live_processes_by_their_program_names", ps_lists_live_processes_by_their_program_names);
+    group.case("ps_reports_vfsd_as_a_thin_mount_table_daemon", ps_reports_vfsd_as_a_thin_mount_table_daemon);
+    group.case("ps_accounts_each_process_stack_to_its_own_group", ps_accounts_each_process_stack_to_its_own_group);
+}
 
 fn run_ps(session: &mut QemuSession) -> String {
     let mark = session.mark();
@@ -23,34 +32,22 @@ fn process_row(report: &str, name: &str) -> Option<(u32, u64)> {
     None
 }
 
-#[test]
-fn ps_reports_a_process_table_over_ipc() {
-    let mut session = QemuSession::spawn();
-    session.expect_output("rose>", BOOT_BUDGET);
-
-    let report = run_ps(&mut session);
+fn ps_reports_a_process_table_over_ipc(session: &mut QemuSession) {
+    let report = run_ps(session);
     assert!(report.contains("PID") && report.contains("NAME"), "header missing: {report}");
 
     let after_report = session.mark();
     session.expect_output_since(after_report, "rose>", TABLE_TIMEOUT);
 }
 
-#[test]
-fn ps_lists_live_processes_by_their_program_names() {
-    let mut session = QemuSession::spawn();
-    session.expect_output("rose>", BOOT_BUDGET);
-
-    let report = run_ps(&mut session);
+fn ps_lists_live_processes_by_their_program_names(session: &mut QemuSession) {
+    let report = run_ps(session);
     assert!(process_row(&report, "ps").is_some(), "ps must list itself: {report}");
     assert!(process_row(&report, "shell").is_some(), "ps must list the shell: {report}");
 }
 
-#[test]
-fn ps_reports_vfsd_as_a_thin_mount_table_daemon() {
-    let mut session = QemuSession::spawn();
-    session.expect_output("rose>", BOOT_BUDGET);
-
-    let report = run_ps(&mut session);
+fn ps_reports_vfsd_as_a_thin_mount_table_daemon(session: &mut QemuSession) {
+    let report = run_ps(session);
     let (_, vfsd_mem_kib) = process_row(&report, "vfsd").expect("ps must list vfsd");
     assert!(
         vfsd_mem_kib < 1024,
@@ -58,14 +55,10 @@ fn ps_reports_vfsd_as_a_thin_mount_table_daemon() {
     );
 }
 
-#[test]
-fn ps_accounts_each_process_stack_to_its_own_group() {
-    let mut session = QemuSession::spawn();
-    session.expect_output("rose>", BOOT_BUDGET);
-
-    let report = run_ps(&mut session);
+fn ps_accounts_each_process_stack_to_its_own_group(session: &mut QemuSession) {
+    let report = run_ps(session);
     let (ps_pid, ps_mem_kib) = process_row(&report, "ps").expect("ps lists itself");
-    let (_, shell_mem_kib) = process_row(&report, "shell").expect("ps lists the shell");
+    let (_, shell_mem_kib) = process_row(&report, "shell").expect("ps must list the shell");
 
     assert!(ps_pid > 0, "ps carries a real pid");
     assert!(

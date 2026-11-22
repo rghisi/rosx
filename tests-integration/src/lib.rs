@@ -4,5 +4,6 @@ pub mod fat_disk;
 pub mod kernel_build;
 pub mod monitor;
 pub mod sendkey;
+pub mod shared;
 pub mod output;
 pub mod qemu;
