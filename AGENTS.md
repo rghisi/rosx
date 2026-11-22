@@ -75,6 +75,7 @@ Each line links the file holding the detail; every file starts with its own inva
 - **`unsafe`** counts per crate are baselined; raising a count needs a record in `docs/decisions/`.
 - **Dependency arrows** and the 486 feature floor: `xtask/arch-rules.txt`.
 - **32-bit hazards** (`f32`, `f64`, `AtomicU64`, `AtomicI64` in 32-bit-reachable crates), **handle kind guards** (`usrlib/tests/handle_kind_guards.rs`), **warnings as errors** (`[workspace.lints.rust]`), **486 ISA audit** (`check-isa`).
+- **check-style surveys `git ls-files` only**: a new source file counts toward the unsafe ratchet and its rationale links only after `git add`.
 - `RUSTFLAGS` in the environment replaces the user-target rustflags that carry `linker.ld`; never export it when building user ELFs.
 
 ## Autonomy
@@ -98,3 +99,4 @@ Each line links the file holding the detail; every file starts with its own inva
 - `rust-toolchain.toml` pins **nightly** with `rust-src`; custom targets live in `arch/x86_64/` (`rosx.json`, `rosx-user.json`) and `arch/x86_32/` (`rosx-i486.json`, `rosx-i486-user.json`).
 - No bootimage: the x86_64 disk image comes from `arch/x86-runner` (the `bootloader` crate); x86_32 chain-boots the unified disk that `arch/x86-runner` packs from `arch/x86-bootloader`'s stage1/stage2.
 - `gh pr edit` on `rghisi/rosx` fails with a Projects (classic) GraphQL error; update PRs through the REST API: `gh api -X PATCH repos/rghisi/rosx/pulls/<n> -f title="..." -F body=@<file>`.
+- Run `cargo xtask test` and `cargo xtask verify` one at a time: the QEMU suites share `target/` and contend with any suite already running.
