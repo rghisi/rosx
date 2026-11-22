@@ -8,14 +8,12 @@ fn main() {
         .expect("unsupported architecture");
     let no_run = args.any(|a| a == "--no-run");
 
-    let medium = x86_runner::prepare_run_medium(&kernel_binary, arch)
-        .expect("failed to prepare boot medium");
+    let disk =
+        x86_runner::run_medium(&kernel_binary, arch).expect("failed to prepare boot medium");
 
     if !no_run {
-        let mut command = x86_runner::qemu_command(arch, &medium, x86_runner::LaunchMode::Interactive);
-        if !matches!(medium, x86_runner::BootMedium::BootDisk(_)) {
-            x86_runner::attach_fat_boot_disk(&mut command, &kernel_binary);
-        }
+        let mut command =
+            x86_runner::qemu_command(arch, &disk, x86_runner::LaunchMode::Interactive);
         x86_runner::attach_persistent_hdd(&mut command);
         let status = command
             .status()

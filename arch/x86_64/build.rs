@@ -1,6 +1,11 @@
 use std::path::Path;
 
 fn main() {
+    let dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    println!("cargo::rustc-link-arg=-T{dir}/linker.ld");
+    println!("cargo::rustc-link-arg=-z");
+    println!("cargo::rustc-link-arg=max-page-size=0x100000");
+    println!("cargo::rerun-if-changed=linker.ld");
     println!("cargo::rerun-if-changed=../../apps/randomd/src");
     println!("cargo::rerun-if-changed=../../apps/randomd/Cargo.toml");
     println!("cargo::rerun-if-changed=../../apps/echo/src");

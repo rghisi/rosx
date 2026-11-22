@@ -6,16 +6,15 @@ extern crate alloc;
 mod apic;
 mod cpu;
 mod elf_arch;
+#[expect(dead_code, reason = "kept detached for the VESA framebuffer successor plan (plans/x86_64-carrier-swap.md D1)")]
+mod framebuffer;
 mod interrupt_controller;
 mod interrupts;
+#[expect(dead_code, reason = "glyph source for the detached framebuffer")]
 mod terminal_fonts;
-mod framebuffer;
 
 use crate::cpu::X86_64;
 use crate::elf_arch::X86_64ElfArch;
-use crate::framebuffer::FramebufferOutput;
-use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
-use bootloader_api::config::Mapping;
 use core::panic::PanicInfo;
 use kernel::memory::{MemoryBlock, MemoryBlocks};
 use kernel::platform::output::MultiplexOutput;
@@ -30,9 +29,11 @@ use kernel::task::FunctionTask;
 use x86_generic::debug_console::QemuDebugConsole;
 use x86_generic::port::X86PortIo;
 
-static FB_OUTPUT: FramebufferOutput = FramebufferOutput;
+core::arch::global_asm!(include_str!("boot.S"));
+
+static VGA_OUTPUT: x86_generic::vga_buffer::VgaOutput = x86_generic::vga_buffer::VgaOutput;
 pub static QEMU_OUTPUT: QemuDebugConsole = QemuDebugConsole;
-static OUTPUTS: &[&dyn kernel::platform::output::KernelOutput] = &[&FB_OUTPUT, &QEMU_OUTPUT];
+static OUTPUTS: &[&dyn kernel::platform::output::KernelOutput] = &[&VGA_OUTPUT, &QEMU_OUTPUT];
 
 static MULTIPLEXED_OUTPUT: MultiplexOutput = MultiplexOutput::new(OUTPUTS);
 
@@ -48,27 +49,20 @@ static KCONFIG: KConfig = KConfig {
     scheduler_factory: scheduler::mfq_scheduler,
 };
 
-const BOOTLOADER_CONFIG: BootloaderConfig = {
-    let mut config = BootloaderConfig::new_default();
-    config.mappings.physical_memory = Some(Mapping::Dynamic);
-    config
-};
-
-entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
-
 #[cfg_attr(not(test), panic_handler)]
 fn panic(info: &PanicInfo) -> ! {
     handle_panic(info);
 }
 
-fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
-    if let Some(fb) = boot_info.framebuffer.as_mut() {
-        framebuffer::init(fb.buffer_mut().as_mut_ptr() as u64, fb.info());
-    }
-    let phys_offset = boot_info.physical_memory_offset.into_option().unwrap();
-    unsafe { cpu::clear_nx_bits(phys_offset); }
-    apic::set_phys_offset(phys_offset);
-    let memory_blocks = build_memory_blocks(boot_info, phys_offset);
+#[unsafe(no_mangle)]
+extern "C" fn kernel_main(loader_magic: u64, loader_info: u64) -> ! {
+    x86_generic::vga_buffer::init(0);
+    kernel::platform::output::setup_default_output(&MULTIPLEXED_OUTPUT);
+    let memory_blocks = if loader_magic == u64::from(system::boot_info::BOOT_INFO_MAGIC) {
+        boot_info_memory(loader_info as usize)
+    } else {
+        panic!("unknown boot magic: {loader_magic:#x}: the only supported loader is the RosX stage chain");
+    };
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kprintln!("[KERNEL] Initializing");
     let mut kernel = Kernel::new(&KCONFIG);
@@ -101,20 +95,41 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     panic!("[KERNEL] Crashed spectacularly, should never reached here.");
 }
 
-fn build_memory_blocks(boot_info: &BootInfo, phys_offset: u64) -> MemoryBlocks {
-    let mut memory_blocks = MemoryBlocks {
+unsafe extern "C" {
+    static kernel_phys_end: u8;
+}
+
+fn boot_info_memory(address: usize) -> MemoryBlocks {
+    let safe_start = core::ptr::addr_of!(kernel_phys_end) as usize;
+    let mut blocks = empty_blocks();
+    match unsafe {
+        kernel::platform::bootinfo::usable_blocks(
+            address,
+            system::boot_info::BootArch::X86_64,
+            safe_start,
+            &mut blocks,
+        )
+    } {
+        Ok(facts) => {
+            kprintln!(
+                "[BOOTINFO] regions={} usable={:#x} blocks={} clipped={} dropped={}",
+                facts.regions, facts.usable_bytes, facts.accepted, facts.clipped, facts.dropped
+            );
+            if facts.dropped > 0 {
+                kprintln!(
+                    "[BOOTINFO] warning: {} usable regions dropped for addressability or the {}-block cap",
+                    facts.dropped, kernel::memory::MAX_MEMORY_BLOCKS
+                );
+            }
+        }
+        Err(error) => panic!("boot info at {address:#x} refused: {error:?}"),
+    }
+    blocks
+}
+
+fn empty_blocks() -> MemoryBlocks {
+    MemoryBlocks {
         blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),
         count: 0,
-    };
-
-    for region in boot_info.memory_regions.iter() {
-        if let bootloader_api::info::MemoryRegionKind::Usable = region.kind {
-            let size = (region.end - region.start) as usize;
-            let start = (region.start + phys_offset) as usize;
-            memory_blocks.blocks[memory_blocks.count] = MemoryBlock { start, size };
-            memory_blocks.count += 1;
-        }
     }
-
-    memory_blocks
 }

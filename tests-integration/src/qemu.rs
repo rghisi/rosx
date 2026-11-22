@@ -64,41 +64,19 @@ impl QemuSession {
     pub fn spawn_with_master_disk(disk: &Path) -> QemuSession {
         let temp_dir = tempfile::TempDir::new().expect("failed to create temporary directory");
         let kernel_elf = kernel_build::kernel_elf();
-        let arch = Arch::current();
-        let command = match arch.boot() {
-            x86_runner::Arch::X86_32 => {
-                let master = temp_dir.path().join("boot-disk.img");
-                std::fs::copy(disk, &master).unwrap_or_else(|err| {
-                    panic!(
-                        "failed to copy {} into the session before stamping: {err}",
-                        disk.display()
-                    )
-                });
-                fat_disk::stamp_bootable(&master, &kernel_elf);
-                let medium = x86_runner::BootMedium::BootDisk(master);
-                x86_runner::qemu_command(arch.boot(), &medium, x86_runner::LaunchMode::Headless)
-            }
-            x86_runner::Arch::X86_64 => {
-                let medium =
-                    x86_runner::prepare_run_medium_in(&kernel_elf, arch.boot(), temp_dir.path())
-                        .unwrap_or_else(|err| {
-                            panic!(
-                                "failed to prepare boot medium for kernel '{}': {err}",
-                                kernel_elf.display()
-                            )
-                        });
-                let mut command = x86_runner::qemu_command(
-                    arch.boot(),
-                    &medium,
-                    x86_runner::LaunchMode::Headless,
-                );
-                command.arg("-drive").arg(format!(
-                    "if=ide,index=0,media=disk,format=raw,file={}",
-                    disk.display()
-                ));
-                command
-            }
-        };
+        let master = temp_dir.path().join("boot-disk.img");
+        std::fs::copy(disk, &master).unwrap_or_else(|err| {
+            panic!(
+                "failed to copy {} into the session before stamping: {err}",
+                disk.display()
+            )
+        });
+        fat_disk::stamp_bootable(&master, &kernel_elf);
+        let command = x86_runner::qemu_command(
+            Arch::current().boot(),
+            &master,
+            x86_runner::LaunchMode::Headless,
+        );
         Self::spawn_capturing(command, temp_dir)
     }
 
@@ -360,29 +338,12 @@ impl QemuSession {
 
 fn session_command(temp_dir: &Path) -> Command {
     let kernel_elf = kernel_build::kernel_elf();
-    let arch = Arch::current();
-    match arch.boot() {
-        x86_runner::Arch::X86_64 => {
-            let medium =
-                x86_runner::prepare_run_medium_in(&kernel_elf, arch.boot(), temp_dir).unwrap_or_else(
-                    |err| {
-                        panic!(
-                            "failed to prepare boot medium for kernel '{}': {err}",
-                            kernel_elf.display()
-                        )
-                    },
-                );
-            let mut command =
-                x86_runner::qemu_command(arch.boot(), &medium, x86_runner::LaunchMode::Headless);
-            attach_fat_master_disk(&mut command, temp_dir);
-            command
-        }
-        x86_runner::Arch::X86_32 => {
-            let master = fat_disk::create_boot_master(temp_dir, &kernel_elf);
-            let medium = x86_runner::BootMedium::BootDisk(master.path().to_path_buf());
-            x86_runner::qemu_command(arch.boot(), &medium, x86_runner::LaunchMode::Headless)
-        }
-    }
+    let master = fat_disk::create_boot_master(temp_dir, &kernel_elf);
+    x86_runner::qemu_command(
+        Arch::current().boot(),
+        master.path(),
+        x86_runner::LaunchMode::Headless,
+    )
 }
 
 fn stamp_mbr_entry(image: &mut [u8], slot: usize, type_id: u8, start_lba: u32, sector_count: u32) {
@@ -390,16 +351,6 @@ fn stamp_mbr_entry(image: &mut [u8], slot: usize, type_id: u8, start_lba: u32, s
     entry[4] = type_id;
     entry[8..12].copy_from_slice(&start_lba.to_le_bytes());
     entry[12..16].copy_from_slice(&sector_count.to_le_bytes());
-}
-
-fn attach_fat_master_disk(command: &mut Command, temp_dir: &Path) {
-    let disk = fat_disk::create_boot_disk(temp_dir);
-    command
-        .arg("-drive")
-        .arg(format!(
-            "if=ide,index=0,media=disk,format=raw,file={}",
-            disk.path().display()
-        ));
 }
 
 fn should_keep_temp_dir(value: Option<&OsStr>) -> bool {
