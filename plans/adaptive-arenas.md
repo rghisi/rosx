@@ -162,4 +162,7 @@ per-group quotas, any change to the `Handle` bit layout, and an O(1) `by_owner` 
 
 Step 0 | harness first compile: `FutureHandle` imported from `crate::future` (private re-export) and `&core::any::Any` missing `dyn` in the scratch module | TASK | 1 round
 Step 0 | harness first run: 3 of 5 bench tests panicked (churn kept 1 live per 3 adds so 2 000 > 1 024 cap; connections curve needs the 257th mailbox slot the service binding itself takes) | TASK | 1 round
+Step 1 | first arena test run: 9 failures — reuse-distance assumptions wrong in both directions (a freed slot queues behind the page's untouched slots, and the old fill-to-`FUTURE_SLOTS` registry tests recycle slot 0 mid-fill now) | TASK | 2 rounds
+Step 1 | `use core::alloc::alloc` unresolved on the pinned nightly (raw fns live in `alloc::alloc` for the no_std kernel) and `Layout::array_of` is `Layout::array` there | ENV-TRAP | 1 round
+Step 2 | test-rewrite script aborted on its own leftover-guard: the test name `reclaim_purges_parents_of_rows...` matched the grep for `parents_of`, so the rewrite never wrote; script rerun | TASK | 0
 

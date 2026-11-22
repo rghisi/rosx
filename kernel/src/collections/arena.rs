@@ -161,12 +161,6 @@ impl<T> GenerationalArena<T> {
         Ok(item)
     }
 
-    pub(crate) fn live_generation(&self, index: u16) -> Option<u16> {
-        let slot = self.slot(index)?;
-        slot.item.as_ref()?;
-        Some(slot.generation)
-    }
-
     pub(crate) fn any<F: Fn(&T) -> bool>(&self, predicate: F) -> bool {
         self.pages.iter().flatten().any(|slot| slot.item.as_ref().is_some_and(&predicate))
     }
@@ -175,6 +169,17 @@ impl<T> GenerationalArena<T> {
         for slot in self.pages.iter().flatten() {
             if let Some(item) = &slot.item {
                 visitor(item);
+            }
+        }
+    }
+
+    pub(crate) fn visit_handles<F: FnMut(Handle, &T)>(&self, mut visitor: F) {
+        for (page_index, page) in self.pages.iter().enumerate() {
+            for (offset, slot) in page.iter().enumerate() {
+                if let Some(item) = &slot.item {
+                    let index = (page_index * PAGE_SLOTS + offset) as u16;
+                    visitor(Handle::new(index, slot.generation), item);
+                }
             }
         }
     }
@@ -326,19 +331,6 @@ mod tests {
         let arena: GenerationalArena<i32> = GenerationalArena::new(64);
         let ghost = arena.borrow(crate::handle::Handle::new(50, 0));
         assert_eq!(ghost, Err(Error::NotFound));
-    }
-
-    #[test]
-    fn live_generation_reports_only_occupied_slots_and_advances_on_remove() {
-        let mut arena: GenerationalArena<i32> = GenerationalArena::new(64);
-        assert_eq!(arena.live_generation(0), None);
-        let handle = arena.add(7).unwrap();
-        assert_eq!(arena.live_generation(handle.index), Some(handle.generation));
-        arena.remove(handle).unwrap();
-        assert_eq!(arena.live_generation(handle.index), None);
-        let recycled = arena.add(9).unwrap();
-        assert_eq!(arena.live_generation(recycled.index), Some(recycled.generation));
-        assert_eq!(arena.live_generation(60), None);
     }
 
     #[test]

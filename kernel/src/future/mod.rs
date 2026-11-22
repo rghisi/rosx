@@ -123,11 +123,29 @@ impl Future for TaskCompletionFuture {
     }
 }
 
+struct FutureEntry {
+    future: Box<dyn Future + Send + Sync>,
+    owner: FutureOwner,
+    parents: Option<Vec<ParentLink>>,
+}
+
+impl FutureEntry {
+    fn add_parent(&mut self, link: ParentLink) {
+        self.parents.get_or_insert_with(Vec::new).push(link);
+    }
+
+    fn take_parents(&mut self) -> Option<Vec<ParentLink>> {
+        self.parents.take()
+    }
+
+    fn set_parents(&mut self, kept: Vec<ParentLink>) {
+        self.parents = if kept.is_empty() { None } else { Some(kept) };
+    }
+}
+
 pub struct FutureRegistry {
-    arena: GenerationalArena<Box<dyn Future + Send + Sync>>,
+    arena: GenerationalArena<FutureEntry>,
     waiters: BTreeMap<FutureHandle, Vec<TaskHandle>>,
-    parents_of: Vec<Vec<ParentLink>>,
-    owners: Vec<FutureOwner>,
     by_owner: BTreeMap<TaskHandle, Vec<FutureHandle>>,
     wake_controller: &'static dyn ForWakingTasks,
 }
@@ -138,22 +156,6 @@ impl ForWakingTasks for NoopWakeController {
 }
 
 static DEFAULT_WAKE_CONTROLLER: NoopWakeController = NoopWakeController;
-
-fn empty_parent_rows() -> Vec<Vec<ParentLink>> {
-    let mut rows = Vec::with_capacity(FUTURE_SLOTS);
-    for _ in 0..FUTURE_SLOTS {
-        rows.push(Vec::new());
-    }
-    rows
-}
-
-fn empty_owner_table() -> Vec<FutureOwner> {
-    let mut table = Vec::with_capacity(FUTURE_SLOTS);
-    for _ in 0..FUTURE_SLOTS {
-        table.push(FutureOwner::Free);
-    }
-    table
-}
 
 impl Default for FutureRegistry {
     fn default() -> Self {
@@ -174,8 +176,6 @@ impl FutureRegistry {
         Self {
             arena: GenerationalArena::new(FUTURE_SLOTS),
             waiters: BTreeMap::new(),
-            parents_of: empty_parent_rows(),
-            owners: empty_owner_table(),
             by_owner: BTreeMap::new(),
             wake_controller: &DEFAULT_WAKE_CONTROLLER,
         }
@@ -185,8 +185,6 @@ impl FutureRegistry {
         Self {
             arena: GenerationalArena::new(FUTURE_SLOTS),
             waiters: BTreeMap::new(),
-            parents_of: empty_parent_rows(),
-            owners: empty_owner_table(),
             by_owner: BTreeMap::new(),
             wake_controller,
         }
@@ -198,8 +196,7 @@ impl FutureRegistry {
         owner: FutureOwner,
     ) -> Option<FutureHandle> {
         let task_owner = future.owner();
-        let handle = self.arena.add(future).ok()?;
-        self.owners[handle.index as usize] = owner;
+        let handle = self.arena.add(FutureEntry { future, owner, parents: None }).ok()?;
         self.by_owner.entry(task_owner).or_default().push(FutureHandle::from(handle));
         Some(FutureHandle::from(handle))
     }
@@ -210,8 +207,8 @@ impl FutureRegistry {
     }
 
     pub fn get(&mut self, handle: FutureHandle) -> Option<bool> {
-        if let Ok(future) = self.arena.borrow_mut(handle.into()) {
-            Some(future.is_completed())
+        if let Ok(entry) = self.arena.borrow_mut(handle.into()) {
+            Some(entry.future.is_completed())
         } else {
             None
         }
@@ -224,29 +221,26 @@ impl FutureRegistry {
 
     fn consume_inner(&mut self, handle: FutureHandle) -> Result<Box<dyn Future + Send + Sync>, Error> {
         let removed = self.arena.remove(handle.into())?;
-        self.owners[handle.index() as usize] = FutureOwner::Free;
-        let owner = removed.owner();
+        let owner = removed.future.owner();
         if let Some(handles) = self.by_owner.get_mut(&owner) {
             handles.retain(|live| *live != handle);
             if handles.is_empty() {
                 self.by_owner.remove(&owner);
             }
         }
-        if let Some(row_slot) = self.parents_of.get_mut(handle.index() as usize) {
-            let row = core::mem::take(row_slot);
-            for link in row {
-                if let Ok(future) = self.arena.borrow_mut(link.parent.into()) {
-                    if let Some(waitset) = as_waitset(future) {
-                        waitset.remove_child(handle);
-                    }
+        for link in removed.parents.unwrap_or_default() {
+            if let Ok(parent) = self.arena.borrow_mut(link.parent.into()) {
+                if let Some(waitset) = as_waitset(&mut parent.future) {
+                    waitset.remove_child(handle);
                 }
             }
         }
-        Ok(removed)
+        Ok(removed.future)
     }
 
     pub fn borrow_mut(&mut self, handle: FutureHandle) -> Result<&mut Box<dyn Future + Send + Sync>, Error> {
-        self.arena.borrow_mut(handle.into())
+        let entry = self.arena.borrow_mut(handle.into())?;
+        Ok(&mut entry.future)
     }
 
     pub fn notify(&mut self, handle: FutureHandle) {
@@ -256,8 +250,8 @@ impl FutureRegistry {
 
     pub fn notify_with_status(&mut self, handle: FutureHandle, status: i32) {
         let _section = FUTURE_SECTION.acquire();
-        if let Ok(future) = self.arena.borrow_mut(handle.into()) {
-            if let Some(completion) = future.as_any_mut().downcast_mut::<TaskCompletionFuture>() {
+        if let Ok(entry) = self.arena.borrow_mut(handle.into()) {
+            if let Some(completion) = entry.future.as_any_mut().downcast_mut::<TaskCompletionFuture>() {
                 completion.stamp(status);
             }
         }
@@ -268,7 +262,7 @@ impl FutureRegistry {
         self.arena
             .borrow(handle.into())
             .ok()
-            .and_then(|future| future.as_any().downcast_ref::<TaskCompletionFuture>())
+            .and_then(|entry| entry.future.as_any().downcast_ref::<TaskCompletionFuture>())
             .map(|completion| completion.owner())
     }
 
@@ -309,7 +303,7 @@ impl FutureRegistry {
 
     pub(crate) fn is_waitset(&mut self, handle: FutureHandle) -> bool {
         match self.arena.borrow(handle.into()) {
-            Ok(future) => is_waitset(future),
+            Ok(entry) => is_waitset(&entry.future),
             Err(_) => false,
         }
     }
@@ -317,17 +311,17 @@ impl FutureRegistry {
     pub(crate) fn attach(&mut self, set: FutureHandle, child: FutureHandle, tag: u32) -> Result<(), AttachError> {
         let _section = FUTURE_SECTION.acquire();
         let child_completed = match self.arena.borrow(child.into()) {
-            Ok(future) => {
-                if is_waitset(future) {
+            Ok(entry) => {
+                if is_waitset(&entry.future) {
                     return Err(AttachError::NestingForbidden);
                 }
-                future.is_completed()
+                entry.future.is_completed()
             }
             Err(_) => return Err(AttachError::ChildInvalid),
         };
         {
             let parent = match self.arena.borrow_mut(set.into()) {
-                Ok(future) => match as_waitset(future) {
+                Ok(entry) => match as_waitset(&mut entry.future) {
                     Some(waitset) => waitset,
                     None => return Err(AttachError::ParentNotFound),
                 },
@@ -344,7 +338,9 @@ impl FutureRegistry {
                 parent.record(WaitEvent { child: child.pack() as u32, tag });
             }
         }
-        self.parents_of[child.index() as usize].push(ParentLink { parent: set, tag });
+        if let Ok(entry) = self.arena.borrow_mut(child.into()) {
+            entry.add_parent(ParentLink { parent: set, tag });
+        }
         if child_completed {
             self.notify_inner(set);
         }
@@ -353,7 +349,7 @@ impl FutureRegistry {
 
     pub(crate) fn detach(&mut self, set: FutureHandle, child: FutureHandle) -> Result<(), AttachError> {
         let edge_removed = match self.arena.borrow_mut(set.into()) {
-            Ok(future) => match as_waitset(future) {
+            Ok(entry) => match as_waitset(&mut entry.future) {
                 Some(waitset) => waitset.remove_child(child),
                 None => return Err(AttachError::ParentNotFound),
             },
@@ -362,8 +358,13 @@ impl FutureRegistry {
         if !edge_removed {
             return Err(AttachError::ChildInvalid);
         }
-        if let Some(row) = self.parents_of.get_mut(child.index() as usize) {
-            row.retain(|link| link.parent != set);
+        if let Ok(entry) = self.arena.borrow_mut(child.into()) {
+            if let Some(parents) = &mut entry.parents {
+                parents.retain(|link| link.parent != set);
+                if parents.is_empty() {
+                    entry.parents = None;
+                }
+            }
         }
         Ok(())
     }
@@ -371,7 +372,7 @@ impl FutureRegistry {
     pub(crate) fn take_pending(&mut self, set: FutureHandle) -> WaitsetTake {
         loop {
             let event = match self.arena.borrow_mut(set.into()) {
-                Ok(future) => match as_waitset(future) {
+                Ok(entry) => match as_waitset(&mut entry.future) {
                     Some(waitset) => match waitset.take_pending() {
                         Some(event) => event,
                         None => return WaitsetTake::Empty,
@@ -393,7 +394,7 @@ impl FutureRegistry {
     pub(crate) fn drop_waitset(&mut self, set: FutureHandle) {
         let _section = FUTURE_SECTION.acquire();
         let children = match self.arena.borrow_mut(set.into()) {
-            Ok(future) => match as_waitset(future) {
+            Ok(entry) => match as_waitset(&mut entry.future) {
                 Some(waitset) => waitset.child_handles(),
                 None => return,
             },
@@ -410,18 +411,14 @@ impl FutureRegistry {
         let _section = FUTURE_SECTION.acquire();
         let owner = FutureOwner::Group(group);
         let mut abandoned = Vec::new();
-        for (index, slot_owner) in self.owners.iter().enumerate() {
-            if *slot_owner == owner {
-                abandoned.push(index as u16);
+        self.arena.visit_handles(|handle, entry| {
+            if entry.owner == owner {
+                abandoned.push(FutureHandle::from(handle));
             }
-        }
-        for index in abandoned {
-            if let Some(generation) = self.arena.live_generation(index) {
-                let handle = FutureHandle::new(index, generation);
-                self.notify_inner(handle);
-                let _ = self.consume_inner(handle);
-            }
-            self.owners[index as usize] = FutureOwner::Free;
+        });
+        for handle in abandoned {
+            self.notify_inner(handle);
+            let _ = self.consume_inner(handle);
         }
     }
 
@@ -430,24 +427,19 @@ impl FutureRegistry {
     }
 
     fn cascade_to_waitsets(&mut self, handle: FutureHandle) {
-        let index = handle.index() as usize;
-        let row = match self.parents_of.get_mut(index) {
-            Some(slot) => core::mem::take(slot),
-            None => return,
+        let row = match self.arena.borrow_mut(handle.into()) {
+            Ok(entry) => match entry.take_parents() {
+                Some(row) => row,
+                None => return,
+            },
+            Err(_) => return,
         };
-        if row.is_empty() {
-            return;
-        }
-        if !self.is_live(handle) {
-            self.parents_of[index] = row;
-            return;
-        }
         let child_token = handle.pack() as u32;
         let mut kept = Vec::with_capacity(row.len());
         let mut awakened = Vec::new();
         for link in row {
             let recorded = match self.arena.borrow_mut(link.parent.into()) {
-                Ok(future) => match as_waitset(future) {
+                Ok(entry) => match as_waitset(&mut entry.future) {
                     Some(waitset) => Some(waitset.record(WaitEvent { child: child_token, tag: link.tag })),
                     None => None,
                 },
@@ -463,7 +455,9 @@ impl FutureRegistry {
                 }
             }
         }
-        self.parents_of[index] = kept;
+        if let Ok(entry) = self.arena.borrow_mut(handle.into()) {
+            entry.set_parents(kept);
+        }
         for parent in awakened {
             self.notify_inner(parent);
         }
@@ -661,7 +655,20 @@ mod tests {
     // === Ownership stamping tests ===
 
     fn owner_of(registry: &FutureRegistry, handle: FutureHandle) -> FutureOwner {
-        registry.owners[handle.index() as usize]
+        registry
+            .arena
+            .borrow(handle.into())
+            .map(|entry| entry.owner)
+            .unwrap_or(FutureOwner::Free)
+    }
+
+    fn parent_links(registry: &FutureRegistry, handle: FutureHandle) -> usize {
+        registry
+            .arena
+            .borrow(handle.into())
+            .ok()
+            .and_then(|entry| entry.parents.as_ref().map(|links| links.len()))
+            .unwrap_or(0)
     }
 
     #[test]
@@ -752,7 +759,7 @@ mod tests {
     }
 
     #[test]
-    fn reclaim_purges_parents_of_rows_and_leaves_the_waitset_alive() {
+    fn reclaim_purges_the_childs_parent_links_and_leaves_the_waitset_alive() {
         let mut registry = FutureRegistry::new();
         let doomed = GroupId::allocate();
         let set_owner = GroupId::allocate();
@@ -767,7 +774,7 @@ mod tests {
         registry.reclaim_group(doomed);
 
         assert_eq!(registry.get(child), None);
-        assert!(registry.parents_of[child.index() as usize].is_empty());
+        assert_eq!(parent_links(&registry, child), 0);
         assert!(registry.is_waitset(set));
         assert!(matches!(registry.take_pending(set), WaitsetTake::Empty));
     }
@@ -958,7 +965,7 @@ mod tests {
         let child = registry.register(Box::new(DummyFuture(GHOST_OWNER)), FutureOwner::Kernel).unwrap();
         let absent = FutureHandle::new(700, 9);
         assert_eq!(registry.attach(absent, child, 0), Err(AttachError::ParentNotFound));
-        assert!(registry.parents_of[child.index() as usize].is_empty());
+        assert_eq!(parent_links(&registry, child), 0);
     }
 
     #[test]
@@ -967,7 +974,7 @@ mod tests {
         let plain = registry.register(Box::new(DummyFuture(GHOST_OWNER)), FutureOwner::Kernel).unwrap();
         let child = registry.register(Box::new(DummyFuture(GHOST_OWNER)), FutureOwner::Kernel).unwrap();
         assert_eq!(registry.attach(plain, child, 0), Err(AttachError::ParentNotFound));
-        assert!(registry.parents_of[child.index() as usize].is_empty());
+        assert_eq!(parent_links(&registry, child), 0);
     }
 
     #[test]
@@ -976,7 +983,7 @@ mod tests {
         let set = register_waitset(&mut registry);
         let absent = FutureHandle::new(701, 9);
         assert_eq!(registry.attach(set, absent, 0), Err(AttachError::ChildInvalid));
-        assert!(registry.parents_of[absent.index() as usize].is_empty());
+        assert_eq!(parent_links(&registry, absent), 0);
         assert_eq!(waitset_of(&mut registry, set).child_count(), 0);
     }
 
@@ -987,8 +994,8 @@ mod tests {
         let other_set = register_waitset(&mut registry);
         assert_eq!(registry.attach(set, other_set, 0), Err(AttachError::NestingForbidden));
         assert_eq!(registry.attach(set, set, 7), Err(AttachError::NestingForbidden));
-        assert!(registry.parents_of[other_set.index() as usize].is_empty());
-        assert!(registry.parents_of[set.index() as usize].is_empty());
+        assert_eq!(parent_links(&registry, other_set), 0);
+        assert_eq!(parent_links(&registry, set), 0);
     }
 
     #[test]
@@ -998,7 +1005,7 @@ mod tests {
         let child = registry.register(Box::new(DummyFuture(GHOST_OWNER)), FutureOwner::Kernel).unwrap();
         assert_eq!(registry.attach(set, child, 1), Ok(()));
         assert_eq!(registry.attach(set, child, 2), Err(AttachError::ChildInvalid));
-        assert_eq!(registry.parents_of[child.index() as usize].len(), 1);
+        assert_eq!(parent_links(&registry, child), 1);
         assert_eq!(waitset_of(&mut registry, set).child_count(), 1);
     }
 
@@ -1012,7 +1019,7 @@ mod tests {
         }
         let overflow = registry.register(Box::new(DummyFuture(GHOST_OWNER)), FutureOwner::Kernel).unwrap();
         assert_eq!(registry.attach(set, overflow, 0), Err(AttachError::Full));
-        assert!(registry.parents_of[overflow.index() as usize].is_empty());
+        assert_eq!(parent_links(&registry, overflow), 0);
     }
 
     #[test]
@@ -1082,7 +1089,7 @@ mod tests {
 
         registry.notify(child);
 
-        assert!(registry.parents_of[child.index() as usize].is_empty());
+        assert_eq!(parent_links(&registry, child), 0);
     }
 
     #[test]
@@ -1096,7 +1103,7 @@ mod tests {
 
         assert_eq!(waitset_of(&mut registry, set).child_count(), 0);
         assert!(matches!(registry.take_pending(set), WaitsetTake::Empty));
-        assert!(registry.parents_of[child.index() as usize].is_empty());
+        assert_eq!(parent_links(&registry, child), 0);
 
         for _ in 2..PAGE_SLOTS {
             registry.register(Box::new(DummyFuture(GHOST_OWNER)), FutureOwner::Kernel).unwrap();
@@ -1130,7 +1137,7 @@ mod tests {
         assert!(waitset_of(&mut registry, fresh_set).has_child(fresh));
         assert!(!waitset_of(&mut registry, fresh_set).is_completed());
         assert!(matches!(registry.take_pending(old_set), WaitsetTake::Empty));
-        assert_eq!(registry.parents_of[fresh.index() as usize].len(), 1);
+        assert_eq!(parent_links(&registry, fresh), 1);
     }
 
     #[test]
@@ -1160,7 +1167,7 @@ mod tests {
         assert_eq!(registry.detach(set, child), Err(AttachError::ChildInvalid));
 
         assert_eq!(registry.attach(set, child, 2), Ok(()));
-        assert_eq!(registry.parents_of[child.index() as usize].len(), 1);
+        assert_eq!(parent_links(&registry, child), 1);
         registry.notify(child);
         expect_event(registry.take_pending(set), child, 2);
     }
@@ -1195,7 +1202,7 @@ mod tests {
 
         assert_eq!(services().task_manager.borrow().get_state(handle), TaskState::Ready);
         assert!(matches!(registry.take_pending(set), WaitsetTake::Gone));
-        assert!(registry.parents_of[child.index() as usize].is_empty());
+        assert_eq!(parent_links(&registry, child), 0);
         registry.drop_waitset(set);
     }
 
@@ -1331,7 +1338,7 @@ mod tests {
 
         assert_eq!(discarded, alloc::vec![child]);
         assert_eq!(waitset_of(&mut registry, foreign_set).child_count(), 0);
-        assert!(registry.parents_of[child.index() as usize].is_empty());
+        assert_eq!(parent_links(&registry, child), 0);
     }
 
     #[test]
