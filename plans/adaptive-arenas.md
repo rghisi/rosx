@@ -157,3 +157,9 @@ Preconditions for every timing run: `uptime` load against `nproc`, and
 Shrinking and freeing empty pages, a hierarchical-bitmap free finder, per-subsystem cap tuning,
 per-group quotas, any change to the `Handle` bit layout, and an O(1) `by_owner` removal (the current
 `retain` is linear per consume). Each is a follow-up once the Step 5 numbers exist.
+
+## Friction log
+
+Step 0 | harness first compile: `FutureHandle` imported from `crate::future` (private re-export) and `&core::any::Any` missing `dyn` in the scratch module | TASK | 1 round
+Step 0 | harness first run: 3 of 5 bench tests panicked (churn kept 1 live per 3 adds so 2 000 > 1 024 cap; connections curve needs the 257th mailbox slot the service binding itself takes) | TASK | 1 round
+
