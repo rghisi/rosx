@@ -9,6 +9,13 @@ fn kernel_boots() {
 }
 
 #[test]
+fn nic_less_boot_reports_the_exited_network_service() {
+    let session = QemuSession::spawn();
+    session.expect_output("[INIT] NE2K service exited before ready", Duration::from_secs(60));
+    session.expect_output("rose>", Duration::from_secs(60));
+}
+
+#[test]
 fn shell_banner_and_prompt() {
     let session = QemuSession::spawn();
     session.expect_output("ROSE Shell", Duration::from_secs(60));
