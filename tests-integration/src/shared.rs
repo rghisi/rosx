@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
-use std::time::Duration;
+use std::env;
+use std::time::{Duration, Instant};
 
 use crate::qemu::QemuSession;
 
@@ -75,11 +76,30 @@ impl SharedSession {
     }
 
     pub fn case(&mut self, name: &str, body: impl FnOnce(&mut QemuSession)) {
+        let timing = env::var_os("ROSX_SHARED_TIMING").is_some_and(|value| !value.is_empty());
         if self.last_case != "boot" {
+            let reset_started = Instant::now();
             self.reset();
+            if timing {
+                eprintln!(
+                    "[shared-timing] {}/{} reset {:?}",
+                    self.group,
+                    name,
+                    reset_started.elapsed()
+                );
+            }
         }
         self.last_case = name.to_string();
+        let body_started = Instant::now();
         body(&mut self.session);
+        if timing {
+            eprintln!(
+                "[shared-timing] {}/{} body {:?}",
+                self.group,
+                name,
+                body_started.elapsed()
+            );
+        }
     }
 
     pub fn reset(&mut self) {

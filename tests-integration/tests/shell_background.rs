@@ -1,26 +1,29 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tests_integration::qemu::QemuSession;
 use tests_integration::shared::SharedSession;
 
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(15);
-const REAP_PASS_TIMEOUT: Duration = Duration::from_secs(10);
-const REAP_PASSES: usize = 5;
+const REAP_POLL: Duration = Duration::from_millis(400);
+const REAP_BUDGET: Duration = Duration::from_secs(15);
 
 // The shell reaps finished background jobs before every prompt, so a report can
 // surface on a later launch line. `from` must therefore be a mark taken before
 // the launches the reports belong to, never the helper's own entry point.
 fn reap_pass_until(session: &mut QemuSession, from: usize, needle: &str) {
-    for _pass in 1..=REAP_PASSES {
+    let deadline = Instant::now() + REAP_BUDGET;
+    let mut passes = 0;
+    while Instant::now() < deadline {
+        passes += 1;
         session.send_key('\n');
-        let arrived = session
-            .wait_until_since(from, |content| content.contains(needle), REAP_PASS_TIMEOUT)
-            .is_ok();
-        if arrived {
+        if session
+            .wait_until_since(from, |content| content.contains(needle), REAP_POLL)
+            .is_ok()
+        {
             return;
         }
     }
     panic!(
-        "no {needle:?} after {REAP_PASSES} prompt reaps:\n{}",
+        "no {needle:?} after {passes} prompt reaps:\n{}",
         session.content_since(from)
     );
 }

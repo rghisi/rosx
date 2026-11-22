@@ -402,8 +402,10 @@ S5, commit (this one): docs and records — AGENTS.md invariant, `kstatsd-and-ro
 noted in `plans/rom-filesystem-vfs.md`, decision `kernel-parses-the-initrd-rom`, todo
 `init-program-name-as-a-kernel-parameter`.
 
-V execution record (2026-11-22): quiet host verified (load 0.37 on 4 cores, no live suites)
-before `cargo xtask verify` — exit 0: gate green, build + integration on both arches, boot-test
+V execution record (2026-11-22): quiet host verified (load 0.37 on 4 cores, no live suites;
+re-confirmed by process name — `pgrep -x 'qemu-system-x86'`, since comm truncates at 15 chars so
+the full-binary `pgrep -x` form is vacuous) before `cargo xtask verify` — exit 0: gate green,
+build + integration on both arches, boot-test
 26 checkpoints / 0 failures / 0 skipped, `real-kernel-boot32` and `real-kernel-boot64` both
 PASS (verdict read from the log file, rc recorded separately). Deliberate-failure proofs, each
 on a copy of the built production disk (originals untouched): deleting `INITRD.BIN` from the
