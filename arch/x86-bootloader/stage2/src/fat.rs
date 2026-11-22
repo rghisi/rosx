@@ -1,7 +1,6 @@
 use fs_core::engine::Engine;
 use fs_core::engine::MetadataView;
 use fs_core::error::FsError;
-use rosx_boot_common::crc32::crc32;
 use rosx_boot_common::memnorm::place_payload;
 use rosx_boot_common::DEBUG_EXIT_FAILURE;
 use rosx_boot_common::debug_exit;
@@ -40,7 +39,6 @@ pub fn place_initrd(
                     size: 0,
                     end: kernel_end,
                 },
-                crc32(&[]),
             );
         }
         Err(error) => refuse_engine(console, error),
@@ -75,17 +73,14 @@ pub fn place_initrd(
             size: metadata.size(),
             end: placement.end,
         },
-        crc32(staging),
     )
 }
 
-fn report(console: &BroadcastConsole<'_>, payload: InitrdPlacement, checksum: u32) -> InitrdPlacement {
+fn report(console: &BroadcastConsole<'_>, payload: InitrdPlacement) -> InitrdPlacement {
     console.write_str("[INITRD] addr=");
     console.write_hex(payload.address, 8);
     console.write_str(" size=");
     console.write_dec(payload.size);
-    console.write_str(" crc32=");
-    console.write_hex(u64::from(checksum), 8);
     console.write_line("");
     payload
 }

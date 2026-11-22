@@ -858,12 +858,13 @@ fn verdict_mismatch(checkpoint: &BootCheckpoint, outcome: &BootOutcome) -> Optio
 }
 
 fn verify_initrd(line: &str, console: &str) -> Option<String> {
-    let mut fields = line.split_whitespace();
-    let (_, _) = (fields.next()?, fields.next()?);
-    let (Some(addr), Some(size), Some(printed)) = (
-        parse_hex_field(fields.next()?, "addr="),
-        parse_dec_field(fields.next()?, "size="),
-        parse_hex_field(fields.next()?, "crc32="),
+    let (Some(addr), Some(size)) = (
+        line.split_whitespace()
+            .nth(1)
+            .and_then(|field| parse_hex_field(field, "addr=")),
+        line.split_whitespace()
+            .nth(2)
+            .and_then(|field| parse_dec_field(field, "size=")),
     ) else {
         return Some(format!("malformed [INITRD] line: {line}"));
     };
@@ -893,11 +894,6 @@ fn verify_initrd(line: &str, console: &str) -> Option<String> {
         }
         u64::from(crc32_ieee(&boot_image::initrd_payload()))
     };
-    if printed != host {
-        return Some(format!(
-            "stage2 crc32 {printed:#010x} differs from the host-seeded {host:#010x}"
-        ));
-    }
     let Some(kernel_printed) = console
         .lines()
         .find_map(|candidate| candidate.strip_prefix("initrd_crc32: "))
@@ -907,9 +903,9 @@ fn verify_initrd(line: &str, console: &str) -> Option<String> {
         );
     };
     let kernel_crc = u64::from_str_radix(kernel_printed.trim_start_matches("0x"), 16).ok()?;
-    if kernel_crc != printed {
+    if kernel_crc != host {
         return Some(format!(
-            "kernel-recomputed crc32 {kernel_crc:#010x} differs from the stage2 {printed:#010x}"
+            "kernel-recomputed crc32 {kernel_crc:#010x} differs from the host-seeded {host:#010x}"
         ));
     }
     None
