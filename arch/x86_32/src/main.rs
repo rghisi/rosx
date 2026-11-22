@@ -37,19 +37,14 @@ fn panic(info: &PanicInfo) -> ! {
     handle_panic(info);
 }
 
-const MULTIBOOT_MAGIC: u32 = 0x2BADB002;
-
 #[unsafe(no_mangle)]
 extern "C" fn kernel_main(loader_magic: u32, loader_info: u32) -> ! {
     x86_generic::vga_buffer::init(0);
     kernel::platform::output::setup_default_output(&MULTIPLEXED_OUTPUT);
     let memory_blocks = if loader_magic == system::boot_info::BOOT_INFO_MAGIC {
         boot_info_memory(loader_info as usize)
-    } else if loader_magic == MULTIBOOT_MAGIC {
-        let raw_blocks = unsafe { x86_generic::multiboot::usable_memory(loader_info as *const u8) };
-        trim_to_safe_memory(raw_blocks)
     } else {
-        panic!("unknown boot magic: {loader_magic:#010x}");
+        panic!("unknown boot magic: {loader_magic:#010x}: the only supported loader is the RosX stage chain");
     };
     kernel::kernel::bootstrap(&memory_blocks, &MULTIPLEXED_OUTPUT);
     kernel::kprintln!("[KERNEL] Initializing");
@@ -120,22 +115,5 @@ fn empty_blocks() -> MemoryBlocks {
         blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),
         count: 0,
     }
-}
-
-fn trim_to_safe_memory(raw: x86_generic::multiboot::BootMemory) -> MemoryBlocks {
-    let safe_start = core::ptr::addr_of!(kernel_end) as usize;
-    let mut out = empty_blocks();
-    for region in raw.regions() {
-        if out.count == out.blocks.len() {
-            break;
-        }
-        let region_end = region.start + region.size;
-        let start = region.start.max(safe_start);
-        if start < region_end {
-            out.blocks[out.count] = MemoryBlock { start, size: region_end - start };
-            out.count += 1;
-        }
-    }
-    out
 }
 

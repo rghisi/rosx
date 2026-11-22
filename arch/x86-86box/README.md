@@ -1,10 +1,11 @@
 # arch/x86-86box — era-hardware verification for x86_32
 
-Data-and-scripts directory (no crate, no cargo membership): everything needed
-to verify the x86_32 port on modeled 1990s hardware — a real Award BIOS, a
-v1-only bootloader, an 8253/8259A on a SiS 496 chipset, an i486SX with no
-FPU — driven headlessly through the [86box-mcp](https://github.com/dafugg/86box-mcp)
-MCP server. Blueprint: `plans/x86-86box-integration-plan.md`; measured facts:
+Data directory (no crate, no cargo membership): everything needed
+to verify the x86_32 port on modeled 1990s hardware — a real Award BIOS, the
+custom stage-chain bootloader, an 8253/8259A on a SiS 496 chipset, an i486SX
+with no FPU — driven headlessly through the
+[86box-mcp](https://github.com/dafugg/86box-mcp) MCP server. Blueprint:
+`plans/x86-86box-integration-plan.md`; measured facts:
 `plans/x86_32-i486-impl.md` (M5 supplement).
 
 **Positioning:** 86Box evidence is *emulator evidence*. It never marks an
@@ -16,21 +17,22 @@ era-verification path and the hardware dry-run ground. CI cannot run 86Box
 ## Layout
 
 ```
-configs/     era VM template (verified byte-for-byte with the session) + board table
-scripts/     fetch / era-media recipes / stage ISA audit — all unprivileged except the grub container
-assets/      grub-legacy.toml: provenance manifest (deb URL + sha256, stage hashes, container digests, pins)
-mcp/         opencode-86box.jsonc: MCP server registration snippet
-docs/        gotchas.md (every trap is mandatory), evidence-checklist.md (M5 item → tool sequence)
+configs/   era VM templates (verified byte-for-byte with the session) + board table
+mcp/       opencode-86box.jsonc: MCP server registration snippet
+docs/      gotchas.md (every trap is mandatory), evidence-checklist.md (item -> tool sequence)
 ```
+
+(The GRUB Legacy era tooling — `scripts/`, `assets/grub-legacy.toml` — was
+retired with phase R; the last kernel and media carrying it are tagged
+`last-multiboot-kernel`.)
 
 ## Prerequisites (host)
 
 - Docker Engine, operator in group `docker` (`usermod -aG docker $USER`).
   **In agent shells wrap invocations as `sg docker -c '...'`** — an
   already-running session's process groups never pick up the new group.
-- Unprivileged media tools: `sfdisk` (util-linux), `mtools`
-  (`mformat`/`mmd`/`mcopy`/`mdir`), `xorriso`, `curl`, `dpkg-deb`,
-  `objdump`. No loop devices anywhere in the flow.
+- Unprivileged media tools: `mtools` (the unified FAT boot disk is built
+  and inspected with them). No loop devices anywhere in the flow.
 - 86Box ROM set (the set the 86Box release ships, 477 machines) under
   `~/.local/share/86Box/roms`. **Licensed BIOS binaries — never commit
   them.** Manual download from the 86Box project; this path is what the
@@ -46,8 +48,8 @@ sg docker -c ./docker/build.sh                     # image "86box-mcp"
 ```
 
 `docker/build.sh` configures `-D AUTOMATION=ON -D DISCORD=OFF -D MUNT=OFF
--D SOUNDCANVAS=OFF` → headless `86Box` with the automation socket. For the
-Multiboot boundary probes (breakpoints, `%ebx` reads) also enable the GDB
+-D SOUNDCANVAS=OFF` → headless `86Box` with the automation socket. For
+handoff probes (breakpoints, register reads) also enable the GDB
 stub — an incremental reconfigure of the same cache:
 
 ```sh
@@ -55,9 +57,9 @@ sg docker -c "docker run --rm -v $PWD:$PWD -w $PWD 86box-mcp \
   sh -c 'cmake -D GDBSTUB=ON .cache/build && cmake --build .cache/build'"
 ```
 
-Verify `AUTOMATION`/`GDBSTUB`/`QT` in `.cache/build/CMakeCache.txt` after
-any reconfigure — see `docs/gotchas.md`. Pinned commits and the expected
-image id live in `assets/grub-legacy.toml`. **Mount discipline:** the
+Verify `AUTOMATION`/`QT` (and `GDBSTUB` if built) in
+`.cache/build/CMakeCache.txt` after any reconfigure — see
+`docs/gotchas.md`. **Mount discipline:** the
 container sees only `$HOME`, `/tmp`, and the 86box-mcp repo — keep VM dirs
 and all media under one of them.
 
@@ -70,35 +72,23 @@ inside tool calls, making boots deterministic and interruptible.
 
 ## Era media
 
-```sh
-cargo xtask build x86_32                     # kernel + apps + ROM
-cargo xtask era-image x86_32                 # both artifacts below, one command
-```
-
-Or drive the scripts directly:
+The era media **is** the production artifact — no parallel bootloader stack:
 
 ```sh
-stages=$(arch/x86-86box/scripts/fetch-grub-legacy.sh | tail -1)
-arch/x86-86box/scripts/build-legacy-iso.sh \
-    target/rosx-i486/release/rosx-x86_32 "$stages" rosx-grub-legacy.iso
-arch/x86-86box/scripts/build-legacy-hdd.sh \
-    target/rosx-i486/release/rosx-x86_32 "$stages" rosx-hdd.img
+cargo xtask build x86_32    # kernel + apps + ROM + target/rosx-i486-boot-disk.img
 ```
 
-- The **ISO** (El Torito, `stage2_eltorito`) passes a sizes-only MBI and is
-  the `mem_upper`-fallback exercise. The 1996 Award BIOS on `486sp3c` has
-  no El Torito — boot it with the QEMU control:
-  `qemu-system-i386 -cpu 486 -m 8 -cdrom <iso> -boot order=d -debugcon stdio -no-reboot -display none`.
-- The **HDD** (FAT16 + MBR stage1 + embedded `fat_stage1_5`) is the AGENTS.md
-  hardware recipe executed literally — the era-authentic medium for this
-  board class. Its grub `setup` runs in the pinned `i386/debian:bullseye`
-  container (the i386 grub shell needs `libtinfo5`/`libncurses5`); no
-  `--privileged`, no loop devices — `device (hd0) <file>` maps a BIOS disk
-  onto a plain file.
-- Both artifacts are guarded by hash-verified, pinned sources: GRUB Legacy
-  **0.97-67** is the last 486-clean release (0.97-70 already drifts).
-  `arch/x86-86box/scripts/check-isa-boot.sh` (or
-  `cargo xtask check-isa x86_32 --stages`) re-audits the stages; CI runs it.
+`target/rosx-i486-boot-disk.img` (64 MiB: MBR stage1, stage2-32, a FAT16
+ROSXBOOT partition holding `KERNEL.ELF` and the ROM) is copied whole into
+the VM directory as the file the cfg names in `hdd_01_fn`. It boots as
+shipped; growing it (`truncate -s 512483328`) only exercises big-CHS
+CMOSes. `cargo xtask check-isa bootloader` audits the two stage ELFs and
+the disk build re-audits the flat binaries — the same gates CI runs.
+
+The GRUB Legacy media (El Torito ISO, `fat_stage1_5` HDD) and its tooling
+were retired with phase R; the last kernel and media carrying the
+Multiboot path are tagged `last-multiboot-kernel`
+(`docs/decisions/multiboot-era-media-retirement-trigger-fired.md`).
 
 ## VM bring-up (via MCP tools)
 
@@ -106,8 +96,9 @@ arch/x86-86box/scripts/build-legacy-hdd.sh \
 2. `vm_create(vm_dir=<path under $HOME or /tmp>,
    config=<repo>/arch/x86-86box/configs/486sx-pvi486sp3.cfg)` — the server
    applies its primed CMOS NVR for `486sp3c`, so first boot needs no SETUP.
-3. Copy the built `hdd.img` into the VM directory as `hdd.img` (the cfg's
-   `hdd_01_fn`), or use `cdrom_insert`/`floppy_insert` for the other media.
+3. Copy the built unified disk into the VM directory under the name the
+   cfg's `hdd_01_fn` expects, or use `cdrom_insert`/`floppy_insert` for
+   experimental media.
 4. `vm_start(held=true, binary=<86box-mcp>/docker/86box.sh)` — the binary
    must be the container launcher (docs/gotchas.md); with `debugger=true`
    the GDB stub joins for the boundary probes. `step ms:2000` → POST screen
@@ -167,12 +158,37 @@ boot-unit normalization (`plans/bootloader/14-era-thunk-stack.md` §6):
   screen, before `[STAGE1]` — and the chain adds none (run dir
   `target/86box/runs/20261118T214900Z-ecs486/`).
 
+## Production chain on era media (phase V)
+
+Distinct bar from the `boot32.img` fake-kernel proof above: here the
+**shipped artifact** — the unified disk (`target/rosx-i486-boot-disk.img`,
+grown to the cfg geometry for the big-CMOS boards) with stage1 + stage2 +
+`KERNEL.ELF` and the real release kernel — boots to `rose>`.
+
+| board | media | verdict | run dir |
+|---|---|---|---|
+| Award 4.51 `486sp3c` | unified disk, 512 MB grown | `media=chs`, E820 accepted, `rose>` x3 | `target/86box/runs/20261121T152239Z-486sp3c-chain/` |
+| AMI 4.01 `vect486vl` | unified disk, 512 MB grown | `media=chs`, **e820+e801 refused — INT 88h synthesis proven**; first boot exposed the VLSI phantom-slave defect (fixed in atad, see `docs/gotchas.md`), `rose>` x3 | `target/86box/runs/20261121T231200Z-vect486vl/` |
+| Phoenix 4.04 PnP `ecs486` | unified disk, 512 MB grown | `media=lba` via EDD, **stage1 survives the `DL=0x00` hand-off**, e801 synthesis proven, `rose>` x4 | `target/86box/runs/20261121T233107Z-ecs486/` |
+| Award 4.51 `486sp3c` | **UN-GROWN 64 MiB artifact** (131/16/63) | the shipped image bytes boot as-is: `media=chs`, mount ok, `rose>` x2 — the growth step above is a rehearsal artifact, not a boot requirement | `target/86box/runs/20261121T234310Z-486sp3c-ungrown/` |
+
+With these three boards both memory-synthesis fallback branches (e801
+and e88) and both media paths (chs and lba) of the production chain are
+proven on era firmware. Bring-up notes: the AMI template against the
+2026-11-18 8 MB primed NVR halts once with `CMOS memory size mismatch`
+— SETUP -> STANDARD CMOS SETUP -> WRITE TO CMOS AND EXIT (Y) fixes it
+permanently; the Phoenix template declares `fdd_01_type = 35_2hd`
+because its CMOS expects a 1.44 MB drive A (`Incorrect Drive A type —
+Press F1` without one). Templates: `configs/ami-486-vectra.cfg`,
+`configs/phoenix-486-ecs.cfg`. Phoenix POST performs one soft reset
+before the MBR runs — the chain adds none.
+
 ## Evidence run
 
 Follow `docs/evidence-checklist.md` — it maps every hardware-checklist
 item that has an emulator analog to its exact tool sequence, and defines
 the run directory (`target/86box/runs/<UTC timestamp>-<machine>/`:
-`screen.txt`, `screenshot.png`, `vm-info.json`, `mbi.hex`, `facts.md`).
+`screen.txt`, `screenshot.png`, `vm-info.json`, `facts.md`).
 `facts.md` opens with the sentence *emulator runs never flip a silicon
 checkbox* by construction.
 

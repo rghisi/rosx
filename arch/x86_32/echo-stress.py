@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""x86_32 keystroke-echo stress gate: boot the multiboot kernel in QEMU, wait
-for the shell prompt, inject a 10-key burst over the monitor socket, and
+"""x86_32 keystroke-echo stress gate: boot the production chain on the
+unified disk in QEMU, wait for the shell prompt, inject a 10-key burst over
+the monitor socket, and
 require every key to echo back. Runs BOOTS consecutive VM boots; exit code is
 nonzero if any run loses a keystroke. This is the M2 acceptance gate of
 plans/x86_32-parity-plan.md and the seed of the M6 integration-test harness."""
@@ -15,9 +16,9 @@ import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
-KERNEL = os.environ.get(
-    "ROSX_KERNEL_ELF",
-    os.path.join(WORKSPACE_ROOT, "target", "rosx-i486", "debug", "rosx-x86_32"),
+DISK = os.environ.get(
+    "ROSX_BOOT_DISK",
+    os.path.join(WORKSPACE_ROOT, "target", "rosx-i486-boot-disk.img"),
 )
 QEMU = os.environ.get("QEMU_BINARY", "qemu-system-i386")
 BOOTS = int(os.environ.get("ECHO_BOOTS", "10"))
@@ -92,7 +93,7 @@ def run_once():
     tmp = tempfile.mkdtemp(prefix="rosx-echo-stress-")
     mon_path = os.path.join(tmp, "monitor.sock")
     proc = subprocess.Popen(
-        [QEMU, "-kernel", KERNEL, "-debugcon", "stdio", "-display", "none",
+        [QEMU, "-drive", "format=raw,file={}".format(DISK), "-debugcon", "stdio", "-display", "none",
          "-monitor", "unix:{},server=on,wait=off".format(mon_path),
          "-no-reboot", "-no-shutdown", "-serial", "none", "-parallel", "none"],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -132,8 +133,8 @@ def run_once():
 
 
 def main():
-    if not os.path.exists(KERNEL):
-        print("missing kernel ELF: {}\nbuild it with `cargo xtask build x86_32`".format(KERNEL))
+    if not os.path.exists(DISK):
+        print("missing unified boot disk: {}\nbuild it with `cargo xtask build x86_32`".format(DISK))
         return 1
     failed = 0
     for run in range(1, BOOTS + 1):
