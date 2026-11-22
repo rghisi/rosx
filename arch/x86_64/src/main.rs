@@ -67,10 +67,18 @@ extern "C" fn kernel_main(loader_magic: u64, loader_info: u64) -> ! {
     kprintln!("[KERNEL] Initializing");
     let mut kernel = Kernel::new(&KCONFIG);
     kernel.setup();
-    static ROM_IMAGE: &[u8] = include_bytes!("../../../target/rosx-user/rom.img");
-    kernel::rom::init(ROM_IMAGE);
+    let initrd = boot_info_initrd(loader_info as usize);
+    let files = kernel::rom::validate(initrd)
+        .unwrap_or_else(|error| panic!("initrd is not a ROM image: {error:?}"));
+    kprintln!(
+        "[ROM] addr={:#x} size={} files={}",
+        initrd.as_ptr() as usize,
+        initrd.len(),
+        files
+    );
+    kernel::rom::init(initrd);
     let _ = kernel.schedule(FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main), FutureOwner::Kernel);
-    static INIT_ELF: &[u8] = include_bytes!("../../../target/rosx-user/release/init");
+    let init_elf = kernel::rom::program("init").unwrap_or_else(|| panic!("initrd carries no init"));
     let boot_plan = BootPlan::new()
         .service("rom:atad", ata_protocol::wire::SERVICE_NAME)
         .service("rom:blockd", block_protocol::manager::wire::SERVICE_NAME)
@@ -86,7 +94,7 @@ extern "C" fn kernel_main(loader_magic: u64, loader_info: u64) -> ! {
         .service("/ne2kd", "NE2K")
         .exec("/shell", &[])
         .exec("rom:shell", &[]);
-    if let Err(error) = kernel.load_elf_program("init", INIT_ELF, boot_plan.encode(), FutureOwner::Kernel) {
+    if let Err(error) = kernel.load_elf_program("init", init_elf, boot_plan.encode(), FutureOwner::Kernel) {
         panic!("init ELF rejected: {error:?}");
     }
 
@@ -97,6 +105,16 @@ extern "C" fn kernel_main(loader_magic: u64, loader_info: u64) -> ! {
 
 unsafe extern "C" {
     static kernel_phys_end: u8;
+}
+
+fn boot_info_initrd(address: usize) -> &'static [u8] {
+    match unsafe {
+        kernel::platform::bootinfo::initrd(address, system::boot_info::BootArch::X86_64)
+    } {
+        Ok(Some(slice)) => slice,
+        Ok(None) => panic!("no initrd (INITRD.BIN missing on the boot volume)"),
+        Err(error) => panic!("initrd refused: {error:?}"),
+    }
 }
 
 fn boot_info_memory(address: usize) -> MemoryBlocks {

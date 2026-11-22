@@ -12,6 +12,7 @@ const BOOTABLE: u8 = 0x80;
 const FAT16_TYPE: u8 = 0x06;
 
 pub const CHAIN_KERNEL_VOLUME_NAME: &str = "KERNEL.ELF";
+pub const CHAIN_INITRD_VOLUME_NAME: &str = "INITRD.BIN";
 
 pub struct FatDisk {
     image: PathBuf,
@@ -45,6 +46,18 @@ impl FatDisk {
         std::fs::write(&seed, payload).expect("write the seed fixture");
         self.copy(&seed, destination);
         std::fs::remove_file(&seed).expect("drop the seed fixture");
+    }
+
+    pub fn install_initrd(&self) {
+        let rom = user_rom_path();
+        if !rom.is_file() {
+            panic!(
+                "missing ROM image {}; run `cargo xtask build {}` first",
+                rom.display(),
+                Arch::current().name()
+            );
+        }
+        self.copy(&rom, &format!("::{CHAIN_INITRD_VOLUME_NAME}"));
     }
 }
 
@@ -161,6 +174,7 @@ pub fn stamp_bootable(image: &Path, kernel_elf: &Path) {
 pub fn create_boot_master(dir: &Path, kernel_elf: &Path) -> FatDisk {
     let disk = create_bootable(dir, "boot-disk.img", BOOT_DISK_BYTES);
     copy_built_els(&disk);
+    disk.install_initrd();
     chain::mcopy_file(
         disk.path(),
         chain::PARTITION_START_LBA,
@@ -233,6 +247,10 @@ fn user_release_dir() -> PathBuf {
         .join("target")
         .join(Arch::current().user_dir_name())
         .join("release")
+}
+
+fn user_rom_path() -> PathBuf {
+    user_release_dir().with_file_name("rom.img")
 }
 
 fn built_els() -> Vec<(String, PathBuf)> {

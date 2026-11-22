@@ -174,6 +174,12 @@ CI gains a `bootloader` job (build all artifacts, run audits, run `cargo xtask b
   guards the flow; era media untouched.
 - **rom.img as initrd** (decision D5): load `/boot/rom.img` from disk, kernel registers the ROM
   from the initrd, drop the `include_bytes!` coupling and the build-order asserts.
+  **Closed 2026-11-22** by `plans/rom-as-initrd.md`: the ROM ships as `INITRD.BIN` at the volume
+  root (not `/boot/rom.img` — loading two root files keeps fewer FAT handles open than nesting),
+  the kernel parses the image itself from `BootInfo` and boots `init` from it, and the
+  `include_bytes!` coupling and build-order asserts are gone. The planned crc32 handshake died
+  with S2a: a load-time checksum protected nothing, containment + format validation are the
+  real guards.
 - **Era hardware.** Extend the AGENTS.md hardware checklist to the custom chain (real-drive INT 13
   timing margins, A20 via 8042, E820/E801/AH=88 on period BIOSes, 8250-vs-16550 FIFO tolerance);
   decide whether the custom chain replaces GRUB Legacy on 486 silicon.

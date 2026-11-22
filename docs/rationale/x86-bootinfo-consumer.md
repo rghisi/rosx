@@ -29,3 +29,19 @@ kernel that allocates over its own image. The treaty itself is frozen
 (`docs/architecture/boot-plan.md`, `system/src/boot_info.rs`): if a future producer
 bumps `BOOT_INFO_VERSION`, this consumer must reject it loudly, and the dual-magic
 entry in the arch crate is where the failure becomes visible on both console streams.
+
+## The initrd slice
+`initrd` adds one more `from_raw_parts`: the initrd bytes themselves, over the range
+the BootInfo names. Its safety contract is stronger than the header's: the producer
+(stage2) keeps those bytes readable, and the check that the whole physical range lies
+inside one `KernelAndModules` region of the published map is what proves the kernel
+allocator can never hand that memory out — the map never offers the region as `Usable`.
+The x86_64 address arrives through the higher-half direct-map alias, so the containment
+test subtracts `HIGHER_HALF_OFFSET` before comparing against the physical map.
+What breaks if loosened: a wild or aliased initrd address becomes a live slice the
+allocator may also write into — silent corruption of the ROM the kernel boots from.
+Width is enforced by `usize::MAX` of the compiled target: exact on x86_32, vacuous on
+the host, so the host tests prove the 32-bit range logic by value while the x86_32 and
+x86_64 QEMU boots are the proof that the address spaces really carry the slice.
+(The x86_64 higher-half acceptance is host-tested on metadata only; the readable
+alias itself is proven by the QEMU boot.)

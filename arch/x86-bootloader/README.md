@@ -153,8 +153,10 @@ command line.
 
 The generic verifiers read `[MEM] entries=` and `[INITRD] addr=` off the
 debug-port stream: the published map must re-derive from the host-computed seed,
-and the initrd crc32 must match three ways (stage2 banner, fake-kernel
-recompute, host seed) — so a passing row proves the guest read real bytes.
+and the initrd crc32 must match two ways (host seed against the fake kernel's
+independent recompute) — so a passing row proves the guest read real bytes.
+Stage2 stopped printing its own CRC: the kernel's parse is the real proof and
+the bitwise loop over a production-sized payload was pure boot-time cost.
 
 ## Era context
 
