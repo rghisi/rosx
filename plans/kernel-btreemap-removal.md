@@ -50,9 +50,14 @@ an arena entry. Maintaining them is what makes `evict`, `consume_inner` and `dis
 3. **`by_owner`, `by_connection`, `by_client` are deleted, not replaced.** Reclaim paths scan the owning
    arena with `visit`. Per-task teardown batches the data-object sweep into one pass.
 4. **Mailbox waiters move into `Mailbox`.** The parked-receiver list is a property of the mailbox.
-5. **Timer is a `Vec<(deadline, FutureHandle)>` sorted descending by deadline**, so expired entries are at
-   the tail. Insertion goes before existing equal deadlines (`partition_point(|e| e.0 > deadline)`) so
-   same-deadline wakeups stay FIFO.
+5. **Timer is an `alloc::collections::BinaryHeap` (available in `no_std`, no new dependency)** of
+   `Reverse(entry)`, where the entry's `Ord` compares only `(deadline, seq)` and carries the
+   `FutureHandle` as payload. `seq` is a `u64` counter that keeps same-deadline wakeups FIFO. The timer is
+   a priority queue, not a map: it needs insert, pop-everything-due and discard-by-handle. Deadlines are
+   nearly monotonic, so a plain binary search tree would degenerate and a balanced one costs too much code.
+   A standalone measurement (host x86_64, opt-level 2) put one `BTreeMap` instantiation at about 14 KB of
+   `.text` against about 1.5 KB for the heap timer; the figure is indicative only, Step 0 measures the
+   kernel.
 6. **Registry is a sorted `Vec<(String, IpcBindingHandle)>`** with binary search.
 7. **`yield_info` and `outstanding` are sparse `Vec`s keyed by `TaskHandle`**, scanned linearly or by
    binary search. `yield_info` is not collapsed into a single `Option`: production code records and
@@ -87,12 +92,12 @@ listed separately under "allocations".
 | `IpcDataManager::release` | O(log Wr + C + D) | **O(log Wr)** | `evict` today walks every `by_connection` list |
 | Mailbox park / `push_back` wake | O(log M) | **O(1)** | the mailbox is already borrowed |
 | `MlfqStrategy::record_yield` / `requeue_after_run` | O(log Y) | **O(Y)**, Y ≤ 1 | production: no lookup cost |
-| `TimerManager::pop_expired`, every scheduler step | O(log S + min(k_t, S − k_t)) | **O(1 + k_t)** | nothing due is a single comparison at the tail |
-| `TimerManager::add_sleep` | O(log S) | O(log S) search + **O(S)** shift | S ≤ 1024 entries of 16 B; allocation-free once warm |
+| `TimerManager::pop_expired`, every scheduler step | O(log S + min(k_t, S − k_t)) | **O(1)** when nothing is due, else **O(k_t · log S)** | `peek` is a single comparison |
+| `TimerManager::add_sleep` | O(log S) | **O(1)** amortised for increasing deadlines, O(log S) worst | allocation-free once warm; no shifting |
 | `IpcManager::connect` | O(L log B + log T) | **O(L log B)** | no `by_client` entry |
 
-`add_sleep` is the one hot-path operation whose worst case grows: a shift of at most 16 KB. It is a
-`memmove` of a sorted tail, and sleepers are usually few.
+No hot-path operation has a worse worst case than today. The heap pays O(log S) per expired timer
+instead of the tree's bulk split, which only matters when many sleepers expire in one step.
 
 ### Teardown and cold paths
 
@@ -106,7 +111,7 @@ listed separately under "allocations".
 | `close_connections_of(task)` | O(log T + c·(…) + D) | O(32·p_c + 32·p_d + c) | batched: one pass over data objects, one over connections |
 | `MailboxManager::remove` | O(log M + w) | O(w) | |
 | `discard_futures` (mailbox) | O(M_w·w·m) for m orphans | O(32·p_m + Σw·m) | outer loop visits every mailbox slot, not only those with waiters |
-| `discard_futures` (timer) | O(S·m) | O(S·m) | unchanged |
+| `discard_futures` (timer) | O(S·m) | O(S·m + S) | `retain` then heap rebuild; cold path |
 | `bind_service` | O(L log B) | O(L log B) + O(B) shift | boot-time only |
 | `on_task_terminate` | O(queue length) | O(queue length) | unchanged |
 
@@ -176,9 +181,11 @@ Same preconditions as the adaptive-arenas plan: quiet host (`uptime` against `np
 
 ## Step 3 — timer and service registry
 
-- `TimerManager` as a descending sorted `Vec`; `registry` as a sorted `Vec` with binary search.
+- `TimerManager` as a `BinaryHeap<Reverse<TimerEntry>>` with a `(deadline, seq)` `Ord` that ignores the
+  handle; `registry` as a sorted `Vec` with binary search.
 - Tests: FIFO order among equal deadlines, nothing due returns `None` without allocating, partial expiry,
-  `discard_futures`, duplicate service names still rejected, lookup of a missing name.
+  `discard_futures` keeps the heap valid and the order of the survivors, duplicate service names still
+  rejected, lookup of a missing name.
 - Gate: `cargo xtask check`.
 
 ## Step 4 — scheduler and budget scratch
@@ -186,6 +193,19 @@ Same preconditions as the adaptive-arenas plan: quiet host (`uptime` against `np
 - `yield_info` and `outstanding` become sparse `Vec`s (`outstanding` sorted, binary search; entry removed
   at zero).
 - Tests: the two-records-before-requeue case, termination with a pending record, budget refund to zero.
+- Gate: `cargo xtask check`.
+
+## Step 1b — optional: intrusive per-owner list
+
+Only if the Step 0 and Step 1 numbers show the `discard_owned` scan is too slow (see the
+`reap-scan-latency-budget` record); otherwise skip and delete this step from the plan.
+
+- Thread a doubly linked list through the future entries (`u16` prev and next, 4 B per entry) with a
+  small sparse `Vec` of per-task heads. `discard_owned` becomes O(k), `consume_inner` stays O(1), and no
+  tree or map comes back.
+- Cost: an index to keep in sync again, which is the risk this plan otherwise avoids.
+- Tests: link and unlink at head, middle and tail; consume of a future in the middle; teardown with a spare
+  completion; list empty after the last future is consumed.
 - Gate: `cargo xtask check`.
 
 ## Step 5 — cleanup, records, docs
@@ -210,17 +230,20 @@ Same preconditions as the adaptive-arenas plan: quiet host (`uptime` against `np
 
 - **Scan latency under IF=0.** Bounded by 1024 slots per scan, a few microseconds on a modern host and
   possibly around a millisecond on a 486 (unmeasured). Mitigation: the Step 6 numbers and the
-  `reap-scan-latency-budget` record; the follow-up is an intrusive per-owner list, not a re-introduced map.
+  `reap-scan-latency-budget` record; the follow-up is the optional Step 1b intrusive per-owner list, not a
+  re-introduced map.
 - **Allocation failure when a `Links` box is created** inside `FUTURE_SECTION`. `register_waiter` has no
   error path today either (a map insert would fail the same way); recorded, not changed here.
-- **Behaviour assumed by tests**: `discard_owned` order, FIFO among equal deadlines and among waiters
-  (`Vec::remove(0)` stays), indices handed out by the paged arena.
+- **Behaviour assumed by tests**: `discard_owned` order, FIFO among equal deadlines (the heap's `seq`
+  tiebreak) and among waiters (`Vec::remove(0)` stays), indices handed out by the paged arena.
+- **Heap growth** allocates and panics on out-of-memory like `Vec`; this is the same failure mode as a
+  `BTreeMap` insert today.
 - **Borrowing while scanning**: handles are collected first and mutated after, as `gc_task` does today.
 - **Size claim unverified**: if Step 0 shows the B-tree symbols are far smaller than the assessment's
   figure, re-evaluate before spending Steps 1 to 4 (Step 3 is the cheapest to land first).
 
 ## Out of scope
 
-Intrusive per-owner or per-group lists, an O(1) `discard_waiter` (a per-task `waiting_on` field), turning
+Intrusive per-group lists, an O(1) `discard_waiter` (a per-task `waiting_on` field), turning
 the mailbox waiter `Vec` into a `VecDeque`, shrinking paged arenas, and the `BTreeMap`s in user-space
 crates (`vfsd`, `ramfs`, `rxfs`), which are separate binaries.
