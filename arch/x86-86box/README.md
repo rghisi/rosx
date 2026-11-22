@@ -179,6 +179,7 @@ grown to the cfg geometry for the big-CMOS boards) with stage1 + stage2 +
 | Award 4.51 `486sp3c` | unified disk, 512 MB grown | `media=chs`, E820 accepted, `rose>` x3 | `target/86box/runs/20261121T152239Z-486sp3c-chain/` |
 | AMI 4.01 `vect486vl` | unified disk, 512 MB grown | `media=chs`, **e820+e801 refused — INT 88h synthesis proven**; first boot exposed the VLSI phantom-slave defect (fixed in atad, see `docs/gotchas.md`), `rose>` x3 | `target/86box/runs/20261121T231200Z-vect486vl/` |
 | Phoenix 4.04 PnP `ecs486` | unified disk, 512 MB grown | `media=lba` via EDD, **stage1 survives the `DL=0x00` hand-off**, e801 synthesis proven, `rose>` x4 | `target/86box/runs/20261121T233107Z-ecs486/` |
+| Award 4.51 `486sp3c` | **UN-GROWN 64 MiB artifact** (131/16/63) | the shipped image bytes boot as-is: `media=chs`, mount ok, `rose>` x2 — the growth step above is a rehearsal artifact, not a boot requirement | `target/86box/runs/20261121T234310Z-486sp3c-ungrown/` |
 
 With these three boards both memory-synthesis fallback branches (e801
 and e88) and both media paths (chs and lba) of the production chain are

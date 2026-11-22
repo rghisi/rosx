@@ -171,8 +171,6 @@ fn audit_elf_paths(
     Ok(failures)
 }
 
-pub const STAGE_FILES: [&str; 4] = ["stage1", "stage2", "fat_stage1_5", "stage2_eltorito"];
-
 pub fn audit_stage_disassembly(text: &str) -> Vec<Violation> {
     let mut offenders: BTreeMap<String, usize> = BTreeMap::new();
     for line in text.lines() {
@@ -285,27 +283,6 @@ pub fn audit_stage_binary(path: &Path) -> Result<Vec<String>, String> {
         .iter()
         .map(|v| format!("{} x{}", v.mnemonic, v.occurrences))
         .collect())
-}
-
-pub fn run_check_stages(stages_dir: &Path) -> Result<Vec<String>, String> {
-    if !stages_dir.is_dir() {
-        return Err(format!(
-            "no stage directory at {}; run arch/x86-86box/scripts/fetch-grub-legacy.sh first",
-            stages_dir.display()
-        ));
-    }
-    let mut failures = Vec::new();
-    for name in STAGE_FILES {
-        let stage = stages_dir.join(name);
-        if !stage.is_file() {
-            return Err(format!("missing stage binary {}", stage.display()));
-        }
-        let offenders = audit_stage_binary(&stage)?;
-        if !offenders.is_empty() {
-            failures.push(format!("{}: {}", stage.display(), offenders.join(", ")));
-        }
-    }
-    Ok(failures)
 }
 
 pub(crate) fn on_path(name: &str) -> Option<PathBuf> {
