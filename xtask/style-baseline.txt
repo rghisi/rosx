@@ -38,8 +38,8 @@ unsafe arch/x86-bootloader/common 9
 unsafe arch/x86-bootloader/fake-kernel-32 6
 unsafe arch/x86-bootloader/fake-kernel-64 8
 unsafe arch/x86-bootloader/stage2 34
-unsafe arch/x86-generic 25
-unsafe arch/x86_32 31
+unsafe arch/x86-generic 22
+unsafe arch/x86_32 30
 unsafe arch/x86_64 42
 unsafe kernel 300
 unsafe tests-integration 5
