@@ -4,8 +4,11 @@ use crate::task::TaskState::{Blocked, Created, Ready, Running, Terminated};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt::{Display, Formatter};
-use crate::elf::load_elf;
+use crate::elf::{inspect, load_into, ElfError};
 use crate::handle::FutureHandle;
+use crate::memory::memory_manager::MEMORY_MANAGER;
+use crate::memory::program_memory::ProgramMemory;
+use crate::platform::elf::ElfArch;
 use crate::task_stack::{StackObservation, TaskStack, STACK_GUARD_BYTES};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use system::args::{MAX_ARGUMENT_BYTES, MAX_ARGUMENT_COUNT};
@@ -242,46 +245,6 @@ pub fn new_entrypoint_task(entrypoint: usize, group: GroupId) -> SharedTask {
     Task::in_group("EPT", task_wrapper as *const () as usize, entrypoint, group)
 }
 
-pub struct ElfTaskContext {
-    elf_bytes: Vec<u8>,
-    argument_strings: Vec<u8>,
-    argument_pointers: Vec<*const u8>,
-}
-
-impl ElfTaskContext {
-    fn with_blob(elf_bytes: &[u8], argument_strings: Vec<u8>) -> Box<ElfTaskContext> {
-        let mut context = Box::new(ElfTaskContext {
-            elf_bytes: elf_bytes.to_vec(),
-            argument_strings,
-            argument_pointers: Vec::new(),
-        });
-        context.install_argument_pointers();
-        context
-    }
-
-    fn install_argument_pointers(&mut self) {
-        let base = self.argument_strings.as_ptr();
-        let mut start = 0;
-        while start < self.argument_strings.len() {
-            self.argument_pointers.push(unsafe { base.add(start) });
-            let argument_len = self.argument_strings[start..]
-                .iter()
-                .position(|byte| *byte == 0)
-                .unwrap();
-            start += argument_len + 1;
-        }
-        self.argument_pointers.push(core::ptr::null());
-    }
-
-    fn argc(&self) -> i32 {
-        self.argument_pointers.len() as i32 - 1
-    }
-
-    fn argv(&self) -> *const *const u8 {
-        self.argument_pointers.as_ptr()
-    }
-}
-
 pub fn validate_arguments_blob(blob: &[u8]) -> Result<(), ErrorCode> {
     if blob.len() > MAX_ARGUMENT_BYTES {
         return Err(ErrorCode::ElfArgumentLimitExceeded);
@@ -303,9 +266,76 @@ pub fn first_argument(blob: &[u8]) -> Option<&str> {
     core::str::from_utf8(&blob[..end]).ok()
 }
 
-pub fn new_elf_task_with_arguments(name: &str, elf: &[u8], arguments_blob: Vec<u8>) -> SharedTask {
-    let context = ElfTaskContext::with_blob(elf, arguments_blob);
-    Task::new(name, elf_task_wrapper as *const () as usize, Box::into_raw(context) as usize)
+#[repr(C)]
+struct ElfProgram {
+    entry: usize,
+    argv: *const *const u8,
+    argc: i32,
+}
+
+pub fn new_elf_task_with_arguments(
+    name: &str,
+    elf: &[u8],
+    arguments_blob: Vec<u8>,
+    elf_arch: &dyn ElfArch,
+) -> Result<SharedTask, ElfError> {
+    let layout = inspect(elf)?;
+    let group = GroupId::allocate();
+    let argc = arguments_blob.iter().filter(|byte| **byte == 0).count();
+    let record_at = (layout.span + core::mem::align_of::<usize>() - 1)
+        & !(core::mem::align_of::<usize>() - 1);
+    let table_at = record_at + core::mem::size_of::<ElfProgram>();
+    let strings_at = table_at + (argc + 1) * core::mem::size_of::<usize>();
+    let total_len = strings_at + arguments_blob.len();
+
+    let mut block = ProgramMemory::allocate(group, total_len, layout.align)
+        .ok_or(ElfError::OutOfMemory)?;
+    let image_len = layout.span;
+    let entry = match load_into(elf, &mut block.bytes_mut()[..image_len], &layout, elf_arch) {
+        Ok(entry) => entry,
+        Err(error) => {
+            unsafe { MEMORY_MANAGER.release_group_allocations(group.value()) };
+            return Err(error);
+        }
+    };
+
+    let base = block.base();
+    unsafe {
+        let strings = base + strings_at;
+        core::ptr::copy_nonoverlapping(
+            arguments_blob.as_ptr(),
+            strings as *mut u8,
+            arguments_blob.len(),
+        );
+        let table = (base + table_at) as *mut usize;
+        let mut start = 0;
+        let mut index = 0;
+        while start < arguments_blob.len() {
+            table.add(index).write(strings + start);
+            let argument_len = arguments_blob[start..]
+                .iter()
+                .position(|byte| *byte == 0)
+                .unwrap();
+            start += argument_len + 1;
+            index += 1;
+        }
+        table.add(argc).write(0);
+        core::ptr::write(
+            (base + record_at) as *mut ElfProgram,
+            ElfProgram {
+                entry,
+                argv: table as *const *const u8,
+                argc: argc as i32,
+            },
+        );
+    }
+
+    Ok(Task::in_group(
+        name,
+        elf_task_wrapper as *const () as usize,
+        base + record_at,
+        group,
+    ))
 }
 
 pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
@@ -322,6 +352,10 @@ pub(crate) extern "C" fn task_wrapper(entry_point: usize) {
 mod tests {
     use super::*;
     use crate::collections::arena::GenerationalArena;
+    use crate::elf::tests::{
+        elf64_file_larger_than_span_fixture, elf64_with_unreachable_reloc_fixture,
+        minimal_elf64_fixture,
+    };
     use crate::task_stack::STACK_WATERMARK;
 
     fn make_future_handle() -> FutureHandle {
@@ -367,49 +401,125 @@ mod tests {
         bytes
     }
 
-    #[test]
-    fn elf_task_context_stores_arguments_as_nul_terminated_strings() {
-        let context = ElfTaskContext::with_blob(&[], b"hello\0world\0".to_vec());
-        assert_eq!(context.argument_strings, b"hello\0world\0");
+    struct StubElfArch;
+
+    impl ElfArch for StubElfArch {
+        fn apply_relocation(&self, _base: usize, _offset: usize, _info: u64, _addend: i64) {}
+    }
+
+    fn program_record(task: &Task) -> ElfProgram {
+        unsafe { core::ptr::read_unaligned(task.entry_param() as *const ElfProgram) }
+    }
+
+    fn argv_strings(record: ElfProgram) -> Vec<Vec<u8>> {
+        let mut arguments = Vec::new();
+        let mut index = 0;
+        while !unsafe { record.argv.add(index).read() }.is_null() {
+            arguments.push(read_c_string(unsafe { record.argv.add(index).read() }));
+            index += 1;
+        }
+        arguments
+    }
+
+    fn heap_used() -> usize {
+        let stats = MEMORY_MANAGER.stats();
+        stats.total_bytes - stats.free_bytes
     }
 
     #[test]
-    fn elf_task_context_without_arguments_holds_no_strings() {
-        let context = ElfTaskContext::with_blob(&[], Vec::new());
-        assert!(context.argument_strings.is_empty());
-        assert_eq!(context.argc(), 0);
-        assert!(unsafe { context.argv().read().is_null() });
+    fn new_elf_task_writes_argv_into_the_program_record() {
+        let elf = minimal_elf64_fixture(42);
+        let task =
+            new_elf_task_with_arguments("pi", &elf, b"pi\0alpha\0".to_vec(), &StubElfArch).unwrap();
+        assert_eq!(task.name(), "pi");
+        let record = program_record(&task);
+        assert_eq!(record.argc, 2);
+        assert_eq!(argv_strings(record), vec![b"pi".to_vec(), b"alpha".to_vec()]);
     }
 
     #[test]
-    fn elf_task_context_argument_pointers_address_their_own_strings() {
-        let context = ElfTaskContext::with_blob(&[], b"hello\0\0x86_64\0".to_vec());
-        let argv = context.argv();
-        assert_eq!(context.argc(), 3);
-        assert_eq!(unsafe { argv.read() }, context.argument_strings.as_ptr());
-        assert_eq!(read_c_string(unsafe { argv.add(0).read() }), b"hello");
-        assert_eq!(read_c_string(unsafe { argv.add(1).read() }), b"");
-        assert_eq!(read_c_string(unsafe { argv.add(2).read() }), b"x86_64");
-        assert!(unsafe { argv.add(3).read().is_null() });
+    fn the_record_argv_addresses_the_groups_copy_not_the_callers_blob() {
+        let elf = minimal_elf64_fixture(0);
+        let mut blob = b"pi\0".to_vec();
+        let task =
+            new_elf_task_with_arguments("pi", &elf, blob.clone(), &StubElfArch).unwrap();
+        blob[0] = b'x';
+        assert_eq!(argv_strings(program_record(&task)), vec![b"pi".to_vec()]);
     }
 
     #[test]
-    fn elf_task_context_keeps_strings_beyond_pointer_installation() {
-        let context = ElfTaskContext::with_blob(&[1, 2, 3], b"pi\0".to_vec());
-        let moved = context;
-        assert_eq!(read_c_string(unsafe { moved.argv().read() }), b"pi");
-        assert_eq!(moved.elf_bytes, &[1, 2, 3]);
+    fn a_task_constructed_without_arguments_reports_an_empty_argv() {
+        let elf = minimal_elf64_fixture(0);
+        let task =
+            new_elf_task_with_arguments("pi", &elf, Vec::new(), &StubElfArch).unwrap();
+        let record = program_record(&task);
+        assert_eq!(record.argc, 0);
+        assert!(unsafe { record.argv.read() }.is_null());
     }
 
     #[test]
-    fn with_blob_builds_context_with_three_arguments_and_null_terminator() {
-        let context = ElfTaskContext::with_blob(&[], b"a\0b\0c\0".to_vec());
-        assert_eq!(context.argc(), 3);
-        let argv = context.argv();
-        assert_eq!(read_c_string(unsafe { argv.add(0).read() }), b"a");
-        assert_eq!(read_c_string(unsafe { argv.add(1).read() }), b"b");
-        assert_eq!(read_c_string(unsafe { argv.add(2).read() }), b"c");
-        assert!(unsafe { argv.add(3).read().is_null() });
+    fn the_record_argv_addresses_arguments_including_an_empty_string() {
+        let elf = minimal_elf64_fixture(0);
+        let task = new_elf_task_with_arguments(
+            "app",
+            &elf,
+            b"hello\0\0x86_64\0".to_vec(),
+            &StubElfArch,
+        )
+        .unwrap();
+        let record = program_record(&task);
+        assert_eq!(record.argc, 3);
+        assert_eq!(
+            argv_strings(record),
+            vec![b"hello".to_vec(), b"".to_vec(), b"x86_64".to_vec()]
+        );
+    }
+
+    #[test]
+    fn with_three_arguments_the_record_table_ends_with_null() {
+        let elf = minimal_elf64_fixture(0);
+        let task =
+            new_elf_task_with_arguments("a", &elf, b"a\0b\0c\0".to_vec(), &StubElfArch).unwrap();
+        let record = program_record(&task);
+        assert_eq!(record.argc, 3);
+        assert_eq!(
+            argv_strings(record),
+            vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]
+        );
+    }
+
+    #[test]
+    fn a_loaded_image_is_owned_by_the_tasks_group() {
+        let elf = minimal_elf64_fixture(0);
+        let task =
+            new_elf_task_with_arguments("app", &elf, b"app\0".to_vec(), &StubElfArch).unwrap();
+        let group_bytes = MEMORY_MANAGER.group_bytes(task.group().value());
+        assert!(
+            group_bytes >= elf.len(),
+            "the group's stamped bytes must include the loaded image span"
+        );
+    }
+
+    #[test]
+    fn a_load_failure_after_allocation_releases_the_group_block() {
+        let elf = elf64_with_unreachable_reloc_fixture();
+        let before = heap_used();
+        let result = new_elf_task_with_arguments("app", &elf, b"app\0".to_vec(), &StubElfArch);
+        assert!(matches!(result, Err(ElfError::MalformedSegment)));
+        assert_eq!(heap_used(), before, "a rejected program leaves no stamped block");
+    }
+
+    #[test]
+    fn the_group_holds_the_image_not_a_copy_of_the_elf_file() {
+        let elf = elf64_file_larger_than_span_fixture(0);
+        let task =
+            new_elf_task_with_arguments("app", &elf, b"app\0".to_vec(), &StubElfArch).unwrap();
+        let stack_bytes = crate::task_stack::STACK_WORDS * core::mem::size_of::<usize>();
+        let retained = MEMORY_MANAGER.group_bytes(task.group().value()) - stack_bytes;
+        assert!(
+            retained < elf.len(),
+            "the retained program memory is the image plus argv, smaller than the ELF file"
+        );
     }
 
     #[test]
@@ -502,13 +612,14 @@ mod tests {
 
     #[test]
     fn elf_task_takes_its_name_from_the_argument_blob() {
+        let elf = minimal_elf64_fixture(0);
         let name = first_argument(b"vfsd\0").unwrap();
-        let task = new_elf_task_with_arguments(name, &[7], b"vfsd\0".to_vec());
+        let task =
+            new_elf_task_with_arguments(name, &elf, b"vfsd\0".to_vec(), &StubElfArch).unwrap();
         assert_eq!(task.name(), "vfsd");
-        let context = unsafe { Box::from_raw(task.entry_param() as *mut ElfTaskContext) };
-        assert_eq!(context.argc(), 1);
-        assert_eq!(read_c_string(unsafe { context.argv().read() }), b"vfsd");
-        assert!(unsafe { context.argv().add(1).read().is_null() });
+        let record = program_record(&task);
+        assert_eq!(record.argc, 1);
+        assert_eq!(argv_strings(record), vec![b"vfsd".to_vec()]);
     }
 
     #[test]
@@ -526,18 +637,6 @@ mod tests {
     }
 
     #[test]
-    fn new_elf_task_with_arguments_wires_blob_into_task_context() {
-        let task = new_elf_task_with_arguments("pi", &[9], b"pi\0alpha\0".to_vec());
-        let context = unsafe { Box::from_raw(task.entry_param() as *mut ElfTaskContext) };
-        assert_eq!(context.argc(), 2);
-        assert_eq!(read_c_string(unsafe { context.argv().read() }), b"pi");
-        assert_eq!(
-            read_c_string(unsafe { context.argv().add(1).read() }),
-            b"alpha"
-        );
-    }
-
-    #[test]
     fn freshly_loaded_images_get_distinct_groups() {
         let first = Task::new("app", 0, 0);
         let second = Task::new("app", 0, 0);
@@ -550,28 +649,16 @@ mod tests {
         let spawned = new_entrypoint_task(0x1000, caller.group());
         assert_eq!(spawned.group(), caller.group());
     }
-
-    #[test]
-    fn elf_task_context_owns_a_copy_of_the_image() {
-        let mut source = vec![1u8, 2, 3, 4];
-        let context = ElfTaskContext::with_blob(&source, Vec::new());
-        source[0] = 9;
-        assert_eq!(context.elf_bytes, vec![1, 2, 3, 4]);
-    }
 }
 
-pub(crate) extern "C" fn elf_task_wrapper(context: usize) {
-    let context = unsafe { Box::from_raw(context as *mut ElfTaskContext) };
-    let image = load_elf(&context.elf_bytes, kernel().elf_arch).unwrap();
+pub(crate) extern "C" fn elf_task_wrapper(record: usize) {
+    let program = unsafe { core::ptr::read_unaligned(record as *const ElfProgram) };
     let task_entry_point: extern "C" fn(i32, *const *const u8) -> i32 =
-        unsafe { core::mem::transmute(image.entry) };
+        unsafe { core::mem::transmute(program.entry) };
 
     kernel().execution_state.preemption_enabled = true;
 
-    let return_code = task_entry_point(context.argc(), context.argv());
-
-    drop(image);
-    drop(context);
+    let return_code = task_entry_point(program.argc, program.argv);
 
     kernel().terminate_with_status(system::exit::encode(system::exit::EXIT_REASON_CLEAN, return_code as u32));
 }

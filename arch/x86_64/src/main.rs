@@ -27,7 +27,6 @@ use kernel::kprintln;
 use kernel::panic::handle_panic;
 use system::boot_plan::BootPlan;
 use kernel::task::FunctionTask;
-use kernel::task::new_elf_task_with_arguments;
 use x86_generic::debug_console::QemuDebugConsole;
 use x86_generic::port::X86PortIo;
 
@@ -93,7 +92,9 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         .service("/ne2kd", "NE2K")
         .exec("/shell", &[])
         .exec("rom:shell", &[]);
-    let _ = kernel.schedule(new_elf_task_with_arguments("init", INIT_ELF, boot_plan.encode()), FutureOwner::Kernel);
+    if let Err(error) = kernel.load_elf_program("init", INIT_ELF, boot_plan.encode(), FutureOwner::Kernel) {
+        panic!("init ELF rejected: {error:?}");
+    }
 
     kprintln!("[KERNEL] Starting");
     kernel.start();

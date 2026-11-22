@@ -1,6 +1,5 @@
 pub(crate) mod structs;
 
-use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 use crate::platform::elf::ElfArch;
@@ -17,20 +16,45 @@ const DT_RELASZ: i64 = 8;
 const DT_REL: i32 = 17;
 const DT_RELSZ: i32 = 18;
 
+const MAX_IMAGE_SPAN: usize = 4 * 1024 * 1024;
+const MIN_IMAGE_ALIGN: usize = 16;
+const MAX_IMAGE_ALIGN: usize = 4096;
+
 #[derive(Debug)]
 pub enum ElfError {
     InvalidMagic,
     TooSmall,
     NoLoadSegments,
     UnsupportedClass,
+    MalformedSegment,
+    SpanTooLarge,
+    OutOfMemory,
+    CannotBeScheduled,
 }
 
-pub struct Image {
-    pub image: Vec<u8>,
-    pub entry: usize,
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ElfClass {
+    Elf32,
+    Elf64,
 }
 
-pub fn load_elf(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError> {
+#[derive(Debug, Copy, Clone)]
+pub struct ElfLayout {
+    pub span: usize,
+    pub align: usize,
+    pub entry_offset: usize,
+    pub class: ElfClass,
+}
+
+fn read_at<T: Copy>(bytes: &[u8], offset: usize) -> Option<T> {
+    let end = offset.checked_add(mem::size_of::<T>())?;
+    if end > bytes.len() {
+        return None;
+    }
+    Some(unsafe { core::ptr::read_unaligned(bytes.as_ptr().add(offset) as *const T) })
+}
+
+pub fn inspect(bytes: &[u8]) -> Result<ElfLayout, ElfError> {
     if bytes.len() < mem::size_of::<Elf32Header>() {
         return Err(ElfError::TooSmall);
     }
@@ -40,207 +64,320 @@ pub fn load_elf(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError>
     }
 
     match bytes[EI_CLASS] {
-        ELFCLASS32 => load_elf32(bytes, elf_arch),
+        ELFCLASS32 => inspect32(bytes),
         ELFCLASS64 => {
             if bytes.len() < mem::size_of::<Elf64Header>() {
                 return Err(ElfError::TooSmall);
             }
-            load_elf64(bytes, elf_arch)
+            inspect64(bytes)
         }
         _ => Err(ElfError::UnsupportedClass),
     }
 }
 
-fn load_elf64(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError> {
-    let header = unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const Elf64Header) };
+pub fn load_into(
+    bytes: &[u8],
+    dst: &mut [u8],
+    layout: &ElfLayout,
+    elf_arch: &dyn ElfArch,
+) -> Result<usize, ElfError> {
+    match layout.class {
+        ElfClass::Elf32 => load_into32(bytes, dst, layout, elf_arch),
+        ElfClass::Elf64 => load_into64(bytes, dst, layout, elf_arch),
+    }
+}
 
-    let phdrs: Vec<Elf64Phdr> = unsafe {
-        let mut phdrs = Vec::with_capacity(header.e_phnum as usize);
-        for i in 0..header.e_phnum as usize {
-            let phdr_ptr = bytes
-                .as_ptr()
-                .add(header.e_phoff as usize + i * mem::size_of::<Elf64Phdr>())
-                as *const Elf64Phdr;
-            phdrs.push(core::ptr::read_unaligned(phdr_ptr));
-        }
-        phdrs
-    };
+fn inspect32(bytes: &[u8]) -> Result<ElfLayout, ElfError> {
+    let header: Elf32Header = read_at(bytes, 0).ok_or(ElfError::TooSmall)?;
+    let phdrs = phdr_table32(bytes, header.e_phoff, header.e_phnum)?;
 
-    let mut max_addr: u64 = 0;
+    let mut span: u32 = 0;
+    let mut align: u32 = 1;
     for phdr in &phdrs {
-        if phdr.p_type == PT_LOAD {
-            let end = phdr.p_vaddr + phdr.p_memsz;
-            if end > max_addr {
-                max_addr = end;
-            }
+        if phdr.p_type != PT_LOAD {
+            continue;
+        }
+        if phdr.p_filesz > phdr.p_memsz {
+            return Err(ElfError::MalformedSegment);
+        }
+        let span_end = phdr.p_vaddr.checked_add(phdr.p_memsz).ok_or(ElfError::MalformedSegment)?;
+        let file_end = phdr.p_offset.checked_add(phdr.p_filesz).ok_or(ElfError::MalformedSegment)?;
+        if (file_end as u64) > bytes.len() as u64 {
+            return Err(ElfError::MalformedSegment);
+        }
+        span = span.max(span_end);
+        if phdr.p_align >= 2 && phdr.p_align.is_power_of_two() {
+            align = align.max(phdr.p_align);
         }
     }
 
-    if max_addr == 0 {
+    if span == 0 {
         return Err(ElfError::NoLoadSegments);
     }
+    if span as usize > MAX_IMAGE_SPAN {
+        return Err(ElfError::SpanTooLarge);
+    }
+    if header.e_entry >= span {
+        return Err(ElfError::MalformedSegment);
+    }
 
-    let mut image = vec![0u8; max_addr as usize];
+    Ok(ElfLayout {
+        span: span as usize,
+        align: clamp_align(align),
+        entry_offset: header.e_entry as usize,
+        class: ElfClass::Elf32,
+    })
+}
 
+fn inspect64(bytes: &[u8]) -> Result<ElfLayout, ElfError> {
+    let header: Elf64Header = read_at(bytes, 0).ok_or(ElfError::TooSmall)?;
+    let phdrs = phdr_table64(bytes, header.e_phoff, header.e_phnum)?;
+
+    let mut span: u64 = 0;
+    let mut align: u64 = 1;
     for phdr in &phdrs {
-        if phdr.p_type == PT_LOAD {
-            let dst_start = phdr.p_vaddr as usize;
-            let src_start = phdr.p_offset as usize;
-            let copy_len = phdr.p_filesz as usize;
-            image[dst_start..dst_start + copy_len]
-                .copy_from_slice(&bytes[src_start..src_start + copy_len]);
+        if phdr.p_type != PT_LOAD {
+            continue;
+        }
+        if phdr.p_filesz > phdr.p_memsz {
+            return Err(ElfError::MalformedSegment);
+        }
+        let span_end = phdr.p_vaddr.checked_add(phdr.p_memsz).ok_or(ElfError::MalformedSegment)?;
+        let file_end = phdr.p_offset.checked_add(phdr.p_filesz).ok_or(ElfError::MalformedSegment)?;
+        if file_end > bytes.len() as u64 {
+            return Err(ElfError::MalformedSegment);
+        }
+        span = span.max(span_end);
+        if phdr.p_align >= 2 && phdr.p_align.is_power_of_two() {
+            align = align.max(phdr.p_align);
         }
     }
 
-    let base = image.as_ptr() as usize;
+    if span == 0 {
+        return Err(ElfError::NoLoadSegments);
+    }
+    if span > MAX_IMAGE_SPAN as u64 {
+        return Err(ElfError::SpanTooLarge);
+    }
+    if header.e_entry >= span {
+        return Err(ElfError::MalformedSegment);
+    }
+
+    Ok(ElfLayout {
+        span: span as usize,
+        align: clamp_align(align),
+        entry_offset: header.e_entry as usize,
+        class: ElfClass::Elf64,
+    })
+}
+
+fn clamp_align(align: impl TryInto<usize> + Copy) -> usize {
+    let requested: usize = align.try_into().unwrap_or(MAX_IMAGE_ALIGN);
+    requested.clamp(MIN_IMAGE_ALIGN, MAX_IMAGE_ALIGN)
+}
+
+fn phdr_table32(bytes: &[u8], phoff: u32, phnum: u16) -> Result<Vec<Elf32Phdr>, ElfError> {
+    let entry = mem::size_of::<Elf32Phdr>();
+    let table_size = (phnum as usize)
+        .checked_mul(entry)
+        .ok_or(ElfError::MalformedSegment)?;
+    let start = phoff as usize;
+    let end = start.checked_add(table_size).ok_or(ElfError::MalformedSegment)?;
+    if end > bytes.len() {
+        return Err(ElfError::MalformedSegment);
+    }
+    (0..phnum as usize)
+        .map(|i| read_at(bytes, start + i * entry).ok_or(ElfError::MalformedSegment))
+        .collect()
+}
+
+fn phdr_table64(bytes: &[u8], phoff: u64, phnum: u16) -> Result<Vec<Elf64Phdr>, ElfError> {
+    let entry = mem::size_of::<Elf64Phdr>();
+    let table_size = (phnum as usize)
+        .checked_mul(entry)
+        .ok_or(ElfError::MalformedSegment)?;
+    let start = usize::try_from(phoff).map_err(|_| ElfError::MalformedSegment)?;
+    let end = start.checked_add(table_size).ok_or(ElfError::MalformedSegment)?;
+    if end > bytes.len() {
+        return Err(ElfError::MalformedSegment);
+    }
+    (0..phnum as usize)
+        .map(|i| read_at(bytes, start + i * entry).ok_or(ElfError::MalformedSegment))
+        .collect()
+}
+
+fn load_into32(
+    bytes: &[u8],
+    dst: &mut [u8],
+    layout: &ElfLayout,
+    elf_arch: &dyn ElfArch,
+) -> Result<usize, ElfError> {
+    let header: Elf32Header = read_at(bytes, 0).ok_or(ElfError::TooSmall)?;
+    let phdrs = phdr_table32(bytes, header.e_phoff, header.e_phnum)?;
+    debug_assert_eq!(dst.len(), layout.span);
 
     for phdr in &phdrs {
+        if phdr.p_type != PT_LOAD {
+            continue;
+        }
+        let dst_start = phdr.p_vaddr as usize;
+        let copy_len = phdr.p_filesz as usize;
+        let src_start = phdr.p_offset as usize;
+        if src_start.checked_add(copy_len).ok_or(ElfError::MalformedSegment)? > bytes.len()
+            || dst_start.checked_add(copy_len).ok_or(ElfError::MalformedSegment)? > dst.len()
+        {
+            return Err(ElfError::MalformedSegment);
+        }
+        dst[dst_start..dst_start + copy_len].copy_from_slice(&bytes[src_start..src_start + copy_len]);
+    }
+
+    let base = dst.as_ptr() as usize;
+    for phdr in &phdrs {
         if phdr.p_type == PT_DYNAMIC {
-            apply_relocations64(&image, base, phdr, elf_arch);
+            apply_relocations32(dst, base, phdr, elf_arch)?;
             break;
         }
     }
 
-    let entry = base + header.e_entry as usize;
-
-    Ok(Image { image, entry })
+    Ok(base + layout.entry_offset)
 }
 
-fn load_elf32(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError> {
-    let header = unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const Elf32Header) };
-
-    let phdrs: Vec<Elf32Phdr> = unsafe {
-        let mut phdrs = Vec::with_capacity(header.e_phnum as usize);
-        for i in 0..header.e_phnum as usize {
-            let phdr_ptr = bytes
-                .as_ptr()
-                .add(header.e_phoff as usize + i * mem::size_of::<Elf32Phdr>())
-                as *const Elf32Phdr;
-            phdrs.push(core::ptr::read_unaligned(phdr_ptr));
-        }
-        phdrs
-    };
-
-    let mut max_addr: u32 = 0;
-    for phdr in &phdrs {
-        if phdr.p_type == PT_LOAD {
-            let end = phdr.p_vaddr + phdr.p_memsz;
-            if end > max_addr {
-                max_addr = end;
-            }
-        }
-    }
-
-    if max_addr == 0 {
-        return Err(ElfError::NoLoadSegments);
-    }
-
-    let mut image = vec![0u8; max_addr as usize];
+fn load_into64(
+    bytes: &[u8],
+    dst: &mut [u8],
+    layout: &ElfLayout,
+    elf_arch: &dyn ElfArch,
+) -> Result<usize, ElfError> {
+    let header: Elf64Header = read_at(bytes, 0).ok_or(ElfError::TooSmall)?;
+    let phdrs = phdr_table64(bytes, header.e_phoff, header.e_phnum)?;
+    debug_assert_eq!(dst.len(), layout.span);
 
     for phdr in &phdrs {
-        if phdr.p_type == PT_LOAD {
-            let dst_start = phdr.p_vaddr as usize;
-            let src_start = phdr.p_offset as usize;
-            let copy_len = phdr.p_filesz as usize;
-            image[dst_start..dst_start + copy_len]
-                .copy_from_slice(&bytes[src_start..src_start + copy_len]);
+        if phdr.p_type != PT_LOAD {
+            continue;
         }
+        let dst_start = phdr.p_vaddr as usize;
+        let copy_len = phdr.p_filesz as usize;
+        let src_start = phdr.p_offset as usize;
+        if src_start.checked_add(copy_len).ok_or(ElfError::MalformedSegment)? > bytes.len()
+            || dst_start.checked_add(copy_len).ok_or(ElfError::MalformedSegment)? > dst.len()
+        {
+            return Err(ElfError::MalformedSegment);
+        }
+        dst[dst_start..dst_start + copy_len].copy_from_slice(&bytes[src_start..src_start + copy_len]);
     }
 
-    let base = image.as_ptr() as usize;
-
+    let base = dst.as_ptr() as usize;
     for phdr in &phdrs {
         if phdr.p_type == PT_DYNAMIC {
-            apply_relocations32(&image, base, phdr, elf_arch);
+            apply_relocations64(dst, base, phdr, elf_arch)?;
             break;
         }
     }
 
-    let entry = base + header.e_entry as usize;
-
-    Ok(Image { image, entry })
+    Ok(base + layout.entry_offset)
 }
 
-fn apply_relocations64(image: &[u8], base: usize, dynamic_phdr: &Elf64Phdr, elf_arch: &dyn ElfArch) {
-    let dyn_start = dynamic_phdr.p_vaddr as usize;
-    let dyn_count = dynamic_phdr.p_memsz as usize / mem::size_of::<Elf64Dyn>();
+fn apply_relocations64(
+    image: &[u8],
+    base: usize,
+    dynamic_phdr: &Elf64Phdr,
+    elf_arch: &dyn ElfArch,
+) -> Result<(), ElfError> {
+    let dyn_start = usize::try_from(dynamic_phdr.p_vaddr).map_err(|_| ElfError::MalformedSegment)?;
+    let dyn_size = usize::try_from(dynamic_phdr.p_memsz).map_err(|_| ElfError::MalformedSegment)?;
+    if dyn_start.checked_add(dyn_size).ok_or(ElfError::MalformedSegment)? > image.len() {
+        return Err(ElfError::MalformedSegment);
+    }
 
-    let mut rela_offset: Option<u64> = None;
-    let mut rela_size: Option<u64> = None;
-
-    for i in 0..dyn_count {
-        let dyn_entry = unsafe {
-            core::ptr::read_unaligned(
-                image.as_ptr().add(dyn_start + i * mem::size_of::<Elf64Dyn>()) as *const Elf64Dyn,
-            )
-        };
+    let mut rela_offset: Option<usize> = None;
+    let mut rela_size: Option<usize> = None;
+    for i in 0..dyn_size / mem::size_of::<Elf64Dyn>() {
+        let dyn_entry: Elf64Dyn =
+            read_at(image, dyn_start + i * mem::size_of::<Elf64Dyn>()).ok_or(ElfError::MalformedSegment)?;
         if dyn_entry.d_tag == 0 {
             break;
         }
         match dyn_entry.d_tag {
-            DT_RELA => rela_offset = Some(dyn_entry.d_val),
-            DT_RELASZ => rela_size = Some(dyn_entry.d_val),
+            DT_RELA => {
+                rela_offset =
+                    Some(usize::try_from(dyn_entry.d_val).map_err(|_| ElfError::MalformedSegment)?);
+            }
+            DT_RELASZ => {
+                rela_size =
+                    Some(usize::try_from(dyn_entry.d_val).map_err(|_| ElfError::MalformedSegment)?);
+            }
             _ => {}
         }
     }
 
     if let (Some(offset), Some(size)) = (rela_offset, rela_size) {
-        let rela_count = size as usize / mem::size_of::<Elf64Rela>();
-        for i in 0..rela_count {
-            let rela = unsafe {
-                core::ptr::read_unaligned(
-                    image.as_ptr().add(offset as usize + i * mem::size_of::<Elf64Rela>())
-                        as *const Elf64Rela,
-                )
-            };
-            elf_arch.apply_relocation(base, rela.r_offset as usize, rela.r_info, rela.r_addend);
+        let entry = mem::size_of::<Elf64Rela>();
+        if offset.checked_add(size).ok_or(ElfError::MalformedSegment)? > image.len() {
+            return Err(ElfError::MalformedSegment);
+        }
+        for i in 0..size / entry {
+            let rela: Elf64Rela =
+                read_at(image, offset + i * entry).ok_or(ElfError::MalformedSegment)?;
+            let r_offset = usize::try_from(rela.r_offset).map_err(|_| ElfError::MalformedSegment)?;
+            if r_offset.checked_add(8).ok_or(ElfError::MalformedSegment)? > image.len() {
+                return Err(ElfError::MalformedSegment);
+            }
+            elf_arch.apply_relocation(base, r_offset, rela.r_info, rela.r_addend);
         }
     }
+    Ok(())
 }
 
-fn apply_relocations32(image: &[u8], base: usize, dynamic_phdr: &Elf32Phdr, elf_arch: &dyn ElfArch) {
+fn apply_relocations32(
+    image: &[u8],
+    base: usize,
+    dynamic_phdr: &Elf32Phdr,
+    elf_arch: &dyn ElfArch,
+) -> Result<(), ElfError> {
     let dyn_start = dynamic_phdr.p_vaddr as usize;
-    let dyn_count = dynamic_phdr.p_memsz as usize / mem::size_of::<Elf32Dyn>();
+    let dyn_size = dynamic_phdr.p_memsz as usize;
+    if dyn_start.checked_add(dyn_size).ok_or(ElfError::MalformedSegment)? > image.len() {
+        return Err(ElfError::MalformedSegment);
+    }
 
-    let mut rel_offset: Option<u32> = None;
-    let mut rel_size: Option<u32> = None;
-
-    for i in 0..dyn_count {
-        let dyn_entry = unsafe {
-            core::ptr::read_unaligned(
-                image.as_ptr().add(dyn_start + i * mem::size_of::<Elf32Dyn>()) as *const Elf32Dyn,
-            )
-        };
+    let mut rel_offset: Option<usize> = None;
+    let mut rel_size: Option<usize> = None;
+    for i in 0..dyn_size / mem::size_of::<Elf32Dyn>() {
+        let dyn_entry: Elf32Dyn =
+            read_at(image, dyn_start + i * mem::size_of::<Elf32Dyn>()).ok_or(ElfError::MalformedSegment)?;
         if dyn_entry.d_tag == 0 {
             break;
         }
         match dyn_entry.d_tag {
-            DT_REL => rel_offset = Some(dyn_entry.d_val),
-            DT_RELSZ => rel_size = Some(dyn_entry.d_val),
+            DT_REL => rel_offset = Some(dyn_entry.d_val as usize),
+            DT_RELSZ => rel_size = Some(dyn_entry.d_val as usize),
             _ => {}
         }
     }
 
     if let (Some(offset), Some(size)) = (rel_offset, rel_size) {
-        let rel_count = size as usize / mem::size_of::<Elf32Rel>();
-        for i in 0..rel_count {
-            let rel = unsafe {
-                core::ptr::read_unaligned(
-                    image.as_ptr().add(offset as usize + i * mem::size_of::<Elf32Rel>())
-                        as *const Elf32Rel,
-                )
-            };
+        let entry = mem::size_of::<Elf32Rel>();
+        if offset.checked_add(size).ok_or(ElfError::MalformedSegment)? > image.len() {
+            return Err(ElfError::MalformedSegment);
+        }
+        for i in 0..size / entry {
+            let rel: Elf32Rel =
+                read_at(image, offset + i * entry).ok_or(ElfError::MalformedSegment)?;
             let patch_offset = rel.r_offset as usize;
-            let implicit_addend = unsafe {
-                core::ptr::read_unaligned(image.as_ptr().add(patch_offset) as *const i32) as i64
-            };
+            if patch_offset.checked_add(4).ok_or(ElfError::MalformedSegment)? > image.len() {
+                return Err(ElfError::MalformedSegment);
+            }
+            let implicit_addend = read_at::<i32>(image, patch_offset)
+                .ok_or(ElfError::MalformedSegment)? as i64;
             elf_arch.apply_relocation(base, patch_offset, rel.r_info as u64, implicit_addend);
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use super::structs::*;
     use std::sync::Mutex;
@@ -312,6 +449,10 @@ mod tests {
         buf
     }
 
+    fn phdr_slot64() -> usize {
+        mem::size_of::<Elf64Header>()
+    }
+
     fn build_elf_with_rela(r_offset: u64, r_info: u64, r_addend: i64) -> Vec<u8> {
         let header_size = mem::size_of::<Elf64Header>();
         let phdr_size = mem::size_of::<Elf64Phdr>();
@@ -378,21 +519,18 @@ mod tests {
 
     #[test]
     fn rejects_too_small() {
-        let mock = MockElfArch::new();
-        assert!(matches!(load_elf(&[], &mock), Err(ElfError::TooSmall)));
-        assert!(matches!(load_elf(&[0u8; 10], &mock), Err(ElfError::TooSmall)));
+        assert!(matches!(inspect(&[]), Err(ElfError::TooSmall)));
+        assert!(matches!(inspect(&[0u8; 10]), Err(ElfError::TooSmall)));
     }
 
     #[test]
     fn rejects_invalid_magic() {
-        let mock = MockElfArch::new();
         let buf = vec![0u8; mem::size_of::<Elf64Header>()];
-        assert!(matches!(load_elf(&buf, &mock), Err(ElfError::InvalidMagic)));
+        assert!(matches!(inspect(&buf), Err(ElfError::InvalidMagic)));
     }
 
     #[test]
     fn rejects_no_load_segments() {
-        let mock = MockElfArch::new();
         let header_size = mem::size_of::<Elf64Header>();
         let mut buf = vec![0u8; header_size];
         let header = Elf64Header {
@@ -412,48 +550,25 @@ mod tests {
             e_shstrndx: 0,
         };
         unsafe { write_at(&mut buf, 0, header); }
-        assert!(matches!(load_elf(&buf, &mock), Err(ElfError::NoLoadSegments)));
-    }
-
-    #[test]
-    fn computes_entry_point_from_base_and_e_entry() {
-        let mock = MockElfArch::new();
-        let elf = build_minimal_elf(42);
-        let image = load_elf(&elf, &mock).unwrap();
-        assert_eq!(image.entry, image.image.as_ptr() as usize + 42);
-    }
-
-    #[test]
-    fn delegates_all_rela_entries_to_elf_arch() {
-        let mock = MockElfArch::new();
-        let elf = build_elf_with_rela(0x10, 0xAB_0000_0008, 100);
-        let image = load_elf(&elf, &mock).unwrap();
-
-        let calls = mock.calls();
-        assert_eq!(calls.len(), 1);
-
-        let (base, offset, info, addend) = calls[0];
-        assert_eq!(base, image.image.as_ptr() as usize);
-        assert_eq!(offset, 0x10);
-        assert_eq!(info, 0xAB_0000_0008);
-        assert_eq!(addend, 100);
+        assert!(matches!(inspect(&buf), Err(ElfError::NoLoadSegments)));
     }
 
     #[test]
     fn no_relocations_called_without_dynamic_segment() {
         let mock = MockElfArch::new();
         let elf = build_minimal_elf(0);
-        load_elf(&elf, &mock).unwrap();
+        let layout = inspect(&elf).unwrap();
+        let mut dst = vec![0u8; layout.span];
+        load_into(&elf, &mut dst, &layout, &mock).unwrap();
         assert!(mock.calls().is_empty());
     }
 
     #[test]
     fn rejects_unsupported_elf_class() {
-        let mock = MockElfArch::new();
         let mut buf = vec![0u8; mem::size_of::<Elf64Header>()];
         buf[..4].copy_from_slice(&ELF_MAGIC);
         buf[4] = 0; // ELFCLASSNONE
-        assert!(matches!(load_elf(&buf, &mock), Err(ElfError::UnsupportedClass)));
+        assert!(matches!(inspect(&buf), Err(ElfError::UnsupportedClass)));
     }
 
     fn build_elf32_minimal(entry_vaddr: u32) -> Vec<u8> {
@@ -561,34 +676,209 @@ mod tests {
     }
 
     #[test]
-    fn load_elf32_loads_single_segment() {
-        let mock = MockElfArch::new();
-        let elf = build_elf32_minimal(0);
-        let image = load_elf(&elf, &mock).unwrap();
-        assert_eq!(&image.image[..4], &[0x7f, b'E', b'L', b'F']);
+    fn inspect_reports_the_minimal_elf64_layout() {
+        let elf = build_minimal_elf(42);
+        let layout = inspect(&elf).unwrap();
+        assert_eq!(layout.span, elf.len());
+        assert_eq!(layout.entry_offset, 42);
+        assert_eq!(layout.align, MIN_IMAGE_ALIGN);
+        assert_eq!(layout.class, ElfClass::Elf64);
     }
 
     #[test]
-    fn load_elf32_computes_entry_from_base_plus_e_entry() {
+    fn inspect_reports_the_minimal_elf32_layout() {
+        let elf = build_elf32_minimal(42);
+        let layout = inspect(&elf).unwrap();
+        assert_eq!(layout.span, elf.len());
+        assert_eq!(layout.entry_offset, 42);
+        assert_eq!(layout.class, ElfClass::Elf32);
+    }
+
+    #[test]
+    fn inspect_rejects_a_load_segment_extending_past_the_file() {
+        let mut elf = build_minimal_elf(0);
+        let mut phdr: Elf64Phdr = read_at(&elf, phdr_slot64()).unwrap();
+        phdr.p_filesz = (elf.len() + 1) as u64;
+        unsafe { write_at(&mut elf, phdr_slot64(), phdr) };
+        assert!(matches!(inspect(&elf), Err(ElfError::MalformedSegment)));
+    }
+
+    #[test]
+    fn inspect_rejects_filesz_above_memsz() {
+        let mut elf = build_minimal_elf(0);
+        let mut phdr: Elf64Phdr = read_at(&elf, phdr_slot64()).unwrap();
+        phdr.p_memsz = (elf.len() / 2) as u64;
+        unsafe { write_at(&mut elf, phdr_slot64(), phdr) };
+        assert!(matches!(inspect(&elf), Err(ElfError::MalformedSegment)));
+    }
+
+    #[test]
+    fn inspect_rejects_overflowing_segment_bounds() {
+        let mut elf = build_minimal_elf(0);
+        let mut phdr: Elf64Phdr = read_at(&elf, phdr_slot64()).unwrap();
+        phdr.p_vaddr = u64::MAX - 2;
+        phdr.p_memsz = 4096;
+        unsafe { write_at(&mut elf, phdr_slot64(), phdr) };
+        assert!(matches!(inspect(&elf), Err(ElfError::MalformedSegment)));
+    }
+
+    #[test]
+    fn inspect_rejects_a_phdr_table_reaching_past_the_file() {
+        let mut elf = build_minimal_elf(0);
+        let e_phnum = 56;
+        elf[e_phnum..e_phnum + 2].copy_from_slice(&255u16.to_le_bytes());
+        assert!(matches!(inspect(&elf), Err(ElfError::MalformedSegment)));
+    }
+
+    #[test]
+    fn inspect_rejects_a_span_above_the_cap() {
+        let mut elf = build_minimal_elf(0);
+        let mut phdr: Elf64Phdr = read_at(&elf, phdr_slot64()).unwrap();
+        phdr.p_filesz = 0;
+        phdr.p_memsz = MAX_IMAGE_SPAN as u64 + 1;
+        unsafe { write_at(&mut elf, phdr_slot64(), phdr) };
+        assert!(matches!(inspect(&elf), Err(ElfError::SpanTooLarge)));
+    }
+
+    #[test]
+    fn inspect_rejects_an_entry_point_at_or_past_the_span() {
+        let mut elf = build_minimal_elf(0);
+        let span: u64 = elf.len() as u64;
+        elf[24..32].copy_from_slice(&span.to_le_bytes());
+        assert!(matches!(inspect(&elf), Err(ElfError::MalformedSegment)));
+    }
+
+    #[test]
+    fn inspect_adopts_the_largest_pt_load_alignment_capped_at_the_page() {
+        let mut elf = build_minimal_elf(0);
+        let mut phdr: Elf64Phdr = read_at(&elf, phdr_slot64()).unwrap();
+        phdr.p_align = 16;
+        unsafe { write_at(&mut elf, phdr_slot64(), phdr) };
+        assert_eq!(inspect(&elf).unwrap().align, 16);
+
+        let mut elf = build_minimal_elf(0);
+        let mut phdr: Elf64Phdr = read_at(&elf, phdr_slot64()).unwrap();
+        phdr.p_align = 0x20_0000;
+        unsafe { write_at(&mut elf, phdr_slot64(), phdr) };
+        assert_eq!(inspect(&elf).unwrap().align, MAX_IMAGE_ALIGN);
+
+        let mut elf = build_minimal_elf(0);
+        let mut phdr: Elf64Phdr = read_at(&elf, phdr_slot64()).unwrap();
+        phdr.p_align = 6;
+        unsafe { write_at(&mut elf, phdr_slot64(), phdr) };
+        assert_eq!(inspect(&elf).unwrap().align, MIN_IMAGE_ALIGN);
+    }
+
+    #[test]
+    fn load_into64_reproduces_the_file_bytes_for_one_covering_segment() {
+        let mock = MockElfArch::new();
+        let elf = build_minimal_elf(42);
+        let layout = inspect(&elf).unwrap();
+        let mut dst = vec![0u8; layout.span];
+        let entry = load_into(&elf, &mut dst, &layout, &mock).unwrap();
+        assert_eq!(dst, elf);
+        assert_eq!(entry, dst.as_ptr() as usize + 42);
+    }
+
+    #[test]
+    fn load_into32_reproduces_the_file_bytes_for_one_covering_segment() {
         let mock = MockElfArch::new();
         let elf = build_elf32_minimal(42);
-        let image = load_elf(&elf, &mock).unwrap();
-        assert_eq!(image.entry, image.image.as_ptr() as usize + 42);
+        let layout = inspect(&elf).unwrap();
+        let mut dst = vec![0u8; layout.span];
+        let entry = load_into(&elf, &mut dst, &layout, &mock).unwrap();
+        assert_eq!(dst, elf);
+        assert_eq!(entry, dst.as_ptr() as usize + 42);
     }
 
     #[test]
-    fn load_elf32_delegates_rel_entries_to_elf_arch() {
+    fn load_into64_applies_relocations_against_the_destination() {
         let mock = MockElfArch::new();
-        let elf = build_elf32_with_rel(0x10, 0x08, 0x5000);
-        let image = load_elf(&elf, &mock).unwrap();
+        let elf = build_elf_with_rela(0x10, 0xAB_0000_0008, 100);
+        let layout = inspect(&elf).unwrap();
+        let mut dst = vec![0u8; layout.span];
+        let entry = load_into(&elf, &mut dst, &layout, &mock).unwrap();
+        assert_eq!(dst, elf);
+        assert_eq!(entry, dst.as_ptr() as usize);
 
         let calls = mock.calls();
         assert_eq!(calls.len(), 1);
-
         let (base, offset, info, addend) = calls[0];
-        assert_eq!(base, image.image.as_ptr() as usize);
+        assert_eq!(base, dst.as_ptr() as usize);
+        assert_eq!(offset, 0x10);
+        assert_eq!(info, 0xAB_0000_0008);
+        assert_eq!(addend, 100);
+    }
+
+    #[test]
+    fn load_into32_applies_relocations_against_the_destination() {
+        let mock = MockElfArch::new();
+        let elf = build_elf32_with_rel(0x10, 0x08, 0x5000);
+        let layout = inspect(&elf).unwrap();
+        let mut dst = vec![0u8; layout.span];
+        let entry = load_into(&elf, &mut dst, &layout, &mock).unwrap();
+        assert_eq!(dst, elf);
+        assert_eq!(entry, dst.as_ptr() as usize);
+
+        let calls = mock.calls();
+        assert_eq!(calls.len(), 1);
+        let (base, offset, info, addend) = calls[0];
+        assert_eq!(base, dst.as_ptr() as usize);
         assert_eq!(offset, 0x10);
         assert_eq!(info, 0x08);
         assert_eq!(addend, 0x5000);
+    }
+
+    fn build_elf_with_rela_pointing(dyn_data_at: usize, rela_val: u64, relasz_val: u64) -> Vec<u8> {
+        let mut elf = build_elf_with_rela(0x10, 0xAB_0000_0008, 100);
+        let dyn_size = mem::size_of::<Elf64Dyn>();
+        unsafe {
+            write_at(&mut elf, dyn_data_at, Elf64Dyn { d_tag: DT_RELA, d_val: rela_val });
+            write_at(&mut elf, dyn_data_at + dyn_size, Elf64Dyn { d_tag: DT_RELASZ, d_val: relasz_val });
+        }
+        elf
+    }
+
+    fn dyn_data_at_of() -> usize {
+        mem::size_of::<Elf64Header>() + 2 * mem::size_of::<Elf64Phdr>()
+    }
+
+    #[test]
+    fn load_into_rejects_a_rela_table_reaching_past_the_span() {
+        let mock = MockElfArch::new();
+        let elf = build_elf_with_rela_pointing(dyn_data_at_of(), 0xFFFF_FFFF_FFFF_0000, 24);
+        let layout = inspect(&elf).unwrap();
+        let mut dst = vec![0u8; layout.span];
+        assert!(matches!(load_into(&elf, &mut dst, &layout, &mock), Err(ElfError::MalformedSegment)));
+        assert!(mock.calls().is_empty());
+    }
+
+    #[test]
+    fn load_into_rejects_a_reloc_offset_reaching_past_the_span() {
+        let mock = MockElfArch::new();
+        let elf = build_elf_with_rela(u64::MAX - 2, 0xAB_0000_0008, 100);
+        let layout = inspect(&elf).unwrap();
+        let mut dst = vec![0u8; layout.span];
+        assert!(matches!(load_into(&elf, &mut dst, &layout, &mock), Err(ElfError::MalformedSegment)));
+        assert!(mock.calls().is_empty());
+    }
+
+    pub(crate) fn minimal_elf64_fixture(entry_vaddr: u64) -> Vec<u8> {
+        build_minimal_elf(entry_vaddr)
+    }
+
+    pub(crate) fn elf64_with_unreachable_reloc_fixture() -> Vec<u8> {
+        build_elf_with_rela(u64::MAX - 2, 0xAB_0000_0008, 100)
+    }
+
+    pub(crate) fn elf64_file_larger_than_span_fixture(entry_vaddr: u64) -> Vec<u8> {
+        let mut buf = build_minimal_elf(entry_vaddr);
+        let span = buf.len();
+        buf.extend(vec![0xC7u8; 8192]);
+        let mut phdr: Elf64Phdr = read_at(&buf, phdr_slot64()).unwrap();
+        phdr.p_filesz = span as u64;
+        phdr.p_memsz = span as u64;
+        unsafe { write_at(&mut buf, phdr_slot64(), phdr) };
+        buf
     }
 }

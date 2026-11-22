@@ -29,7 +29,7 @@ use crate::future::TaskCompletionFuture;
 #[cfg(not(test))]
 use crate::ipc::message_future::IpcMessageFuture;
 #[cfg(not(test))]
-use crate::task::{first_argument, new_elf_task_with_arguments, new_entrypoint_task, validate_arguments_blob};
+use crate::task::{first_argument, new_entrypoint_task, validate_arguments_blob};
 #[cfg(not(test))]
 use system::waitset::WaitEvent;
 
@@ -125,15 +125,12 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             let Some(name) = first_argument(blob) else {
                 return ErrorCode::ElfArgumentBlobMalformed.to_reg();
             };
-            match kernel()
-                .schedule(
-                    new_elf_task_with_arguments(name, elf_bytes, Vec::from(blob)),
-                    current_group_owner(),
-                )
-                .ok()
-            {
-                Some(handle) => handle.pack(),
-                None => u64::MAX as usize,
+            match kernel().load_elf_program(name, elf_bytes, Vec::from(blob), current_group_owner()) {
+                Ok(handle) => handle.pack(),
+                Err(error) => {
+                    crate::kprintln!("[ELF] '{name}' rejected: {error:?}");
+                    u64::MAX as usize
+                }
             }
         }
         Ok(SyscallNum::IpcConnect) => {
