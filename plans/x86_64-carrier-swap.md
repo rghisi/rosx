@@ -362,6 +362,22 @@ successor; `plans/platform-runner-abstraction.md` (trait plan, now on a simpler 
     M3 | the D5 merge linked fake-kernel-64 under `large` with `p_paddr == p_vaddr` segments: neither linker.ld collected the `.ltext/.lrodata/.ldata/.lbss` orphan families the large model emits (the real kernel was accidentally rescued by boot.S's non-empty `.text` inheriting the AT region); caught by the ELF audit before any boot | MISSING-FACT | 1 rebuild round; both scripts collect them now, fact lands in the code-model decision record (M4)
     M4 | decision-record filenames `x86_64-*.md` rejected by the records validator (kebab-case law already in AGENTS.md); renamed to `x86-64-*` next round | MISSING-FACT | 1 gate round
 
+Lessons:
+
+- **[M1] Process (no gate or doc covers it):** a suite's output that was truncated is a
+  suite that never ran — derive verdicts only from captured files and exit codes. A 40-minute
+  `cargo xtask verify` that died mid-run hid behind a tail-piped output and made `rosx-x86_32`
+  look like it passed; the same trap fired on `cargo xtask test`. Approved lesson (2026-11-22,
+  landed with its ledger row): **ALWAYS capture long-running suite output to a file with its
+  exit code; NEVER derive a verdict from piped or truncated output.**
+- **[M2+M3] Covered by existing docs and gates, with a fact gained:** the large code model
+  emits `.ltext/.lrodata/.ldata/.lbss` orphan families and both linker scripts collect them
+  (fact landed in `docs/decisions/x86-64-link-code-model-large.md` and the link recipe in
+  `docs/architecture/boot-media-and-harness.md`); the handoff failure classes this plan hit —
+  a selector or far-target landing in the magic-carrying register (`rax`), a 32-bit data
+  relocation under a non-sign-extended window base — stay documented in
+  `docs/architecture/boot-media-and-harness.md`.
+
 M1 execution record (2026-11-22, commit `3cbfb8b`): the re-stamped index-0 disk stayed out of
 the boot order — the bootindex=1 carrier won, SeaBIOS never touched the new bootable MBR — and
 the kernel mounted `ata0d0p0` from the LBA-2048 slice to the disk shell (boot-plan green,
