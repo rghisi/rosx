@@ -357,19 +357,28 @@ successor; `plans/platform-runner-abstraction.md` (trait plan, now on a simpler 
     M1 | ad-hoc python MBR stamp check raised struct.unpack ValueError (wrong entry format); fixed second run | TASK | 0
     M2 | boot.S absolute data references emitted R_X86_64_32 relocations; the `kernel`-model link failure was misread as Rust codegen before the asm was blamed (fake-kernel-64 hid both defects) | TASK | 2 link rounds (~5 min)
     M2 | first chain boot reached kernel_main with magic 0x10: boot.S reused rax — the magic carrier — for the far-reload target and the selector load, ignoring the 32-bit template's register discipline | TASK | 1 boot round
-
-M2 execution record (2026-11-22, commit `9052850`): the real kernel now boots from the unified
-disk through stage1→stage2-64 (standalone: `[BOOTINFO] regions=11`, mount `ata0d0p0`, `rose>`,
-zero PANIC; no `[ERR] heap` — R1 did not fire). ELF audit: entry `0xffff800000100000`, every
-PT_LOAD at `p_paddr = p_vaddr − 0xFFFF800000000000` (rust-lld's orphan placement of
-`.ltext/.lrodata/.ldata/.lbss` keeps the constant VMA−LMA offset), `kernel_phys_end` correct.
-x86_64 never needed a TSS — `syscall.S` returns to ring 0 ("we don't support Ring 3 yet") and
-the carrier never loaded one either, so the chain inherits an already-TSS-free kernel.
-`real-kernel-boot64` added as boot-test row 26; gate green with the unsafe/comments ratchet
-down; both integration suites 40/40 (all x86_64 sessions now boot chain-stamped masters).
+    M3 | the D5 merge linked fake-kernel-64 under `large` with `p_paddr == p_vaddr` segments: neither linker.ld collected the `.ltext/.lrodata/.ldata/.lbss` orphan families the large model emits (the real kernel was accidentally rescued by boot.S's non-empty `.text` inheriting the AT region); caught by the ELF audit before any boot | MISSING-FACT | 1 rebuild round; both scripts collect them now, fact lands in the code-model decision record (M4)
 
 M1 execution record (2026-11-22, commit `3cbfb8b`): the re-stamped index-0 disk stayed out of
 the boot order — the bootindex=1 carrier won, SeaBIOS never touched the new bootable MBR — and
 the kernel mounted `ata0d0p0` from the LBA-2048 slice to the disk shell (boot-plan green,
 `rose>` reached, zero PANIC on a headless reproduction of the `cargo xtask run x86_64`
 topology). Gate, both integration suites (40/40 each) and all 25 boot-test rows green.
+
+M2 execution record (2026-11-22, commit `9052850`): the real kernel now boots from the unified
+disk through stage1→stage2-64 (standalone: `[BOOTINFO] regions=11`, mount `ata0d0p0`, `rose>`,
+zero PANIC; no `[ERR] heap` — R1 did not fire). ELF audit: entry `0xffff800000100000`, every
+PT_LOAD at `p_paddr = p_vaddr − 0xFFFF800000000000`, `kernel_phys_end` correct.
+x86_64 never needed a TSS — `syscall.S` returns to ring 0 ("we don't support Ring 3 yet") and
+the carrier never loaded one either, so the chain inherits an already-TSS-free kernel.
+`real-kernel-boot64` added as boot-test row 26; gate green with the unsafe/comments ratchet
+down; both integration suites 40/40 (all x86_64 sessions now boot chain-stamped masters).
+
+M3 execution record (2026-11-22, commit `1afa661`): one 64-bit target spec —
+`arch/x86_64/rosx.json` — now links kernel and fake-kernel-64 alike. The merge turned the
+real kernel's accidental orphan survival (rust-lld placing `.ltext*` next to a non-empty
+AT()'d `.text` region) into a deterministic recipe: both `linker.ld`s collect
+`.ltext*/.lrodata*/.ldata*/.lbss*` explicitly, and the fake kernel's `p_paddr` audit is green
+again under `large`. `fat_boot_disk` died with its last consumer; runner exports narrowed to
+what callers use; the debug tooling boots the unified disk from reset with higher-half
+symbols. Gate green, boot-test 26/26.
