@@ -1,6 +1,7 @@
 pub mod memory_manager;
 pub mod bitmap_chunk_allocator;
 pub mod free_list_allocator;
+pub mod program_memory;
 
 pub const MAX_MEMORY_BLOCKS: usize = 32;
 

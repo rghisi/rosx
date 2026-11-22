@@ -457,4 +457,50 @@ mod tests {
         assert_eq!(restored.free_block_count, fresh.free_block_count);
         assert_eq!(restored.largest_free_block, fresh.largest_free_block);
     }
+
+    #[test]
+    fn global_allocator_blocks_are_invisible_to_group_accounting_and_sweep() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let image_like = Layout::from_size_align(196 * 1024, 1).unwrap();
+        unsafe {
+            let image = manager.alloc(image_like);
+            assert!(!image.is_null());
+            let held = used(&manager);
+            assert_eq!(held, 196 * 1024 + ALLOC_HDR);
+
+            assert_eq!(manager.group_bytes(0), 0);
+            assert_eq!(manager.group_bytes(1), 0);
+            manager.release_group_allocations(1);
+            assert_eq!(used(&manager), held, "the group sweep must not touch a Kernel-stamped block");
+
+            manager.dealloc(image, image_like);
+            assert_eq!(used(&manager), 0);
+        }
+    }
+
+    #[test]
+    fn align_one_allocations_land_on_the_block_alignment_grid() {
+        let block_align = core::mem::align_of::<usize>();
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let mut blocks = Vec::new();
+        unsafe {
+            for size in [64usize, 4096, 64 * 1024, 196 * 1024] {
+                let layout = Layout::from_size_align(size, 1).unwrap();
+                let ptr = manager.alloc(layout);
+                assert!(!ptr.is_null());
+                assert_eq!(
+                    ptr as usize % block_align,
+                    0,
+                    "a Vec<u8> allocation is guaranteed no better than the {block_align}-byte grid"
+                );
+                blocks.push((layout, ptr));
+            }
+            for (layout, ptr) in blocks {
+                manager.dealloc(ptr, layout);
+            }
+        }
+        assert_eq!(used(&manager), 0);
+    }
 }
