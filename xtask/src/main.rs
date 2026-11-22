@@ -118,20 +118,8 @@ fn create_boot_disk(debug: bool, spec: &ArchSpec) {
 }
 
 fn create_flashable_image(debug: bool, spec: &ArchSpec) {
-    let kernel = spec.kernel_elf(if debug { "debug" } else { "release" });
-    match spec.boot {
-        x86_runner::Arch::X86_64 => {
-            let image = x86_runner::create_bios_disk_image(&kernel).unwrap_or_else(|err| {
-                eprintln!("error: {err}");
-                process::exit(1);
-            });
-            println!("==> created x86_64 disk image {}", image.display());
-        }
-        x86_runner::Arch::X86_32 => {
-            let image = boot_disk::create_boot_disk(debug, spec);
-            println!("==> created x86_32 unified boot disk {}", image.display());
-        }
-    }
+    let image = boot_disk::create_boot_disk(debug, spec);
+    println!("==> created the {} unified boot disk {}", spec.name, image.display());
 }
 
 fn integration_arch() -> &'static ArchSpec {
@@ -154,7 +142,7 @@ fn run_tests(arch: &ArchSpec, skip_integration: bool) {
         cmd.env("ROSX_KERNEL_ELF", arch.kernel_elf("release"));
     }
     if !skip_integration && arch.boot == x86_runner::Arch::X86_32 {
-        boot_image::stage_boot32_artifacts();
+        boot_image::stage_chain_artifacts(boot_image::Stage2Flavor::for_arch(arch.boot));
     }
     cmd.arg("test").arg("--workspace");
     let description = if skip_integration {
@@ -335,7 +323,7 @@ fn check_isa_bootloader_command() {
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 | check-isa bootloader | check-arch | check-style [--update-baseline [--allow-increase <reason>]] | decisions | install-hooks | check | verify | test [--skip-integration] | boot-image [32|64|floppy] | boot-test | boot-artifacts x86_32>"
+        "usage: cargo xtask <build [x86_64|x86_32] [--debug] | run [x86_64|x86_32] [--debug] | image [x86_64|x86_32] [--debug] | apps [x86_64|x86_32] | rom [x86_64|x86_32] | check-isa x86_32 | check-isa bootloader | check-arch | check-style [--update-baseline [--allow-increase <reason>]] | decisions | install-hooks | check | verify | test [--skip-integration] | boot-image [32|64|floppy] | boot-test | boot-artifacts [x86_64|x86_32]>"
     );
 }
 
@@ -469,14 +457,7 @@ fn main() {
         "boot-artifacts" => {
             let (spec, rest) = split_arch(extras);
             require_no_extras(rest);
-            if spec.boot != x86_runner::Arch::X86_32 {
-                eprintln!(
-                    "boot-artifacts stages the x86_32 boot chain (stage1, stage2-32); {} boots differently",
-                    spec.name
-                );
-                process::exit(2);
-            }
-            boot_image::stage_boot32_artifacts();
+            boot_image::stage_chain_artifacts(boot_image::Stage2Flavor::for_arch(spec.boot));
         }
         "help" | "--help" | "-h" => usage(),
         other => {

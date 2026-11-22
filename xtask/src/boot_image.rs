@@ -44,6 +44,13 @@ pub enum Stage2Flavor {
 }
 
 impl Stage2Flavor {
+    pub fn for_arch(arch: x86_runner::Arch) -> Stage2Flavor {
+        match arch {
+            x86_runner::Arch::X86_32 => Stage2Flavor::Flat32,
+            x86_runner::Arch::X86_64 => Stage2Flavor::Long64,
+        }
+    }
+
     fn feature(self) -> Option<&'static str> {
         match self {
             Stage2Flavor::Flat32 => None,
@@ -419,17 +426,21 @@ pub(crate) fn scratch_dir() -> PathBuf {
     dir
 }
 
-pub fn boot32_dir() -> PathBuf {
-    let dir = workspace_root().join("target").join("boot32");
-    fs::create_dir_all(&dir).expect("cannot create target/boot32");
+pub fn chain_dir(flavor: Stage2Flavor) -> PathBuf {
+    let name = match flavor {
+        Stage2Flavor::Flat32 => "boot32",
+        Stage2Flavor::Long64 => "boot64",
+    };
+    let dir = workspace_root().join("target").join(name);
+    fs::create_dir_all(&dir).expect("cannot create the boot-chain staging directory");
     dir
 }
 
-pub fn stage_boot32_artifacts() -> (Vec<u8>, Vec<u8>) {
+pub fn stage_chain_artifacts(flavor: Stage2Flavor) -> (Vec<u8>, Vec<u8>) {
     require_boot_image_tools();
-    let dir = boot32_dir();
+    let dir = chain_dir(flavor);
     let stage1 = build_stage1(&dir, true);
-    let stage2 = build_stage2(&dir, Stage2Flavor::Flat32);
-    println!("==> staged stage1 and stage2-32 in {}", dir.display());
+    let stage2 = build_stage2(&dir, flavor);
+    println!("==> staged stage1 and {} in {}", flavor.label(), dir.display());
     (stage1, stage2)
 }

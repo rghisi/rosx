@@ -148,7 +148,7 @@ pub fn create_bootable(dir: &Path, name: &str, image_bytes: usize) -> FatDisk {
         start_lba: chain::PARTITION_START_LBA,
         sector_count: partition_sectors,
     });
-    let (stage1, stage2) = stage_boot32_bins();
+    let (stage1, stage2) = chain_bins();
     chain::create_sparse(&image, image_bytes as u64);
     chain::write_at(&image, 0, &chain::boot_mbr(&stage1, &entries));
     chain::write_at(
@@ -190,7 +190,7 @@ pub fn stamp_bootable(image: &Path, kernel_elf: &Path) {
         chain::PARTITION_START_LBA
     );
     entries[0] = Some(Entry { boot: BOOTABLE, ..first });
-    let (stage1, stage2) = stage_boot32_bins();
+    let (stage1, stage2) = chain_bins();
     chain::write_at(image, 0, &chain::boot_mbr(&stage1, &entries));
     chain::write_at(
         image,
@@ -217,22 +217,28 @@ pub fn create_boot_master(dir: &Path, kernel_elf: &Path) -> FatDisk {
     disk
 }
 
-fn stage_boot32_bins() -> (Vec<u8>, Vec<u8>) {
+fn chain_bins() -> (Vec<u8>, Vec<u8>) {
+    let (stage_dir, stage2_name) = match Arch::current().boot() {
+        x86_runner::Arch::X86_32 => ("boot32", "stage2-32.bin"),
+        x86_runner::Arch::X86_64 => ("boot64", "stage2-64.bin"),
+    };
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("target")
-        .join("boot32");
+        .join(stage_dir);
     let read = |name: &str| {
         let path = dir.join(name);
         std::fs::read(&path).unwrap_or_else(|err| {
             panic!(
-                "missing staged boot-chain {} ({err}); run `cargo xtask build x86_32` \
-                 or `cargo xtask boot-artifacts x86_32` to stage it",
-                path.display()
+                "missing staged boot-chain {} ({err}); run `cargo xtask build {}` \
+                 or `cargo xtask boot-artifacts {}` to stage it",
+                path.display(),
+                Arch::current().name(),
+                Arch::current().name(),
             )
         })
     };
-    (read("stage1.bin"), read("stage2-32.bin"))
+    (read("stage1.bin"), read(stage2_name))
 }
 
 fn copy_built_els(disk: &FatDisk) {
