@@ -75,7 +75,9 @@ extern "C" fn kernel_main(loader_magic: u32, loader_info: u32) -> ! {
         .service("/ne2kd", "NE2K")
         .exec("/shell", &[])
         .exec("rom:shell", &[]);
-    let _ = kernel.schedule(kernel::task::new_elf_task_with_arguments("init", INIT_ELF, boot_plan.encode()), kernel::future::FutureOwner::Kernel);
+    if let Err(error) = kernel.load_elf_program("init", INIT_ELF, boot_plan.encode(), kernel::future::FutureOwner::Kernel) {
+        panic!("init ELF rejected: {error:?}");
+    }
     kernel::kprintln!("[KERNEL] Starting");
     kernel.start();
     panic!("[KERNEL] Crashed spectacularly, should never reached here.");

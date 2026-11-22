@@ -140,7 +140,63 @@ byte-identical `load_into` output for the ELF32 and ELF64 fixtures, relocations 
 the caller's `dst`, layout fields and alignment clamp. `cargo test -p kernel`: 495 passed; full
 `cargo xtask check` green.
 
+## M2+M3 — Group-owned program memory, eager constructor, load at the syscall
+
+**Fold rationale (deviation from the plan's commit split):** the plan's M2 is a types-only step
+(`ProgramMemory` + ownership skeleton, no caller). That cannot pass the gate: `unused = deny`
+(`[workspace.lints.rust]`) flags a `ProgramMemory` nothing constructs, and the bridge caller would
+either be test-only production surface (banned by AGENTS.md) or M3's production change itself. M2
+and M3 therefore land as one reviewable commit.
+
+- `kernel/src/memory/program_memory.rs` (new): `ProgramMemory` — one block stamped
+  `BlockOwner::Group(g)` via `alloc_with_owner`, zeroed at allocation, with **no `Drop`**: the only
+  way it is freed is the group's last-member sweep (`release_group_allocations` matches `Group`
+  only), which is exactly why per-`Task` drop can never free the image under a live `Spawn`
+  sibling (D3/F8). Safety in `docs/rationale/group-stamped-program-memory.md`, linked from the two
+  doc comments on items containing `unsafe`.
+- `kernel/src/task.rs`: `new_elf_task_with_arguments(name, elf, blob, &dyn ElfArch) ->
+  Result<SharedTask, ElfError>` is now eager — `inspect` → `GroupId::allocate` → one
+  `ProgramMemory` block laid out `[image | ElfProgram record @ align_up(span, 8) | argv table |
+  argument strings]`; `load_into` writes the image in place, argv strings and the NUL-split argv
+  table and the `{entry, argv, argc}` record are written into the same block. On any
+  `load_into` failure the group is swept before returning `Err` — nothing leaks. The task entry is
+  `elf_task_wrapper(record_addr)`, which now only `read_unaligned`s the record and jumps: the
+  first slice parses and loads nothing, and no `Vec` of ELF bytes survives the syscall anywhere.
+  The M1 `load_elf`/`Image` wrapper is deleted in this commit (its last caller migrated).
+- `kernel/src/kernel.rs`: `load_elf_program(name, elf, blob, owner) -> Result<FutureHandle,
+  ElfError>` = eager constructor + `schedule_with_task_handle`; a schedule failure sweeps the group
+  and returns the new `ElfError::CannotBeScheduled`. `schedule_with_task_handle` returns
+  `Err(())` instead of `panic!("Not able to create new task")`. Both death paths already called
+  `release_group_allocations` at the last member (M0: `kernel.rs:332,385`); the image simply joins
+  that sweep now that it is group-stamped (U1 fixed by construction).
+- `kernel/src/syscall.rs`: `LoadElf` runs `load_elf_program`; rejection prints
+  `[ELF] '<name>' rejected: <error>` and returns `u64::MAX` — no wire change (the old path already
+  returned the packed completion handle on success and `u64::MAX` on failure), so per-error detail
+  stays kernel-side by decision `docs/decisions/elf-load-failure-generic-error-code.md`.
+- `arch/x86_64/src/main.rs`, `arch/x86_32/src/main.rs`: the init ELF goes through
+  `load_elf_program` too; boot failure is a loud `panic!("init ELF rejected: {error:?}")`.
+- `docs/todo/elf-load-failure-must-not-panic-kernel.md` deleted (git rm) — a malformed ELF fails
+  `LoadElf` with a diagnostic; only the boot-path init keeps a panic, where there is no one left
+  to report to.
+- Tests: `kernel.rs` — `a_schedule_failure_after_elf_construction_releases_the_group` (registry
+  exhausted → `CannotBeScheduled`, heap used byte-identical), and the two
+  `a_loaded_program_group_survives_until_the_last_member_dies_via_kill`/`_via_exit` tests: with a
+  sibling alive, the first member's death keeps the group non-empty (image + sibling stack), and
+  the last death brings `group_bytes` to 0; `program_memory.rs` — group stamp + zeroing, sweep
+  reclaims even written-into blocks, oversize allocation returns `None` with nothing stamped;
+  `task.rs` — rewritten around the record (argv written into the record, the record's argv
+  addresses the group's copy and not the caller's blob, empty and empty-string argvs, null-terminated
+  three-argument table, the image is group-owned, a load failure after allocation releases the block,
+  the group holds the image not a copy of the ELF file, distinct groups per load). `cargo test -p
+  kernel`: 496 passed.
+- `unsafe` ratchet: kernel **302 → 295** — the eager constructor and the record-reading wrapper
+  remove more `unsafe` than `ProgramMemory` adds; ratcheted down with `--update-baseline` (drops
+  need no decision record).
+
 ## Friction log
 
 M0 | test import of `BLOCK_ALIGN` failed E0603 — constant is private, visibility not a plan fact | MISSING-FACT | 1 round
 M0 | first `cargo xtask check` failed `unsafe: kernel has 302, baseline allows 300` — new cfg(test) code counts toward the ratchet | MISSING-FACT | 1 round + decision record
+M2+M3 | plan's types-only M2 commit cannot pass the gate (unused=deny + no-test-only-production-surface) | CONTRADICTION | plan commit split amended: M2 folded into M3
+M2+M3 | check-style reported "302 → 292" while `program_memory.rs` was untracked — survey scans `git ls-files`, so new files only count after `git add` | MISSING-FACT | 1 round
+M2+M3 | `NonNull::addr()` returns `NonZero<usize>` on this nightly — needs `.get()` for plain `usize` | MISSING-FACT | 1 round

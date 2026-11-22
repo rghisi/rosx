@@ -22,11 +22,12 @@ use crate::ports::driven::ForReadingSystemTime;
 use crate::ports::driven::ForSwitchingTaskContext;
 use crate::ports::driven::SwitchOutcome;
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::ptr::null_mut;
 use crate::collections::arena::Error;
+use crate::elf::ElfError;
 use crate::future::Future;
 use crate::handle::FutureHandle;
-#[cfg(not(test))]
 use crate::memory::memory_manager::MEMORY_MANAGER;
 #[cfg(not(test))]
 use crate::memory::MemoryBlocks;
@@ -218,10 +219,28 @@ impl Kernel {
                     }
                 }
             }
-            Err(_) => panic!("Not able to create new task"),
+            Err(_) => Err(()),
         };
         self.execution_state.preemption_enabled = prev;
         paired
+    }
+
+    pub fn load_elf_program(
+        &mut self,
+        name: &str,
+        elf: &[u8],
+        arguments_blob: Vec<u8>,
+        owner: FutureOwner,
+    ) -> Result<FutureHandle, ElfError> {
+        let task = crate::task::new_elf_task_with_arguments(name, elf, arguments_blob, self.elf_arch)?;
+        let group = task.group();
+        match self.schedule_with_task_handle(task, owner) {
+            Ok((_task_handle, future_handle)) => Ok(future_handle),
+            Err(()) => {
+                unsafe { MEMORY_MANAGER.release_group_allocations(group.value()) };
+                Err(ElfError::CannotBeScheduled)
+            }
+        }
     }
 
     pub fn sleep(&mut self, millis: u64, owner: FutureOwner) -> Result<(), ()> {
@@ -783,6 +802,106 @@ mod tests {
             0,
             "handle_termination removes the Task and its field drops free the stack block"
         );
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    fn heap_used() -> usize {
+        let stats = MEMORY_MANAGER.stats();
+        stats.total_bytes - stats.free_bytes
+    }
+
+    #[test]
+    fn a_schedule_failure_after_elf_construction_releases_the_group() {
+        install_kill_stage();
+        let elf = crate::elf::tests::minimal_elf64_fixture(0);
+        let before = heap_used();
+        let fillers = exhaust_future_registry();
+        let result = kernel().load_elf_program(
+            "[T] elf-no-slot",
+            &elf,
+            b"elf-no-slot\0".to_vec(),
+            FutureOwner::Kernel,
+        );
+        release_future_registry(fillers);
+        assert!(matches!(result, Err(ElfError::CannotBeScheduled)));
+        assert_eq!(heap_used(), before, "a program that never got scheduled leaves no stamped block");
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    fn load_group_leader(name: &'static str, blob: &'static [u8]) -> (TaskHandle, FutureHandle, crate::task::GroupId) {
+        let elf = crate::elf::tests::minimal_elf64_fixture(0);
+        let leader_completion = kernel()
+            .load_elf_program(name, &elf, blob.to_vec(), FutureOwner::Kernel)
+            .expect("load the elf program");
+        let leader = services()
+            .future_registry
+            .borrow_mut()
+            .completion_owner(leader_completion)
+            .expect("the completion names its task");
+        let group = services()
+            .task_manager
+            .borrow()
+            .get_group(leader)
+            .expect("the leader has a group");
+        assert!(services().memory_manager.group_bytes(group.value()) > 0);
+        (leader, leader_completion, group)
+    }
+
+    #[test]
+    fn a_loaded_program_group_survives_until_the_last_member_dies_via_kill() {
+        install_kill_stage();
+        let (_leader, leader_completion, group) = load_group_leader("elf-kill", b"elf-kill\0");
+        let (_sibling, sibling_completion) = kernel()
+            .schedule_with_task_handle(
+                crate::task::new_entrypoint_task(0x1000, group),
+                FutureOwner::Group(group),
+            )
+            .expect("spawn a sibling into the loaded group");
+
+        assert_eq!(kernel().kill_task(leader_completion), Ok(()));
+        assert!(
+            services().memory_manager.group_bytes(group.value()) > 0,
+            "the image must outlive the first member while a sibling can still execute it"
+        );
+
+        assert_eq!(kernel().kill_task(sibling_completion), Ok(()));
+        assert_eq!(services().memory_manager.group_bytes(group.value()), 0);
+        *KERNEL_PTR.borrow_mut() = null_mut();
+    }
+
+    #[test]
+    fn a_loaded_program_group_survives_until_the_last_member_dies_via_exit() {
+        install_kill_stage();
+        let (leader, _leader_completion, group) = load_group_leader("elf-exit", b"elf-exit\0");
+        let (sibling, _sibling_completion) = kernel()
+            .schedule_with_task_handle(
+                crate::task::new_entrypoint_task(0x1000, group),
+                FutureOwner::Group(group),
+            )
+            .expect("spawn a sibling into the loaded group");
+
+        kernel().execution_state.current_task = Some(leader);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            kernel().terminate_with_status(system::exit::clean_status(0).unwrap())
+        }));
+        assert!(outcome.is_err());
+        services().scheduler.borrow_mut().handle_termination(leader);
+        assert!(
+            services().memory_manager.group_bytes(group.value()) > 0,
+            "the image must outlive the first member while a sibling can still execute it"
+        );
+
+        kernel().execution_state.current_task = Some(sibling);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            kernel().terminate_with_status(system::exit::clean_status(0).unwrap())
+        }));
+        assert!(outcome.is_err());
+        assert!(
+            services().memory_manager.group_bytes(group.value()) > 0,
+            "the dying member's stack outlives the sweep until the scheduler removes it"
+        );
+        services().scheduler.borrow_mut().handle_termination(sibling);
+        assert_eq!(services().memory_manager.group_bytes(group.value()), 0);
         *KERNEL_PTR.borrow_mut() = null_mut();
     }
 

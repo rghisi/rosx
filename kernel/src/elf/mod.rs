@@ -1,6 +1,5 @@
 pub(crate) mod structs;
 
-use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 use crate::platform::elf::ElfArch;
@@ -29,6 +28,8 @@ pub enum ElfError {
     UnsupportedClass,
     MalformedSegment,
     SpanTooLarge,
+    OutOfMemory,
+    CannotBeScheduled,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -43,11 +44,6 @@ pub struct ElfLayout {
     pub align: usize,
     pub entry_offset: usize,
     pub class: ElfClass,
-}
-
-pub struct Image {
-    pub image: Vec<u8>,
-    pub entry: usize,
 }
 
 fn read_at<T: Copy>(bytes: &[u8], offset: usize) -> Option<T> {
@@ -380,15 +376,8 @@ fn apply_relocations32(
     Ok(())
 }
 
-pub fn load_elf(bytes: &[u8], elf_arch: &dyn ElfArch) -> Result<Image, ElfError> {
-    let layout = inspect(bytes)?;
-    let mut image = vec![0u8; layout.span];
-    let entry = load_into(bytes, &mut image, &layout, elf_arch)?;
-    Ok(Image { image, entry })
-}
-
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use super::structs::*;
     use std::sync::Mutex;
@@ -530,21 +519,18 @@ mod tests {
 
     #[test]
     fn rejects_too_small() {
-        let mock = MockElfArch::new();
-        assert!(matches!(load_elf(&[], &mock), Err(ElfError::TooSmall)));
-        assert!(matches!(load_elf(&[0u8; 10], &mock), Err(ElfError::TooSmall)));
+        assert!(matches!(inspect(&[]), Err(ElfError::TooSmall)));
+        assert!(matches!(inspect(&[0u8; 10]), Err(ElfError::TooSmall)));
     }
 
     #[test]
     fn rejects_invalid_magic() {
-        let mock = MockElfArch::new();
         let buf = vec![0u8; mem::size_of::<Elf64Header>()];
-        assert!(matches!(load_elf(&buf, &mock), Err(ElfError::InvalidMagic)));
+        assert!(matches!(inspect(&buf), Err(ElfError::InvalidMagic)));
     }
 
     #[test]
     fn rejects_no_load_segments() {
-        let mock = MockElfArch::new();
         let header_size = mem::size_of::<Elf64Header>();
         let mut buf = vec![0u8; header_size];
         let header = Elf64Header {
@@ -564,48 +550,25 @@ mod tests {
             e_shstrndx: 0,
         };
         unsafe { write_at(&mut buf, 0, header); }
-        assert!(matches!(load_elf(&buf, &mock), Err(ElfError::NoLoadSegments)));
-    }
-
-    #[test]
-    fn computes_entry_point_from_base_and_e_entry() {
-        let mock = MockElfArch::new();
-        let elf = build_minimal_elf(42);
-        let image = load_elf(&elf, &mock).unwrap();
-        assert_eq!(image.entry, image.image.as_ptr() as usize + 42);
-    }
-
-    #[test]
-    fn delegates_all_rela_entries_to_elf_arch() {
-        let mock = MockElfArch::new();
-        let elf = build_elf_with_rela(0x10, 0xAB_0000_0008, 100);
-        let image = load_elf(&elf, &mock).unwrap();
-
-        let calls = mock.calls();
-        assert_eq!(calls.len(), 1);
-
-        let (base, offset, info, addend) = calls[0];
-        assert_eq!(base, image.image.as_ptr() as usize);
-        assert_eq!(offset, 0x10);
-        assert_eq!(info, 0xAB_0000_0008);
-        assert_eq!(addend, 100);
+        assert!(matches!(inspect(&buf), Err(ElfError::NoLoadSegments)));
     }
 
     #[test]
     fn no_relocations_called_without_dynamic_segment() {
         let mock = MockElfArch::new();
         let elf = build_minimal_elf(0);
-        load_elf(&elf, &mock).unwrap();
+        let layout = inspect(&elf).unwrap();
+        let mut dst = vec![0u8; layout.span];
+        load_into(&elf, &mut dst, &layout, &mock).unwrap();
         assert!(mock.calls().is_empty());
     }
 
     #[test]
     fn rejects_unsupported_elf_class() {
-        let mock = MockElfArch::new();
         let mut buf = vec![0u8; mem::size_of::<Elf64Header>()];
         buf[..4].copy_from_slice(&ELF_MAGIC);
         buf[4] = 0; // ELFCLASSNONE
-        assert!(matches!(load_elf(&buf, &mock), Err(ElfError::UnsupportedClass)));
+        assert!(matches!(inspect(&buf), Err(ElfError::UnsupportedClass)));
     }
 
     fn build_elf32_minimal(entry_vaddr: u32) -> Vec<u8> {
@@ -713,38 +676,6 @@ mod tests {
     }
 
     #[test]
-    fn load_elf32_loads_single_segment() {
-        let mock = MockElfArch::new();
-        let elf = build_elf32_minimal(0);
-        let image = load_elf(&elf, &mock).unwrap();
-        assert_eq!(&image.image[..4], &[0x7f, b'E', b'L', b'F']);
-    }
-
-    #[test]
-    fn load_elf32_computes_entry_from_base_plus_e_entry() {
-        let mock = MockElfArch::new();
-        let elf = build_elf32_minimal(42);
-        let image = load_elf(&elf, &mock).unwrap();
-        assert_eq!(image.entry, image.image.as_ptr() as usize + 42);
-    }
-
-    #[test]
-    fn load_elf32_delegates_rel_entries_to_elf_arch() {
-        let mock = MockElfArch::new();
-        let elf = build_elf32_with_rel(0x10, 0x08, 0x5000);
-        let image = load_elf(&elf, &mock).unwrap();
-
-        let calls = mock.calls();
-        assert_eq!(calls.len(), 1);
-
-        let (base, offset, info, addend) = calls[0];
-        assert_eq!(base, image.image.as_ptr() as usize);
-        assert_eq!(offset, 0x10);
-        assert_eq!(info, 0x08);
-        assert_eq!(addend, 0x5000);
-    }
-
-    #[test]
     fn inspect_reports_the_minimal_elf64_layout() {
         let elf = build_minimal_elf(42);
         let layout = inspect(&elf).unwrap();
@@ -761,17 +692,6 @@ mod tests {
         assert_eq!(layout.span, elf.len());
         assert_eq!(layout.entry_offset, 42);
         assert_eq!(layout.class, ElfClass::Elf32);
-    }
-
-    #[test]
-    fn inspect_rejects_the_header_rejections_as_inspect() {
-        assert!(matches!(inspect(&[]), Err(ElfError::TooSmall)));
-        assert!(matches!(inspect(&[0u8; 10]), Err(ElfError::TooSmall)));
-        let mut buf = vec![0u8; mem::size_of::<Elf64Header>()];
-        assert!(matches!(inspect(&buf), Err(ElfError::InvalidMagic)));
-        buf[..4].copy_from_slice(&ELF_MAGIC);
-        buf[4] = 0;
-        assert!(matches!(inspect(&buf), Err(ElfError::UnsupportedClass)));
     }
 
     #[test]
@@ -941,5 +861,24 @@ mod tests {
         let mut dst = vec![0u8; layout.span];
         assert!(matches!(load_into(&elf, &mut dst, &layout, &mock), Err(ElfError::MalformedSegment)));
         assert!(mock.calls().is_empty());
+    }
+
+    pub(crate) fn minimal_elf64_fixture(entry_vaddr: u64) -> Vec<u8> {
+        build_minimal_elf(entry_vaddr)
+    }
+
+    pub(crate) fn elf64_with_unreachable_reloc_fixture() -> Vec<u8> {
+        build_elf_with_rela(u64::MAX - 2, 0xAB_0000_0008, 100)
+    }
+
+    pub(crate) fn elf64_file_larger_than_span_fixture(entry_vaddr: u64) -> Vec<u8> {
+        let mut buf = build_minimal_elf(entry_vaddr);
+        let span = buf.len();
+        buf.extend(vec![0xC7u8; 8192]);
+        let mut phdr: Elf64Phdr = read_at(&buf, phdr_slot64()).unwrap();
+        phdr.p_filesz = span as u64;
+        phdr.p_memsz = span as u64;
+        unsafe { write_at(&mut buf, phdr_slot64(), phdr) };
+        buf
     }
 }
