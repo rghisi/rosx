@@ -1,8 +1,9 @@
 # tests-integration
 
-Integration tests that build the RosX x86_64 kernel, create a BIOS disk image,
-boot it in a QEMU instance spawned by the test, inject keystrokes, and assert
-on guest output.
+Integration tests that build the RosX kernel for the selected port, pack a bootable **unified FAT
+disk** (stage1, the `ROS2` stage2 blob, `KERNEL.ELF` and every user ELF), chain-boot it in a QEMU
+instance spawned by the test, inject keystrokes, and assert on guest output. `ROSX_ARCH` picks the
+port: x86_64 by default, `x86_32` for the 486 chain.
 
 ## Running
 
@@ -12,16 +13,17 @@ cargo test -p tests-integration
 
 Requirements:
 
-- `qemu-system-x86_64` on the `PATH`
-- nightly toolchain with the `rust-src` component (pinned by `rust-toolchain.toml`;
-  the kernel is built with `-Z build-std` against `arch/x86_64/rosx.json`)
+- `qemu-system-x86_64` on the `PATH` (`qemu-system-i386` when `ROSX_ARCH=x86_32`)
+- nightly toolchain with the `rust-src` component (pinned by `rust-toolchain.toml`; the kernel is
+  built with `-Z build-std` against the port's target spec, `arch/x86_64/rosx.json` or
+  `arch/x86_32/rosx-i486.json`)
 - No KVM flag is passed, so tests run under pure TCG and are slow; boot
   assertions use generous 60 s timeouts
 - Recommended: `cargo test -p tests-integration -- --test-threads=1` to avoid
   TCG CPU contention
 
-The kernel is built once per test run (guarded by a `OnceLock`) by shelling out
-to cargo against `arch/x86_64/Cargo.toml`.
+The kernel is built once per test run (guarded by a `OnceLock`) by shelling out to cargo against the
+selected port's kernel crate; `ROSX_KERNEL_ELF` skips that build entirely.
 
 ## Environment variables
 

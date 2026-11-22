@@ -265,3 +265,26 @@ x86_32 suite 12:19–12:21, boot samples 12:21–12:24, each started behind an e
 - Coverage: every old test name still runs, either as a `case("…")` inside a group or
   unchanged in its own file; nothing was `#[ignore]`d or deleted with its assertions.
 
+## Post-merge re-check (main's x86_64 carrier swap, appended)
+
+`main` landed `plans/x86_64-carrier-swap.md` (#197) while this branch was open: x86_64 now
+chain-boots the same unified FAT disk as x86_32 instead of the `bootloader`-crate BIOS carrier.
+Merging it (merge commit `98792a8`) touched only two docs — the harness paragraph this branch had
+annotated, and a rules-ledger row whose lesson collided with ours — and the harness code merged
+cleanly. Re-measured on a quiet host over the merged tree (build 14:49, verify 14:49–14:55, timed
+suites 14:55–15:00):
+
+| Metric | this branch pre-merge | merged with main | note |
+|---|---|---|---|
+| `cargo xtask verify` | 453 s green | **352 s green** | boot-test now 26 checkpoints, 0 failures, 0 skipped |
+| suite wall x86_64 | 246 s | **155 s** (sum 154.2 s) | the carrier swap, not this branch |
+| suite wall x86_32 | 149 s | **148 s** (sum 147.6 s) | unchanged |
+| boot-to-prompt median x86_64 | 4.31 s | **1.72 s** | spawn 9.9 ms, init 0.51 s, kernel 0.53 s |
+| boot-to-prompt median x86_32 | 1.68 s | 1.75 s | unchanged |
+| tests per arch | 48 unit + 37 integration | 48 unit + 37 integration | 0 failures, 0 flakes both arches |
+
+The carrier swap took the rest of the x86_64 boot gap away, so the two ports now boot alike at
+~1.7 s. What this branch contributes is unchanged in kind and still visible: 35 QEMU boots per arch
+removed by the five shared-session groups, and no boot pays the ~10 s dead-service probe — with the
+prompt at ~1.7 s, that tax would now dominate a simple test's cost.
+
