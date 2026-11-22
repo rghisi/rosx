@@ -2,7 +2,7 @@ use alloc::collections::{BTreeMap};
 use alloc::string::String;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use crate::collections::arena::GenerationalArena;
+use crate::collections::arena::{ARENA_MAX_SLOTS, GenerationalArena};
 #[cfg(test)]
 use crate::future::Future;
 use crate::future::FutureOwner;
@@ -57,9 +57,9 @@ struct IpcConnection {
 }
 
 pub(crate) struct IpcManager {
-    bindings: GenerationalArena<IpcServerBinding, 256>,
+    bindings: GenerationalArena<IpcServerBinding>,
     mailbox_manager: MailboxManager,
-    connections: GenerationalArena<IpcConnection, 256>,
+    connections: GenerationalArena<IpcConnection>,
     by_client: BTreeMap<TaskHandle, Vec<IpcConnectionHandle>>,
     registry: BTreeMap<String, IpcBindingHandle>,
     notifier: &'static dyn ForNotifyingFutures,
@@ -71,9 +71,9 @@ impl IpcManager {
     #[cfg(test)]
     pub(crate) fn new() -> IpcManager {
         IpcManager {
-            bindings: GenerationalArena::new(),
+            bindings: GenerationalArena::new(ARENA_MAX_SLOTS),
             mailbox_manager: MailboxManager::new(),
-            connections: GenerationalArena::new(),
+            connections: GenerationalArena::new(ARENA_MAX_SLOTS),
             by_client: BTreeMap::new(),
             registry: BTreeMap::new(),
             notifier: &NOOP_IPC_NOTIFIER,
@@ -83,9 +83,9 @@ impl IpcManager {
 
     pub(crate) fn new_with_notifier(notifier: &'static dyn ForNotifyingFutures) -> IpcManager {
         IpcManager {
-            bindings: GenerationalArena::new(),
+            bindings: GenerationalArena::new(ARENA_MAX_SLOTS),
             mailbox_manager: MailboxManager::new_with_notifier(notifier),
-            connections: GenerationalArena::new(),
+            connections: GenerationalArena::new(ARENA_MAX_SLOTS),
             by_client: BTreeMap::new(),
             registry: BTreeMap::new(),
             notifier,
@@ -274,6 +274,7 @@ impl IpcManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collections::arena::PAGE_SLOTS;
     use crate::kernel_services::init as init_services;
     use crate::kernel_services::services;
     use crate::kernel_services::FutureRegistryNotifierUseCase;
@@ -359,7 +360,7 @@ mod tests {
         let (_binding, c1) = bind_and_connect(&mut manager, "MSG-ABA");
         manager.disconnect(c1);
 
-        for _ in 0..255 {
+        for _ in 1..PAGE_SLOTS {
             let filler = manager.connect("MSG-ABA", CLIENT_TASK).unwrap();
             manager.disconnect(filler);
         }

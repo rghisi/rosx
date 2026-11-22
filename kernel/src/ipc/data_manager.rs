@@ -1,6 +1,6 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use crate::collections::arena::GenerationalArena;
+use crate::collections::arena::{ARENA_MAX_SLOTS, GenerationalArena};
 use crate::handle::{Handle, IpcConnectionHandle, IpcDataHandle};
 use crate::ipc::errors::DataError;
 use crate::task::TaskHandle;
@@ -16,7 +16,7 @@ pub(crate) struct DataObject {
 }
 
 pub(crate) struct IpcDataManager {
-    objects: GenerationalArena<DataObject, 256>,
+    objects: GenerationalArena<DataObject>,
     outstanding: BTreeMap<TaskHandle, usize>,
     by_connection: BTreeMap<IpcConnectionHandle, Vec<Handle>>,
 }
@@ -25,7 +25,7 @@ impl IpcDataManager {
 
     pub(crate) fn new() -> IpcDataManager {
         IpcDataManager {
-            objects: GenerationalArena::new(),
+            objects: GenerationalArena::new(ARENA_MAX_SLOTS),
             outstanding: BTreeMap::new(),
             by_connection: BTreeMap::new(),
         }
@@ -154,6 +154,7 @@ impl IpcDataManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collections::arena::PAGE_SLOTS;
     use alloc::vec;
 
     const WRITER_TASK: TaskHandle = TaskHandle::new(1, 1);
@@ -264,10 +265,10 @@ mod tests {
     #[test]
     fn arena_capacity_exhaustion_maps_to_budget_exceeded() {
         let mut manager = IpcDataManager::new();
-        for _ in 0..256 {
+        for _ in 0..ARENA_MAX_SLOTS {
             manager.write(WRITER_TASK, CONNECTION_A, &[1u8]).unwrap();
         }
-        assert_eq!(outstanding(&manager, WRITER_TASK), 256);
+        assert_eq!(outstanding(&manager, WRITER_TASK), ARENA_MAX_SLOTS);
         assert_eq!(
             manager.write(WRITER_TASK, CONNECTION_A, &[1u8]),
             Err(DataError::BudgetExceeded)
@@ -305,7 +306,7 @@ mod tests {
         let mut manager = IpcDataManager::new();
         let first = manager.write(WRITER_TASK, CONNECTION_A, &[1u8]).unwrap();
         manager.release(WRITER_TASK, first).unwrap();
-        for _ in 0..255 {
+        for _ in 1..PAGE_SLOTS {
             let filler = manager.write(WRITER_TASK, CONNECTION_A, &[2u8]).unwrap();
             manager.release(WRITER_TASK, filler).unwrap();
         }

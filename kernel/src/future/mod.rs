@@ -124,7 +124,7 @@ impl Future for TaskCompletionFuture {
 }
 
 pub struct FutureRegistry {
-    arena: GenerationalArena<Box<dyn Future + Send + Sync>, FUTURE_SLOTS>,
+    arena: GenerationalArena<Box<dyn Future + Send + Sync>>,
     waiters: BTreeMap<FutureHandle, Vec<TaskHandle>>,
     parents_of: Vec<Vec<ParentLink>>,
     owners: Vec<FutureOwner>,
@@ -172,7 +172,7 @@ fn as_waitset(future: &mut Box<dyn Future + Send + Sync>) -> Option<&mut Waitset
 impl FutureRegistry {
     pub fn new() -> Self {
         Self {
-            arena: GenerationalArena::new(),
+            arena: GenerationalArena::new(FUTURE_SLOTS),
             waiters: BTreeMap::new(),
             parents_of: empty_parent_rows(),
             owners: empty_owner_table(),
@@ -183,7 +183,7 @@ impl FutureRegistry {
 
     pub(crate) fn new_with_wake_controller(wake_controller: &'static dyn ForWakingTasks) -> Self {
         Self {
-            arena: GenerationalArena::new(),
+            arena: GenerationalArena::new(FUTURE_SLOTS),
             waiters: BTreeMap::new(),
             parents_of: empty_parent_rows(),
             owners: empty_owner_table(),
@@ -474,6 +474,7 @@ impl FutureRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collections::arena::PAGE_SLOTS;
     use crate::kernel_services::{init as init_services, services};
     use crate::task::Task;
     use crate::task::TaskState;
@@ -685,7 +686,7 @@ mod tests {
         assert_eq!(owner_of(&registry, kernel_slot), FutureOwner::Kernel);
         registry.consume(kernel_slot).unwrap();
 
-        for _ in 1..FUTURE_SLOTS {
+        for _ in 1..PAGE_SLOTS {
             registry
                 .register(Box::new(DummyFuture(GHOST_OWNER)), FutureOwner::Kernel)
                 .unwrap();
@@ -781,7 +782,7 @@ mod tests {
 
         registry.reclaim_group(doomed);
 
-        for _ in 1..FUTURE_SLOTS {
+        for _ in 1..PAGE_SLOTS {
             registry
                 .register(Box::new(DummyFuture(GHOST_OWNER)), FutureOwner::Kernel)
                 .unwrap();
@@ -1097,13 +1098,13 @@ mod tests {
         assert!(matches!(registry.take_pending(set), WaitsetTake::Empty));
         assert!(registry.parents_of[child.index() as usize].is_empty());
 
-        for _ in 2..=(FUTURE_SLOTS as u16 - 2) {
+        for _ in 2..PAGE_SLOTS {
             registry.register(Box::new(DummyFuture(GHOST_OWNER)), FutureOwner::Kernel).unwrap();
         }
-        let fresh_set = register_waitset(&mut registry);
         let recycled = registry.register(Box::new(DummyFuture(GHOST_OWNER)), FutureOwner::Kernel).unwrap();
         assert_eq!(recycled.index(), child.index());
         assert_eq!(recycled.generation(), (child.generation() + 1) & 0x7FFF);
+        let fresh_set = register_waitset(&mut registry);
 
         registry.attach(fresh_set, recycled, 4).unwrap();
         registry.notify(recycled);
