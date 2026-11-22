@@ -41,6 +41,6 @@ unsafe arch/x86-bootloader/stage2 34
 unsafe arch/x86-generic 22
 unsafe arch/x86_32 30
 unsafe arch/x86_64 37
-unsafe kernel 295
+unsafe kernel 299
 unsafe tests-integration 5
 unsafe usrlib 62
