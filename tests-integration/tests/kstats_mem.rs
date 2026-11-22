@@ -54,3 +54,31 @@ fn repeated_mem_runs_report_stable_used_bytes() {
     let spread = samples.iter().max().unwrap() - samples.iter().min().unwrap();
     assert!(spread < 6, "reported memory does not erode across runs: {samples:?}");
 }
+
+const READY_TIMEOUT: Duration = Duration::from_secs(30);
+const KILL_TIMEOUT: Duration = Duration::from_secs(20);
+const CYCLES: usize = 10;
+
+#[test]
+fn load_run_kill_cycles_do_not_erode_used_memory() {
+    let mut session = QemuSession::spawn();
+    session.expect_output("rose>", BOOT_BUDGET);
+
+    let before = used_kib(&mut session);
+    for _ in 0..CYCLES {
+        let cycle = session.mark();
+        session.send_line("spinner");
+        session.expect_output_since(cycle, "spinner ready", READY_TIMEOUT);
+        session.send_key('\x03');
+        session.expect_output_since(cycle, "^C", KILL_TIMEOUT);
+        session.expect_output_since(cycle, "rose>", KILL_TIMEOUT);
+    }
+    let after = used_kib(&mut session);
+    println!("used KiB before {CYCLES} spinner load-run-kill cycles: {before}, after: {after}");
+
+    assert!(
+        after.abs_diff(before) < 32,
+        "the image and stack of every killed program must return to the free list: \
+         before {before} KiB, after {after} KiB"
+    );
+}

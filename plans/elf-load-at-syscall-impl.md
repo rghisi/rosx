@@ -193,6 +193,44 @@ and M3 therefore land as one reviewable commit.
   remove more `unsafe` than `ProgramMemory` adds; ratcheted down with `--update-baseline` (drops
   need no decision record).
 
+## M4 — Integration (QEMU, both arches)
+
+New integration tests (`tests-integration/tests/`):
+
+- **Test 7 — `elf_launch_failure.rs`** (2 tests): the session's FAT master gets a text file
+  (`notes.txt`) and a blob with ELF magic but nothing loadable (`corrupt.elf`). `rose> notes.txt`
+  prints `Not an executable: notes.txt`; `rose> corrupt.elf` fails inside `LoadElf` and produces
+  the kernel diagnostic `[ELF] 'corrupt.elf' rejected: …` plus the shell line
+  `Cannot launch: corrupt.elf`; both cases then run `exiter 5`/`exiter 6` to prove the system is
+  up, and the windows assert no panic anywhere. x86_64: both pass; x86_32: both pass.
+- **Test 8 — `kstats_mem.rs`**: `load_run_kill_cycles_do_not_erode_used_memory` — 10 cycles of
+  `spinner` + Ctrl-C (the real load, run and `Kill` path), sampling `mem` before and after.
+  x86_64: 1696 → 1704 KiB (+8 over 10 killed programs, threshold < 32); x86_32: 1455 → 1455 KiB
+  (zero drift). A per-cycle leak would have been ≥ 21 KiB of image plus the stack.
+
+**Test 9 — steady-state used-KiB** (five `mem` samples each, zero spread in every series):
+
+| Arch | M0 baseline | after M2+M3 | drop | M0 prediction |
+|---|---|---|---|---|
+| x86_64 | 2341 KiB | **1696 KiB** | 645 KiB | ~587 KiB → ~1754 |
+| x86_32 | 2074 KiB | **1455 KiB** | 619 KiB | ~565 KiB → ~1509 |
+
+The drop exceeds the retained-ELF-bytes prediction (645 vs 587, 619 vs 565): the old path kept
+both the caller's file bytes and the first-slice image `Vec`, while the new one keeps only the
+group block; the alignment overshoot (4 KiB align per block) does not eat the difference.
+
+**Test 10 — boot time:** `measure_boot` (5 samples each side) ran the pre-plan `83ade61` kernel
+against the M2+M3 kernel, same host, same session shape — boot to prompt:
+
+| Arch | baseline median | new median | verdict |
+|---|---|---|---|
+| x86_64 | 14.7299 s | 14.7390 s | +9 ms, within the series' own spread — no regression |
+| x86_32 | 12.6632 s | 11.5498 s | 1.1 s **faster** with eager group-block loading |
+
+M4 gate: `cargo xtask test` green on x86_64 (exit 0, boot-test 25 checkpoints 0 failures, all
+three kstats tests and both `elf_launch_failure` tests in-suite) and green on x86_32 (exit 0,
+boot-test 25/25, same tests passing).
+
 ## Friction log
 
 M0 | test import of `BLOCK_ALIGN` failed E0603 — constant is private, visibility not a plan fact | MISSING-FACT | 1 round
@@ -200,3 +238,4 @@ M0 | first `cargo xtask check` failed `unsafe: kernel has 302, baseline allows 3
 M2+M3 | plan's types-only M2 commit cannot pass the gate (unused=deny + no-test-only-production-surface) | CONTRADICTION | plan commit split amended: M2 folded into M3
 M2+M3 | check-style reported "302 → 292" while `program_memory.rs` was untracked — survey scans `git ls-files`, so new files only count after `git add` | MISSING-FACT | 1 round
 M2+M3 | `NonNull::addr()` returns `NonZero<usize>` on this nightly — needs `.get()` for plain `usize` | MISSING-FACT | 1 round
+M4 | tail of a still-running `cargo xtask test` log read as completion; the x86_32 suite started alongside the live x86_64 one and the two QEMU runs shared `target/` until killed | ENV-TRAP | 1 kill + full x86_32 rerun; trust only the completion notification
