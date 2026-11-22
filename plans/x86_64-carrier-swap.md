@@ -358,6 +358,7 @@ successor; `plans/platform-runner-abstraction.md` (trait plan, now on a simpler 
     M2 | boot.S absolute data references emitted R_X86_64_32 relocations; the `kernel`-model link failure was misread as Rust codegen before the asm was blamed (fake-kernel-64 hid both defects) | TASK | 2 link rounds (~5 min)
     M2 | first chain boot reached kernel_main with magic 0x10: boot.S reused rax — the magic carrier — for the far-reload target and the selector load, ignoring the 32-bit template's register discipline | TASK | 1 boot round
     M3 | the D5 merge linked fake-kernel-64 under `large` with `p_paddr == p_vaddr` segments: neither linker.ld collected the `.ltext/.lrodata/.ldata/.lbss` orphan families the large model emits (the real kernel was accidentally rescued by boot.S's non-empty `.text` inheriting the AT region); caught by the ELF audit before any boot | MISSING-FACT | 1 rebuild round; both scripts collect them now, fact lands in the code-model decision record (M4)
+    M4 | decision-record filenames `x86_64-*.md` rejected by the records validator (kebab-case law already in AGENTS.md); renamed to `x86-64-*` next round | MISSING-FACT | 1 gate round
 
 M1 execution record (2026-11-22, commit `3cbfb8b`): the re-stamped index-0 disk stayed out of
 the boot order — the bootindex=1 carrier won, SeaBIOS never touched the new bootable MBR — and
@@ -382,3 +383,12 @@ AT()'d `.text` region) into a deterministic recipe: both `linker.ld`s collect
 again under `large`. `fat_boot_disk` died with its last consumer; runner exports narrowed to
 what callers use; the debug tooling boots the unified disk from reset with higher-half
 symbols. Gate green, boot-test 26/26.
+
+M4 execution record (2026-11-22, commit `0074b45`): the docs now match the machine — AGENTS.md,
+`docs/architecture/boot-media-and-harness.md` (unified-disk story for both ports,
+secondary-bus invariant retired, link recipe spelled out), the release-boot recipes in the
+root README, the boot-reader README positioning with a 26-row checkpoint table (the
+`real-kernel-boot32` row had never been listed), §9 x86_64 halves closed, the runner-abstraction
+plan refreshed. Decision records `bootloader-crate-retirement`, `x86-64-console-vga-text`,
+`x86-64-link-code-model-large` and todo `vesa-framebuffer-successor.md` filed; the records
+validator keeps filenames kebab.
