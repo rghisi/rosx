@@ -25,7 +25,7 @@ cargo xtask install-hooks            # git pre-commit hook running the gate (the
 ```
 
 - `cargo xtask help` lists every subcommand; CI recipes are in `.github/workflows/ci.yml` and `build-artifacts.yml`.
-- Integration tests: `cargo xtask test` builds the release kernel and sets `ROSX_KERNEL_ELF`; by hand, `ROSX_KERNEL_ELF=<prebuilt release kernel> cargo test -p tests-integration -- --test-threads=1` (add `ROSX_ARCH=x86_32` for the 32-bit port). With neither variable set the harness fails loudly; `ROSX_QEMU_PROFILE=dev|release` is the explicit opt-in to a harness-built kernel.
+- Integration tests: `cargo xtask test` builds the release kernel and sets `ROSX_KERNEL_ELF`; by hand, `ROSX_KERNEL_ELF=<prebuilt release kernel — absolute path> cargo test -p tests-integration -- --test-threads=1` (add `ROSX_ARCH=x86_32` for the 32-bit port). With neither variable set the harness fails loudly; `ROSX_QEMU_PROFILE=dev|release` is the explicit opt-in to a harness-built kernel.
 - Unit tests: `cargo test -p kernel -- --test-threads=1`, `cargo test -p rxfs`, `cargo test -p usrlib`.
 - `cargo build --workspace` is intentionally unsupported: bare-metal bins and PIE apps cannot compile for the host.
 - Boot media, QEMU wiring and harness facts: `docs/architecture/boot-media-and-harness.md`.
@@ -72,7 +72,7 @@ Each line links the file holding the detail; every file starts with its own inva
 
 - **Comments:** none, except a short (at most 6 lines) `///`/`//!` on an item containing `unsafe`/`asm!`/`global_asm!` (or an `unsafe fn`/`unsafe impl`) that links its `docs/rationale/<slug>.md`; assembly (`*.S`, `asm!`/`global_asm!` bodies) keeps its mandatory register and calling-convention comments. Today's comments are frozen in `xtask/style-baseline.txt`, which only ratchets down.
 - **`#[allow]`** is banned; use `#[expect(lint, reason = "...")]` and never without the maintainer's approval for that specific case. The existing `#[allow]` attributes are baselined.
-- **`unsafe`** counts per crate are baselined; raising a count needs a record in `docs/decisions/`.
+- **`unsafe`** counts per crate are baselined (the count includes `#[cfg(test)]` code); raising a count needs a record in `docs/decisions/`.
 - **Dependency arrows** and the 486 feature floor: `xtask/arch-rules.txt`.
 - **32-bit hazards** (`f32`, `f64`, `AtomicU64`, `AtomicI64` in 32-bit-reachable crates), **handle kind guards** (`usrlib/tests/handle_kind_guards.rs`), **warnings as errors** (`[workspace.lints.rust]`), **486 ISA audit** (`check-isa`).
 - **check-style surveys `git ls-files` only**: a new source file counts toward the unsafe ratchet and its rationale links only after `git add`.
