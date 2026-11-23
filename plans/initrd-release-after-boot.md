@@ -305,6 +305,11 @@ piped or truncated output — AGENTS.md toolchain notes). Boot-test rows must sh
 - Hardware evidence for how much RAM this actually frees on 486-class machines
   (`docs/architecture/real-hardware-x86_32.md`); this plan claims QEMU numbers only.
 
+## Friction log
+
+S0 | `ROSX_KERNEL_ELF=target/rosx/release/rosx` (relative) → harness `canonicalize` failed, test
+aborted | ENV-TRAP | 1 round (rerun with `$PWD/...` absolute)
+
 ## Execution records
 
 ### S0 — Baseline and proofs (no production code)
@@ -354,3 +359,21 @@ Boot lines and `mem` snapshot at `rose>` (the before figures for S2 and S4):
 
 S2 target checks derived here: `[BOOTINFO] blocks=` must read **2** on both arches (one above
 S0), `mem` free bytes must **equal S0's** (the ROM is held, not free), and `dropped` must stay **0**.
+
+### S1 — Allocator tag and `free_blocks` (host-tested, no behaviour change)
+
+`MemoryBlock` gained a required `use_: BlockUse { Free, Held }` (no `Default`), a
+`MemoryBlock::free` constructor, and `MemoryBlocks::free_blocks()`; all 10 struct literals migrated
+to the constructor. `FreeListAllocator::new` now threads only `free_blocks()` onto the free list
+while keeping every block in `regions`, so `region_contains` still accepts a pointer inside a held
+range. Four unit tests prove the tag: `free_blocks` yields only `Free`; a held block is never
+allocated however large the request and never counted free; `deallocate` of a held pointer is
+rejected `not-in-alloc-list` and leaves the list intact; a held block counts in `total_bytes` but
+not in `free_bytes`. No held block is produced yet, so boot is unchanged.
+
+**Deviation from §3 (rule-driven, not a §2 change):** `release_held` is deferred to S3. `kernel` is
+a lib crate, so a `release_held` with only test callers is a banned test-only production surface
+(AGENTS.md), and a `pub(crate)` one is dead in the binary build; its only real caller,
+`rom::release`, lands in S3. Its coalescing / idempotence / `free_bytes`-rise tests therefore move to
+S3 with it. The kernel `unsafe` baseline rose 299→302 for the three new test `allocate`/`deallocate`
+calls, recorded in `docs/decisions/gate-baseline-unsafe-raised-2026-11-23.md`.

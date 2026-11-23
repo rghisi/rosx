@@ -130,7 +130,7 @@ fn boot_info_memory(address: usize) -> MemoryBlocks {
 
 fn empty_blocks() -> MemoryBlocks {
     MemoryBlocks {
-        blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),
+        blocks: core::array::from_fn(|_| MemoryBlock::free(0, 0)),
         count: 0,
     }
 }

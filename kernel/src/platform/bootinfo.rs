@@ -125,10 +125,10 @@ pub unsafe fn usable_blocks(
             facts.dropped += 1;
             continue;
         }
-        blocks.blocks[blocks.count] = MemoryBlock {
-            start: start as usize,
-            size: (end - start) as usize,
-        };
+        blocks.blocks[blocks.count] = MemoryBlock::free(
+            start as usize,
+            (end - start) as usize,
+        );
         blocks.count += 1;
         facts.accepted += 1;
     }
@@ -291,7 +291,7 @@ mod tests {
 
     fn empty_blocks() -> MemoryBlocks {
         MemoryBlocks {
-            blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),
+            blocks: core::array::from_fn(|_| MemoryBlock::free(0, 0)),
             count: 0,
         }
     }
