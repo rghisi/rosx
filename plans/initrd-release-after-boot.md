@@ -532,3 +532,22 @@ green`.
 - Wall time was ~6 min, not the ~40 min AGENTS.md estimates: this host booted every QEMU session
   to the prompt in under two seconds (S0–S4 timings match), so the estimate, not the run, was
   the outlier.
+
+### Post-V — Merge of origin/main (PR #202 paged arenas) and re-verify
+
+`main` moved ahead by `f85af9f` (paged arenas on demand, PR #202) while this branch ran. It
+rewrites `collections/arena.rs` and `future/mod.rs` but touches no ROM-path file, so only the
+two shared ledgers conflicted:
+
+- `docs/architecture/memory.md` — both sides added one invariant line at the same spot; kept
+  both (the arena-pages rule and the held-initrd rule).
+- `xtask/style-baseline.txt` — the unsafe ratchet: the shared base was **299**, main raised +1
+  (its own record `gate-baseline-unsafe-raised-2026-11-22-3`), this branch +6 (S1 + S3 records);
+  the merged count is 299+1+6 = **306**, exactly what `check-style` reported, so the line takes
+  the sum and both sides' decision records stand as written.
+
+`cargo xtask check` green on the merged tree, then a full re-verify (`/tmp/opencode/verify2.log`,
+exit code and start/end 22:27:38→22:33:38 UTC stamped in `verify2_wall.txt`): **exit 0**, all
+five stages, boot-test **26 checkpoints, 0 failures, 0 skipped**, `rom_is_released_once_after_the_boot_plan`
+passing on both arches — main's arena pages draw from the same allocator that now receives the
+released ROM, and the release path is unharmed.
