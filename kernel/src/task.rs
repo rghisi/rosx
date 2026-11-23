@@ -76,7 +76,7 @@ impl TaskName {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct GroupId(usize);
 
 impl GroupId {

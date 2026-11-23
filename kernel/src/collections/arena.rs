@@ -172,17 +172,6 @@ impl<T> GenerationalArena<T> {
             }
         }
     }
-
-    pub(crate) fn visit_handles<F: FnMut(Handle, &T)>(&self, mut visitor: F) {
-        for (page_index, page) in self.pages.iter().enumerate() {
-            for (offset, slot) in page.iter().enumerate() {
-                if let Some(item) = &slot.item {
-                    let index = (page_index * PAGE_SLOTS + offset) as u16;
-                    visitor(Handle::new(index, slot.generation), item);
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]

@@ -147,6 +147,7 @@ pub struct FutureRegistry {
     arena: GenerationalArena<FutureEntry>,
     waiters: BTreeMap<FutureHandle, Vec<TaskHandle>>,
     by_owner: BTreeMap<TaskHandle, Vec<FutureHandle>>,
+    by_group: BTreeMap<GroupId, Vec<FutureHandle>>,
     wake_controller: &'static dyn ForWakingTasks,
 }
 
@@ -177,6 +178,7 @@ impl FutureRegistry {
             arena: GenerationalArena::new(FUTURE_SLOTS),
             waiters: BTreeMap::new(),
             by_owner: BTreeMap::new(),
+            by_group: BTreeMap::new(),
             wake_controller: &DEFAULT_WAKE_CONTROLLER,
         }
     }
@@ -186,6 +188,7 @@ impl FutureRegistry {
             arena: GenerationalArena::new(FUTURE_SLOTS),
             waiters: BTreeMap::new(),
             by_owner: BTreeMap::new(),
+            by_group: BTreeMap::new(),
             wake_controller,
         }
     }
@@ -198,6 +201,9 @@ impl FutureRegistry {
         let task_owner = future.owner();
         let handle = self.arena.add(FutureEntry { future, owner, parents: None }).ok()?;
         self.by_owner.entry(task_owner).or_default().push(FutureHandle::from(handle));
+        if let FutureOwner::Group(group) = owner {
+            self.by_group.entry(group).or_default().push(FutureHandle::from(handle));
+        }
         Some(FutureHandle::from(handle))
     }
 
@@ -226,6 +232,14 @@ impl FutureRegistry {
             handles.retain(|live| *live != handle);
             if handles.is_empty() {
                 self.by_owner.remove(&owner);
+            }
+        }
+        if let FutureOwner::Group(group) = removed.owner {
+            if let Some(handles) = self.by_group.get_mut(&group) {
+                handles.retain(|live| *live != handle);
+                if handles.is_empty() {
+                    self.by_group.remove(&group);
+                }
             }
         }
         for link in removed.parents.unwrap_or_default() {
@@ -409,13 +423,9 @@ impl FutureRegistry {
 
     pub(crate) fn reclaim_group(&mut self, group: GroupId) {
         let _section = FUTURE_SECTION.acquire();
-        let owner = FutureOwner::Group(group);
-        let mut abandoned = Vec::new();
-        self.arena.visit_handles(|handle, entry| {
-            if entry.owner == owner {
-                abandoned.push(FutureHandle::from(handle));
-            }
-        });
+        let Some(abandoned) = self.by_group.remove(&group) else {
+            return;
+        };
         for handle in abandoned {
             self.notify_inner(handle);
             let _ = self.consume_inner(handle);
@@ -733,6 +743,47 @@ mod tests {
         registry.reclaim_group(GroupId::allocate());
         assert_eq!(registry.get(other), Some(false));
         assert_eq!(registry.get(kernel_slot), Some(false));
+    }
+
+    #[test]
+    fn the_group_index_shrinks_as_its_futures_are_consumed() {
+        let mut registry = FutureRegistry::new();
+        let doomed = GroupId::allocate();
+        let first = registry
+            .register(Box::new(DummyFuture(GHOST_OWNER)), FutureOwner::Group(doomed))
+            .unwrap();
+        let second = registry
+            .register(Box::new(DummyFuture(GHOST_OWNER)), FutureOwner::Group(doomed))
+            .unwrap();
+        assert_eq!(registry.by_group.get(&doomed).map(Vec::as_slice), Some(&[first, second][..]));
+
+        registry.consume(first).unwrap();
+        assert_eq!(registry.by_group.get(&doomed).map(Vec::as_slice), Some(&[second][..]));
+
+        registry.consume(second).unwrap();
+        assert!(!registry.by_group.contains_key(&doomed));
+    }
+
+    #[test]
+    fn reclaim_group_empties_only_its_own_index_entry() {
+        let mut registry = FutureRegistry::new();
+        let doomed = GroupId::allocate();
+        let neighbor = GroupId::allocate();
+        let set = registry
+            .register(Box::new(WaitsetFuture::owned_by(GHOST_OWNER)), FutureOwner::Group(neighbor))
+            .unwrap();
+        let child = registry
+            .register(Box::new(DummyFuture(GHOST_OWNER)), FutureOwner::Group(doomed))
+            .unwrap();
+        registry.attach(set, child, 1).unwrap();
+
+        registry.reclaim_group(doomed);
+
+        assert_eq!(registry.get(child), None);
+        assert!(!registry.by_group.contains_key(&doomed));
+        assert_eq!(registry.by_group.get(&neighbor).map(Vec::as_slice), Some(&[set][..]));
+        assert!(registry.is_waitset(set));
+        assert!(matches!(registry.take_pending(set), WaitsetTake::Empty));
     }
 
     #[test]
