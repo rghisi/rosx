@@ -312,6 +312,9 @@ aborted | ENV-TRAP | 1 round (rerun with `$PWD/...` absolute)
 S1 | `cargo xtask check` first run exit 1: `///` on the non-unsafe `BlockUse` (mod.rs comment
 baseline 0) and kernel `unsafe` 299→302 from new cfg(test) `allocate`/`deallocate` calls | MISSING-FACT |
 1 round (removed the comment; `check-style --update-baseline --allow-increase` wrote the record)
+S3 | `cargo xtask check` first run exit 1: new `Lifecycle` owner field written as `AtomicU64`,
+flagged by check-isa as a 32-bit hazard despite the AGENTS.md 486-floor line | TASK | 1 round
+(fixed to `AtomicUsize`; the planned baseline raise was already routed by the plan's Gate line)
 
 ## Execution records
 
