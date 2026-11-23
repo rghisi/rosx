@@ -262,11 +262,59 @@ impl Display for TaskKillError {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum RomMapError {
+    Released,
+    NotOwner,
+}
+
+impl From<ErrorCode> for RomMapError {
+    fn from(code: ErrorCode) -> Self {
+        match code {
+            ErrorCode::RomReleased => Self::Released,
+            _ => Self::NotOwner,
+        }
+    }
+}
+
+impl Display for RomMapError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            RomMapError::Released => write!(f, "ROM already released"),
+            RomMapError::NotOwner => write!(f, "ROM mapped by another group"),
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum RomReleaseError {
+    NotOwner,
+    AlreadyReleased,
+}
+
+impl From<ErrorCode> for RomReleaseError {
+    fn from(code: ErrorCode) -> Self {
+        match code {
+            ErrorCode::RomAlreadyReleased => Self::AlreadyReleased,
+            _ => Self::NotOwner,
+        }
+    }
+}
+
+impl Display for RomReleaseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            RomReleaseError::NotOwner => write!(f, "ROM release refused to a non-owner"),
+            RomReleaseError::AlreadyReleased => write!(f, "ROM already released"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 28] = [
+    const ALL_ERROR_CODES: [ErrorCode; 31] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -294,6 +342,9 @@ mod tests {
         ErrorCode::ExitCodeOutOfRange,
         ErrorCode::TaskKillTargetTerminated,
         ErrorCode::TaskKillTargetRunning,
+        ErrorCode::RomReleased,
+        ErrorCode::RomNotOwner,
+        ErrorCode::RomAlreadyReleased,
         ErrorCode::Unknown,
     ];
 
@@ -309,6 +360,8 @@ mod tests {
             let port = PortError::from(code);
             let task_exit = TaskExitError::from(code);
             let task_kill = TaskKillError::from(code);
+            let rom_map = RomMapError::from(code);
+            let rom_release = RomReleaseError::from(code);
 
             let expected_connection = match code {
                 ErrorCode::IpcConnectionCannotBeEstablished => {
@@ -352,6 +405,14 @@ mod tests {
                 ErrorCode::TaskKillTargetRunning => TaskKillError::TargetRunning,
                 _ => TaskKillError::TargetTerminated,
             };
+            let expected_rom_map = match code {
+                ErrorCode::RomReleased => RomMapError::Released,
+                _ => RomMapError::NotOwner,
+            };
+            let expected_rom_release = match code {
+                ErrorCode::RomAlreadyReleased => RomReleaseError::AlreadyReleased,
+                _ => RomReleaseError::NotOwner,
+            };
 
             assert_eq!(connection, expected_connection);
             assert_eq!(binding, IpcBindingError::AlreadyBound);
@@ -362,6 +423,8 @@ mod tests {
             assert_eq!(port, expected_port);
             assert_eq!(task_exit, expected_task_exit);
             assert_eq!(task_kill, expected_task_kill);
+            assert_eq!(rom_map, expected_rom_map);
+            assert_eq!(rom_release, expected_rom_release);
         }
     }
 

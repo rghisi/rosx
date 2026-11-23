@@ -217,10 +217,23 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
                 Err(e) => ErrorCode::from(e).to_reg(),
             }
         }
-        Ok(SyscallNum::RomRead) => {
-            let dst = unsafe { core::slice::from_raw_parts_mut(arg2 as *mut u8, arg3) };
-            crate::rom::read(arg1 as u64, dst)
-        }
+        Ok(SyscallNum::RomMap) => match current_group_owner() {
+            FutureOwner::Group(group) => match crate::rom::map(group) {
+                Ok(view) => {
+                    unsafe { (arg1 as *mut system::rom::RomRef).write(view) };
+                    0
+                }
+                Err(error) => error.to_reg(),
+            },
+            _ => ErrorCode::RomNotOwner.to_reg(),
+        },
+        Ok(SyscallNum::RomRelease) => match current_group_owner() {
+            FutureOwner::Group(group) => match crate::rom::release(group) {
+                Ok(bytes) => bytes,
+                Err(error) => error.to_reg(),
+            },
+            _ => ErrorCode::RomNotOwner.to_reg(),
+        },
         Ok(SyscallNum::WaitsetCreate) => {
             let caller = kernel().execution_state.current_task();
             match services()

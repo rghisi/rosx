@@ -1,14 +1,77 @@
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+
 use crate::once::Once;
+use crate::task::GroupId;
+use system::error::ErrorCode;
 use system::rom::RomError;
 use system::rom::RomImage;
+use system::rom::RomRef;
 
 static ROM_IMAGE: Once<&'static [u8]> = Once::new();
+static LIFECYCLE: Lifecycle = Lifecycle::new();
+
+struct Lifecycle {
+    state: AtomicU8,
+    owner: AtomicUsize,
+}
+
+impl Lifecycle {
+    const HELD: u8 = 0;
+    const MAPPED: u8 = 1;
+    const RELEASED: u8 = 2;
+
+    const fn new() -> Self {
+        Lifecycle {
+            state: AtomicU8::new(Self::HELD),
+            owner: AtomicUsize::new(0),
+        }
+    }
+
+    fn is_released(&self) -> bool {
+        self.state.load(Ordering::SeqCst) == Self::RELEASED
+    }
+
+    fn map(&self, caller: usize) -> Result<(), ErrorCode> {
+        match self
+            .state
+            .compare_exchange(Self::HELD, Self::MAPPED, Ordering::SeqCst, Ordering::SeqCst)
+        {
+            Ok(_) => {
+                self.owner.store(caller, Ordering::SeqCst);
+                Ok(())
+            }
+            Err(Self::MAPPED) if self.owner.load(Ordering::SeqCst) == caller => Ok(()),
+            Err(Self::MAPPED) => Err(ErrorCode::RomNotOwner),
+            Err(_) => Err(ErrorCode::RomReleased),
+        }
+    }
+
+    fn claim_release(&self, caller: usize) -> Result<(), ErrorCode> {
+        let state = self.state.load(Ordering::SeqCst);
+        if state == Self::HELD {
+            return Err(ErrorCode::RomNotOwner);
+        }
+        if state == Self::RELEASED {
+            return Err(ErrorCode::RomAlreadyReleased);
+        }
+        if self.owner.load(Ordering::SeqCst) != caller {
+            return Err(ErrorCode::RomNotOwner);
+        }
+        self.state
+            .compare_exchange(Self::MAPPED, Self::RELEASED, Ordering::SeqCst, Ordering::SeqCst)
+            .map(|_| ())
+            .map_err(|_| ErrorCode::RomAlreadyReleased)
+    }
+}
 
 pub fn init(image: &'static [u8]) {
     ROM_IMAGE.call_once(|| image);
 }
 
 pub fn image() -> &'static [u8] {
+    if LIFECYCLE.is_released() {
+        return &[];
+    }
     ROM_IMAGE.get().copied().unwrap_or(&[])
 }
 
@@ -28,18 +91,21 @@ fn located<'a>(image: &'a [u8], name: &str) -> Option<&'a [u8]> {
     image.get(entry.offset..entry.offset + entry.len)
 }
 
-pub fn read(offset: u64, dst: &mut [u8]) -> usize {
-    read_at(image(), offset, dst)
+pub fn map(caller: GroupId) -> Result<RomRef, ErrorCode> {
+    LIFECYCLE.map(caller.value())?;
+    let image = image();
+    Ok(RomRef {
+        start: image.as_ptr() as u64,
+        len: image.len() as u64,
+    })
 }
 
-pub fn read_at(image: &[u8], offset: u64, dst: &mut [u8]) -> usize {
-    if offset >= image.len() as u64 {
-        return 0;
-    }
-    let start = offset as usize;
-    let count = core::cmp::min(dst.len(), image.len() - start);
-    dst[..count].copy_from_slice(&image[start..start + count]);
-    count
+pub fn release(caller: GroupId) -> Result<usize, ErrorCode> {
+    LIFECYCLE.claim_release(caller.value())?;
+    let address = ROM_IMAGE.get().copied().unwrap_or(&[]).as_ptr() as usize;
+    let bytes = crate::memory::memory_manager::MEMORY_MANAGER.release_held();
+    crate::kprintln!("[ROM] released addr=0x{:x} bytes={}", address, bytes);
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -91,66 +157,37 @@ mod tests {
     }
 
     #[test]
-    fn read_at_empty_image_copies_nothing() {
-        let mut dst = [0u8; 4];
-        assert_eq!(read_at(&[], 0, &mut dst), 0);
-    }
-
-    #[test]
-    fn read_at_start_copies_exact_prefix() {
-        let mut dst = [0u8; 3];
-        assert_eq!(read_at(b"abcdef", 0, &mut dst), 3);
-        assert_eq!(&dst, b"abc");
-    }
-
-    #[test]
-    fn read_at_middle_copies_exact_window() {
-        let mut dst = [0u8; 2];
-        assert_eq!(read_at(b"abcdef", 2, &mut dst), 2);
-        assert_eq!(&dst, b"cd");
-    }
-
-    #[test]
-    fn read_at_clamps_across_end() {
-        let mut dst = [0u8; 8];
-        assert_eq!(read_at(b"abcdef", 4, &mut dst), 2);
-        assert_eq!(&dst[..2], b"ef");
-    }
-
-    #[test]
-    fn read_at_offset_at_len_is_zero() {
-        let mut dst = [0u8; 4];
-        assert_eq!(read_at(b"abcdef", 6, &mut dst), 0);
-    }
-
-    #[test]
-    fn read_at_offset_past_end_is_zero() {
-        let mut dst = [0u8; 4];
-        assert_eq!(read_at(b"abcdef", 99, &mut dst), 0);
-    }
-
-    #[test]
-    fn read_at_u64_max_offset_is_zero() {
-        let mut dst = [0u8; 4];
-        assert_eq!(read_at(b"abcdef", u64::MAX, &mut dst), 0);
-    }
-
-    #[test]
-    fn read_at_zero_length_dst_copies_nothing() {
-        assert_eq!(read_at(b"abcdef", 0, &mut []), 0);
-    }
-
-    #[test]
-    fn init_registers_image_for_read() {
+    fn init_registers_the_image_for_program() {
         static IMAGE: &[u8] = b"kernel rom image";
         init(IMAGE);
         assert_eq!(image(), IMAGE);
-        let mut dst = [0u8; 6];
-        assert_eq!(read(0, &mut dst), 6);
-        assert_eq!(&dst, b"kernel");
-        let mut tail = [0u8; 64];
-        assert_eq!(read(11, &mut tail), 5);
-        assert_eq!(&tail[..5], b"image");
-        assert_eq!(read(16, &mut tail), 0);
+        assert_eq!(located(image(), "nope"), None);
+    }
+
+    #[test]
+    fn a_fresh_lifecycle_maps_for_exactly_one_group() {
+        let lifecycle = Lifecycle::new();
+        assert_eq!(lifecycle.map(7), Ok(()));
+        assert_eq!(lifecycle.map(7), Ok(()), "the owner may map again");
+        assert_eq!(lifecycle.map(8), Err(ErrorCode::RomNotOwner));
+    }
+
+    #[test]
+    fn release_requires_the_mapping_owner() {
+        let lifecycle = Lifecycle::new();
+        assert_eq!(lifecycle.claim_release(7), Err(ErrorCode::RomNotOwner), "nothing is mapped yet");
+        lifecycle.map(7).unwrap();
+        assert_eq!(lifecycle.claim_release(8), Err(ErrorCode::RomNotOwner));
+        assert_eq!(lifecycle.claim_release(7), Ok(()));
+        assert_eq!(lifecycle.claim_release(7), Err(ErrorCode::RomAlreadyReleased));
+    }
+
+    #[test]
+    fn a_released_lifecycle_refuses_to_map_again() {
+        let lifecycle = Lifecycle::new();
+        lifecycle.map(7).unwrap();
+        lifecycle.claim_release(7).unwrap();
+        assert_eq!(lifecycle.map(9), Err(ErrorCode::RomReleased));
+        assert!(lifecycle.is_released());
     }
 }
