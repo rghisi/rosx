@@ -307,4 +307,50 @@ piped or truncated output — AGENTS.md toolchain notes). Boot-test rows must sh
 
 ## Execution records
 
-(none yet)
+### S0 — Baseline and proofs (no production code)
+
+Quiet-host gate (`pgrep -x 'qemu-system-x86'`, load vs `nproc`) held before every boot; the host
+was idle each time. Both arches built (`cargo xtask build`, `cargo xtask build x86_32`) and booted
+to the `rose>` prompt from the prebuilt release kernels. A throwaway `tests-integration` boot test
+captured the lines and the `mem` snapshot, then was deleted; no production code changed.
+
+ROM image size on the boot volume (`target/<arch>-user/rom.img`, what stage2 places at
+`kernel_end` and the kernel sees as the initrd):
+
+| Arch | ROM bytes | page-rounded (held block) |
+|---|---|---|
+| x86_64 | 573,449 | 577,536 (141 pages) = 564 KiB |
+| x86_32 | 550,689 | 552,960 (135 pages) = 540 KiB |
+
+Boot lines and `mem` snapshot at `rose>` (the before figures for S2 and S4):
+
+| Arch | `[BOOTINFO]` | `[ROM]` | `mem` free | `mem` total | largest free | free blocks |
+|---|---|---|---|---|---|---|
+| x86_64 | regions=11 usable=0x7e52000 blocks=1 clipped=1 dropped=0 | addr=0xffff800000146000 size=573449 files=9 | 127355 KiB | 129052 KiB | 126195 KiB | 77 |
+| x86_32 | regions=10 usable=0x7e6a000 blocks=1 clipped=1 dropped=0 | addr=0x13a000 size=550689 files=9 | 127693 KiB | 129148 KiB | 126503 KiB | 82 |
+
+**Findings against the §1 unverified items — none contradicts a §2 decision:**
+
+- **U1 — settled: block starts are physical; the `RomRef` carries the kernel slice pointer.**
+  The `[BOOTINFO]` blocks come from the memory-map `base` fields, which are physical, and
+  `safe_start` (`kernel_phys_end`) is the physical clip floor. The `[ROM]` address differs by arch:
+  x86_64 reports the higher-half alias `0xffff800000146000`, x86_32 reports the physical
+  `0x13a000`. So the **held block carries the physical start** (`wire − HIGHER_HALF_OFFSET` on
+  x86_64, equal on x86_32) — the alias the allocator already uses — and the **`RomRef` the user
+  reads is `rom::image().as_ptr()`**, i.e. the same slice pointer the kernel boots from (valid
+  because user space is flat ring 0). This is what D6/R1 assumed; it holds.
+- **U2 — ROM size and free-heap figures are the table above**, per arch. Releasing reclaims
+  564 KiB (x86_64) / 540 KiB (x86_32).
+- **U3 — block-cap headroom confirmed: `dropped=0` on both arches.** Only one usable block reaches
+  the allocator today (`blocks=1`); appending one held block keeps the table at two of the
+  `MAX_MEMORY_BLOCKS = 32`. No new drop.
+- **U4 — `init` is single-task for its whole life.** `apps/init/src/main.rs` runs `main()` to
+  completion and never calls `Spawn`, so recording the calling group as the ROM owner is
+  sufficient: no sibling of init's group can outlive the release. R3's multi-task caveat stays
+  recorded but does not fire today.
+- **Retired-number rule confirmed by an existing test.** `system/src/syscall_numbers.rs` carries
+  `try_read_char_number_stays_retired` (asserts 9 stays unused) alongside the gaps at
+  13/14/16–19/21. Retiring `RomRead = 27` (left unreused) matches the convention.
+
+S2 target checks derived here: `[BOOTINFO] blocks=` must read **2** on both arches (one above
+S0), `mem` free bytes must **equal S0's** (the ROM is held, not free), and `dropped` must stay **0**.
