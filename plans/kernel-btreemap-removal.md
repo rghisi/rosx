@@ -1,10 +1,10 @@
 # Kernel BTreeMap removal — fold, delete or flatten every map, measured before and after
 
-> **Date:** 2026-11-22 · **Branch:** `ccr-8c760afd-pvgqik` · **Base:** `origin/main@162e69f`
+> **Date:** 2026-11-22 (revised 2026-11-23) · **Branch:** `ccr-8c760afd-pvgqik` · **Base:** `origin/main@f85af9f`
 > **Status:** proposal; steps land one commit each.
-> **Depends on:** `plans/adaptive-arenas.md` Steps 1 and 2 (paged arena with the generation stored in the
-> slot, `owners` and `parents_of` folded into one future entry). Its Step 3 (`by_group` as a `BTreeMap`)
-> is **dropped** here; see Decisions.
+> **Depends on:** `plans/adaptive-arenas.md`. All its steps have landed (#202): paged arena with the
+> generation stored in the slot, `owners` and `parents_of` folded into one `FutureEntry`, and a
+> `by_group` index. That `by_group` index is a `BTreeMap`, and this plan **removes it**; see Decisions.
 > **Evidence base:** a memory-footprint assessment item ("remove BTreeMap duplication: 7 distinct
 > instantiations take 54.6 KB of x86_64 `.text` (34%) and 50.1 KB on x86_32; replace the handle-keyed maps
 > with slot-indexed tables") and a read of `kernel/src/future/`, `kernel/src/ipc/`,
@@ -20,7 +20,7 @@ disappears from both kernels, and no operation in the kernel gets worse than a b
 
 ## Today
 
-Nine map fields in `kernel/src`, each a distinct `(K, V)` instantiation of the B-tree code:
+Ten map fields in `kernel/src`, each a distinct `(K, V)` instantiation of the B-tree code:
 
 | # | Field | Key → value | What it really is |
 |---|---|---|---|
@@ -33,8 +33,9 @@ Nine map fields in `kernel/src`, each a distinct `(K, V)` instantiation of the B
 | 7 | `MailboxManager.waiters` | Handle → Vec<FutureHandle> | receivers parked on one mailbox |
 | 8 | `MlfqStrategy.yield_info` | TaskHandle → YieldInfo | scratch between `record_yield` and `requeue_after_run` |
 | 9 | `TimerManager.next` | u64 → Vec<FutureHandle> | sleepers ordered by deadline |
+| 10 | `FutureRegistry.by_group` | GroupId → Vec<FutureHandle> | reverse index of `FutureEntry.owner` (added by #202) |
 
-Five of them (2, 4, 5, 7, and the by-key half of 1) are derived data whose source of truth already sits in
+Six of them (2, 4, 5, 7, 10, and the by-key half of 1) are derived data whose source of truth already sits in
 an arena entry. Maintaining them is what makes `evict`, `consume_inner` and `disconnect` linear today.
 `scheduler.rs` also has a `BTreeMap` inside `#[cfg(test)]`; it is out of scope.
 
@@ -44,11 +45,13 @@ an arena entry. Maintaining them is what makes `evict`, `consume_inner` and `dis
    per arena, so a table sized to the cap costs 24 KB per `Vec<Vec<_>>` on x86_64 and defeats that plan's
    purpose. Data lives inside the arena entry (generation-validated for free), is derived by scanning
    with `visit`/`any` (which skip empty pages), or is a small sparse `Vec`.
-2. **Waiters fold into the future entry.** One `links: Option<Box<Links>>` field holds `waiters` and
-   `parents` together, so an entry pays one pointer (8 B on x86_64, 4 B on x86_32) and only futures that
-   have a waiter or a parent allocate. The entry also caches the owning `TaskHandle`.
-3. **`by_owner`, `by_connection`, `by_client` are deleted, not replaced.** Reclaim paths scan the owning
-   arena with `visit`. Per-task teardown batches the data-object sweep into one pass.
+2. **Waiters fold into the future entry.** `FutureEntry` already holds `future`, `owner: FutureOwner`
+   and `parents: Option<Vec<ParentLink>>` (56 B per slot on x86_64). One `links: Option<Box<Links>>`
+   field replaces `parents` and takes `waiters` too, so the entry **shrinks** (24 B → 8 B on x86_64)
+   and only futures that have a waiter or a parent allocate. The entry also caches the owning
+   `TaskHandle` (4 B), so a scan reads it without a virtual call.
+3. **`by_owner`, `by_group`, `by_connection`, `by_client` are deleted, not replaced.** Reclaim paths scan
+   the owning arena with `visit`. Per-task teardown batches the data-object sweep into one pass.
 4. **Mailbox waiters move into `Mailbox`.** The parked-receiver list is a property of the mailbox.
 5. **Timer is an `alloc::collections::BinaryHeap` (available in `no_std`, no new dependency)** of
    `Reverse(entry)`, where the entry's `Ord` compares only `(deadline, seq)` and carries the
@@ -63,10 +66,15 @@ an arena entry. Maintaining them is what makes `evict`, `consume_inner` and `dis
    binary search. `yield_info` is not collapsed into a single `Option`: production code records and
    requeues back to back (`scheduler.rs`), but that adjacency is not part of the `SchedulingAlgorithm`
    contract and the unit tests record two handles before requeueing.
-8. **Adaptive-arenas Step 3 (`by_group`) is dropped.** It would add a tenth instantiation and keep the
-   B-tree code linked. `reclaim_group` stays a scan over occupied pages. Record the
-   `docs/todo/` item that plan prescribes, noting an intrusive `next_in_group` link as the way to get O(k).
-9. **Scan latency is bounded and recorded.** Reap paths run with IF=0. The bound is 1024 slots; the
+8. **`by_group` goes too, and `reclaim_group` becomes a scan.** #202 added the index so that
+   `reclaim_group` is a lookup, O(k). Keeping it would leave a `BTreeMap` linked, which defeats the goal.
+   The scan is O(slots in materialized pages), see the next point. This is a **regression** against
+   `main` and the complexity tables say so. Record a `docs/todo/` item naming an intrusive
+   `next_in_group` link (with Step 1b) as the way back to O(k).
+9. **Scan latency is bounded and recorded.** `visit` and `any` walk every slot of every materialized
+   page. Pages are never freed (`docs/decisions/arena-shrinking-deferred.md`), so a scan costs the
+   arena's **high-water mark**, not its live count: after one burst of 1024 futures it stays 1024.
+   Reap paths run with IF=0. The bound is 1024 slots for futures (256 for the IPC and task arenas); the
    decision record `reap-scan-latency-budget` is opened with `revisit-when` set to "a measured reap on
    x86_32 hardware or emulation exceeds 1 ms, or any arena cap rises above 1024".
 
@@ -74,10 +82,10 @@ an arena entry. Maintaining them is what makes `evict`, `consume_inner` and `dis
 
 Notation: `F` live futures, `Fw` futures with at least one waiter, `W` total waiters, `w` waiters of one
 future, `k` futures owned by one task, `T` tasks, `C` live connections, `c` connections of one task,
-`D` live data objects, `d` objects of one connection, `Wr` writers with outstanding bytes, `M` mailboxes,
+`D` live data objects, `d` objects of one connection, `Wr` writers with outstanding bytes, `M` mailboxes, `g` futures of one group,
 `B` bound services, `L` service-name length, `S` pending sleepers, `k_t` expired timers, `Y` outstanding
-yield records, `p` occupied pages of the arena being scanned. A scan visits `32·p` slots, with
-`F ≤ 32·p ≤ 1024`. Each cell is worst case; amortised pushes and the cost of the map nodes' allocation are
+yield records, `p` materialized pages of the arena being scanned (its high-water mark; pages are never
+freed). A scan visits `32·p` slots, with `F ≤ 32·p ≤ 1024`. Each cell is worst case; amortised pushes and the cost of the map nodes' allocation are
 listed separately under "allocations".
 
 ### Hot paths
@@ -105,7 +113,7 @@ instead of the tree's bulk split, which only matters when many sleepers expire i
 |---|---|---|---|
 | `discard_waiter(task)` | O(Fw + W) | O(32·p_f + W) | **regression**: visits every future slot instead of only futures with waiters |
 | `discard_owned(task)` | O(log T + k·log Fw) | O(32·p_f + k) | scan replaces the index; the per-future wake-list removal is O(1) |
-| `reclaim_group` | O(cap) | O(32·p_f) | adaptive-arenas Step 1 (`visit` skips empty pages) |
+| `reclaim_group` | O(g · log F) (since #202) | O(32·p_f + g) | **regression** against `main`: the `by_group` lookup becomes a scan |
 | `IpcDataManager::gc_task` | O(D + k·(C + D)) | O(32·p_d + k) | today each `evict` rescans all lists |
 | `gc_connection` / `disconnect` | O(log T + c + d·(C + D)) | O(32·p_d + d) | `by_client` upkeep gone |
 | `close_connections_of(task)` | O(log T + c·(…) + D) | O(32·p_c + 32·p_d + c) | batched: one pass over data objects, one over connections |
@@ -121,14 +129,16 @@ Reading:
   `evict`, called per data object, which scans every `by_connection` list. The `retain` in `consume_inner`
   made a task teardown quadratic in its own futures.
 - **Regressions** are the by-key lookups that became scans (`discard_waiter`, `discard_owned`, the mailbox
-  `discard_futures`). They occur only on task exit and kill, and are bounded by 1024 slots. In the typical
-  case `p` is 1–3 pages, so 32–96 slots, compared with a handful of tree operations today.
-- **Allocations (IF=0 matters).** Today every first future of an owner allocates a `Vec` in `by_owner`
-  (freed again when the owner's last future is consumed), and each first insert into a map can allocate a
+  `discard_futures`, and `reclaim_group` since #202). They occur only on task exit and kill, and are
+  bounded by 1024 slots. A system that never bursts keeps `p` at 1–3 pages (32–96 slots). A system that
+  once held 1000 futures scans 1024 slots on every later exit, because pages are never freed. Step 0
+  measures both cases.
+- **Allocations (IF=0 matters).** Today every first future of an owner allocates a `Vec` in `by_owner`, and every
+  first future of a group one in `by_group` (freed again when the last one is consumed), and each first insert into a map can allocate a
   node. After: `register` allocates nothing, `register_waiter` allocates one `Links` box per future that
   gains a waiter or parent, and the timer and sparse `Vec`s stop allocating once warm.
-- **Space.** Eager cost is zero: no table is sized to the cap. Per future entry, +8 B (x86_64) or +4 B
-  (x86_32) for the `links` pointer and +4 B for the cached task owner. The `BTreeMap` node overhead
+- **Space.** Eager cost is zero: no table is sized to the cap. Per future entry, −16 B (x86_64) for `links`
+  replacing `parents` (24 B → 8 B), plus 4 B for the cached task owner. The `BTreeMap` node overhead
   (internal and leaf nodes, per-entry `Vec` headers) is removed.
 - **Ordering.** `discard_owned` used to return futures in registration order and will return them in slot
   order. The caller (`reap_task_resources`) only forwards the list, but tests that assert order need review.
@@ -153,20 +163,25 @@ Same preconditions as the adaptive-arenas plan: quiet host (`uptime` against `np
 
 ## Step 0 — baseline
 
-- Wait for adaptive-arenas Steps 0 to 2 to land; reuse its baseline results file, adding the `.text`
-  and allocation-count tables above, measured on the head after its Step 2.
+- Adaptive arenas has landed. Reuse `plans/adaptive-arenas-results.md` (boot `used` 1696 KiB x86_64,
+  1455 KiB x86_32; eager and growth curves; timings) and add the `.text` and allocation-count tables
+  above, measured on the current `origin/main` head.
+- Add a scan-budget row for a **post-burst** arena: fill 1024 futures, free them, keep 3 live, then time
+  `discard_owned`, `discard_waiter` and `reclaim_group`.
 - Record them in `plans/kernel-btreemap-removal-results.md` and commit only that document.
 - End with the `retro` skill's step-end mode.
 
 ## Step 1 — future registry
 
-- Replace `waiters` and `parents` with `links: Option<Box<Links>>` in the future entry; cache the task owner
-  in the entry; delete `waiters` and `by_owner`.
-- `discard_waiter` and `discard_owned` scan with `visit`, collect handles first, then mutate (the borrow
+- Replace `FutureEntry.parents` with `links: Option<Box<Links>>` (holding `waiters` and `parents`); cache
+  the task owner in the entry; delete `waiters`, `by_owner` and `by_group`.
+- `discard_waiter`, `discard_owned` and `reclaim_group` scan with `visit`, collect handles first, then mutate (the borrow
   rules and the existing `discard_owned` spare-handle behaviour stay as they are).
 - Tests: register, wake and consume with and without waiters; `discard_waiter` removes a task only from
   waiters; `discard_owned` with and without a spare completion; an empty `Links` box is freed when its last
-  waiter and parent are gone; existing registry tests move to the entry accessors.
+  waiter and parent are gone; existing registry tests move to the entry accessors (those that read `registry.waiters`, `by_owner` and
+  `by_group` directly, for example `reclaim_group_*` and `register_indexes_every_future_by_owner`, are
+  rewritten to observable behaviour); `reclaim_group` frees only its group's futures after a burst.
 - Gate: `cargo xtask check`; one `cargo xtask test` (futures are on every boot path).
 
 ## Step 2 — IPC and mailbox
@@ -197,11 +212,12 @@ Same preconditions as the adaptive-arenas plan: quiet host (`uptime` against `np
 
 ## Step 1b — optional: intrusive per-owner list
 
-Only if the Step 0 and Step 1 numbers show the `discard_owned` scan is too slow (see the
+Only if the Step 0 and Step 1 numbers show the `discard_owned` or `reclaim_group` scan is too slow (see the
 `reap-scan-latency-budget` record); otherwise skip and delete this step from the plan.
 
 - Thread a doubly linked list through the future entries (`u16` prev and next, 4 B per entry) with a
-  small sparse `Vec` of per-task heads. `discard_owned` becomes O(k), `consume_inner` stays O(1), and no
+  small sparse `Vec` of per-task heads; a second list can do the same per group, restoring O(g) for
+  `reclaim_group`. `discard_owned` becomes O(k), `consume_inner` stays O(1), and no
   tree or map comes back.
 - Cost: an index to keep in sync again, which is the risk this plan otherwise avoids.
 - Tests: link and unlink at head, middle and tail; consume of a future in the middle; teardown with a spare
@@ -210,10 +226,10 @@ Only if the Step 0 and Step 1 numbers show the `discard_owned` scan is too slow 
 
 ## Step 5 — cleanup, records, docs
 
-- Remove `Ord`/`PartialOrd` derives from the handle types if nothing else needs them; confirm with
+- Remove `Ord`/`PartialOrd` derives from the handle types and `GroupId` (derived for `by_group` in #202) if nothing else needs them; confirm with
   `grep -rn BTree kernel/src` that only the `#[cfg(test)]` mock remains.
-- `docs/decisions/reap-scan-latency-budget.md` (`status: open`), and the `docs/todo/` item for the dropped
-  `by_group` index.
+- `docs/decisions/reap-scan-latency-budget.md` (`status: open`), and the `docs/todo/` item for the
+  intrusive per-group list that would restore O(g) `reclaim_group`.
 - `docs/architecture/ipc-and-futures.md`: no reverse indexes for data an arena entry already holds;
   teardown scans occupied pages; `docs/architecture/memory.md`: no table sized to a cap.
 - Commit.
@@ -228,7 +244,7 @@ Only if the Step 0 and Step 1 numbers show the `discard_owned` scan is too slow 
 
 ## Risks
 
-- **Scan latency under IF=0.** Bounded by 1024 slots per scan, a few microseconds on a modern host and
+- **Scan latency under IF=0.** Bounded by 1024 slots per scan (the arena's high-water mark, not the live count), a few microseconds on a modern host and
   possibly around a millisecond on a 486 (unmeasured). Mitigation: the Step 6 numbers and the
   `reap-scan-latency-budget` record; the follow-up is the optional Step 1b intrusive per-owner list, not a
   re-introduced map.
@@ -244,6 +260,6 @@ Only if the Step 0 and Step 1 numbers show the `discard_owned` scan is too slow 
 
 ## Out of scope
 
-Intrusive per-group lists, an O(1) `discard_waiter` (a per-task `waiting_on` field), turning
-the mailbox waiter `Vec` into a `VecDeque`, shrinking paged arenas, and the `BTreeMap`s in user-space
+Shrinking or freeing empty pages (`arena-shrinking-deferred`), an O(1) `discard_waiter` (a per-task `waiting_on` field), turning
+the mailbox waiter `Vec` into a `VecDeque`, and the `BTreeMap`s in user-space
 crates (`vfsd`, `ramfs`, `rxfs`), which are separate binaries.
