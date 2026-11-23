@@ -315,6 +315,8 @@ baseline 0) and kernel `unsafe` 299→302 from new cfg(test) `allocate`/`dealloc
 S3 | `cargo xtask check` first run exit 1: new `Lifecycle` owner field written as `AtomicU64`,
 flagged by check-isa as a 32-bit hazard despite the AGENTS.md 486-floor line | TASK | 1 round
 (fixed to `AtomicUsize`; the planned baseline raise was already routed by the plan's Gate line)
+S4 | first two `rom_release` runs exit 101 from the test's own parsing helpers (marker included
+the `0x`, and hex vs decimal fields were conflated), not from product code | TASK | 2 rounds
 
 ## Execution records
 
@@ -466,3 +468,27 @@ image. `mem` free rose by within a few KiB of the held block (the shortfall is t
 daemons allocating after the release point). No `BAD-FREE`, `[IRQGUARD]` silent, `rose>` reached.
 The boot-log address (`147000`) matches S2's, confirming the release reports the region the boot
 handed over, not a later shift.
+
+### S4 — Integration proof (both arches + the fallback)
+
+`tests-integration/tests/rom_release.rs` boots to `rose>` and asserts: the release marker appears
+exactly once; its `addr` equals the boot `[ROM] addr`; its `bytes` is the ROM image size plus at
+most one page of rounding; it sits after the last `[INIT]` line and before the first `rose>`; no
+`BAD-FREE` and no `[IRQGUARD]`; and `mem` free at the prompt is within 24 KiB of the release-boot
+pinned figure (127898 / 128224 KiB per arch) — if the release ever stopped happening, free would
+land a whole ROM lower and the assert fires with the ROM's KiB count in its message. The pinned
+figure (not the S0 pre-release one) is used deliberately: the delta-vs-S0 form leaves only ~3 KiB
+of margin against kernel growth, while a release regression moves free by 540+ KiB, which this
+form catches with 20x headroom.
+
+The allocation-sized reuse probe became the plan's pre-authorized contingency: no stock app can
+size an allocation into the window between the pre-release largest free block (~126 MiB) and the
+coalesced one without also being fragile against shell headroom, so the free-bytes proof stands.
+
+The failure path extends `disk_boot::a_mounted_root_without_a_shell_falls_back_to_the_rom_shell`
+(x86_32, FAT disk without the shell apps): the release line must exist and sit between
+`[INIT] handing over to rom:shell` and the prompt — the `rom:shell` fallback image is loaded
+before the release consumes the ROM.
+
+Evidence: `rom_release` green on x86_64 (free 127898 KiB, released 564 KiB) and x86_32 (128224
+KiB, 540 KiB); full `disk_boot` green on x86_32 (4 passed, including the extended fallback test).
