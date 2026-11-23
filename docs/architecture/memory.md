@@ -6,6 +6,7 @@
 - The ELF image and its argv live in the group's single `ProgramMemory` block, loaded eagerly at the load call; the kernel retains no ELF bytes after a successful load and a task's first slice parses or loads nothing.
 - A group's memory is reclaimed when its last live member terminates.
 - Task stacks carry `BlockOwner::Stack(group)`: accounted to the group but freed by the owning task's `Drop`; `deallocate_by_owner` matches `Group` only, never `Stack`.
+- The initrd is a `BlockUse::Held` block: threaded onto no free list, counted in `total_bytes` but never in `free_bytes`, and never allocatable, until `MemoryManager::release_held()` (`rom::release` is its only caller) coalesces it into the heap after bootstrap.
 
 ## Design
 

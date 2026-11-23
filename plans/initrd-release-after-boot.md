@@ -492,3 +492,24 @@ before the release consumes the ROM.
 
 Evidence: `rom_release` green on x86_64 (free 127898 KiB, released 564 KiB) and x86_32 (128224
 KiB, 540 KiB); full `disk_boot` green on x86_32 (4 passed, including the extended fallback test).
+
+### S5 — Docs and records
+
+- `docs/architecture/kstatsd-and-rom.md`: the ROM invariant now names `RomMap`/`RomRelease` and
+  the held-until-released RAM; the `rom/` design paragraph describes the lifecycle, the
+  owner-group rule, the `[ROM] released` log line, and `RomView`/`init` zero-copy with the
+  release at the end of `init`'s control flow.
+- `docs/architecture/memory.md`: new invariant — the initrd is a `BlockUse::Held` block, never on
+  a free list, counted in total but never free, until `MemoryManager::release_held()` (`rom::release`
+  is its only caller) coalesces it into the heap after bootstrap.
+- `AGENTS.md` invariants index: the kstatsd/ROM line gained "and `init` releases the ROM's RAM
+  after bootstrap".
+- `docs/architecture/vfs.md` drift fix: its "init reads the ROM image through `RomRead`" clause
+  now names the mapped `RomView` (the same stale-path claim, caught while grepping for leftovers).
+- Decision records: `rom-map-assumes-flat-address-space.md` (open, D6 — landed early in S3 because
+  the rationale doc links it) and `rom-release-by-init-not-plan-step.md` (decided, D5).
+  `cargo xtask decisions` lists the open record with its trigger.
+- `docs/todo/` sweep: no item this plan supersedes (checked against `cargo xtask decisions`).
+- S0/S3 before/after figures live in the Execution records above: reclaim 564 KiB (x86_64,
+  141 pages) / 540 KiB (x86_32, 135 pages); `mem` free at the prompt 127355 → 127898 KiB and
+  127693 → 128224 KiB respectively.
