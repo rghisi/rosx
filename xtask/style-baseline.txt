@@ -4,7 +4,7 @@ comments apps/tetris/src/main.rs 7
 comments arch/x86-bootloader/common/src/bios.rs 4
 comments arch/x86_32/src/elf_arch.rs 1
 comments arch/x86_32/src/interrupts.rs 24
-comments arch/x86_64/src/cpu.rs 33
+comments arch/x86_64/src/cpu.rs 32
 comments arch/x86_64/src/elf_arch.rs 2
 comments arch/x86_64/src/framebuffer.rs 1
 comments arch/x86_64/src/terminal_fonts.rs 380
@@ -39,8 +39,8 @@ unsafe arch/x86-bootloader/fake-kernel-32 6
 unsafe arch/x86-bootloader/fake-kernel-64 8
 unsafe arch/x86-bootloader/stage2 34
 unsafe arch/x86-generic 22
-unsafe arch/x86_32 30
-unsafe arch/x86_64 42
-unsafe kernel 295
+unsafe arch/x86_32 31
+unsafe arch/x86_64 38
+unsafe kernel 300
 unsafe tests-integration 5
 unsafe usrlib 62

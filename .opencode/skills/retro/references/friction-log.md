@@ -13,4 +13,4 @@ Example:
 
     step 2 | built rosx-x86_32 from repo root, exit 101 | ENV-TRAP | 1 round
 
-An entry with fewer than three `|`-separated columns is invisible to `scripts/recurrence.sh`.
+`scripts/recurrence.sh` reads the cause class from the second-to-last `|`-separated column and the cost from the last, so an event sentence may quote pipes freely; an entry with fewer than four columns is invisible to it.

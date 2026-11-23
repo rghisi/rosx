@@ -38,7 +38,14 @@ unsafe impl GlobalAlloc for BumpAllocator {
         begin as *mut u8
     }
 
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        let Some(finish) = (ptr as usize).checked_add(layout.size()) else {
+            return;
+        };
+        self.next
+            .compare_exchange(finish, ptr as usize, Ordering::Relaxed, Ordering::Relaxed)
+            .ok();
+    }
 }
 
 fn refuse() -> ! {

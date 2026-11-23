@@ -1,9 +1,20 @@
 use std::time::Duration;
 use tests_integration::qemu::QemuSession;
+use tests_integration::shared::SharedSession;
 
-const READY_TIMEOUT: Duration = Duration::from_secs(60);
+const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(30);
+const ARGUMENTS_TIMEOUT: Duration = Duration::from_secs(30);
+const LEAK_TIMEOUT: Duration = Duration::from_secs(30);
+const REPORT_TIMEOUT: Duration = Duration::from_secs(15);
 const SWEEP_TIMEOUT: Duration = Duration::from_secs(180);
-const DIAGNOSTIC_TAIL_CHARS: usize = 2000;
+const REPORT_LINES: [&str; 6] = [
+    "KSTATSD memory snapshot",
+    "used:",
+    "free:",
+    "total:",
+    "largest free block:",
+    "free blocks:",
+];
 const ROUND_PREFIX: &str = "waitset round: ";
 const NEGATIVE_PREFIX: &str = "waitset negative: ";
 const LAST_LINE: &str = "waitset complete: 3 rounds ok";
@@ -16,6 +27,93 @@ const EXPECTED_NEGATIVE_LINES: [&str; 5] = [
     "waitset negative: drop idempotent ok",
 ];
 const EXPECTED_TAGS: [&str; 3] = ["11", "22", "33"];
+const DIAGNOSTIC_TAIL_CHARS: usize = 2000;
+
+#[test]
+fn shell_single_shots_share_one_session() {
+    let mut group = SharedSession::spawn("shell_single_shots");
+    group.case("mem_reports_a_memory_snapshot_over_ipc", mem_reports_a_memory_snapshot_over_ipc);
+    group.case("elf_app_receives_arguments_from_kernel", elf_app_receives_arguments_from_kernel);
+    group.case(
+        "shell_forwards_command_arguments_to_elf_app",
+        shell_forwards_command_arguments_to_elf_app,
+    );
+    group.case(
+        "a_dying_group_forfeits_its_abandoned_futures_and_the_pool_stays_usable",
+        a_dying_group_forfeits_its_abandoned_futures_and_the_pool_stays_usable,
+    );
+    group.case("shell_waitset_or_composition_roundtrip", shell_waitset_or_composition_roundtrip);
+}
+
+fn mem_reports_a_memory_snapshot_over_ipc(session: &mut QemuSession) {
+    let mark = session.mark();
+    session.send_line("mem");
+    for needle in REPORT_LINES {
+        session.expect_output_since(mark, needle, SNAPSHOT_TIMEOUT);
+    }
+
+    let after_report = session.mark();
+    session.expect_output_since(after_report, "rose>", SNAPSHOT_TIMEOUT);
+}
+
+fn elf_app_receives_arguments_from_kernel(session: &mut QemuSession) {
+    let mark = session.mark();
+    session.send_line("pi");
+    session.expect_output_since(mark, "args(1): [\"pi\"]", ARGUMENTS_TIMEOUT);
+}
+
+fn shell_forwards_command_arguments_to_elf_app(session: &mut QemuSession) {
+    let mark = session.mark();
+    session.send_line("pi alpha beta");
+    session.expect_output_since(
+        mark,
+        "args(3): [\"pi\", \"alpha\", \"beta\"]",
+        ARGUMENTS_TIMEOUT,
+    );
+}
+
+fn abandoned_count(line: &str) -> usize {
+    line.split_whitespace()
+        .nth(2)
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("no abandoned count in {line:?}"))
+}
+
+fn a_dying_group_forfeits_its_abandoned_futures_and_the_pool_stays_usable(session: &mut QemuSession) {
+    let first_run = session.mark();
+    session.send_line("leaky");
+    session.expect_output_since(first_run, "LEAKY ABANDONED ", LEAK_TIMEOUT);
+    session.expect_output_since(first_run, "rose>", LEAK_TIMEOUT);
+    let first = abandoned_count(
+        session
+            .content_since(first_run)
+            .lines()
+            .find(|line| line.contains("LEAKY ABANDONED "))
+            .unwrap(),
+    );
+    assert!(first > 512, "leaky must have filled most of the pool, got {first}");
+
+    let second_run = session.mark();
+    session.send_line("leaky");
+    session.expect_output_since(second_run, "LEAKY ABANDONED ", LEAK_TIMEOUT);
+    session.expect_output_since(second_run, "rose>", LEAK_TIMEOUT);
+    let second = abandoned_count(
+        session
+            .content_since(second_run)
+            .lines()
+            .find(|line| line.contains("LEAKY ABANDONED "))
+            .unwrap(),
+    );
+    assert!(
+        second + 16 >= first,
+        "the dead group must have returned its slots: first abandoned {first}, second only {second}"
+    );
+
+    let after_report = session.mark();
+    session.send_line("exiter 7");
+    session.expect_output_since(after_report, "exiter exited with code 7", REPORT_TIMEOUT);
+    session.expect_output_since(after_report, "rose>", REPORT_TIMEOUT);
+}
 
 fn count_prefixes(content: &str, prefix: &str) -> usize {
     content
@@ -38,7 +136,7 @@ fn window_diagnostics(content: &str) -> String {
         count_prefixes(content, ROUND_PREFIX),
         count_prefixes(content, NEGATIVE_PREFIX),
         content.contains(LAST_LINE),
-        tail_chars(content, DIAGNOSTIC_TAIL_CHARS),
+        tail_chars(content, DIAGNOSTIC_TAIL_CHARS)
     )
 }
 
@@ -57,12 +155,7 @@ fn negative_lines(content: &str) -> Vec<&str> {
         .collect()
 }
 
-#[test]
-fn shell_waitset_or_composition_roundtrip() {
-    let mut session = QemuSession::spawn();
-
-    session.expect_output("rose>", READY_TIMEOUT);
-
+fn shell_waitset_or_composition_roundtrip(session: &mut QemuSession) {
     let mark = session.mark();
     session.send_line("waitset");
 

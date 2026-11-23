@@ -18,8 +18,9 @@ matches="$(
       /^## /            { in_log = 0 }
       in_log && index($0, "|") {
         n = split($0, cols, "|")
-        gsub(/^ +| +$/, "", cols[3])
-        if (cols[3] == cls && (kw == "" || index(tolower($0), tolower(kw)))) {
+        if (n < 4) { next }
+        gsub(/^ +| +$/, "", cols[n-1])
+        if (cols[n-1] == cls && (kw == "" || index(tolower($0), tolower(kw)))) {
           print file ":" NR ": " $0
         }
       }

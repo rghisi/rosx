@@ -157,3 +157,15 @@ Preconditions for every timing run: `uptime` load against `nproc`, and
 Shrinking and freeing empty pages, a hierarchical-bitmap free finder, per-subsystem cap tuning,
 per-group quotas, any change to the `Handle` bit layout, and an O(1) `by_owner` removal (the current
 `retain` is linear per consume). Each is a follow-up once the Step 5 numbers exist.
+
+## Friction log
+
+Step 0 | harness first compile: `FutureHandle` imported from `crate::future` (private re-export) and `&core::any::Any` missing `dyn` in the scratch module | TASK | 1 round
+Step 0 | harness first run: 3 of 5 bench tests panicked (churn kept 1 live per 3 adds so 2 000 > 1 024 cap; connections curve needs the 257th mailbox slot the service binding itself takes) | TASK | 1 round
+Step 1 | first arena test run: 9 failures — reuse-distance assumptions wrong in both directions (a freed slot queues behind the page's untouched slots, and the old fill-to-`FUTURE_SLOTS` registry tests recycle slot 0 mid-fill now) | TASK | 2 rounds
+Step 1 | `use core::alloc::alloc` unresolved on the pinned nightly (raw fns live in `alloc::alloc` for the no_std kernel) and `Layout::array_of` is `Layout::array` there | ENV-TRAP | 1 round
+Step 2 | test-rewrite script aborted on its own leftover-guard: the test name `reclaim_purges_parents_of_rows...` matched the grep for `parents_of`, so the rewrite never wrote; script rerun | TASK | 0
+Step 3 | first compile after adding the index: 18 errors, one cause — `BTreeMap<GroupId, _>` needs `Ord` and `GroupId` only derived `Eq` | TASK | 1 round
+Step 3 | an out-of-session process replaced `kernel/src/future/mod.rs` mid-step (23:18); the Step 2 commit captured that content instead of the conversation-recorded rewrite; audited the committed fold, confirmed the real registry base, reran a clean full `cargo xtask test` | ENV-TRAP | ~40 min
+Step 5 | verify turned green in 6 min while AGENTS.md advertises ~40 min, so the log's stage list had to be audited before trusting the verdict | STALE-DOC | 1 round
+

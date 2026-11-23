@@ -1,7 +1,6 @@
 use core::fmt;
 use core::fmt::Write;
 use core::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering::Relaxed};
-use bootloader_api::info::{FrameBufferInfo, PixelFormat};
 use kernel::once::Once;
 use kernel::platform::output::KernelOutput;
 use spin::Mutex;
@@ -17,18 +16,15 @@ static FB_STRIDE: AtomicUsize = AtomicUsize::new(0);
 static FB_BPP:    AtomicUsize = AtomicUsize::new(4);
 static FB_FMT:    AtomicU8    = AtomicU8::new(0); // 0 = RGB, 1 = BGR
 
-pub fn init(buffer_start: u64, info: FrameBufferInfo) {
+pub fn init(buffer_start: u64, width: usize, height: usize, stride: usize, bytes_per_pixel: usize, bgr: bool) {
     FB_START.store(buffer_start, Relaxed);
-    FB_WIDTH.store(info.width, Relaxed);
-    FB_HEIGHT.store(info.height, Relaxed);
-    FB_STRIDE.store(info.stride, Relaxed);
-    FB_BPP.store(info.bytes_per_pixel, Relaxed);
-    FB_FMT.store(match info.pixel_format {
-        PixelFormat::Bgr => 1,
-        _ => 0,
-    }, Relaxed);
+    FB_WIDTH.store(width, Relaxed);
+    FB_HEIGHT.store(height, Relaxed);
+    FB_STRIDE.store(stride, Relaxed);
+    FB_BPP.store(bytes_per_pixel, Relaxed);
+    FB_FMT.store(u8::from(bgr), Relaxed);
     unsafe {
-        core::ptr::write_bytes(buffer_start as *mut u8, 0, info.stride * info.height * info.bytes_per_pixel);
+        core::ptr::write_bytes(buffer_start as *mut u8, 0, stride * height * bytes_per_pixel);
     }
 }
 

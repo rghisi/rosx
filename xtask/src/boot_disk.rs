@@ -5,8 +5,6 @@ use std::process;
 use rxpart::mbr::ENTRY_COUNT;
 use rxpart::mbr::Entry;
 use rxpart::mbr::SECTOR_BYTES;
-use rxpart::mbr::encode_mbr;
-use x86_runner::Arch;
 use x86_runner::chain;
 
 use crate::arch::ArchSpec;
@@ -15,7 +13,6 @@ use crate::boot_image;
 use crate::check_isa::on_path;
 use crate::workspace_root;
 
-const FORWARD_LOOKING_PARTITION_START_LBA: u32 = 63;
 const BOOT_DISK_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_FAT_NAME_BYTES: usize = 8;
 pub const KERNEL_VOLUME_NAME: &str = "KERNEL.ELF";
@@ -30,10 +27,7 @@ pub fn create_boot_disk(debug: bool, spec: &ArchSpec) -> PathBuf {
     require_fat_tools();
     require_names_fit_8_3();
     let path = boot_disk_path(spec);
-    match spec.boot {
-        Arch::X86_64 => create_forward_looking_disk(debug, spec, &path),
-        Arch::X86_32 => create_bootable_disk(debug, spec, &path),
-    }
+    create_bootable_disk(debug, spec, &path);
     path
 }
 
@@ -64,15 +58,9 @@ fn require_names_fit_8_3() {
     }
 }
 
-fn create_forward_looking_disk(debug: bool, spec: &ArchSpec, path: &Path) {
-    let partition_sectors = stamp_forward_looking_mbr(path);
-    chain::mformat_volume(path, FORWARD_LOOKING_PARTITION_START_LBA, partition_sectors);
-    fill_volume(path, FORWARD_LOOKING_PARTITION_START_LBA, debug, spec);
-    println!("==> wrote FAT boot disk {}", path.display());
-}
-
 fn create_bootable_disk(debug: bool, spec: &ArchSpec, path: &Path) {
-    let (stage1, stage2) = boot_image::stage_boot32_artifacts();
+    let flavor = boot_image::Stage2Flavor::for_arch(spec.boot);
+    let (stage1, stage2) = boot_image::stage_chain_artifacts(flavor);
     let partition_sectors =
         (BOOT_DISK_BYTES / SECTOR_BYTES as u64) as u32 - chain::PARTITION_START_LBA;
     let mut entries: [Option<Entry>; ENTRY_COUNT] = [None; ENTRY_COUNT];
@@ -99,24 +87,7 @@ fn create_bootable_disk(debug: bool, spec: &ArchSpec, path: &Path) {
     println!("==> wrote bootable unified FAT disk {}", path.display());
 }
 
-fn stamp_forward_looking_mbr(path: &Path) -> u32 {
-    let disk_sectors = (BOOT_DISK_BYTES / SECTOR_BYTES as u64) as u32;
-    let partition_sectors = disk_sectors - FORWARD_LOOKING_PARTITION_START_LBA;
-    let mut entries: [Option<Entry>; ENTRY_COUNT] = [None; ENTRY_COUNT];
-    entries[0] = Some(Entry {
-        boot: chain::BOOTABLE,
-        type_id: chain::FAT16_TYPE,
-        start_lba: FORWARD_LOOKING_PARTITION_START_LBA,
-        sector_count: partition_sectors,
-    });
-    let mbr = encode_mbr(&entries);
-    chain::create_sparse(path, BOOT_DISK_BYTES);
-    chain::write_at(path, 0, &mbr);
-    partition_sectors
-}
-
 fn fill_volume(path: &Path, partition_start_lba: u32, debug: bool, spec: &ArchSpec) {
-    chain::mmd_directory(path, partition_start_lba, "::/boot");
     let release_dir = spec.user_release_dir();
     for name in USER_APPS {
         let elf = release_dir.join(name);
@@ -127,13 +98,10 @@ fn fill_volume(path: &Path, partition_start_lba: u32, debug: bool, spec: &ArchSp
         chain::mcopy_file(path, partition_start_lba, &elf, &format!("::/{name}"));
     }
     let kernel = spec.kernel_elf(if debug { "debug" } else { "release" });
-    let kernel_destination = match spec.boot {
-        Arch::X86_64 => "::/boot/kernel.elf".to_string(),
-        Arch::X86_32 => format!("::/{KERNEL_VOLUME_NAME}"),
-    };
-    for (source, destination) in
-        [(kernel, kernel_destination), (spec.rom_path(), "::/boot/rom.img".to_string())]
-    {
+    for (source, destination) in [
+        (kernel, format!("::/{KERNEL_VOLUME_NAME}")),
+        (spec.rom_path(), format!("::/{}", boot_image::INITRD_VOLUME_NAME)),
+    ] {
         if !source.is_file() {
             eprintln!("missing boot file {}", source.display());
             process::exit(1);

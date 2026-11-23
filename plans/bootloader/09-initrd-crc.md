@@ -1,5 +1,10 @@
 # Phase 9 — Initrd Placement + Stage-2 CRC32
 
+> **Superseded (2026-11-22, `plans/rom-as-initrd.md` D6):** stage2 no longer CRCs or prints
+> the checksum; `[INITRD]` carries `addr=` and `size=` only. The read proof stays where it is
+> independent: the fake kernels recompute CRC32 over the initrd they receive and `boot-test`
+> asserts host seed == kernel recompute. Placement and the `KernelAndModules` carve are unchanged.
+
 The payload channel gets its final shape and its integrity anchor: initrd lands page-aligned
 right after the kernel, stage2 CRCs it, and the number is cross-checked against the host.
 

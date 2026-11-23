@@ -158,13 +158,28 @@ CI gains a `bootloader` job (build all artifacts, run audits, run `cargo xtask b
   `BOOT_INFO_MAGIC` → `BootInfo` path), Multiboot header kept for coexistence.
   **x86_32 half closed 2026-11-21** by `plans/x86_32-carrier-swap.md`: the dual-magic entry is
   live and chain-boots `BootInfo`; the header stays until `docs/todo/multiboot-retirement.md`.
+  **x86_64 half closed 2026-11-22** by `plans/x86_64-carrier-swap.md`: higher-half link at
+  `0xFFFF800000100000 AT(…)` with `code-model: large` (the window is outside the range the
+  kernel/medium models address through — the spike finding), `bootloader_api` gone,
+  `physical_memory_offset`/`clear_nx_bits` retired, the kernel installs its own copy of the
+  frozen GDT; the console decision is **VGA text** (`x86_generic::vga_buffer`), the framebuffer
+  kept detached for a VESA successor (`docs/todo/vesa-framebuffer-successor.md`).
 - **Carrier swap.** `x86-runner` `BootMedium` for both arches, `-kernel` retirement decision,
   `tests-integration` re-wiring, GRUB ISO + era-media disposition.
   **x86_32 half closed 2026-11-21** by the same plan: `BootMedium::BootDisk`, `-kernel` retired,
   `tests-integration` re-wired to chain-boot the unified disk, GRUB ISO retired; era media
-  untouched. x86_64 half stays open.
+  untouched. **x86_64 half closed 2026-11-22** by `plans/x86_64-carrier-swap.md`: the `bootloader`
+  crate dependency is gone, `BootMedium` died with its second variant (`run_medium` returns the
+  unified disk path), every harness session chain-boots a stamped master, `real-kernel-boot64`
+  guards the flow; era media untouched.
 - **rom.img as initrd** (decision D5): load `/boot/rom.img` from disk, kernel registers the ROM
   from the initrd, drop the `include_bytes!` coupling and the build-order asserts.
+  **Closed 2026-11-22** by `plans/rom-as-initrd.md`: the ROM ships as `INITRD.BIN` at the volume
+  root (not `/boot/rom.img` — loading two root files keeps fewer FAT handles open than nesting),
+  the kernel parses the image itself from `BootInfo` and boots `init` from it, and the
+  `include_bytes!` coupling and build-order asserts are gone. The planned crc32 handshake died
+  with S2a: a load-time checksum protected nothing, containment + format validation are the
+  real guards.
 - **Era hardware.** Extend the AGENTS.md hardware checklist to the custom chain (real-drive INT 13
   timing margins, A20 via 8042, E820/E801/AH=88 on period BIOSes, 8250-vs-16550 FIFO tolerance);
   decide whether the custom chain replaces GRUB Legacy on 486 silicon.

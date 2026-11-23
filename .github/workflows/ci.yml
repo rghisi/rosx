@@ -62,7 +62,6 @@ jobs:
         with:
           name: rosx-x86_64
           path: |
-            target/rosx/release/rosx-x86_64.img
             target/rosx-boot-disk.img
           if-no-files-found: error
 
@@ -92,7 +91,9 @@ jobs:
       - name: ISA audit (486 baseline)
         run: cargo xtask check-isa x86_32
 
-      - name: Upload kernel and ROM
+      - name: Upload kernel ELF and ROM image
+        # The ROM is the boot disk's INITRD.BIN content; the unified boot disk
+        # is the artifact that boots on both arches, and the kernel embeds neither.
         if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
@@ -126,7 +127,7 @@ jobs:
         run: cargo xtask build
 
       - name: Integration suite on x86_64
-        run: ROSX_KERNEL_ELF=$GITHUB_WORKSPACE/target/rosx/release/rosx cargo test -p tests-integration -- --test-threads=1
+        run: ROSX_KERNEL_ELF=$GITHUB_WORKSPACE/target/rosx/release/rosx cargo test --no-fail-fast -p tests-integration -- --test-threads=1
 
   test-x86_32-integration:
     name: Integration Tests (x86_32)
@@ -152,7 +153,7 @@ jobs:
         run: cargo xtask build x86_32
 
       - name: Integration suite on x86_32
-        run: ROSX_ARCH=x86_32 ROSX_KERNEL_ELF=$GITHUB_WORKSPACE/target/rosx-i486/release/rosx-x86_32 cargo test -p tests-integration -- --test-threads=1
+        run: ROSX_ARCH=x86_32 ROSX_KERNEL_ELF=$GITHUB_WORKSPACE/target/rosx-i486/release/rosx-x86_32 cargo test --no-fail-fast -p tests-integration -- --test-threads=1
 
   bootloader:
     name: Custom BIOS Bootloader
@@ -174,7 +175,14 @@ jobs:
       - name: Install QEMU x86 targets and mtools
         run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 mtools
 
-      - name: Build boot images and run the checkpoint suite
+      - name: Build the production media the real-kernel rows boot
+        # real-kernel-boot32/64 boot target/rosx-boot-disk.img and
+        # target/rosx-i486-boot-disk.img as they are; the shared cargo cache can
+        # hand back an image from an earlier commit, and those rows must describe
+        # the tree they run in, so build both disks first.
+        run: cargo xtask build x86_64 && cargo xtask build x86_32
+
+      - name: Run the checkpoint suite
         run: cargo xtask boot-test
 
       - name: Audit the bootloader ELFs against the 486 baseline
@@ -200,11 +208,11 @@ jobs:
           name: rosx-x86_64
 
       - name: Compress artifacts
-        run: gzip -9 rosx-x86_64.img
+        run: gzip -9 rosx-boot-disk.img
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.date.outputs.date_tag }}
           name: ${{ steps.date.outputs.date_name }}
-          files: rosx-x86_64.img.gz
+          files: rosx-boot-disk.img.gz

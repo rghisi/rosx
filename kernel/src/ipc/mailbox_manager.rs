@@ -1,7 +1,7 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use alloc::boxed::Box;
-use crate::collections::arena::GenerationalArena;
+use crate::collections::arena::{ARENA_MAX_SLOTS, GenerationalArena};
 #[cfg(test)]
 use crate::future::Future;
 use crate::future::FutureOwner;
@@ -41,7 +41,7 @@ pub(crate) type MailboxHandle = Handle;
 static MAILBOX_SECTION: IrqCell = IrqCell::new("mailbox_manager");
 
 pub(crate) struct MailboxManager {
-    mailboxes: GenerationalArena<Mailbox, 256>,
+    mailboxes: GenerationalArena<Mailbox>,
     waiters: BTreeMap<MailboxHandle, Vec<FutureHandle>>,
     notifier: &'static dyn ForNotifyingFutures,
 }
@@ -50,7 +50,7 @@ impl MailboxManager {
     #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self {
-            mailboxes: GenerationalArena::new(),
+            mailboxes: GenerationalArena::new(ARENA_MAX_SLOTS),
             waiters: BTreeMap::new(),
             notifier: &NOOP_NOTIFIER,
         }
@@ -58,7 +58,7 @@ impl MailboxManager {
 
     pub(crate) fn new_with_notifier(notifier: &'static dyn ForNotifyingFutures) -> Self {
         Self {
-            mailboxes: GenerationalArena::new(),
+            mailboxes: GenerationalArena::new(ARENA_MAX_SLOTS),
             waiters: BTreeMap::new(),
             notifier,
         }

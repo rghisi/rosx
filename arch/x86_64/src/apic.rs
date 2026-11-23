@@ -1,5 +1,4 @@
 use kernel::platform::interrupt::{InterruptController, InterruptError, Polarity, Result, TriggerMode};
-use core::sync::atomic::{AtomicU64, Ordering};
 use x86_64::instructions::port::Port;
 
 const LOCAL_APIC_MMIO_BASE: u64 = 0xFEE0_0000;
@@ -7,7 +6,6 @@ const IO_APIC_MMIO_BASE: u64 = 0xFEC0_0000;
 
 const IA32_APIC_BASE_MSR: u32 = 0x1B;
 const APIC_BASE_GLOBAL_ENABLE: u64 = 1 << 11;
-const APIC_BASE_DISABLE_EXEC: u64 = 1 << 10;
 
 const LAPIC_ID: u64 = 0x020;
 const LAPIC_SPIV: u64 = 0x0F0;
@@ -44,16 +42,6 @@ const PIT_CHANNEL2_PORT: u16 = 0x42;
 const PIT_TIMER_CTRL_PORT: u16 = 0x61;
 const PIT_OUT2_MASK: u8 = 1 << 5;
 const PIT_LATCH_ONE_MILLISECOND: u16 = 1193;
-
-static PHYS_MEM_OFFSET: AtomicU64 = AtomicU64::new(0);
-
-pub fn set_phys_offset(offset: u64) {
-    PHYS_MEM_OFFSET.store(offset, Ordering::Relaxed);
-}
-
-fn phys_offset() -> u64 {
-    PHYS_MEM_OFFSET.load(Ordering::Relaxed)
-}
 
 pub fn cpu_supports_local_apic() -> bool {
     let edx: u32;
@@ -161,10 +149,7 @@ fn calibrate_ticks_per_ms() -> u32 {
 fn enable_local_apic() {
     unsafe {
         let base = rdmsr(IA32_APIC_BASE_MSR);
-        wrmsr(
-            IA32_APIC_BASE_MSR,
-            (base | APIC_BASE_GLOBAL_ENABLE) & !APIC_BASE_DISABLE_EXEC,
-        );
+        wrmsr(IA32_APIC_BASE_MSR, base | APIC_BASE_GLOBAL_ENABLE);
     }
 }
 
@@ -218,19 +203,19 @@ fn update_source_mask(irq: u32, masked: bool) -> Result {
 
 fn lapic_read(register: u64) -> u32 {
     unsafe {
-        ((phys_offset() + LOCAL_APIC_MMIO_BASE + register) as *const u32).read_volatile()
+        ((LOCAL_APIC_MMIO_BASE + register) as *const u32).read_volatile()
     }
 }
 
 fn lapic_write(register: u64, value: u32) {
     unsafe {
-        ((phys_offset() + LOCAL_APIC_MMIO_BASE + register) as *mut u32).write_volatile(value);
+        ((LOCAL_APIC_MMIO_BASE + register) as *mut u32).write_volatile(value);
     }
 }
 
 fn ioapic_read(select: u32) -> u32 {
     unsafe {
-        let base = (phys_offset() + IO_APIC_MMIO_BASE) as *mut u32;
+        let base = IO_APIC_MMIO_BASE as *mut u32;
         base.add(IO_APIC_INDEX_PORT).write_volatile(select);
         base.add(IO_APIC_WINDOW_PORT).read_volatile()
     }
@@ -238,7 +223,7 @@ fn ioapic_read(select: u32) -> u32 {
 
 fn ioapic_write(select: u32, value: u32) {
     unsafe {
-        let base = (phys_offset() + IO_APIC_MMIO_BASE) as *mut u32;
+        let base = IO_APIC_MMIO_BASE as *mut u32;
         base.add(IO_APIC_INDEX_PORT).write_volatile(select);
         base.add(IO_APIC_WINDOW_PORT).write_volatile(value);
     }
