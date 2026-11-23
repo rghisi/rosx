@@ -309,6 +309,9 @@ piped or truncated output — AGENTS.md toolchain notes). Boot-test rows must sh
 
 S0 | `ROSX_KERNEL_ELF=target/rosx/release/rosx` (relative) → harness `canonicalize` failed, test
 aborted | ENV-TRAP | 1 round (rerun with `$PWD/...` absolute)
+S1 | `cargo xtask check` first run exit 1: `///` on the non-unsafe `BlockUse` (mod.rs comment
+baseline 0) and kernel `unsafe` 299→302 from new cfg(test) `allocate`/`deallocate` calls | MISSING-FACT |
+1 round (removed the comment; `check-style --update-baseline --allow-increase` wrote the record)
 
 ## Execution records
 
@@ -357,8 +360,9 @@ Boot lines and `mem` snapshot at `rose>` (the before figures for S2 and S4):
   `try_read_char_number_stays_retired` (asserts 9 stays unused) alongside the gaps at
   13/14/16–19/21. Retiring `RomRead = 27` (left unreused) matches the convention.
 
-S2 target checks derived here: `[BOOTINFO] blocks=` must read **2** on both arches (one above
-S0), `mem` free bytes must **equal S0's** (the ROM is held, not free), and `dropped` must stay **0**.
+S2 target checks derived here: `[BOOTINFO]` must show **`held=1`** on both arches, `dropped` must
+stay **0**, and `mem` free bytes must stay **near S0's** (the ROM joins `total_bytes` but never
+`free_bytes`; only the kernel-image growth of later steps nudges the figures by a few KiB).
 
 ### S1 — Allocator tag and `free_blocks` (host-tested, no behaviour change)
 
@@ -377,3 +381,28 @@ a lib crate, so a `release_held` with only test callers is a banned test-only pr
 `rom::release`, lands in S3. Its coalescing / idempotence / `free_bytes`-rise tests therefore move to
 S3 with it. The kernel `unsafe` baseline rose 299→302 for the three new test `allocate`/`deallocate`
 calls, recorded in `docs/decisions/gate-baseline-unsafe-raised-2026-11-23.md`.
+
+### S2 — The initrd arrives as a `Held` block (both arches boot)
+
+`usable_blocks` now runs one shared `initrd_range` check (D3) and appends a `Held` block for the
+page-rounded initrd range (start = physical initrd start, end = `align_up_page(start + size)`), after
+the usable blocks. A full table counts the held block as `dropped`, not lost. `initrd` reuses the same
+`initrd_range` (its ABI row, width, and `KernelAndModules` containment are unchanged).
+`MemoryMapFacts` gained a `held` field and the arch `[BOOTINFO]` line prints `held=`, so the held
+block is observable at boot (`[BOOTINFO] blocks=` alone cannot show it — it counts accepted usable
+only). Four host tests cover it: reserved initrd → exactly one `Held` block page-rounded to `0x2000`;
+absent row → no held block; cap full → held counted as `dropped`; plus the `held` fact.
+
+Boot evidence (prebuilt release kernels, `rose>` reached, `mem` snapshot), and the flip check:
+
+| Arch | `[BOOTINFO]` (S2) | `[ROM]` | `mem` free | `mem` total | flipped-to-`Free` |
+|---|---|---|---|---|---|
+| x86_64 | blocks=1 **held=1** dropped=0 | addr=0xffff800000147000 size=573449 | 127351 KiB | 129612 KiB | panic `initrd is not a ROM image: BadMagic` |
+| x86_32 | blocks=1 **held=1** dropped=0 | addr=0x13c000 size=550689 | 127685 KiB | 129680 KiB | — |
+
+`total_bytes` rose by the page-rounded initrd (x86_64 +560 KiB, x86_32 +532 KiB — the held block minus
+the few KiB the kernel image grew between S0 and S2), while `free_bytes` stayed at S0's figure
+(within that same kernel-growth noise), proving the ROM is held, not free. The deliberate flip to
+`Free` on x86_64 made the allocator hand out the ROM during boot and the kernel panicked at
+`main.rs:72` before reaching the shell — direct proof the `Held` tag is what protects the ROM. Reverted
+before commit.

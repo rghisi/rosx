@@ -113,8 +113,8 @@ fn boot_info_memory(address: usize) -> MemoryBlocks {
     } {
         Ok(facts) => {
             kernel::kprintln!(
-                "[BOOTINFO] regions={} usable={:#x} blocks={} clipped={} dropped={}",
-                facts.regions, facts.usable_bytes, facts.accepted, facts.clipped, facts.dropped
+                "[BOOTINFO] regions={} usable={:#x} blocks={} held={} clipped={} dropped={}",
+                facts.regions, facts.usable_bytes, facts.accepted, facts.held, facts.clipped, facts.dropped
             );
             if facts.dropped > 0 {
                 kernel::kprintln!(

@@ -5,7 +5,7 @@ pub mod program_memory;
 
 pub const MAX_MEMORY_BLOCKS: usize = 32;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum BlockUse {
     Free,
     Held,
