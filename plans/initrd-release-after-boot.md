@@ -513,3 +513,22 @@ KiB, 540 KiB); full `disk_boot` green on x86_32 (4 passed, including the extende
 - S0/S3 before/after figures live in the Execution records above: reclaim 564 KiB (x86_64,
   141 pages) / 540 KiB (x86_32, 135 pages); `mem` free at the prompt 127355 → 127898 KiB and
   127693 → 128224 KiB respectively.
+
+### V — Merge evidence
+
+`cargo xtask verify` on a quiet host (quiet gate GATE: quiet before launch; `pgrep -x
+qemu-system-x86` = 0), captured to `/tmp/opencode/verify.log` with the exit code appended to
+the wall file — verdict read from the files, never from piped output. Start 20:06:50, end
+20:12:50 UTC; **exit 0**: `verify: gate, build, integration on every arch, and boot-test all
+green`.
+
+- Stages, in order: build x86_64 → integration x86_64 → build x86_32 (check-isa: kernel and 43
+  user ELFs 486-clean) → integration x86_32 → boot-test.
+- Integration on both arches: 0 failures; `rom_release` passed in each arch run; `disk_boot`'s
+  extended fallback-release test passed on x86_32.
+- boot-test line: **26 checkpoints, 0 failures, 0 skipped** — no new SKIPs, as required.
+- The 9 grep hits for "skipped" in the log are unit-test *names* (`..._are_skipped`), not
+  skipped tests.
+- Wall time was ~6 min, not the ~40 min AGENTS.md estimates: this host booted every QEMU session
+  to the prompt in under two seconds (S0–S4 timings match), so the estimate, not the run, was
+  the outlier.
