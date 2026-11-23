@@ -1,7 +1,7 @@
 # Kernel BTreeMap removal — fold, delete or flatten every map, measured before and after
 
 > **Date:** 2026-11-22 (revised 2026-11-23) · **Branch:** `ccr-8c760afd-pvgqik` · **Base:** `origin/main@f85af9f`
-> **Status:** proposal; steps land one commit each.
+> **Status:** deferred, see `docs/decisions/kernel-btreemap-removal-deferred.md`; if executed, steps land one commit each.
 > **Depends on:** `plans/adaptive-arenas.md`. All its steps have landed (#202): paged arena with the
 > generation stored in the slot, `owners` and `parents_of` folded into one `FutureEntry`, and a
 > `by_group` index. That `by_group` index is a `BTreeMap`, and this plan **removes it**; see Decisions.
@@ -71,6 +71,9 @@ an arena entry. Maintaining them is what makes `evict`, `consume_inner` and `dis
    The scan is O(slots in materialized pages), see the next point. This is a **regression** against
    `main` and the complexity tables say so. Record a `docs/todo/` item naming an intrusive
    `next_in_group` link (with Step 1b) as the way back to O(k).
+   Context: the rest of group teardown already scans. `deallocate_by_owner` walks every live heap
+   allocation and `group_has_live_members` scans the task arena, so the O(k) lookup saves little of a
+   path whose other parts are O(heap) and O(tasks).
 9. **Scan latency is bounded and recorded.** `visit` and `any` walk every slot of every materialized
    page. Pages are never freed (`docs/decisions/arena-shrinking-deferred.md`), so a scan costs the
    arena's **high-water mark**, not its live count: after one burst of 1024 futures it stays 1024.
