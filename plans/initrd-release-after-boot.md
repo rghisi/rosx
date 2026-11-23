@@ -406,3 +406,60 @@ the few KiB the kernel image grew between S0 and S2), while `free_bytes` stayed 
 `Free` on x86_64 made the allocator hand out the ROM during boot and the kernel panicked at
 `main.rs:72` before reaching the shell — direct proof the `Held` tag is what protects the ROM. Reverted
 before commit.
+
+### S3 — `RomMap`/`RomRelease` and the zero-copy `init` (both arches boot and release)
+
+One atomic step, both arches. **ABI** (D7, values as approved): syscall `27` (`RomRead`) retired
+with a `rom_read_number_stays_retired` test; `RomMap = 43`, `RomRelease = 44` appended after
+`Kill = 42`; error domain `0x09` — `RomReleased = 0x0901`, `RomNotOwner = 0x0902`,
+`RomAlreadyReleased = 0x0903`; `system::rom::RomRef { start: u64, len: u64 }` `#[repr(C)]` with
+its layout pinned by `rom_ref_layout_is_pinned` (size 16, align 8, offsets 0/8).
+
+`kernel::rom` replaced `Once` + `read`/`read_at` with the D4 lifecycle as a small `Lifecycle`
+struct (state + owner atomics) behind the module. `map` records the caller group from `Held` and
+is idempotent for that group; `claim_release` succeeds only `Mapped` for the owner; `image()`
+serves an empty slice once `Released`. `release` calls `MemoryManager::release_held()` (which
+flips every `Held` region to `Free` and `insert_free_block`s it, coalescing and idempotent,
+returning the byte count) and prints `[ROM] released addr=… bytes=…`. `RomMap` in `syscall.rs`
+writes the `RomRef` through the user out-pointer and records `current_group_owner()`; both arms
+refuse a non-group caller with `RomNotOwner`.
+
+`usrlib::rom::RomView` borrows the mapped bytes (`image(&self)`) and consumes itself on
+`release(self)`, so use-after-release is a borrow error in `init`; `read_image`/`rom_read` are
+deleted. `apps/init` maps once and threads an `Image<'a> { Rom(&'a [u8]), Owned(Vec<u8>) }` so a
+`rom:` step hands `load_with_args` a borrowed slice instead of a `Vec::from` copy, releasing at
+the end of `main` after the plan runs (D5).
+
+**Two rule-driven implementation choices, no §2 change:** (a) the lifecycle is a `Lifecycle`
+struct instantiated fresh per unit test, not bare module atomics — bare globals would be poisoned
+by the first test that flips them, making the state-machine tests order-dependent; (b) the owner
+is an `AtomicUsize`, not `AtomicU64` — the check-isa gate rejects `AtomicU64` as a 486 hazard
+(the x86_32 baseline is atomics of at most 32 bits). `caller.value()` is `usize`, so `usize` is
+both the correct width and the ISA-safe one.
+
+Tests. Kernel state machine: `map` by A ok, by A again ok, by B `RomNotOwner`; `claim_release` by
+B `RomNotOwner`, by A ok, second `RomAlreadyReleased`; map after release `RomReleased`; `rom::program`
+unaffected before any map. `release_held`: coalesces with the adjacent heap (free-block count
+unchanged, bytes grown), makes a detached held block allocatable, idempotent (second call 0), and
+nothing-held returns 0; the manager-level test proves `free_bytes` rises by exactly the held size
+once and `total_bytes` is unchanged. usrlib: `find` reads program bytes through a fabricated
+`RomRef`. `handle_kind_guards` still passes.
+
+Gate: `check-style` raised `unsafe` — kernel 302→305 (`RomMap` out-pointer write, `release_held`
+`insert_free_block`, two `cfg(test)` held probes), usrlib 62→65 (`RomView::image` `from_raw_parts`,
+the `cfg(test)` `from_reference` and its call site) — recorded in
+`docs/decisions/gate-baseline-unsafe-raised-2026-11-23-2.md`. `cargo xtask check` all green.
+
+Boot evidence (prebuilt release kernels, throwaway `tests-integration` boot test deleted after):
+
+| Arch | `[ROM] released` line | release position | `mem` free after release | vs S0 |
+|---|---|---|---|---|
+| x86_64 | addr=0xffff800000147000 bytes=577536 | after last `[INIT]`, before `rose>` | 127898 KiB | +543 KiB (ROM 564 KiB) |
+| x86_32 | addr=0x13c000 bytes=552960 | after last `[INIT]`, before `rose>` | 128224 KiB | +531 KiB (ROM 540 KiB) |
+
+The release fires exactly once, its `addr=` equals the boot `[ROM] addr=` in the same run, and
+`bytes=` is the page-rounded held size (141 / 135 pages), i.e. slightly more than the raw ROM
+image. `mem` free rose by within a few KiB of the held block (the shortfall is the shell and
+daemons allocating after the release point). No `BAD-FREE`, `[IRQGUARD]` silent, `rose>` reached.
+The boot-log address (`147000`) matches S2's, confirming the release reports the region the boot
+handed over, not a later shift.
