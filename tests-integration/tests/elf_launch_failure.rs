@@ -47,8 +47,8 @@ fn launching_a_text_file_reports_a_failed_launch_and_the_system_stays_up() {
     let mut session = spawn_seeded_session(staging.path());
 
     let mark = session.mark();
-    session.send_line("notes.txt");
-    session.expect_output_since(mark, "Not an executable: notes.txt", LAUNCH_BUDGET);
+    session.send_line("/notes.txt");
+    session.expect_output_since(mark, "Not an executable: /notes.txt", LAUNCH_BUDGET);
     session.expect_output_since(mark, "rose>", LAUNCH_BUDGET);
     let window = session.content_since(mark);
     assert!(
@@ -69,9 +69,9 @@ fn launching_a_corrupt_elf_fails_at_the_syscall_with_a_kernel_diagnostic() {
     let mut session = spawn_seeded_session(staging.path());
 
     let mark = session.mark();
-    session.send_line("corrupt.elf");
-    session.expect_output_since(mark, "[ELF] 'corrupt.elf' rejected", LAUNCH_BUDGET);
-    session.expect_output_since(mark, "Cannot launch: corrupt.elf", LAUNCH_BUDGET);
+    session.send_line("/corrupt.elf");
+    session.expect_output_since(mark, "[ELF] '/corrupt.elf' rejected", LAUNCH_BUDGET);
+    session.expect_output_since(mark, "Cannot launch: /corrupt.elf", LAUNCH_BUDGET);
     session.expect_output_since(mark, "rose>", LAUNCH_BUDGET);
     let window = session.content_since(mark);
     assert!(

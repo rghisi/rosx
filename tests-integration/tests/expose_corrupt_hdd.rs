@@ -41,7 +41,7 @@ fn a_corrupt_partition_table_exposes_the_whole_drive_for_rescue() {
     run(&mut session, "format ata0d1", "format ok device=ata0d1");
     run(&mut session, "mount ata0d1 /data", "mount ok device=ata0d1 dir=/data");
 
-    run(&mut session, "cp /pi /data/pi", "cp ok /pi -> /data/pi");
+    run(&mut session, "cp /stress/pi /data/pi", "cp ok /stress/pi -> /data/pi");
     let listing = run(&mut session, "ls /data", "rose>");
     assert!(listing.contains("pi"), "the rescue path must roundtrip: {listing}");
 

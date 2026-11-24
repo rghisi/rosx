@@ -158,7 +158,7 @@ fn fat_partition_mounts_by_autodetection_and_survives_reboot() {
         );
 
         run(&mut session, "mkdir /fat/sub", "mkdir ok /fat/sub");
-        run(&mut session, "cp /pi /fat/sub/pi", "cp ok /pi -> /fat/sub/pi");
+        run(&mut session, "cp /stress/pi /fat/sub/pi", "cp ok /stress/pi -> /fat/sub/pi");
         run(&mut session, "cp /fat/greeting.txt /readback", "cp ok /fat/greeting.txt -> /readback");
 
         let listing = run(&mut session, "ls /fat/sub", "rose>");

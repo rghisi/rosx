@@ -56,7 +56,7 @@ spinner: system usrlib
 stress: system usrlib
 system:
 ted: input-protocol usrlib vfs-protocol
-tests-integration: input-protocol libc rxpart tempfile x86-runner
+tests-integration: input-protocol libc rxpart system tempfile x86-runner
 tetris: system usrlib
 threads: system usrlib
 usrlib: input-protocol system
