@@ -1,300 +1,81 @@
 # RosX
 
-RosX is a multi-platform operating system written in Rust from scratch. It is designed with a focus on portability, a microkernel-inspired architecture, and networking capabilities. A key design goal is to not require an MMU, enabling it to run on smaller and simpler devices.
-
-## Current Status
-
-**RosX is currently under active development.** The x86_64 platform is functional with basic multitasking, while x86_32 support has been implemented. The project serves as both a learning exercise and a practical OS for running network applications.
-
-### What's Working
-
-- **x86_64 Platform:** Full implementation with preemptive multitasking, ELF loading, interrupt handling, and console output
-- **x86_32 Platform:** Complete port supporting 32-bit x86 processors, chain-booting a unified FAT boot disk from the custom BIOS stages
-- **Multi-platform Architecture:** Clean separation between platform-agnostic kernel and architecture-specific code
-- **Preemptive Multitasking:** MLFQ scheduler with interrupt-driven task switching
-- **ELF Binary Support:** Loads both 32-bit and 64-bit ELF binaries with relocation support
-- **Hardware Abstraction:** Well-defined traits for CPU and ELF architecture
-
-### Known Issues
-
-- **Memory Management:** Free-list allocator is active; a bitmap-chunk allocator exists but is not yet wired in
-- **Networking:** A goal, not yet implemented; mailbox IPC infrastructure is in place
+RosX is a hobby operating system written in Rust, with minimal assembly. It started as a way to learn Rust and experiment with OS design. Since late 2026 it is also a test bed for **agentic AI coding** and for **running local AI models**: most changes since then are written by a local Qwen3.8-Flash-Next model working through the repository's gates and plans, with the maintainer reviewing.
 
 ## Goals
 
-- **CLI-First Experience:** RosX is built to be a powerful command-line oriented operating system.
-- **Networking as a Priority:** A primary objective is implementing a robust TCP/IP stack to support network applications like web servers.
-- **Multi-Platform Support:** While development started on `x86_64`, RosX is designed to be portable across a wide range of architectures, including `x86_32`, ARM, RISC-V, m68k, and various microcontrollers.
-- **Microkernel Architecture:** The system follows a modular design, keeping the core kernel lean and moving non-essential services into userspace or pluggable modules.
+- **Run without an MMU.** The target is small, simple devices; the stretch goals are a Sega Mega Drive and a Sony PlayStation 1.
+- **Portable, microkernel-inspired design.** A lean, platform-agnostic `no_std` kernel; drivers, filesystems and the network stack run as user-space daemons.
+- **Network applications.** An Ethernet/ARP/IP stack exists; the aim is to grow it into something that can serve real network applications.
+- **A good environment for coding agents.** Strict, mechanical gates and written invariants, so a small local model can make safe changes.
+
+## Status
+
+| Area | State |
+| --- | --- |
+| x86_64 | Complete; the bootstrap platform |
+| x86_32 | Complete; the 486 is a maintained baseline |
+| ARM, RISC-V, m68k, PlayStation 1, Mega Drive | Future; no `arch/` directories yet |
+| Kernel | Preemptive MLFQ scheduling, IPC and futures, ELF user space |
+| Storage | Block layer, VFS, FAT/RxFS/RAM filesystems, ROM initrd boot |
+| Network | Ethernet (NE2000), ARP, IP |
+| User space | Shell, text editor, input daemons, games and test apps |
+
+## How this repo is developed
+
+- [`AGENTS.md`](AGENTS.md) is the context document for coding agents: commands, invariants, working rules and autonomy limits. `CLAUDE.md` and `GEMINI.md` point to it.
+- `cargo xtask check` is the gate: style rules, architecture rules, the 486 ISA audit, builds and unit tests. A change that fails it is not committed.
+- `cargo xtask verify` is the merge evidence: the gate plus the full QEMU integration suite on both architectures.
+- [`plans/`](plans/) holds the design notes and step-by-step plans agents work from.
+- [`docs/decisions/`](docs/decisions/) records open decisions, [`docs/todo/`](docs/todo/) holds out-of-scope work, and [`docs/rationale/`](docs/rationale/) explains low-level `unsafe` code.
+
+## Quick start
+
+Requirements: Rust nightly with `rust-src` (the pinned toolchain installs itself), QEMU, and `mtools` for the FAT boot disk.
+
+```bash
+git clone https://github.com/rghisi/rosx.git
+cd rosx
+cargo xtask run             # build and boot x86_64 in QEMU to the shell prompt
+cargo xtask run x86_32      # the same on the 32-bit port
+cargo xtask check           # the gate
+cargo xtask verify          # gate + full integration on both architectures
+cargo xtask help            # every subcommand
+```
+
+`cargo build --workspace` is intentionally unsupported: the bare-metal binaries and PIE apps cannot compile for the host. Use `cargo xtask`.
 
 ## Architecture
 
-RosX emphasizes a clean separation between platform-independent logic and architecture-specific implementations.
+The workspace is split by directory:
 
-### Kernel Layer (`kernel/`)
-Platform-agnostic code that forms the core OS functionality:
-- **Scheduler:** Pluggable scheduler trait with MLFQ and FIFO implementations
-- **Task Management:** Task structures, state machine, and context management
-- **Memory Management:** Free-list allocator (active) and bitmap-chunk allocator (not yet wired in)
-- **IPC Infrastructure:** Mailbox-based message passing (bind/connect/send/receive)
-- **ELF Loader:** Supports both 32-bit and 64-bit ELF binaries
-- **Hardware Abstraction:** Traits for CPU, ELF architecture, and other subsystems
+- `kernel/` is platform-agnostic and `no_std`. It depends only on `system`, and reaches hardware through HAL traits.
+- `system/` is the ABI treaty: syscall numbers, wire layouts and error numbers.
+- `arch/` holds the per-platform code, plus the bootloader and the image runner shared by the x86 ports.
+- `usrlib/` is the user-space library; `apps/` holds the daemons and applications.
+- `protocol/` holds the wire protocols between daemons, and `fs/` the filesystem engines.
 
-### Architecture Layer (`arch/`)
-Platform-specific implementations that provide hardware support:
-- **x86_64:** Full implementation with IDT/PIC setup, interrupt handlers, VGA/framebuffer output
-- **x86_32:** BIOS chain-boot port using 32-bit protected mode
-- **Future Platforms:** ARM, RISC-V, m68k designed to follow the same pattern
-
-### Hardware Abstraction Layer (HAL)
-The kernel interacts with hardware through well-defined traits:
-- **`Cpu` trait:** Provides `setup()`, `enable_interrupts()`, `disable_interrupts()`, and task initialization
-- **`ElfArch` trait:** Architecture-specific ELF relocation handling
-
-### Pluggable Subsystems
-Core components are designed to be interchangeable:
-- **Schedulers:** MLFQ (current), FIFO, and future algorithms can be swapped via configuration
-- **Memory:** Free-list global allocator (active); a pluggable allocator is a low-priority goal
-- **Console Output:** Multiplexed output (framebuffer + QEMU debug console)
-
-### Memory Management
-The system utilizes:
-- **Free-list Allocator:** Active global allocator for kernel memory
-- **Bitmap-chunk Allocator:** Present, not yet wired in
-- **`no_std`:** std is forbidden; dependencies limited to `system`
-
-## Current State
-
-### x86_64 Platform (Primary)
-The current bootstrap platform provides a complete implementation:
-
-- **Preemptive Multitasking:** MLFQ scheduler with both cooperative and interrupt-driven task switching
-- **Interrupt Handling:** Full IDT and PIC management for hardware interrupts (keyboard, timer)
-- **ELF Loading:** 64-bit ELF binary support with full relocation handling
-- **Console Output:** VGA text mode and framebuffer with ANSI escape sequence parsing
-- **Context Switching:** Interrupt-driven using `iretq` for uniform task switching
-- **System Calls:** Basic infrastructure in place
-
-### x86_32 Platform (Complete)
-Full 32-bit x86 support:
-
-- **Boot entry:** the custom BIOS chain's `BootInfo` handoff — the only loader the kernel accepts
-- **32-bit ELF Support:** Loads both 32-bit and 64-bit ELF binaries
-- **PIC and PIT:** 8259A PIC and 8254 PIT configuration
-- **System V i386 ABI:** Proper calling convention for task contexts
-- **Port I/O:** Direct port access for console output (QEMU debug console)
-
-### Future Platforms
-Architectural support planned for:
-- **ARM:** 32-bit and 64-bit ARM processors
-- **RISC-V:** Modern RISC architecture with user-mode support
-- **m68k:** Classic Motorola 68000 series
-- **Microcontrollers:** Lightweight variants for embedded systems
-
-## Getting Started
-
-### Prerequisites
-
-To build and run RosX, you will need:
-
-- **Rust Nightly:** `rustup default nightly`
-- **Rust Source:** `rustup component add rust-src`
-- **QEMU:** For emulation (`qemu-system-x86_64` for x86_64, `qemu-system-i386` for x86_32)
-
-### Build and Run (x86_64)
-
-The x86_64 platform is the current bootstrap target.
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/rghisi/rosx.git
-   cd rosx
-   ```
-
-2. **Build everything (ELF apps + kernel + disk image):**
-    ```bash
-    cargo xtask build
-    ```
-
-3. **Run in QEMU:**
-    ```bash
-    cargo run -p rosx
-    ```
-
-    To build only the kernel:
-    ```bash
-    cargo build -p rosx --target arch/x86_64/rosx.json
-    ```
-
-    `cargo build --workspace` is intentionally unsupported; use `cargo xtask build` or build individual packages.
-
-### Build and Run (x86_32)
-
-The x86_32 platform runs on older 32-bit processors.
-
-1. **Build:**
-   ```bash
-   cargo xtask build x86_32
-   ```
-
-2. **Run:**
-   ```bash
-   cargo xtask run x86_32
-   ```
-
-3. **Flashable boot disk (optional):**
-   ```bash
-   cargo xtask image x86_32    # the unified boot disk at target/rosx-i486-boot-disk.img; needs mtools
-   ```
-
-### Testing
-
-```bash
-cargo xtask test                      # workspace unit tests
-cargo test -p tests-integration -- --test-threads=1                      # QEMU integration, x86_64
-ROSX_ARCH=x86_32 cargo test -p tests-integration -- --test-threads=1      # QEMU integration, x86_32
-```
-
-### More detail
-
-The commands above are enough to get a boot. For the full flow — the custom runner and disk-image creation, the standalone user-space ELF apps, and the x86_32 unified boot disk — see **[AGENTS.md](AGENTS.md) → *Build & Run***.
-
-## Development
-
-### Project Structure
-
-```
-rosx/
-├── arch/                    # Architecture-specific implementations
-│   ├── x86_64/             # 64-bit x86 implementation
-│   ├── x86_32/             # 32-bit x86 implementation (BIOS chain boot)
-│   └── ...                 # Future platforms (ARM, RISC-V, m68k)
-├── kernel/                 # Platform-agnostic kernel code
-│   ├── src/
-│   │   ├── scheduler/      # Pluggable scheduling strategies
-│   │   ├── task.rs         # Task structure and management
-│   │   ├── memory/         # Memory allocation subsystem
-│   │   ├── collections/    # Generational arena (kernel-owned storage)
-│   │   ├── handle/         # Handle domain newtypes (task/future/ipc-connection/ipc-binding)
-│   │   └── elf/            # ELF binary loader
-├── apps/                   # User-space applications (workspace members)
-│   ├── shell/              # Command-line shell
-│   ├── pi/                 # Simple ELF test program (pi digits spigot)
-│   ├── randomd/            # Random number generator server
-│   ├── echo/               # Echo IPC server
-│   ├── bulk/               # Bulk data-plane budget exerciser
-│   ├── pong/               # IPC ping-pong latency app
-│   ├── ping/               # IPC ping client for pong
-│   ├── mem/                # kstatsd memory report client
-│   ├── vfsd/               # VFS daemon (RAM/ROM filesystem)
-│   ├── vfs/                # VFS client demo app
-│   ├── atad/               # ATA (IDE) PIO disk driver daemon
-│   ├── ata/                # ATA client demo (identity, MBR, read/write/stress)
-│   ├── snake/              # Snake game
-│   ├── tetris/             # Tetris game
-│   ├── conway/             # Conway's Game of Life
-│   ├── threads/            # Multithreading exerciser
-│   ├── dummy/              # Dummy app for testing
-│   ├── waitset/            # Waitset OR-composition demo
-│   ├── inputd/             # INPUTD input multiplexer daemon
-│   ├── ps2d/               # PS/2 keyboard driver daemon
-│   └── stress/             # Kernel subsystem stress tests (memory, context switching)
-├── system/                 # ABI treaty: syscall numbers, wire layout, error numbers
-└── usrlib/                 # User-space library
-```
-
-### Key Files
-
-- **`kernel/src/kernel.rs`** - Main kernel struct and bootstrap logic
-- **`kernel/src/task.rs`** - Task management and context switching
-- **`kernel/src/scheduler/`** - Scheduler implementations (MLFQ, FIFO)
-- **`arch/x86_64/src/main.rs`** - x86_64 entry point and initialization
-- **`arch/x86_32/src/boot.S`** - Boot assembly: GDT install, boot stack, and the stage2 handoff into `kernel_main`
-
-### Development Guidelines
-
-- **Incremental Development:** Make small, testable changes; verify each step
-- **Hardware Abstraction:** All platform-specific code must use traits (HAL pattern)
-- **`no_std` kernel:** std is forbidden; dependencies are limited to the workspace crate `system`
-- **Unit Tests:** Write comprehensive tests for all kernel modules
-- **No Comments in Code:** Write self-explanatory code with clear names; exceptions for assembly
-
-### Architecture Principles
-
-- **Domain knowledge is owned by the allocating subsystem.** A kernel resource's identity, layout, and validity rules live with the subsystem that allocates and validates it; OS policy must not live in infrastructure crates.
-- **The kernel is the single authority on invariants.** Validation happens once, kernel-side; user space carries opaque tokens and neither re-checks nor duplicates kernel invariants.
-- **The shared treaty holds the contract, not the mechanism.** `system` contains numbers and layouts only: a type that describes *how the kernel works* is in the wrong crate; a type that describes *what the boundary contract says* belongs in `system`.
-- **Translation lives at the boundaries.** The kernel edge encodes domain→wire and the user edge decodes wire→user-view; the shared crate cannot own either translation — the dependency arrows forbid it.
-- **User-visible APIs expose no kernel internals.** Debug aids are kernel-side and never part of the ABI.
-
-These principles are the regression guard: the very inversion this rework removed survived many runs because no document stated who owns handle semantics, while the HAL rule — written down — has been obeyed throughout.
-
-See `AGENTS.md` for detailed development guidelines and coding standards.
+Design documents are in [`docs/architecture/`](docs/architecture/): scheduling and interrupts, IPC and futures, memory, boot plan, disk and VFS, networking, input, the shell, and the 486 baseline.
 
 ## Releases
 
-Ready-to-use binary images are available in the [Releases](https://github.com/rghisi/rosx/releases) section of the GitHub repository. The CI `Build Artifacts` workflow (manual dispatch) also publishes them as run artifacts, downloadable with `gh run download <run-id> -n <artifact-name>` (artifacts are kept for one day). Boot any of them directly in QEMU:
-
-### x86_64 — unified boot disk (`rosx-x86_64` artifact)
-
-The disk is both boot medium and root volume: stage1 chain-loads stage2-64, which loads
-`KERNEL.ELF` off the FAT volume into long mode.
+Boot images are published in [Releases](https://github.com/rghisi/rosx/releases) and as artifacts of the manual `Build Artifacts` workflow (kept for one day). Each is a unified boot disk: stage1 chain-loads stage2, which loads `KERNEL.ELF` from the FAT volume.
 
 ```bash
-qemu-system-x86_64 \
-  -drive format=raw,file=rosx-boot-disk.img \
-  -debugcon stdio \
-  -no-reboot -no-shutdown
+qemu-system-x86_64 -drive format=raw,file=rosx-boot-disk.img -debugcon stdio -no-reboot -no-shutdown
+qemu-system-i386 -cpu 486 -drive format=raw,file=rosx-i486-boot-disk.img -debugcon stdio -no-reboot -no-shutdown
 ```
 
-### x86_32 — unified boot disk (`rosx-x86_32-boot-disk` artifact)
+- `-debugcon stdio` carries console output over QEMU's debug port into your terminal; keyboard input goes to the VGA window.
+- `-cpu 486` is the x86_32 baseline.
+- `-no-reboot -no-shutdown` makes a guest panic halt visibly.
 
-The disk is both boot medium and root volume: stage1 chain-loads stage2, which loads
-`KERNEL.ELF` off the FAT volume.
-
-```bash
-qemu-system-i386 -cpu 486 \
-  -drive format=raw,file=rosx-i486-boot-disk.img \
-  -debugcon stdio \
-  -no-reboot -no-shutdown
-```
-
-### Optional: a second disk for the ATA / RxFS flow
-
-To exercise `ata list` → `attach <dev-id> ATA 1` → `format <dev-id>` → `mkdir <dir>` → `mount <dev-id> <dir>` → `ls <dir>`, attach a raw data disk as the secondary IDE drive:
-
-```bash
-truncate -s 50M hdd.img
-qemu-system-x86_64 \
-  -drive format=raw,file=rosx-boot-disk.img \
-  -drive if=ide,index=1,media=disk,format=raw,file=hdd.img \
-  -debugcon stdio \
-  -no-reboot -no-shutdown
-```
-
-### Why these flags
-
-- **`-debugcon stdio`** — console output rides QEMU's debug console port (0xE9) into your terminal; type into the VGA window (the guest reads the PS/2 keyboard).
-- **`-cpu 486` on x86_32** — the port's maintained baseline; the `cargo xtask check-isa x86_32` audit guards against ever needing more.
-- **No `-m`** — memory is left at QEMU's 128 MiB default, which the kernel banner reports as about 112 MB usable.
-- **`-no-reboot -no-shutdown`** — a guest panic halts visibly instead of spinning the VM.
-
-## Documentation
-
-- **`AGENTS.md`** - Detailed development guidelines, coding standards, and the full build/test/run flow
-- **`plans/`** - In-flight design notes (e.g. `notification-based-futures.md`)
+To try the block and filesystem stack, attach a second disk with `-drive if=ide,index=1,media=disk,format=raw,file=hdd.img` (create it with `truncate -s 50M hdd.img`), then in the shell run `ata list`, `attach <dev-id> ATA 1`, `format <dev-id>`, `mkdir <dir>`, `mount <dev-id> <dir>`, `ls <dir>`.
 
 ## Contributing
 
-RosX is a learning project focused on practical operating system development. Contributions are welcome, especially:
-
-- Bug fixes and improvements to existing features
-- New platform ports (ARM, RISC-V, m68k)
-- Documentation improvements
-- Test cases and verification
-
-For major changes, please open an issue first to discuss what you would like to change.
+RosX is a personal project and is not currently accepting outside contributions.
 
 ## License
 
-This project is licensed under the MIT License.
+MIT.
