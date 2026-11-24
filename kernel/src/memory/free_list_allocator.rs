@@ -2,6 +2,7 @@ use core::alloc::Layout;
 use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::memory::BlockUse;
 use crate::memory::MemoryBlocks;
 
 struct FreeBlock {
@@ -101,7 +102,7 @@ fn bad_free(reason: &'static str, p: usize, size: usize) {
 impl FreeListAllocator {
     pub fn new(memory_blocks: &MemoryBlocks) -> Self {
         let mut head: *mut FreeBlock = ptr::null_mut();
-        for block in memory_blocks.blocks[..memory_blocks.count].iter().rev() {
+        for block in memory_blocks.free_blocks().rev() {
             let aligned = align_up(block.start, BLOCK_ALIGN);
             let shrink = aligned - block.start;
             if block.size <= shrink || block.size - shrink < BLOCK_HDR {
@@ -300,6 +301,20 @@ impl FreeListAllocator {
         }
     }
 
+    pub(crate) fn release_held(&mut self) -> usize {
+        let mut returned = 0usize;
+        for index in 0..self.regions.count {
+            let block = self.regions.blocks[index];
+            if block.use_ != BlockUse::Held || block.size == 0 {
+                continue;
+            }
+            self.regions.blocks[index].use_ = BlockUse::Free;
+            unsafe { self.insert_free_block(block.start, block.size) };
+            returned += block.size;
+        }
+        returned
+    }
+
     unsafe fn insert_free_block(&mut self, start: usize, block_size: usize) -> bool {
         if block_size < BLOCK_HDR {
             bad_free("size-below-header", start, block_size);
@@ -371,12 +386,20 @@ impl FreeListAllocator {
 mod tests {
     use super::*;
     use core::alloc::Layout;
-    use crate::memory::{MemoryBlock, MemoryBlocks, MAX_MEMORY_BLOCKS};
+    use crate::memory::{BlockUse, MemoryBlock, MemoryBlocks, MAX_MEMORY_BLOCKS};
 
     fn make_allocator(regions: &[(usize, usize)]) -> FreeListAllocator {
-        let mut blocks = [MemoryBlock { start: 0, size: 0 }; MAX_MEMORY_BLOCKS];
+        let mut blocks = [MemoryBlock::free(0, 0); MAX_MEMORY_BLOCKS];
         for (i, &(start, size)) in regions.iter().enumerate() {
-            blocks[i] = MemoryBlock { start, size };
+            blocks[i] = MemoryBlock::free(start, size);
+        }
+        FreeListAllocator::new(&MemoryBlocks { blocks, count: regions.len() })
+    }
+
+    fn make_typed_allocator(regions: &[(usize, usize, BlockUse)]) -> FreeListAllocator {
+        let mut blocks = [MemoryBlock::free(0, 0); MAX_MEMORY_BLOCKS];
+        for (i, &(start, size, use_)) in regions.iter().enumerate() {
+            blocks[i] = MemoryBlock { start, size, use_ };
         }
         FreeListAllocator::new(&MemoryBlocks { blocks, count: regions.len() })
     }
@@ -1037,5 +1060,114 @@ mod tests {
         assert_eq!(stats.free_block_count, 2);
         assert_eq!(stats.free_bytes, 2 * needed_for(64));
         assert_eq!(stats.largest_free_block, needed_for(64));
+    }
+
+    #[test]
+    fn free_blocks_yields_only_the_free_blocks() {
+        let mut blocks = [MemoryBlock::free(0, 0); MAX_MEMORY_BLOCKS];
+        blocks[0] = MemoryBlock::free(0x1000, 0x1000);
+        blocks[1] = MemoryBlock {
+            start: 0x2000,
+            size: 0x800,
+            use_: BlockUse::Held,
+        };
+        blocks[2] = MemoryBlock::free(0x3000, 0x400);
+        let set = MemoryBlocks { blocks, count: 3 };
+        let starts: Vec<usize> = set.free_blocks().map(|block| block.start).collect();
+        assert_eq!(starts, vec![0x1000, 0x3000]);
+    }
+
+    #[test]
+    fn a_held_block_is_never_allocated_and_never_counted_free() {
+        let mut heap = vec![0u8; 512];
+        let mut held = vec![0u8; 4096];
+        let heap_base = heap.as_mut_ptr() as usize;
+        let held_base = held.as_mut_ptr() as usize;
+        let mut alloc = make_typed_allocator(&[
+            (heap_base, 512, BlockUse::Free),
+            (held_base, 4096, BlockUse::Held),
+        ]);
+        let stats = alloc.stats();
+        assert_eq!(stats.free_block_count, 1, "only the heap block reaches the free list");
+        assert!(
+            stats.largest_free_block < 4096,
+            "the held block must not be counted as free memory"
+        );
+        let too_big = Layout::from_size_align(4000, 8).unwrap();
+        assert!(matches!(
+            unsafe { alloc.allocate(too_big, BlockOwner::Kernel) },
+            Err(AllocError::OutOfMemory)
+        ));
+        let small = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { alloc.allocate(small, BlockOwner::Kernel) }.unwrap() as usize;
+        assert!(ptr >= heap_base && ptr < heap_base + 512);
+    }
+
+    #[test]
+    fn deallocate_of_a_held_pointer_is_rejected_as_not_in_alloc_list() {
+        let mut heap = vec![0u8; 512];
+        let mut held = PageAlignedMemory([0u8; 16 * 1024]);
+        let heap_base = heap.as_mut_ptr() as usize;
+        let held_base = held.0.as_mut_ptr() as usize;
+        assert_eq!(held_base % BLOCK_ALIGN, 0);
+        let mut alloc = make_typed_allocator(&[
+            (heap_base, 512, BlockUse::Free),
+            (held_base, 4096, BlockUse::Held),
+        ]);
+        assert!(alloc.region_contains(held_base, ALLOC_HDR), "the held range stays in regions");
+        let snapshot = free_entries(&alloc);
+        let bad_before = BAD_FREE_COUNT.load(Ordering::Relaxed);
+        let held_ptr = (held_base + ALLOC_HDR) as *mut u8;
+        unsafe { alloc.deallocate(held_ptr, BLOCK_ALIGN) };
+        assert_eq!(BAD_FREE_COUNT.load(Ordering::Relaxed), bad_before + 1);
+        assert_eq!(free_entries(&alloc), snapshot, "the held block is never handed to the free list");
+    }
+
+    #[test]
+    fn release_held_coalesces_the_held_block_with_the_adjacent_heap() {
+        let mut heap = PageAlignedMemory([0u8; 16 * 1024]);
+        let heap_base = heap.0.as_mut_ptr() as usize;
+        let mut alloc = make_typed_allocator(&[
+            (heap_base, 4096, BlockUse::Free),
+            (heap_base + 4096, 2048, BlockUse::Held),
+        ]);
+        let before = alloc.stats();
+        assert_eq!(alloc.release_held(), 2048);
+        let after = alloc.stats();
+        assert_eq!(after.free_bytes, before.free_bytes + 2048);
+        assert_eq!(after.free_block_count, 1, "the released block coalesced into the heap block");
+        assert_eq!(after.largest_free_block, 6144);
+        assert_eq!(alloc.release_held(), 0, "a second release has nothing to return");
+        assert_eq!(alloc.stats(), after);
+    }
+
+    #[test]
+    fn release_held_makes_a_detached_held_block_allocatable() {
+        let mut heap = vec![0u8; 512];
+        let mut held = PageAlignedMemory([0u8; 16 * 1024]);
+        let heap_base = heap.as_mut_ptr() as usize;
+        let held_base = held.0.as_mut_ptr() as usize;
+        let mut alloc = make_typed_allocator(&[
+            (heap_base, 512, BlockUse::Free),
+            (held_base, 4096, BlockUse::Held),
+        ]);
+        let too_big = Layout::from_size_align(4000, 8).unwrap();
+        assert!(matches!(
+            unsafe { alloc.allocate(too_big, BlockOwner::Kernel) },
+            Err(AllocError::OutOfMemory)
+        ));
+        assert_eq!(alloc.release_held(), 4096);
+        let ptr = unsafe { alloc.allocate(too_big, BlockOwner::Kernel) }.unwrap() as usize;
+        assert!(ptr >= held_base && ptr + 4000 <= held_base + 4096);
+    }
+
+    #[test]
+    fn release_held_with_nothing_held_returns_zero() {
+        let mut heap = vec![0u8; 4096];
+        let heap_base = heap.as_mut_ptr() as usize;
+        let mut alloc = make_allocator(&[(heap_base, 4096)]);
+        let snapshot = alloc.stats();
+        assert_eq!(alloc.release_held(), 0);
+        assert_eq!(alloc.stats(), snapshot);
     }
 }

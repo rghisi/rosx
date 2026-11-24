@@ -133,6 +133,19 @@ fn a_mounted_root_without_a_shell_falls_back_to_the_rom_shell() {
     session.expect_output("[INIT] hand-off /shell unavailable", BOOT_BUDGET);
     session.expect_output("[INIT] handing over to rom:shell", BOOT_BUDGET);
     session.expect_output("rose>", BOOT_BUDGET);
+    let boot = session.content_since(0);
+    let hand_off = boot
+        .find("[INIT] handing over to rom:shell")
+        .expect("the fallback hands off to the ROM shell");
+    let release = boot
+        .find("[ROM] released addr=")
+        .expect("the fallback boot releases the ROM too");
+    let prompt = boot.find("rose>").expect("the fallback shell reaches its prompt");
+    assert!(
+        hand_off < release && release < prompt,
+        "the release follows the rom:shell hand-off and precedes the prompt: \
+         hand-off {hand_off}, release {release}, prompt {prompt}"
+    );
 
     let listing = run(&mut session, "ls");
     assert!(

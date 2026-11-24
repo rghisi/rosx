@@ -38,6 +38,9 @@ pub enum ErrorCode {
     IrqControllerUnavailable = 0x0702,
     TaskKillTargetTerminated = 0x0801,
     TaskKillTargetRunning = 0x0802,
+    RomReleased = 0x0901,
+    RomNotOwner = 0x0902,
+    RomAlreadyReleased = 0x0903,
     Unknown = 0x7FFF_FFFF,
 }
 
@@ -79,6 +82,9 @@ impl ErrorCode {
             0x0702 => ErrorCode::IrqControllerUnavailable,
             0x0801 => ErrorCode::TaskKillTargetTerminated,
             0x0802 => ErrorCode::TaskKillTargetRunning,
+            0x0901 => ErrorCode::RomReleased,
+            0x0902 => ErrorCode::RomNotOwner,
+            0x0903 => ErrorCode::RomAlreadyReleased,
             _ => ErrorCode::Unknown,
         }
     }
@@ -88,7 +94,7 @@ impl ErrorCode {
 mod tests {
     use super::*;
 
-    const ALL_ERROR_CODES: [ErrorCode; 32] = [
+    const ALL_ERROR_CODES: [ErrorCode; 35] = [
         ErrorCode::IpcServerNotFound,
         ErrorCode::IpcConnectionCannotBeEstablished,
         ErrorCode::IpcAlreadyBound,
@@ -120,6 +126,9 @@ mod tests {
         ErrorCode::IrqControllerUnavailable,
         ErrorCode::TaskKillTargetTerminated,
         ErrorCode::TaskKillTargetRunning,
+        ErrorCode::RomReleased,
+        ErrorCode::RomNotOwner,
+        ErrorCode::RomAlreadyReleased,
         ErrorCode::Unknown,
     ];
 

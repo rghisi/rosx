@@ -14,11 +14,18 @@ pub enum RomError {
     BeyondImage,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct RomEntry<'a> {
     pub name: &'a str,
     pub offset: usize,
     pub len: usize,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct RomRef {
+    pub start: u64,
+    pub len: u64,
 }
 
 #[derive(Debug, PartialEq)]
@@ -118,6 +125,15 @@ pub fn encode(files: &[(&str, &[u8])]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::mem::{align_of, offset_of, size_of};
+
+    #[test]
+    fn rom_ref_layout_is_pinned() {
+        assert_eq!(size_of::<RomRef>(), 16);
+        assert_eq!(align_of::<RomRef>(), 8);
+        assert_eq!(offset_of!(RomRef, start), 0);
+        assert_eq!(offset_of!(RomRef, len), 8);
+    }
 
     fn header(count: u32) -> Vec<u8> {
         let mut bytes = ROM_MAGIC.to_vec();

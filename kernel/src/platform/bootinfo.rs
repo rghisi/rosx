@@ -2,6 +2,7 @@ use core::mem::offset_of;
 use core::mem::size_of;
 
 use crate::memory::MAX_MEMORY_BLOCKS;
+use crate::memory::BlockUse;
 use crate::memory::MemoryBlock;
 use crate::memory::MemoryBlocks;
 use system::boot_info::BOOT_INFO_MAGIC;
@@ -39,6 +40,7 @@ pub struct MemoryMapFacts {
     pub regions: u32,
     pub usable_bytes: u64,
     pub accepted: usize,
+    pub held: usize,
     pub clipped: usize,
     pub dropped: usize,
 }
@@ -92,6 +94,7 @@ pub unsafe fn usable_blocks(
         regions,
         usable_bytes: 0,
         accepted: 0,
+        held: 0,
         clipped: 0,
         dropped: 0,
     };
@@ -125,14 +128,95 @@ pub unsafe fn usable_blocks(
             facts.dropped += 1;
             continue;
         }
-        blocks.blocks[blocks.count] = MemoryBlock {
-            start: start as usize,
-            size: (end - start) as usize,
-        };
+        blocks.blocks[blocks.count] = MemoryBlock::free(
+            start as usize,
+            (end - start) as usize,
+        );
         blocks.count += 1;
         facts.accepted += 1;
     }
+    if let Some(range) = initrd_range(header, map, expect_arch)? {
+        if blocks.count == MAX_MEMORY_BLOCKS {
+            facts.dropped += 1;
+        } else {
+            let held_end = align_up_page(range.physical_start + range.size);
+            blocks.blocks[blocks.count] = MemoryBlock {
+                start: range.physical_start,
+                size: held_end - range.physical_start,
+                use_: BlockUse::Held,
+            };
+            blocks.count += 1;
+            facts.held += 1;
+        }
+    }
     Ok(facts)
+}
+
+const PAGE_BYTES: usize = 4096;
+
+fn align_up_page(bytes: usize) -> usize {
+    bytes.saturating_add(PAGE_BYTES - 1) & !(PAGE_BYTES - 1)
+}
+
+struct InitrdRange {
+    physical_start: usize,
+    size: usize,
+    wire_start: usize,
+}
+
+fn initrd_range(
+    header: &[u8],
+    map: &[u8],
+    expect_arch: BootArch,
+) -> Result<Option<InitrdRange>, BootInfoError> {
+    let wire_address = u64_at(header, offset_of!(BootInfo, initrd_addr));
+    let size = u64_at(header, offset_of!(BootInfo, initrd_size));
+    if size == 0 || wire_address == 0 {
+        return if size == 0 && wire_address == 0 {
+            Ok(None)
+        } else {
+            Err(BootInfoError::Initrd)
+        };
+    }
+    let physical = match expect_arch {
+        BootArch::X86_64 => wire_address.checked_sub(HIGHER_HALF_OFFSET),
+        BootArch::X86_32 => Some(wire_address),
+    };
+    let Some(physical) = physical else {
+        return Err(BootInfoError::InitrdRange);
+    };
+    let Some(physical_end) = physical.checked_add(size) else {
+        return Err(BootInfoError::InitrdRange);
+    };
+    let width_limit = usize::MAX as u64;
+    if wire_address > width_limit || physical > width_limit || physical_end > width_limit {
+        return Err(BootInfoError::InitrdRange);
+    }
+    let entry = size_of::<MemoryRegion>();
+    let mut reserved = false;
+    for record in map.chunks(entry) {
+        let kind = u32_at(record, offset_of!(MemoryRegion, kind));
+        if MemoryKind::from_wire(kind) != Some(MemoryKind::KernelAndModules) {
+            continue;
+        }
+        let base = u64_at(record, offset_of!(MemoryRegion, base));
+        let length = u64_at(record, offset_of!(MemoryRegion, length));
+        let Some(region_end) = base.checked_add(length) else {
+            continue;
+        };
+        if base <= physical && physical_end <= region_end {
+            reserved = true;
+            break;
+        }
+    }
+    if !reserved {
+        return Err(BootInfoError::InitrdNotReserved);
+    }
+    Ok(Some(InitrdRange {
+        physical_start: physical as usize,
+        size: size as usize,
+        wire_start: wire_address as usize,
+    }))
 }
 
 /// Reads the initrd range out of the frozen BootInfo treaty and returns it as a slice:
@@ -156,15 +240,6 @@ pub unsafe fn initrd(
     if u16_at(header, offset_of!(BootInfo, arch)) != expect_arch as u16 {
         return Err(BootInfoError::Arch);
     }
-    let wire_address = u64_at(header, offset_of!(BootInfo, initrd_addr));
-    let size = u64_at(header, offset_of!(BootInfo, initrd_size));
-    if size == 0 || wire_address == 0 {
-        return if size == 0 && wire_address == 0 {
-            Ok(None)
-        } else {
-            Err(BootInfoError::Initrd)
-        };
-    }
     let entry_size = u32_at(header, offset_of!(BootInfo, memory_map_entry_size));
     if entry_size != size_of::<MemoryRegion>() as u32 {
         return Err(BootInfoError::EntrySize);
@@ -177,48 +252,15 @@ pub unsafe fn initrd(
     if map_address == 0 || usize::try_from(map_address).is_err() {
         return Err(BootInfoError::MapPtr);
     }
-    let physical = match expect_arch {
-        BootArch::X86_64 => wire_address.checked_sub(HIGHER_HALF_OFFSET),
-        BootArch::X86_32 => Some(wire_address),
-    };
-    let Some(physical) = physical else {
-        return Err(BootInfoError::InitrdRange);
-    };
-    let Some(physical_end) = physical.checked_add(size) else {
-        return Err(BootInfoError::InitrdRange);
-    };
-    let width_limit = usize::MAX as u64;
-    if wire_address > width_limit || physical > width_limit || physical_end > width_limit {
-        return Err(BootInfoError::InitrdRange);
-    }
     let slice = unsafe {
         let map = core::slice::from_raw_parts(
             map_address as *const u8,
             regions as usize * entry_size as usize,
         );
-        let mut reserved = false;
-        for index in 0..regions as usize {
-            let record = &map[index * entry_size as usize..(index + 1) * entry_size as usize];
-            let kind = u32_at(record, offset_of!(MemoryRegion, kind));
-            if MemoryKind::from_wire(kind) != Some(MemoryKind::KernelAndModules) {
-                continue;
-            }
-            let base = u64_at(record, offset_of!(MemoryRegion, base));
-            let length = u64_at(record, offset_of!(MemoryRegion, length));
-            let Some(region_end) = base.checked_add(length) else {
-                continue;
-            };
-            if base <= physical && physical_end <= region_end {
-                reserved = true;
-                break;
-            }
-        }
-        if !reserved {
-            return Err(BootInfoError::InitrdNotReserved);
-        }
-        core::slice::from_raw_parts(wire_address as usize as *const u8, size as usize)
+        initrd_range(header, map, expect_arch)?
+            .map(|range| core::slice::from_raw_parts(range.wire_start as *const u8, range.size))
     };
-    Ok(Some(slice))
+    Ok(slice)
 }
 
 fn u16_at(bytes: &[u8], offset: usize) -> u16 {
@@ -291,7 +333,7 @@ mod tests {
 
     fn empty_blocks() -> MemoryBlocks {
         MemoryBlocks {
-            blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),
+            blocks: core::array::from_fn(|_| MemoryBlock::free(0, 0)),
             count: 0,
         }
     }
@@ -459,6 +501,78 @@ mod tests {
         assert_eq!(facts.regions, 0);
         assert_eq!(facts.usable_bytes, 0);
         assert_eq!(blocks.count, 0);
+    }
+
+    #[test]
+    fn usable_blocks_appends_one_held_block_for_a_reserved_initrd() {
+        let mut buf = window();
+        kernel_and_modules(&mut buf, 0x0010_0000, 0x000c_0000);
+        region(&mut buf, 1, 0x001c_0000, 0x0100_0000, 1);
+        initrd_at(&mut buf, 0x0016_0000, 0x1500);
+        stage2_header(&mut buf, 2);
+        let (facts, blocks) = consume(&buf);
+        let facts = facts.expect("a map with a reserved initrd");
+        assert_eq!(facts.accepted, 1);
+        assert_eq!(facts.held, 1);
+        assert_eq!(facts.dropped, 0);
+        assert_eq!(blocks.count, 2, "one usable block plus the held initrd");
+        assert_eq!(blocks.blocks[0].start, 0x001c_0000);
+        assert_eq!(blocks.blocks[0].use_, BlockUse::Free);
+        assert_eq!(blocks.blocks[1].start, 0x0016_0000);
+        assert_eq!(
+            blocks.blocks[1].size, 0x2000,
+            "the held block rounds the page-sized image end up to a page"
+        );
+        assert_eq!(blocks.blocks[1].use_, BlockUse::Held);
+        assert_eq!(blocks.free_blocks().count(), 1, "the held block is not free");
+    }
+
+    #[test]
+    fn an_absent_initrd_appends_no_held_block() {
+        let mut buf = window();
+        kernel_and_modules(&mut buf, 0x0010_0000, 0x000c_0000);
+        region(&mut buf, 1, 0x001c_0000, 0x0100_0000, 1);
+        stage2_header(&mut buf, 2);
+        let (facts, blocks) = consume(&buf);
+        let facts = facts.expect("a usable map with no initrd row");
+        assert_eq!(facts.accepted, 1);
+        assert_eq!(facts.held, 0);
+        assert_eq!(facts.dropped, 0);
+        assert_eq!(blocks.count, 1);
+        assert!(
+            blocks.blocks[..blocks.count]
+                .iter()
+                .all(|block| block.use_ == BlockUse::Free),
+            "no held block when the initrd row is absent"
+        );
+    }
+
+    #[test]
+    fn a_held_block_beyond_the_cap_is_counted_as_dropped() {
+        let mut buf = window();
+        for index in 0..MAX_MEMORY_BLOCKS {
+            let base = 0x0100_0000 + index as u64 * 0x0000_1000;
+            region(&mut buf, index, base, 0x0000_1000, 1);
+        }
+        region(
+            &mut buf,
+            MAX_MEMORY_BLOCKS,
+            0x2000_0000,
+            0x0010_0000,
+            MemoryKind::KernelAndModules as u32,
+        );
+        initrd_at(&mut buf, 0x2000_1000, 0x1000);
+        stage2_header(&mut buf, (MAX_MEMORY_BLOCKS + 1) as u32);
+        let (facts, blocks) = consume(&buf);
+        let facts = facts.expect("a full usable table with a reserved initrd");
+        assert_eq!(facts.accepted, MAX_MEMORY_BLOCKS);
+        assert_eq!(facts.held, 0, "a held block that cannot fit is dropped, never counted as held");
+        assert_eq!(
+            facts.dropped, 1,
+            "the held block could not enter a full table and is counted, not silently lost"
+        );
+        assert_eq!(blocks.count, MAX_MEMORY_BLOCKS);
+        assert_eq!(blocks.free_blocks().count(), MAX_MEMORY_BLOCKS);
     }
 
     const INITRD_OFFSET: usize = INFO_OFFSET + size_of::<BootInfo>() + 0x40;
