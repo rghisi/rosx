@@ -236,7 +236,10 @@ fn who_has(nic: &Ne2k, source_ip: [u8; IPV4_BYTES], target_ip: [u8; IPV4_BYTES])
 }
 
 fn launch_detached(vfs: &Vfs, program: &str) {
-    let Ok(image) = vfs.read_whole(&format!("/{program}")) else {
+    let Some(directory) = system::boot_disk::directory_of(program) else {
+        return;
+    };
+    let Ok(image) = vfs.read_whole(&format!("/{}/{}", directory.name(), program)) else {
         return;
     };
     let argv = [program.to_string()];
