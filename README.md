@@ -72,10 +72,6 @@ qemu-system-i386 -cpu 486 -drive format=raw,file=rosx-i486-boot-disk.img -debugc
 
 To try the block and filesystem stack, attach a second disk with `-drive if=ide,index=1,media=disk,format=raw,file=hdd.img` (create it with `truncate -s 50M hdd.img`), then in the shell run `ata list`, `attach <dev-id> ATA 1`, `format <dev-id>`, `mkdir <dir>`, `mount <dev-id> <dir>`, `ls <dir>`.
 
-## Contributing
-
-RosX is a personal project and is not currently accepting outside contributions.
-
 ## License
 
 MIT.
