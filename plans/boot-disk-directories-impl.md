@@ -113,6 +113,9 @@ three crates, and pointed `ip_slirp`/`ip_inject` at
 `tests_integration::shared::start_ipd`. Decision recorded in
 `docs/decisions/service-provisioning-and-consumer-launch.md`; `network-and-ip.md`
 updated (its stale `/pcid`, `/ne2kd` plan-path mentions fixed in the same pass).
+`ip_inject ip_slirp arp_slirp arp_watch ne2k_smoke ne2k_watch boot_and_exit_status`
+on x86_64: 7 passed, 0 failed. Full `cargo xtask test` re-run at `b9d27b2` on both
+arches: 1985 passed, 0 failed, 6 ignored each, boot-test 26 checkpoints 0 failures.
 
 ## Friction log
 
