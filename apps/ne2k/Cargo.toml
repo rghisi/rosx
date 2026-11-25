@@ -11,11 +11,8 @@ bench = false
 test = false
 
 [dependencies]
-system = { path = "../../system" }
 usrlib = { path = "../../usrlib" }
 net-protocol = { path = "../../protocol/net" }
-pci-protocol = { path = "../../protocol/pci" }
-vfs-protocol = { path = "../../protocol/vfs" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 usrlib = { path = "../../usrlib", features = ["runtime"] }

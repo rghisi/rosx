@@ -3,18 +3,14 @@
 extern crate alloc;
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 use ip_protocol::client::{Ip, IpEvent};
 use ip_protocol::wire::{self, IPV4_BYTES};
 use net_protocol::icmp::{self, Icmp};
-use pci_protocol::wire::SERVICE_NAME as PCI_SERVICE_NAME;
 use usrlib::syscall::Syscall;
 use usrlib::println;
-use vfs_protocol::client::Vfs;
 
-const LAUNCH_ATTEMPTS: usize = 100;
-const LAUNCH_RETRY_DELAY_MS: u64 = 100;
 const PING_TIMEOUT_MS: u64 = 2_000;
 const PING_POLL_MS: u64 = 20;
 const PING_GAP_MS: u64 = 400;
@@ -22,44 +18,6 @@ const DEFAULT_PING_COUNT: u32 = 3;
 const DEFAULT_PING_SIZE: usize = 56;
 const MAX_PING_SIZE: usize = 1_472;
 const PING_PATTERN: &[u8] = b"RosxPing";
-
-fn service_is_live(binding: &str) -> bool {
-    Syscall::ipc_connect(binding).is_ok()
-}
-
-fn launch_detached(vfs: &Vfs, program: &str) {
-    let Some(directory) = system::boot_disk::directory_of(program) else {
-        return;
-    };
-    let Ok(image) = vfs.read_whole(&format!("/{}/{}", directory.name(), program)) else {
-        return;
-    };
-    let argv = [program.to_string()];
-    let _completion = Syscall::load_with_args(&image, &argv);
-}
-
-fn ensure_service(vfs: &Vfs, program: &str, binding: &str) {
-    if service_is_live(binding) {
-        return;
-    }
-    launch_detached(vfs, program);
-    for _ in 0..LAUNCH_ATTEMPTS {
-        if service_is_live(binding) {
-            return;
-        }
-        Syscall::sleep(LAUNCH_RETRY_DELAY_MS);
-    }
-}
-
-fn ensure_network_stack() {
-    let Ok(vfs) = Vfs::connect() else {
-        return;
-    };
-    ensure_service(&vfs, "pcid", PCI_SERVICE_NAME);
-    ensure_service(&vfs, "ne2kd", net_protocol::wire::SERVICE_NAME);
-    ensure_service(&vfs, "ipd", ip_protocol::wire::SERVICE_NAME);
-    vfs.disconnect();
-}
 
 fn format_mac(mac: [u8; 6]) -> String {
     let mut rendered = String::new();
@@ -271,9 +229,6 @@ fn main() {
     } else {
         &arguments[1..]
     };
-    if !service_is_live(wire::SERVICE_NAME) {
-        ensure_network_stack();
-    }
     let Ok(mut ip) = Ip::connect() else {
         println!("ip no service");
         return;

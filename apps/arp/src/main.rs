@@ -3,19 +3,14 @@
 extern crate alloc;
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use net_protocol::arp::{self, ArpError, Operation, Packet};
 use net_protocol::client::Ne2k;
 use net_protocol::ethernet::{self, MAC_BYTES};
 use net_protocol::ipv4::IPV4_BYTES;
-use net_protocol::wire as net_wire;
-use pci_protocol::wire::SERVICE_NAME as PCI_SERVICE_NAME;
 use usrlib::syscall::Syscall;
 use usrlib::println;
-use vfs_protocol::client::Vfs;
 
-const LAUNCH_ATTEMPTS: usize = 100;
-const LAUNCH_RETRY_DELAY_MS: u64 = 100;
 const DEFAULT_WATCH_SECONDS: u64 = 10;
 const DEFAULT_RESPOND_SECONDS: u64 = 10;
 const WHO_HAS_TIMEOUT_MS: u64 = 5_000;
@@ -175,10 +170,6 @@ fn respond(nic: &Ne2k, my_ip: [u8; IPV4_BYTES], seconds: u64) {
     }
 }
 
-fn service_is_live(binding: &str) -> bool {
-    Syscall::ipc_connect(binding).is_ok()
-}
-
 fn is_arp_reply_from(packet: &Packet, target: [u8; IPV4_BYTES]) -> bool {
     packet.operation == Operation::Reply && packet.sender_ip == target
 }
@@ -235,39 +226,6 @@ fn who_has(nic: &Ne2k, source_ip: [u8; IPV4_BYTES], target_ip: [u8; IPV4_BYTES])
     }
 }
 
-fn launch_detached(vfs: &Vfs, program: &str) {
-    let Some(directory) = system::boot_disk::directory_of(program) else {
-        return;
-    };
-    let Ok(image) = vfs.read_whole(&format!("/{}/{}", directory.name(), program)) else {
-        return;
-    };
-    let argv = [program.to_string()];
-    let _completion = Syscall::load_with_args(&image, &argv);
-}
-
-fn ensure_service(vfs: &Vfs, program: &str, binding: &str) {
-    if service_is_live(binding) {
-        return;
-    }
-    launch_detached(vfs, program);
-    for _ in 0..LAUNCH_ATTEMPTS {
-        if service_is_live(binding) {
-            return;
-        }
-        Syscall::sleep(LAUNCH_RETRY_DELAY_MS);
-    }
-}
-
-fn ensure_network_stack() {
-    let Ok(vfs) = Vfs::connect() else {
-        return;
-    };
-    ensure_service(&vfs, "pcid", PCI_SERVICE_NAME);
-    ensure_service(&vfs, "ne2kd", net_wire::SERVICE_NAME);
-    vfs.disconnect();
-}
-
 fn parse_seconds(text: &str) -> Option<u64> {
     text.parse::<u64>().ok()
 }
@@ -291,9 +249,6 @@ fn main() {
     } else {
         &arguments[1..]
     };
-    if !service_is_live(net_wire::SERVICE_NAME) {
-        ensure_network_stack();
-    }
     let Ok(nic) = Ne2k::connect() else {
         println!("arp no service");
         return;

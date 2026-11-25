@@ -10,8 +10,15 @@ const BOOT_TIMEOUT: Duration = Duration::from_secs(90);
 const PS_TIMEOUT: Duration = Duration::from_secs(30);
 const TRANSCRIPT_CAP: usize = 4000;
 
-pub fn process_names(report: &str) -> BTreeSet<String> {
-    report
+const IPD_READY: &str = "[IPD] bound IP";
+const IPD_ATTEMPTS: usize = 5;
+const IPD_BUDGET: Duration = Duration::from_secs(60);
+
+pub fn start_ipd(session: &mut QemuSession) {
+    session.run_command("/srv/ipd &", |delta| delta.contains(IPD_READY), IPD_ATTEMPTS, IPD_BUDGET);
+}
+
+pub fn process_names(report: &str) -> BTreeSet<String> {    report
         .lines()
         .filter_map(|line| {
             let fields: Vec<&str> = line.split_whitespace().collect();

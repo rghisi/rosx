@@ -1,5 +1,6 @@
 use std::time::Duration;
 use tests_integration::qemu::QemuSession;
+use tests_integration::shared::start_ipd;
 
 const BOOT_BUDGET: Duration = Duration::from_secs(240);
 const COMMAND_BUDGET: Duration = Duration::from_secs(120);
@@ -9,6 +10,7 @@ const INPUT_ATTEMPTS: usize = 5;
 fn ip_ping_crosses_slirp() {
     let mut session = QemuSession::spawn_ne2k_pci();
     session.expect_output("rose>", BOOT_BUDGET);
+    start_ipd(&mut session);
 
     let status = session.run_command(
         "ip status",
