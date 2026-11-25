@@ -99,8 +99,24 @@
 
 Hardware. The era/smoke media are untouched and carry no apps.
 
+## Post-review: consumers never launch daemons (2026-11-25)
+
+Code review of `6e10fe8` on the PR found the daemon auto-launch in `ip`/`ne2k`/`arp`
+to be a coupling to avoid (app CLIs reaching VFS + `system::boot_disk` to bootstrap
+services, duplicating the shell launcher). Owner ruling: remove it — services are
+provisioned ahead of use (boot plan for non-optional ones, manual `/srv/ipd &` for
+`ipd`, whose old "no boot-plan step" rationale predated `&` job control), and a
+future service-manager daemon owns on-demand start. `268e341` dropped
+`launch_detached`/`ensure_service` from the three CLIs (their `no service` messages
+are the failure UX), shed the `system`/`pci-protocol`/`vfs-protocol` arrows from all
+three crates, and pointed `ip_slirp`/`ip_inject` at
+`tests_integration::shared::start_ipd`. Decision recorded in
+`docs/decisions/service-provisioning-and-consumer-launch.md`; `network-and-ip.md`
+updated (its stale `/pcid`, `/ne2kd` plan-path mentions fixed in the same pass).
+
 ## Friction log
 
 step 2 | `cargo xtask build x86_32` was launched in the background while the step-3 launcher edit was still in flight; it compiled the half-edited tree and failed with 2 errors in `shell`, costing one rebuild | ENV-TRAP | 1 round
 verification | first x86_32 `disk_boot` run set `ROSX_KERNEL_ELF=target/rosx-x86_32/release/rosx-x86_32`, but the x86_32 kernel ELF ships under `target/rosx-i486/release/rosx-x86_32` (dir is `kernel_dir_name`, not the package name); all 4 tests panicked on canonicalization, no product signal | MISSING-FACT | 1 round
 verification | a bare `cargo xtask test` covers only the `ROSX_ARCH` arch (default x86_64); the x86_32 integration pass needs its own `ROSX_ARCH=x86_32 cargo xtask test` run — read from the log files, not the exit code | MISSING-FACT | 0
+post-review | the redo re-verified every repo fact but carried #184's daemon auto-launch as-is; review caught the VFS + `boot_disk` coupling in three CLIs and it was removed in `268e341` — a redo must question inherited design, not only refresh facts | PLAN-DEFECT | 1 round
