@@ -26,7 +26,8 @@ pub fn start_ipd(session: &mut QemuSession) {
     start_service(session, "/srv/ipd", "[IPD] bound IP");
 }
 
-pub fn process_names(report: &str) -> BTreeSet<String> {    report
+pub fn process_names(report: &str) -> BTreeSet<String> {
+    report
         .lines()
         .filter_map(|line| {
             let fields: Vec<&str> = line.split_whitespace().collect();

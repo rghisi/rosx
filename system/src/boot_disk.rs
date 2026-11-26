@@ -102,16 +102,16 @@ pub fn directory_of(app: &str) -> Option<Directory> {
         .map(|(_, directory)| *directory)
 }
 
-pub fn apps_in(directory: Directory) -> impl Iterator<Item = &'static str> {
-    APP_DIRECTORIES
-        .iter()
-        .filter(move |(_, entry)| *entry == directory)
-        .map(|(name, _)| *name)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn apps_in(directory: Directory) -> impl Iterator<Item = &'static str> {
+        APP_DIRECTORIES
+            .iter()
+            .filter(move |(_, entry)| *entry == directory)
+            .map(|(name, _)| *name)
+    }
 
     #[test]
     fn table_carries_forty_three_apps_with_unique_names() {
