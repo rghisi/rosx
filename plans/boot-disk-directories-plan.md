@@ -12,6 +12,15 @@
 > the shell launcher, and the integration harness, and shell name resolution extended to a fixed
 > search path so bare-name launches keep working unchanged.
 > **Method:** every repo fact below was re-verified against this working tree (paths cited).
+>
+> **Amended 2026-11-25/26 after code review** (`268e341`, `db26f0e`; owner rulings recorded in
+> `docs/decisions/service-provisioning-and-consumer-launch.md`): (a) consumers never launch
+> daemons — the `ip`/`ne2k`/`arp` auto-launch of fact 7 and step 5 was removed, and those crates
+> shed the `system` arrow instead of gaining it; (b) the boot plan provisions only non-optional
+> services — `randomd`, `echo` and `pong` left the plan entirely (final shape: 11 steps), and the
+> suites that need them start them at the prompt through
+> `tests_integration::shared::start_service`. Passages below carry inline amendment marks; the
+> amended text is what shipped.
 
 **Decisions (owner-approved in session 2026-11-19, carried over):**
 - Taxonomy: **bin, games, tests, bench, stress**, plus **`srv/`** for the service daemons.
@@ -98,6 +107,8 @@ root     KERNEL.ELF INITRD.BIN (chain-pinned, staged outside the taxonomy)      
    (`system/src/boot_plan.rs` `Program::name()` `rsplit_once('/')`) — so `ps` rows and exit
    reports keep the bare names. Plan budget: ≤ 15 steps (now 14), ≤ 512 bytes
    (`system/src/boot_plan.rs`); this change adds ~29 bytes, inside budget, builder-asserted.
+   **Amended (`db26f0e`): the final plan is 11 steps** — review took `randomd`, `echo` and `pong`
+   out of the plan; only `pcid` and `ne2kd` remain disk-sourced.
 4. `tests-integration/src/fat_disk.rs`: `create_boot_master` = `create_bootable` (chain-stamped)
    + `copy_built_els` (glob of dotless ELFs in the user release dir, one flat `mcopy`) +
    `install_initrd` (`INITRD.BIN` at root) + `KERNEL.ELF` at root. `stamp_bootable` and
@@ -111,7 +122,9 @@ root     KERNEL.ELF INITRD.BIN (chain-pinned, staged outside the taxonomy)      
    root `ls` contains `snake` and `tetris`); the no-disk-shell ROM fallback (`hand-off /shell
    unavailable`); and the missing-`INITRD.BIN` panic (root-pinned initrd — unaffected by the
    taxonomy; the `::/boot/menu.txt` fixture is a test's own nested dir, not the dropped taxonomy
-   `boot/`).
+   `boot/`). **Amended (`db26f0e`):** the shipped fixture stages only `shell`/`mkdir`;
+   `[INIT] /srv/pcid not available` pins log-and-continue, and the built-disk boot asserts
+   `starting /srv/pcid` + `PCI ready` before the `/games` listing.
 6. Shell-launched names across the integration suite (all keep working via the search path):
    `exiter mount mkdir attach cp ne2k format bench ata rm pi arp spinner rmdir ping mem leaky
    waitset stress ps fsbench bulk ted` (`ls clear rose sleep random` are built-ins; a bare `ls`
@@ -124,7 +137,9 @@ root     KERNEL.ELF INITRD.BIN (chain-pinned, staged outside the taxonomy)      
    - `apps/ip/src/main.rs:31`, `apps/ne2k/src/main.rs:75`, `apps/arp/src/main.rs:239` auto-launch
      missing daemons with `vfs.read_whole(&format!("/{program}"))` — runtime-built paths; resolve
      through `system::boot_disk::directory_of`. These three crates gain a `system` dependency
-     (`xtask/arch-rules.txt` rows `ip`, `ne2k`, `arp`).
+     (`xtask/arch-rules.txt` rows `ip`, `ne2k`, `arp`). **Amended (`268e341`):** the auto-launch
+     was removed instead — the CLIs are thin clients answering `no service`, and the three crates
+     ended with *fewer* arrows (no `system`, no `pci-protocol`, no `vfs-protocol`).
    - Payload copies of root-level ELFs used as test data: `expose_corrupt_hdd.rs`,
      `partitioned_hdd_flow.rs` (`cp /pi`, `cp /echo`), `vfs_hdd_flow.rs`, `fat_partition_flow.rs`
      (`cp /pi`, `cp /fat/...`) → `/stress/pi`, `/srv/echo` with their expected `cp ok …` strings.
@@ -162,9 +177,12 @@ root     KERNEL.ELF INITRD.BIN (chain-pinned, staged outside the taxonomy)      
 4. **Boot plans (both arches)** — `/randomd → /srv/randomd`, `/echo → /srv/echo`,
    `/pong → /srv/pong`, `/pcid → /srv/pcid`, `/ne2kd → /srv/ne2kd`, `exec /shell →
    exec /bin/shell`; `exec rom:shell` unchanged. Builder asserts the 512-byte budget at encode.
+   **Amended (`db26f0e`):** `randomd`, `echo` and `pong` left the plan after review — the shipped
+   disk-sourced steps are only `pcid` and `ne2kd` (11 steps total).
 5. **App path consumers** — `apps/vfs` self-test `/srv/randomd` (print string kept); `fsbench`
    `/games/snake`; `ip`/`ne2k`/`arp` daemon auto-launch through `directory_of` with the `system`
-   dependency and the three `arch-rules.txt` rows amended.
+   dependency and the three `arch-rules.txt` rows amended. **Amended (`268e341`):** the
+   auto-launch was removed rather than retargeted; `vfs` and `fsbench` shipped as described.
 6. **Harness through the treaty** — `fat_disk::create_boot_master` stages via the table (`mmd` +
    per-app `mcopy`) replacing the flat `copy_built_els`/`built_els` glob; `arch-rules.txt` allows
    `tests-integration → system`; `disk_boot.rs` stages `::/bin/shell`, `::/bin/mkdir`,
@@ -172,7 +190,10 @@ root     KERNEL.ELF INITRD.BIN (chain-pinned, staged outside the taxonomy)      
    `handing over to /bin/shell`, `hand-off /bin/shell unavailable`; the built-disk presence
    assertion moves to `ls /games`; `boot_and_exit_status.rs` expects `games` in the root listing;
    `elf_launch_failure.rs` types `/notes.txt` and `/corrupt.elf`; the four payload-copy suites
-   move to `/stress/pi`, `/srv/echo`.
+   move to `/stress/pi`, `/srv/echo`. **Amended (`db26f0e`):** `disk_boot` no longer stages
+   `/srv/randomd` and asserts `[INIT] /srv/pcid not available` (fixture) plus `PCI ready` (built
+   disk); suites needing `randomd`/`echo`/`pong`/`ipd` start them at the prompt via
+   `tests_integration::shared::start_service` (`start_ipd` is its `/srv/ipd` wrapper).
 7. **Docs** — `docs/architecture/boot-media-and-harness.md` (the "every user ELF at the root" and
    "all ELFs found in the user release dir" sentences, boot-plan service tokens, the root-pinned
    boot files beside the taxonomy), `docs/architecture/shell.md` (search-path resolution rule),
