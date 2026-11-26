@@ -10,7 +10,8 @@
 
 1. `d1ffe01` **`system::boot_disk` treaty** — six directory constants (`bin games tests bench
    stress srv`), `Directory::name()/path()`, the 43-app table (`init` → `bin`), `directory_of`,
-   `apps_in`, `SEARCH_PATH` (`/bin → /tests → /games → /bench → /stress`); 13 unit tests pin
+   `apps_in` (later review: no non-test caller, moved into `#[cfg(test)]` as a private helper),
+   `SEARCH_PATH` (`/bin → /tests → /games → /bench → /stress`); 13 unit tests pin
    membership, uniqueness, 8.3 names, path order and `srv` exclusion. `cargo test -p system`:
    116 passed.
 2. `473221c` **xtask staging** — `fill_volume` mmds the six directories and mcopy-stages each app
@@ -138,6 +139,25 @@ shared-plan list and `boot-media-and-harness.md` service sentence narrowed,
 record extended. Verification: `ipc_random ipc_ping ipc_wake_latency ipc_bulk
 boot_and_exit_status` on x86_64 — 5 passed, 0 failed; same four plus `disk_boot`
 (4 tests) on x86_32 — 5 passed, 0 failed.
+
+## PR comments round 2 (2026-11-26)
+
+Second review pass on #204, five findings. **Must-fix 1:** `boot_disk::apps_in` was test-only
+production surface (AGENTS.md bans it — the review commits had removed its last consumers);
+deleted from the public API, a private helper now lives in the `#[cfg(test)]` module, the 13
+pins unchanged. **Must-fix 2:** the `start_service` insertion had collapsed
+`process_names`'s first two lines into one — restored, and a sweep over the whole PR diff
+(`{` + indented code on one line) found no other artifact; note the repo is intentionally not
+default-`rustfmt` shaped (no rustfmt.toml, no fmt CI step), so the fix is the lost newline,
+not a reformat. **Should-fix:** `plans/boot-disk-directories-plan.md` amended in place —
+header note plus correction marks on fact 3 (final 11 steps), fact 5 and step 6 (the
+`/srv/pcid not available` + `PCI ready` assertions, the `start_service`/`start_ipd` helpers),
+fact 7 and step 5 (auto-launch removed, arrows shed). **Optional:** `shell.md` now states the
+resolve edge cases (single-entry lookup, no PATH semantics for names containing `/`, only
+`NotFound` advances — other VFS errors abort rather than mask, unknown name costs ≤ 5 stats);
+no unit pin because `resolve` takes the concrete `Vfs` client and faking it would mean a trait
+abstraction out of scope here. `boot-media-and-harness.md` states that the `disk_boot` fixture
+proves missing service **file** with `srv/` present, not missing directory.
 
 ## Friction log
 
