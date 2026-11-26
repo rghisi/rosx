@@ -1,5 +1,6 @@
 use std::time::Duration;
 use tests_integration::qemu::QemuSession;
+use tests_integration::shared::start_service;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
 const SWEEP_TIMEOUT: Duration = Duration::from_secs(180);
@@ -80,10 +81,10 @@ fn window_diagnostics(content: &str) -> String {
 #[test]
 fn bulk_data_transfer_echo_and_limits_roundtrip() {
     let mut session = QemuSession::spawn();
+    session.expect_output("rose>", READY_TIMEOUT);
+    start_service(&mut session, "/srv/echo", "[IPC Server] BulkEcho");
 
     let mark = session.mark();
-    session.expect_output("[IPC Server] BulkEcho", READY_TIMEOUT);
-    session.expect_output("rose>", READY_TIMEOUT);
     session.send_line("bulk");
 
     if let Err(output_tail) =

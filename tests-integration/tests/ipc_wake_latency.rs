@@ -1,5 +1,6 @@
 use std::time::Duration;
 use tests_integration::qemu::QemuSession;
+use tests_integration::shared::start_service;
 
 const BOOT_BUDGET: Duration = Duration::from_secs(90);
 const BURST_BUDGET: Duration = Duration::from_secs(60);
@@ -14,9 +15,9 @@ fn position_of(content: &str, needle: &str) -> usize {
 #[test]
 fn parked_services_run_before_the_waking_burst_completes() {
     let mut session = QemuSession::spawn();
-    session.expect_output("[IPC Server] Ping", BOOT_BUDGET);
-    session.expect_output("[IPC Server] Random", BOOT_BUDGET);
     session.expect_output("rose>", BOOT_BUDGET);
+    start_service(&mut session, "/srv/pong", "[IPC Server] Ping");
+    start_service(&mut session, "/srv/randomd", "[IPC Server] Random");
 
     let mark = session.mark();
     session.send_line("ping burst");

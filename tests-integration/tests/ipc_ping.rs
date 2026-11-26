@@ -1,5 +1,6 @@
 use std::time::Duration;
 use tests_integration::qemu::QemuSession;
+use tests_integration::shared::start_service;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
 const SWEEP_TIMEOUT: Duration = Duration::from_secs(180);
@@ -68,8 +69,8 @@ fn parse_size(raw: &str, line: &str) -> usize {
 fn shell_ping_capability_data_roundtrip() {
     let mut session = QemuSession::spawn();
 
-    session.expect_output("[IPC Server] Ping", READY_TIMEOUT);
     session.expect_output("rose>", READY_TIMEOUT);
+    start_service(&mut session, "/srv/pong", "[IPC Server] Ping");
 
     let mark = session.mark();
     session.send_line("ping");

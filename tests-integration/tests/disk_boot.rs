@@ -38,7 +38,7 @@ fn build_boot_disk(staging: &Path, with_apps: bool) -> FatDisk {
         for directory in [boot_disk::Directory::Bin, boot_disk::Directory::Srv] {
             disk.make_directory(&format!("::/{}", directory.name()));
         }
-        for app in ["shell", "mkdir", "randomd"] {
+        for app in ["shell", "mkdir"] {
             let directory = boot_disk::directory_of(app).expect("the taxonomy covers the staged apps");
             let elf = built_elf(app);
             disk.copy(&elf, &format!("::{}/{app}", directory.name()));
@@ -59,9 +59,7 @@ fn boot_disk_mounts_the_root_and_hands_off_the_disk_shell() {
     let mut session = QemuSession::spawn_with_master_disk(disk.path());
     session.expect_output("attach registered ATA", BOOT_BUDGET);
     session.expect_output("mount ok device=ata0d0p0 dir=/", BOOT_BUDGET);
-    session.expect_output("[INIT] starting /srv/randomd", BOOT_BUDGET);
-    session.expect_output("[INIT] RANDOM ready", BOOT_BUDGET);
-    session.expect_output("[INIT] /srv/echo not available", BOOT_BUDGET);
+    session.expect_output("[INIT] /srv/pcid not available", BOOT_BUDGET);
     session.expect_output("[INIT] handing over to /bin/shell", BOOT_BUDGET);
     session.expect_output("rose>", BOOT_BUDGET);
 
@@ -109,10 +107,8 @@ fn the_built_boot_disk_boots_to_the_disk_shell() {
     };
     let mut session = QemuSession::spawn_with_master_disk(&image);
     session.expect_output("mount ok device=ata0d0p0 dir=/", BOOT_BUDGET);
-    session.expect_output("[INIT] starting /srv/randomd", BOOT_BUDGET);
-    session.expect_output("[INIT] RANDOM ready", BOOT_BUDGET);
-    session.expect_output("[INIT] starting /srv/pong", BOOT_BUDGET);
-    session.expect_output("[INIT] PING ready", BOOT_BUDGET);
+    session.expect_output("[INIT] starting /srv/pcid", BOOT_BUDGET);
+    session.expect_output("[INIT] PCI ready", BOOT_BUDGET);
     session.expect_output("[INIT] handing over to /bin/shell", BOOT_BUDGET);
     session.expect_output("rose>", BOOT_BUDGET);
 
