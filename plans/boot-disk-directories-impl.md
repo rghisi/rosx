@@ -117,6 +117,28 @@ updated (its stale `/pcid`, `/ne2kd` plan-path mentions fixed in the same pass).
 on x86_64: 7 passed, 0 failed. Full `cargo xtask test` re-run at `b9d27b2` on both
 arches: 1985 passed, 0 failed, 6 ignored each, boot-test 26 checkpoints 0 failures.
 
+## Post-review: the plan keeps only non-optional services (2026-11-26)
+
+Owner ruling following the provisioning decision: `randomd`, `echo` and `pong`
+leave the boot plan too — they exist for demos and for a few IPC suites, not for
+every boot. Both arches now plan `pcid` and `ne2kd` from `/srv/` and nothing
+else from disk. The suites that need the daemons start them at the prompt:
+`shared::start_ipd` generalized into `start_service(session, program, ready)`,
+used by `ipc_random` (`/srv/randomd`), `ipc_ping` and `ipc_wake_latency`
+(`/srv/pong`, wake-latency also needs `/srv/randomd`), `ipc_bulk` (`/srv/echo`);
+the daemons themselves, their taxonomy placement and the disk staging are
+unchanged. `disk_boot` re-anchored: the fixture disk proves the log-and-continue
+policy on `/srv/pcid not available` (fixture no longer stages `randomd`), the
+built disk proves a live plan service with `starting /srv/pcid` + `PCI ready`
+(`ne2kd` is not asserted because the disk-boot QEMU has no NIC attached). The
+shell `random` built-in now needs `/srv/randomd &` typed first; it already
+degrades gracefully (`Connection failed`) without it. Docs: `boot-plan.md`
+shared-plan list and `boot-media-and-harness.md` service sentence narrowed,
+`shell.md` pong phrasing de-scoped from "the boot plan's daemon", decision
+record extended. Verification: `ipc_random ipc_ping ipc_wake_latency ipc_bulk
+boot_and_exit_status` on x86_64 — 5 passed, 0 failed; same four plus `disk_boot`
+(4 tests) on x86_32 — 5 passed, 0 failed.
+
 ## Friction log
 
 step 2 | `cargo xtask build x86_32` was launched in the background while the step-3 launcher edit was still in flight; it compiled the half-edited tree and failed with 2 errors in `shell`, costing one rebuild | ENV-TRAP | 1 round

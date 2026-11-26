@@ -12,6 +12,11 @@ the consuming app on demand, the boot plan, or a future service manager?
 Never the consuming app. Services are provisioned ahead of use — non-optional
 ones by the boot plan (`pcid`, `ne2kd` are plan services from `/srv/`), `ipd`
 manually (`/srv/ipd &`, backgroundable since the shell gained `&` job control).
+The same test of non-optionality retired `randomd`, `echo` and `pong` from the
+plan on 2026-11-26: they serve only demo traffic and a few integration suites,
+so those suites start them (`/srv/randomd &` etc.) through
+`tests_integration::shared::start_service`, and a boot that never exercises them
+no longer pays three daemons.
 A CLI whose binding is missing reports `no service` and exits. The 2026-11-17
 auto-launch rationale in `docs/architecture/network-and-ip.md` (CLIs loading
 `pcid`/`ne2kd`/`ipd` via `load_with_args` because "the shell itself blocks on
