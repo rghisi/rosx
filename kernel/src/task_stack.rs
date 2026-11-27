@@ -1,4 +1,4 @@
-use core::alloc::{GlobalAlloc, Layout};
+use core::alloc::Layout;
 use core::ptr::NonNull;
 
 use crate::memory::free_list_allocator::BlockOwner;
@@ -34,7 +34,7 @@ pub struct TaskStack {
 impl TaskStack {
     pub fn new(group: GroupId) -> TaskStack {
         #[cfg(test)]
-        MemoryManager::ensure_test_memory();
+        <MemoryManager>::ensure_test_memory();
         let pointer = unsafe {
             MEMORY_MANAGER.alloc_with_owner(Self::layout(), BlockOwner::Stack(group.value()))
         };
@@ -96,7 +96,7 @@ impl TaskStack {
 
 impl Drop for TaskStack {
     fn drop(&mut self) {
-        unsafe { MEMORY_MANAGER.dealloc(self.pointer.as_ptr() as *mut u8, Self::layout()) };
+        unsafe { MEMORY_MANAGER.dealloc_owned(self.pointer.as_ptr() as *mut u8, Self::layout()) };
     }
 }
 

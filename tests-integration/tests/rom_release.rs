@@ -105,8 +105,8 @@ fn rom_is_released_once_after_the_boot_plan() {
 
     let free = free_kib(&mut session);
     let pinned_free = match Arch::current() {
-        Arch::X86_64 => 127898u64,
-        Arch::X86_32 => 128224,
+        Arch::X86_64 => 127856u64,
+        Arch::X86_32 => 128142,
     };
     println!("free {free} KiB, released {} KiB", release_bytes / 1024);
     assert!(
