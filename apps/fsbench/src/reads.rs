@@ -4,7 +4,7 @@ use alloc::format;
 use usrlib::println;
 use vfs_protocol::client::Vfs;
 
-const ELF_PATH: &str = "/snake";
+const ELF_PATH: &str = "/games/snake";
 const SMALL_READ_BYTES: usize = 512;
 const CHUNK_READ_BYTES: usize = 4096;
 

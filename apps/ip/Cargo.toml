@@ -16,8 +16,6 @@ test = false
 usrlib = { path = "../../usrlib", features = ["runtime"] }
 ip-protocol = { path = "../../protocol/ip" }
 net-protocol = { path = "../../protocol/net" }
-pci-protocol = { path = "../../protocol/pci" }
-vfs-protocol = { path = "../../protocol/vfs" }
 
 [lints]
 workspace = true

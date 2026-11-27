@@ -15,8 +15,6 @@ test = false
 [target.'cfg(target_os = "none")'.dependencies]
 usrlib = { path = "../../usrlib", features = ["runtime"] }
 net-protocol = { path = "../../protocol/net" }
-pci-protocol = { path = "../../protocol/pci" }
-vfs-protocol = { path = "../../protocol/vfs" }
 
 [lints]
 workspace = true

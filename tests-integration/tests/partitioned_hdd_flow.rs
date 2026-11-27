@@ -57,8 +57,8 @@ fn slices_are_first_class_devices_on_a_partitioned_disk() {
         run(&mut session, "format ata0d1p1", "format ok device=ata0d1p1");
         run(&mut session, "mount ata0d1p1 /data", "mount ok device=ata0d1p1 dir=/data");
 
-        run(&mut session, "cp /pi /data/pi", "cp ok /pi -> /data/pi");
-        run(&mut session, "cp /echo /data/echo", "cp ok /echo -> /data/echo");
+        run(&mut session, "cp /stress/pi /data/pi", "cp ok /stress/pi -> /data/pi");
+        run(&mut session, "cp /srv/echo /data/echo", "cp ok /srv/echo -> /data/echo");
 
         let listing = run(&mut session, "ls /data", "rose>");
         assert!(

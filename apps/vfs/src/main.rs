@@ -33,7 +33,7 @@ fn run(vfs: &Vfs) -> bool {
     }
     println!("vfs ok: stat ghost denied");
 
-    match vfs.stat("/randomd") {
+    match vfs.stat("/srv/randomd") {
         Ok(entity) if entity.kind == EntityKind::File && entity.size > 0 => {}
         _ => return failed("stat randomd present"),
     }

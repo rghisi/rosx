@@ -13,9 +13,7 @@ name = "arp"
 version = "0.1.0"
 dependencies = [
  "net-protocol",
- "pci-protocol",
  "usrlib",
- "vfs-protocol",
 ]
 
 [[package]]
@@ -250,9 +248,7 @@ version = "0.1.0"
 dependencies = [
  "ip-protocol",
  "net-protocol",
- "pci-protocol",
  "usrlib",
- "vfs-protocol",
 ]
 
 [[package]]
@@ -338,9 +334,7 @@ name = "ne2k"
 version = "0.1.0"
 dependencies = [
  "net-protocol",
- "pci-protocol",
  "usrlib",
- "vfs-protocol",
 ]
 
 [[package]]
@@ -650,6 +644,7 @@ dependencies = [
  "input-protocol",
  "libc",
  "rxpart",
+ "system",
  "tempfile",
  "x86-runner",
 ]

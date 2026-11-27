@@ -68,7 +68,7 @@ fn shell_ls_and_unknown_command(session: &mut QemuSession) {
     let after_prompt = session.mark();
     session.send_line("ls");
     session.expect_output_since(after_prompt, "clear", SHELL_TIMEOUT);
-    session.expect_output_since(after_prompt, "tetris", SHELL_TIMEOUT);
+    session.expect_output_since(after_prompt, "games", SHELL_TIMEOUT);
     session.expect_output_since(after_prompt, "rose>", SHELL_TIMEOUT);
     let after_ls = session.mark();
     session.send_line("foo");

@@ -10,6 +10,22 @@ const BOOT_TIMEOUT: Duration = Duration::from_secs(90);
 const PS_TIMEOUT: Duration = Duration::from_secs(30);
 const TRANSCRIPT_CAP: usize = 4000;
 
+const START_ATTEMPTS: usize = 5;
+const START_BUDGET: Duration = Duration::from_secs(60);
+
+pub fn start_service(session: &mut QemuSession, program: &str, ready: &str) {
+    session.run_command(
+        &format!("{program} &"),
+        |delta| delta.contains(ready),
+        START_ATTEMPTS,
+        START_BUDGET,
+    );
+}
+
+pub fn start_ipd(session: &mut QemuSession) {
+    start_service(session, "/srv/ipd", "[IPD] bound IP");
+}
+
 pub fn process_names(report: &str) -> BTreeSet<String> {
     report
         .lines()

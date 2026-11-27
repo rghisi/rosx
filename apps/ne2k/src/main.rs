@@ -3,17 +3,12 @@
 extern crate alloc;
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 use net_protocol::client::Ne2k;
-use net_protocol::wire::{self, MAC_BYTES, Stats};
-use pci_protocol::wire::SERVICE_NAME as PCI_SERVICE_NAME;
-use usrlib::syscall::Syscall;
+use net_protocol::wire::{MAC_BYTES, Stats};
 use usrlib::println;
-use vfs_protocol::client::Vfs;
 
-const LAUNCH_ATTEMPTS: usize = 100;
-const LAUNCH_RETRY_DELAY_MS: u64 = 100;
 const ETHERNET_MIN_BYTES: usize = 60;
 const ETHERNET_MAX_BYTES: usize = 1514;
 
@@ -67,40 +62,6 @@ fn parse_hex_frame(text: &str) -> Option<Vec<u8>> {
     Some(frame)
 }
 
-fn service_is_live(binding: &str) -> bool {
-    Syscall::ipc_connect(binding).is_ok()
-}
-
-fn launch_detached(vfs: &Vfs, program: &str) {
-    let Ok(image) = vfs.read_whole(&format!("/{program}")) else {
-        return;
-    };
-    let argv = [program.to_string()];
-    let _completion = Syscall::load_with_args(&image, &argv);
-}
-
-fn ensure_service(vfs: &Vfs, program: &str, binding: &str) {
-    if service_is_live(binding) {
-        return;
-    }
-    launch_detached(vfs, program);
-    for _ in 0..LAUNCH_ATTEMPTS {
-        if service_is_live(binding) {
-            return;
-        }
-        Syscall::sleep(LAUNCH_RETRY_DELAY_MS);
-    }
-}
-
-fn ensure_network_stack() {
-    let Ok(vfs) = Vfs::connect() else {
-        return;
-    };
-    ensure_service(&vfs, "pcid", PCI_SERVICE_NAME);
-    ensure_service(&vfs, "ne2kd", wire::SERVICE_NAME);
-    vfs.disconnect();
-}
-
 fn main() {
     let arguments = usrlib::args();
     let requested: &[&str] = if arguments.is_empty() {
@@ -108,9 +69,6 @@ fn main() {
     } else {
         &arguments[1..]
     };
-    if !service_is_live(wire::SERVICE_NAME) {
-        ensure_network_stack();
-    }
     let Ok(nic) = Ne2k::connect() else {
         println!("ne2k no service");
         return;

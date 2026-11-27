@@ -1,5 +1,6 @@
 use std::time::Duration;
 use tests_integration::qemu::QemuSession;
+use tests_integration::shared::start_service;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
 const SWEEP_TIMEOUT: Duration = Duration::from_secs(180);
@@ -81,8 +82,8 @@ fn window_diagnostics(content: &str) -> String {
 #[test]
 fn shell_random_capability_ipc_roundtrip() {
     let mut session = QemuSession::spawn();
-    session.expect_output("[IPC Server] Random", READY_TIMEOUT);
     session.expect_output("rose>", READY_TIMEOUT);
+    start_service(&mut session, "/srv/randomd", "[IPC Server] Random");
 
     let mark = session.mark();
     session.send_line("random");

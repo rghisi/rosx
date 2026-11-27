@@ -3,6 +3,7 @@ use std::os::unix::io::AsRawFd;
 use std::thread;
 use std::time::{Duration, Instant};
 use tests_integration::qemu::QemuSession;
+use tests_integration::shared::start_ipd;
 
 const BOOT_BUDGET: Duration = Duration::from_secs(240);
 const COMMAND_BUDGET: Duration = Duration::from_secs(120);
@@ -187,6 +188,7 @@ fn inject_until_witnessed(socket: &UdpSocket, frame: &[u8], accepted: fn(&[u8]) 
 fn injected_frames_are_answered_by_ipd() {
     let mut session = QemuSession::spawn_ne2k_isa(MULTICAST);
     session.expect_output("rose>", BOOT_BUDGET);
+    start_ipd(&mut session);
 
     session.run_command(
         "ip config 10.9.9.1/24",

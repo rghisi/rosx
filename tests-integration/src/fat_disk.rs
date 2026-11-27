@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use rxpart::mbr::{Entry, ENTRY_COUNT, parse_mbr};
+use system::boot_disk;
 use x86_runner::chain;
 
 use crate::arch::Arch;
@@ -209,16 +210,13 @@ fn chain_bins() -> (Vec<u8>, Vec<u8>) {
 }
 
 fn copy_built_els(disk: &FatDisk) {
-    let mut args: Vec<String> = vec![
-        "-m".to_string(),
-        "-o".to_string(),
-        "-i".to_string(),
-        disk.target.clone(),
-    ];
-    args.extend(built_els().into_iter().map(|(_, elf)| elf.display().to_string()));
-    args.push("::/".to_string());
-    let arguments: Vec<&str> = args.iter().map(String::as_str).collect();
-    host_run("mcopy", &arguments);
+    for directory in boot_disk::ALL_DIRECTORIES {
+        disk.make_directory(&format!("::/{}", directory.name()));
+    }
+    for (app, directory) in boot_disk::APP_DIRECTORIES {
+        let elf = built_elf(app);
+        disk.copy(&elf, &format!("::{}/{app}", directory.name()));
+    }
 }
 
 fn mtools_target(image: &Path, partition_start_lba: u32) -> String {
@@ -251,26 +249,6 @@ fn user_release_dir() -> PathBuf {
 
 fn user_rom_path() -> PathBuf {
     user_release_dir().with_file_name("rom.img")
-}
-
-fn built_els() -> Vec<(String, PathBuf)> {
-    let release = user_release_dir();
-    let entries = std::fs::read_dir(&release)
-        .unwrap_or_else(|err| panic!("cannot read the user release directory: {err}"));
-    let mut elfs: Vec<(String, PathBuf)> = entries
-        .filter_map(|entry| entry.ok())
-        .map(|entry| (entry.file_name().to_string_lossy().into_owned(), entry.path()))
-        .filter(|(name, path)| path.is_file() && !name.contains('.'))
-        .collect();
-    elfs.sort();
-    if elfs.is_empty() {
-        panic!(
-            "no user ELFs in {}; run `cargo xtask build {}` first",
-            release.display(),
-            Arch::current().name()
-        );
-    }
-    elfs
 }
 
 fn host_run(program: &str, args: &[&str]) {

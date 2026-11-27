@@ -87,12 +87,9 @@ extern "C" fn kernel_main(loader_magic: u64, loader_info: u64) -> ! {
         .service("rom:inputd", input_protocol::wire::SERVICE_NAME)
         .service("rom:ps2d", input_protocol::wire::SOURCE_NAME_PS2KEYBOARD)
         .run("rom:mount", &["ata0d0p0", "/"])
-        .service("/randomd", "RANDOM")
-        .service("/echo", "BULKECHO")
-        .service("/pong", "PING")
-        .service("/pcid", pci_protocol::wire::SERVICE_NAME)
-        .service("/ne2kd", "NE2K")
-        .exec("/shell", &[])
+        .service("/srv/pcid", pci_protocol::wire::SERVICE_NAME)
+        .service("/srv/ne2kd", "NE2K")
+        .exec("/bin/shell", &[])
         .exec("rom:shell", &[]);
     if let Err(error) = kernel.load_elf_program("init", init_elf, boot_plan.encode(), FutureOwner::Kernel) {
         panic!("init ELF rejected: {error:?}");
