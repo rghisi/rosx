@@ -34,7 +34,7 @@ pub struct TaskStack {
 impl TaskStack {
     pub fn new(group: GroupId) -> TaskStack {
         #[cfg(test)]
-        MemoryManager::ensure_test_memory();
+        <MemoryManager>::ensure_test_memory();
         let pointer = unsafe {
             MEMORY_MANAGER.alloc_with_owner(Self::layout(), BlockOwner::Stack(group.value()))
         };

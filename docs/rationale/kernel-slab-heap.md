@@ -32,9 +32,10 @@ narrows the window by not consulting any per-allocation table. Failures log
 
 ## Invariants relied on
 
-- Routing is the pure function `small_class(&Layout)`; `alloc` and `dealloc`
-  of the same layout always land on the same tier. Owner-tagged blocks
-  (`Group`, `Stack`) are allocated by `alloc_with_owner` and freed by
+- Routing is the pure function `small_class(&Layout)` applied by the
+  `KernelSlabAllocator` policy injected into `MemoryManager`; `alloc` and
+  `dealloc` of the same layout always land on the same tier. Owner-tagged
+  blocks (`Group`, `Stack`) are allocated by `alloc_with_owner` and freed by
   `dealloc_owned`/`deallocate_by_owner` and never see Tier 1. The
   `LoadElf`/`IpcConnect`/`IpcBind` handlers free their `kernel_box` argument
   cells through `dealloc_owned` for the same reason: user space allocated
@@ -60,8 +61,9 @@ narrows the window by not consulting any per-allocation table. Failures log
 A `dealloc` routed by a different predicate than `alloc` frees a block the
 other tier never gave out. Writing a slot's free-list link into an allocated
 slot (a missed bitmap check) corrupts the class free chain. Growing arenas
-while the `MemoryManager` cell is re-borrowed would alias the allocator;
-Tier 1 therefore takes `&mut FreeListAllocator` as a parameter.
+while a cell is re-borrowed would alias the allocator; the
+`KernelMemoryAllocator` interface therefore takes `&mut FreeListAllocator`
+as a parameter instead of owning Tier 0.
 
 ## Evidence
 

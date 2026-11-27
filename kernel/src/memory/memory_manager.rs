@@ -6,10 +6,10 @@ use crate::platform::cpu::Cpu;
 use crate::kernel_cell::KernelCell;
 use crate::memory::MemoryBlocks;
 use crate::memory::free_list_allocator::{BlockOwner, FreeListAllocator};
-use crate::memory::slab_heap::{SlabHeap, realloc_same_class, small_class};
+use crate::memory::kernel_allocator::{KernelMemoryAllocator, KernelSlabAllocator};
 
 #[cfg_attr(not(test), global_allocator)]
-pub(crate) static MEMORY_MANAGER: MemoryManager = MemoryManager::new();
+pub(crate) static MEMORY_MANAGER: MemoryManager = MemoryManager::new(KernelSlabAllocator::new());
 
 #[cfg_attr(not(test), alloc_error_handler)]
 pub fn alloc_error_handler(layout: Layout) -> ! {
@@ -24,19 +24,19 @@ pub(crate) struct MemoryStats {
     pub free_block_count: usize,
 }
 
-pub struct MemoryManager {
+pub struct MemoryManager<A: KernelMemoryAllocator = KernelSlabAllocator> {
     allocator: KernelCell<Option<FreeListAllocator>>,
-    slab: KernelCell<SlabHeap>,
+    kernel_allocator: KernelCell<A>,
     is_setup: AtomicBool,
     cpu: KernelCell<Option<&'static dyn Cpu>>,
     memory_blocks: KernelCell<Option<MemoryBlocks>>,
 }
 
-impl MemoryManager {
-    pub const fn new() -> Self {
+impl<A: KernelMemoryAllocator> MemoryManager<A> {
+    pub const fn new(kernel_allocator: A) -> Self {
         MemoryManager {
             allocator: KernelCell::new(None),
-            slab: KernelCell::new(SlabHeap::new()),
+            kernel_allocator: KernelCell::new(kernel_allocator),
             is_setup: AtomicBool::new(false),
             cpu: KernelCell::new(None),
             memory_blocks: KernelCell::new(None),
@@ -221,11 +221,8 @@ impl MemoryManager {
     }
 }
 
-unsafe impl GlobalAlloc for MemoryManager {
+unsafe impl<A: KernelMemoryAllocator> GlobalAlloc for MemoryManager<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if small_class(&layout).is_none() {
-            return unsafe { self.alloc_with_owner(layout, BlockOwner::Kernel) };
-        }
         let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
             && self.cpu.borrow().unwrap().are_interrupts_enabled();
         if interrupts_enabled {
@@ -236,7 +233,7 @@ unsafe impl GlobalAlloc for MemoryManager {
             let tier0 = slot
                 .as_mut()
                 .expect("MemoryManager not bootstrapped");
-            unsafe { self.slab.borrow_mut().allocate(tier0, layout) }
+            self.kernel_allocator.borrow_mut().allocate(tier0, layout)
         };
         if interrupts_enabled {
             self.cpu.borrow().unwrap().enable_interrupts();
@@ -250,43 +247,37 @@ unsafe impl GlobalAlloc for MemoryManager {
         if interrupts_enabled {
             self.cpu.borrow().unwrap().disable_interrupts();
         }
-        if small_class(&layout).is_some() {
-            let slot = self.allocator.borrow_mut();
-            let tier0 = slot
-                .as_mut()
-                .expect("MemoryManager not bootstrapped");
-            unsafe { self.slab.borrow_mut().deallocate(tier0, ptr, layout) };
-        } else {
-            unsafe {
-                self.allocator
-                    .borrow_mut()
-                    .as_mut()
-                    .expect("MemoryManager not bootstrapped")
-                    .deallocate(ptr, layout.align())
-            };
-        }
+        let slot = self.allocator.borrow_mut();
+        let tier0 = slot
+            .as_mut()
+            .expect("MemoryManager not bootstrapped");
+        self.kernel_allocator
+            .borrow_mut()
+            .deallocate(tier0, ptr, layout);
         if interrupts_enabled {
             self.cpu.borrow().unwrap().enable_interrupts();
         }
     }
 
-    /// Same-class growth keeps the pointer; every other case inlines the
-    /// default alloc-copy-free, routed by the new layout. Never delegate
-    /// through the trait: path calls resolve to this override.
-    /// See docs/rationale/kernel-slab-heap.md.
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if realloc_same_class(&layout, new_size) {
-            return ptr;
+        let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
+            && self.cpu.borrow().unwrap().are_interrupts_enabled();
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().disable_interrupts();
         }
-        let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
-            return core::ptr::null_mut();
+        let pointer = {
+            let slot = self.allocator.borrow_mut();
+            let tier0 = slot
+                .as_mut()
+                .expect("MemoryManager not bootstrapped");
+            self.kernel_allocator
+                .borrow_mut()
+                .reallocate(tier0, ptr, layout, new_size)
         };
-        let new_ptr = unsafe { self.alloc(new_layout) };
-        if !new_ptr.is_null() {
-            unsafe { core::ptr::copy_nonoverlapping(ptr, new_ptr, layout.size().min(new_size)) };
-            unsafe { self.dealloc(ptr, layout) };
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().enable_interrupts();
         }
-        new_ptr
+        pointer
     }
 }
 
@@ -315,7 +306,14 @@ mod tests {
     static MOCK_CPU: MockCpu = MockCpu;
 
     fn make_manager(memory: &mut Vec<u8>) -> MemoryManager {
-        let manager = MemoryManager::new();
+        make_manager_with(KernelSlabAllocator::new(), memory)
+    }
+
+    fn make_manager_with<A: KernelMemoryAllocator>(
+        kernel_allocator: A,
+        memory: &mut Vec<u8>,
+    ) -> MemoryManager<A> {
+        let manager = MemoryManager::new(kernel_allocator);
         let blocks = MemoryBlocks {
             blocks: core::array::from_fn(|i| {
                 if i == 0 {
@@ -330,9 +328,43 @@ mod tests {
         manager
     }
 
-    fn used(manager: &MemoryManager) -> usize {
+    fn used<A: KernelMemoryAllocator>(manager: &MemoryManager<A>) -> usize {
         let stats = manager.stats();
         stats.total_bytes - stats.free_bytes
+    }
+
+    struct PassThrough;
+
+    impl KernelMemoryAllocator for PassThrough {
+        fn allocate(&mut self, tier0: &mut FreeListAllocator, layout: Layout) -> *mut u8 {
+            unsafe { tier0.allocate(layout, BlockOwner::Kernel) }.unwrap_or(core::ptr::null_mut())
+        }
+
+        fn deallocate(&mut self, tier0: &mut FreeListAllocator, pointer: *mut u8, layout: Layout) {
+            unsafe { tier0.deallocate(pointer, layout.align()) };
+        }
+
+        fn reallocate(
+            &mut self,
+            _tier0: &mut FreeListAllocator,
+            _pointer: *mut u8,
+            _layout: Layout,
+            _new_size: usize,
+        ) -> *mut u8 {
+            unimplemented!()
+        }
+    }
+
+    #[test]
+    fn an_injected_policy_routes_small_blocks_through_tier0() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager_with(PassThrough, &mut memory);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { manager.alloc(layout) };
+        assert!(!ptr.is_null());
+        assert_eq!(used(&manager), 64 + ALLOC_HDR);
+        unsafe { manager.dealloc(ptr, layout) };
+        assert_eq!(used(&manager), 0);
     }
 
     #[test]
@@ -691,7 +723,7 @@ mod tests {
         let mut held = vec![0u8; 64 * 1024];
         let heap_base = heap.as_mut_ptr() as usize;
         let held_base = held.as_mut_ptr() as usize;
-        let manager = MemoryManager::new();
+        let manager = MemoryManager::new(KernelSlabAllocator::new());
         let blocks = MemoryBlocks {
             blocks: core::array::from_fn(|i| match i {
                 0 => MemoryBlock::free(heap_base, heap.len()),
@@ -720,7 +752,7 @@ mod tests {
         let mut held = vec![0u8; 64 * 1024];
         let heap_base = heap.as_mut_ptr() as usize;
         let held_base = held.as_mut_ptr() as usize;
-        let manager = MemoryManager::new();
+        let manager = MemoryManager::new(KernelSlabAllocator::new());
         let blocks = MemoryBlocks {
             blocks: core::array::from_fn(|i| match i {
                 0 => MemoryBlock::free(heap_base, heap.len()),

@@ -18,7 +18,7 @@ impl ProgramMemory {
     /// last-member sweep, never by this type. See docs/rationale/group-stamped-program-memory.md.
     pub(crate) fn allocate(group: GroupId, len: usize, align: usize) -> Option<ProgramMemory> {
         #[cfg(test)]
-        MemoryManager::ensure_test_memory();
+        <MemoryManager>::ensure_test_memory();
         let layout = Layout::from_size_align(len, align).ok()?;
         let pointer = unsafe {
             let block = MEMORY_MANAGER.alloc_with_owner(layout, BlockOwner::Group(group.value()));
