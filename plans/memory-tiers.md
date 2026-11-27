@@ -268,3 +268,10 @@ Preconditions for every timing run: `uptime` load against `nproc`, and
 - Any change to `Alloc`/`Dealloc` numbers or semantics, to the `system` crate, or to the 486 feature
   floor. Tier 1 uses `usize` arithmetic only, no atomics and no bit-scan instructions beyond what the
   `check-isa` audit already accepts.
+
+## Friction log
+
+K0 | traffic harness first compile failed: a `static` of `UnsafeCell<Counters>` needs a `Sync` wrapper, kernel build exit 101 | TASK | 1 round
+K0 | host cost test first run freed the batch in LIFO order, so the deallocate live-list walk stayed flat and the O(live) scaling was masked; re-run with random-order frees | TASK | 1 round
+K0 | plan's "Slab header … at most 64 B" is too tight: class 16 needs a 32 B slot bitmap plus fields; K1 budget is ≤ 96 B, recorded in `plans/memory-tiers-results.md` | PLAN-DEFECT | 0
+
