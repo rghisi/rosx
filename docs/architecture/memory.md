@@ -8,6 +8,9 @@
 - Task stacks carry `BlockOwner::Stack(group)`: accounted to the group but freed by the owning task's `Drop`; `deallocate_by_owner` matches `Group` only, never `Stack`.
 - The initrd is a `BlockUse::Held` block: threaded onto no free list, counted in `total_bytes` but never in `free_bytes`, and never allocatable, until `MemoryManager::release_held()` (`rom::release` is its only caller) coalesces it into the heap after bootstrap.
 - `GenerationalArena` grows on demand in 32-slot pages and never shrinks; the cap passed to `new` is the owning subsystem's quota and `add` surfaces `OutOfMemory` rather than aborting.
+- The kernel heap is two tiers: the slab heap (Tier 1) serves every `GlobalAlloc` request that `small_class` covers (size ≤ 512 B, alignment at most the class's largest power-of-two divisor) and draws its arenas from Tier 0 as `BlockOwner::Kernel` blocks; `FreeListAllocator` (Tier 0) stays the byte-granular supplier of everything else. Routing is the pure function `small_class(&Layout)`, identical on `alloc` and `dealloc`.
+- Owner-tagged blocks never reach Tier 1: `Group` and `Stack` blocks are allocated through `alloc_with_owner` and freed only through `dealloc_owned` or `deallocate_by_owner`; Tier 1 owns no user memory and `group_bytes` and `deallocate_by_owner` read Tier 0 alone.
+- Tier 1 detects a bad free with O(1) checks only (header magic, header class equals the layout's class, slot offset a multiple of the class size, slot index inside capacity, bitmap bit set) and then leaks the slot; a wild pointer that happens to carry the magic into a same-class slab is not caught. Tier 0's live-list checks are unchanged.
 
 ## Design
 
@@ -20,3 +23,15 @@ jumps, so no ELF bytes are kept anywhere after the load and the first slice vali
 malformed ELF fails `LoadElf` — kernel diagnostic, `u64::MAX` to the caller, group swept — and can
 never panic the kernel; only the boot-time init load panics, where there is no one left to report
 to.
+
+**Two-tier kernel heap** — small objects must not pay a general allocator's cost (a 32 B header on
+x86_64, a first-fit walk to allocate, a live-list plus two free-list walks to free). Tier 1
+(`kernel/src/memory/slab_heap.rs`) is a size-class slab heap: the class table and `SMALL_MAX = 512`
+are fixed by the K0 histogram in `plans/memory-tiers-results.md`; arenas are 16 page-aligned pages
+drawn from Tier 0 as one `Kernel` block; each slab page carries its header at the page end so a slot
+address masks straight to it, slots start at the page base (so a class's largest power-of-two
+divisor is free alignment), and a page sits on its class partial list exactly while it has free
+slots. Allocate and free are O(1); Tier 0 failure to supply an arena returns null, never a panic. K1
+returns no pages or arenas, so `free_bytes` in `kstatsd` counts a retained arena as used — expected,
+trim is K2. Layout, alignment rule and the weaker bad-free story:
+`docs/rationale/kernel-slab-heap.md`.
