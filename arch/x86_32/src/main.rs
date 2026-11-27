@@ -51,10 +51,18 @@ extern "C" fn kernel_main(loader_magic: u32, loader_info: u32) -> ! {
 
     let mut kernel = kernel::kernel::Kernel::new(&KCONFIG);
     kernel.setup();
-    static ROM_IMAGE: &[u8] = include_bytes!("../../../target/rosx-i486-user/rom.img");
-    kernel::rom::init(ROM_IMAGE);
+    let initrd = boot_info_initrd(loader_info as usize);
+    let files = kernel::rom::validate(initrd)
+        .unwrap_or_else(|error| panic!("initrd is not a ROM image: {error:?}"));
+    kernel::kprintln!(
+        "[ROM] addr={:#x} size={} files={}",
+        initrd.as_ptr() as usize,
+        initrd.len(),
+        files
+    );
+    kernel::rom::init(initrd);
     let _ = kernel.schedule(kernel::task::FunctionTask::new("[K] Kstatsd", kernel::kstatsd::main), kernel::future::FutureOwner::Kernel);
-    static INIT_ELF: &[u8] = include_bytes!("../../../target/rosx-i486-user/release/init");
+    let init_elf = kernel::rom::program("init").unwrap_or_else(|| panic!("initrd carries no init"));
     let boot_plan = system::boot_plan::BootPlan::new()
         .service("rom:atad", ata_protocol::wire::SERVICE_NAME)
         .service("rom:blockd", block_protocol::manager::wire::SERVICE_NAME)
@@ -70,7 +78,7 @@ extern "C" fn kernel_main(loader_magic: u32, loader_info: u32) -> ! {
         .service("/ne2kd", "NE2K")
         .exec("/shell", &[])
         .exec("rom:shell", &[]);
-    if let Err(error) = kernel.load_elf_program("init", INIT_ELF, boot_plan.encode(), kernel::future::FutureOwner::Kernel) {
+    if let Err(error) = kernel.load_elf_program("init", init_elf, boot_plan.encode(), kernel::future::FutureOwner::Kernel) {
         panic!("init ELF rejected: {error:?}");
     }
     kernel::kprintln!("[KERNEL] Starting");
@@ -80,6 +88,16 @@ extern "C" fn kernel_main(loader_magic: u32, loader_info: u32) -> ! {
 
 unsafe extern "C" {
     static kernel_end: u8;
+}
+
+fn boot_info_initrd(address: usize) -> &'static [u8] {
+    match unsafe {
+        kernel::platform::bootinfo::initrd(address, system::boot_info::BootArch::X86_32)
+    } {
+        Ok(Some(slice)) => slice,
+        Ok(None) => panic!("no initrd (INITRD.BIN missing on the boot volume)"),
+        Err(error) => panic!("initrd refused: {error:?}"),
+    }
 }
 
 fn boot_info_memory(address: usize) -> MemoryBlocks {
@@ -95,8 +113,8 @@ fn boot_info_memory(address: usize) -> MemoryBlocks {
     } {
         Ok(facts) => {
             kernel::kprintln!(
-                "[BOOTINFO] regions={} usable={:#x} blocks={} clipped={} dropped={}",
-                facts.regions, facts.usable_bytes, facts.accepted, facts.clipped, facts.dropped
+                "[BOOTINFO] regions={} usable={:#x} blocks={} held={} clipped={} dropped={}",
+                facts.regions, facts.usable_bytes, facts.accepted, facts.held, facts.clipped, facts.dropped
             );
             if facts.dropped > 0 {
                 kernel::kprintln!(
@@ -112,7 +130,7 @@ fn boot_info_memory(address: usize) -> MemoryBlocks {
 
 fn empty_blocks() -> MemoryBlocks {
     MemoryBlocks {
-        blocks: core::array::from_fn(|_| MemoryBlock { start: 0, size: 0 }),
+        blocks: core::array::from_fn(|_| MemoryBlock::free(0, 0)),
         count: 0,
     }
 }

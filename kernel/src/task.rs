@@ -76,7 +76,7 @@ impl TaskName {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct GroupId(usize);
 
 impl GroupId {
@@ -359,7 +359,7 @@ mod tests {
     use crate::task_stack::STACK_WATERMARK;
 
     fn make_future_handle() -> FutureHandle {
-        let mut arena: GenerationalArena<u8, 1> = GenerationalArena::new();
+        let mut arena: GenerationalArena<u8> = GenerationalArena::new(1);
         FutureHandle::from(arena.add(0u8).unwrap())
     }
 

@@ -1,4 +1,4 @@
-use crate::collections::arena::GenerationalArena;
+use crate::collections::arena::{ARENA_MAX_SLOTS, GenerationalArena};
 use crate::task::TaskState::Terminated;
 use crate::task::{GroupId, SharedTask, Task, TaskHandle, TaskState, YieldReason, TASK_NAME_BYTES};
 use crate::task_stack::{StackObservation, STACK_WORDS};
@@ -24,7 +24,7 @@ fn liveness(state: TaskState) -> u8 {
 }
 
 pub(crate) struct TaskManager {
-    tasks: GenerationalArena<SharedTask, 256>,
+    tasks: GenerationalArena<SharedTask>,
 }
 
 #[derive(Debug)]
@@ -36,7 +36,7 @@ pub(crate) enum Error {
 impl TaskManager {
     pub(crate) fn new() -> Self {
         TaskManager {
-            tasks: GenerationalArena::new(),
+            tasks: GenerationalArena::new(ARENA_MAX_SLOTS),
         }
     }
 
@@ -176,7 +176,7 @@ mod tests {
     use crate::collections::arena::GenerationalArena;
 
     fn make_future_handle() -> FutureHandle {
-        let mut arena: GenerationalArena<u8, 1> = GenerationalArena::new();
+        let mut arena: GenerationalArena<u8> = GenerationalArena::new(1);
         FutureHandle::from(arena.add(0u8).unwrap())
     }
 

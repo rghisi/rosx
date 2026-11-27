@@ -20,7 +20,6 @@ pub enum SyscallNum {
     IpcDataWrite = 24,
     IpcDataRead = 25,
     IpcDataRelease = 26,
-    RomRead = 27,
     WaitsetCreate = 28,
     WaitsetAttach = 29,
     WaitsetDetach = 30,
@@ -36,6 +35,8 @@ pub enum SyscallNum {
     IrqSubscribe = 40,
     IrqClear = 41,
     Kill = 42,
+    RomMap = 43,
+    RomRelease = 44,
 }
 
 impl TryFrom<usize> for SyscallNum {
@@ -62,7 +63,6 @@ impl TryFrom<usize> for SyscallNum {
             24 => Ok(Self::IpcDataWrite),
             25 => Ok(Self::IpcDataRead),
             26 => Ok(Self::IpcDataRelease),
-            27 => Ok(Self::RomRead),
             28 => Ok(Self::WaitsetCreate),
             29 => Ok(Self::WaitsetAttach),
             30 => Ok(Self::WaitsetDetach),
@@ -78,6 +78,8 @@ impl TryFrom<usize> for SyscallNum {
             40 => Ok(Self::IrqSubscribe),
             41 => Ok(Self::IrqClear),
             42 => Ok(Self::Kill),
+            43 => Ok(Self::RomMap),
+            44 => Ok(Self::RomRelease),
             _ => Err(()),
         }
     }
@@ -90,6 +92,11 @@ mod tests {
     #[test]
     fn try_read_char_number_stays_retired() {
         assert!(SyscallNum::try_from(9usize).is_err());
+    }
+
+    #[test]
+    fn rom_read_number_stays_retired() {
+        assert!(SyscallNum::try_from(27usize).is_err());
     }
 
     #[test]
@@ -114,7 +121,6 @@ mod tests {
             SyscallNum::IpcDataWrite,
             SyscallNum::IpcDataRead,
             SyscallNum::IpcDataRelease,
-            SyscallNum::RomRead,
             SyscallNum::WaitsetCreate,
             SyscallNum::WaitsetAttach,
             SyscallNum::WaitsetDetach,
@@ -130,6 +136,8 @@ mod tests {
             SyscallNum::IrqSubscribe,
             SyscallNum::IrqClear,
             SyscallNum::Kill,
+            SyscallNum::RomMap,
+            SyscallNum::RomRelease,
         ];
         for number in live {
             assert_eq!(SyscallNum::try_from(number as usize).unwrap(), number);

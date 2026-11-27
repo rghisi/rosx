@@ -1,7 +1,7 @@
 use crate::arch;
 use crate::error::{
     DataError, IpcBindingError, IpcConnectionError, IpcReceiveError, IpcSendError, IrqError,
-    PortError, TaskExitError, TaskKillError, WaitsetError,
+    PortError, RomMapError, RomReleaseError, TaskExitError, TaskKillError, WaitsetError,
 };
 use crate::exit::ExitStatus;
 use crate::handle::{UserBindingHandle, UserConnectionHandle, UserDataHandle, UserFutureHandle};
@@ -12,6 +12,7 @@ use core::alloc::Layout;
 use core::fmt;
 use system::error::{ErrorCode, is_token};
 use system::ipc::{MESSAGE_PAYLOAD_BYTES, Message};
+use system::rom::RomRef;
 use system::syscall_numbers::SyscallNum;
 use system::waitset::WaitEvent;
 
@@ -239,13 +240,22 @@ impl Syscall {
         }
     }
 
-    pub fn rom_read(offset: u64, dst: &mut [u8]) -> usize {
-        arch::raw_syscall(
-            SyscallNum::RomRead as usize,
-            offset as usize,
-            dst.as_mut_ptr() as usize,
-            dst.len(),
-        )
+    pub fn rom_map(out: &mut RomRef) -> Result<(), RomMapError> {
+        let raw = arch::raw_syscall(SyscallNum::RomMap as usize, out as *mut RomRef as usize, 0, 0);
+        if is_token(raw) {
+            Ok(())
+        } else {
+            Err(RomMapError::from(ErrorCode::from_code(raw)))
+        }
+    }
+
+    pub fn rom_release() -> Result<usize, RomReleaseError> {
+        let raw = arch::raw_syscall(SyscallNum::RomRelease as usize, 0, 0, 0);
+        if is_token(raw) {
+            Ok(raw)
+        } else {
+            Err(RomReleaseError::from(ErrorCode::from_code(raw)))
+        }
     }
 
     pub fn waitset_create() -> Result<UserFutureHandle, WaitsetError> {

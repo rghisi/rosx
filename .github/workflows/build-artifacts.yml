@@ -35,7 +35,6 @@ jobs:
         with:
           name: rosx-x86_64
           path: |
-            target/rosx/release/rosx-x86_64.img
             target/rosx-boot-disk.img
           if-no-files-found: error
           retention-days: 1
@@ -60,7 +59,9 @@ jobs:
       - name: Build
         run: cargo xtask build x86_32
 
-      - name: Upload kernel and ROM
+      - name: Upload staged kernel and ROM
+        # The unified boot disk above is the artifact that boots; the ROM is
+        # staged here as the INITRD.BIN source and the kernel embeds neither.
         uses: actions/upload-artifact@v4
         with:
           name: rosx-x86_32

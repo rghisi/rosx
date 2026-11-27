@@ -60,9 +60,9 @@ impl MemoryManager {
         let blocks = crate::memory::MemoryBlocks {
             blocks: core::array::from_fn(|i| {
                 if i == 0 {
-                    crate::memory::MemoryBlock { start: region.as_mut_ptr() as usize, size: region.len() }
+                    crate::memory::MemoryBlock::free(region.as_mut_ptr() as usize, region.len())
                 } else {
-                    crate::memory::MemoryBlock { start: 0, size: 0 }
+                    crate::memory::MemoryBlock::free(0, 0)
                 }
             }),
             count: 1,
@@ -156,6 +156,31 @@ impl MemoryManager {
         }
     }
 
+    pub(crate) fn release_held(&self) -> usize {
+        let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
+            && self.cpu.borrow().unwrap().are_interrupts_enabled();
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().disable_interrupts();
+        }
+        let returned = self
+            .allocator
+            .borrow_mut()
+            .as_mut()
+            .expect("MemoryManager not bootstrapped")
+            .release_held();
+        if let Some(memory_blocks) = self.memory_blocks.borrow_mut().as_mut() {
+            for i in 0..memory_blocks.count {
+                if memory_blocks.blocks[i].use_ == crate::memory::BlockUse::Held {
+                    memory_blocks.blocks[i].use_ = crate::memory::BlockUse::Free;
+                }
+            }
+        }
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().enable_interrupts();
+        }
+        returned
+    }
+
     pub fn print_config(&self) {
         let memory_blocks = self.memory_blocks.borrow();
         let memory_blocks = memory_blocks.as_ref().expect("MemoryManager not bootstrapped");
@@ -204,7 +229,7 @@ mod tests {
     use super::*;
     use crate::memory::free_list_allocator::{ALLOC_HDR, BACKREF_BYTES, BLOCK_HDR};
     use crate::platform::cpu::Cpu;
-    use crate::memory::MemoryBlock;
+    use crate::memory::{BlockUse, MemoryBlock};
     use core::alloc::{GlobalAlloc, Layout};
 
     struct MockCpu;
@@ -227,9 +252,9 @@ mod tests {
         let blocks = MemoryBlocks {
             blocks: core::array::from_fn(|i| {
                 if i == 0 {
-                    MemoryBlock { start: memory.as_mut_ptr() as usize, size: memory.len() }
+                    MemoryBlock::free(memory.as_mut_ptr() as usize, memory.len())
                 } else {
-                    MemoryBlock { start: 0, size: 0 }
+                    MemoryBlock::free(0, 0)
                 }
             }),
             count: 1,
@@ -502,5 +527,63 @@ mod tests {
             }
         }
         assert_eq!(used(&manager), 0);
+    }
+
+    #[test]
+    fn a_held_block_counts_in_total_but_never_in_free() {
+        let mut heap = vec![0u8; 1024 * 1024];
+        let mut held = vec![0u8; 64 * 1024];
+        let heap_base = heap.as_mut_ptr() as usize;
+        let held_base = held.as_mut_ptr() as usize;
+        let manager = MemoryManager::new();
+        let blocks = MemoryBlocks {
+            blocks: core::array::from_fn(|i| match i {
+                0 => MemoryBlock::free(heap_base, heap.len()),
+                1 => MemoryBlock {
+                    start: held_base,
+                    size: held.len(),
+                    use_: BlockUse::Held,
+                },
+                _ => MemoryBlock::free(0, 0),
+            }),
+            count: 2,
+        };
+        manager.bootstrap(&blocks);
+        let stats = manager.stats();
+        assert_eq!(stats.total_bytes, heap.len() + held.len());
+        let used_now = used(&manager);
+        assert!(
+            used_now >= held.len() && used_now < held.len() + BLOCK_HDR,
+            "the held block reads as used (it is counted in total but never free): used {used_now}"
+        );
+    }
+
+    #[test]
+    fn release_held_returns_the_held_region_to_the_heap_once() {
+        let mut heap = vec![0u8; 1024 * 1024];
+        let mut held = vec![0u8; 64 * 1024];
+        let heap_base = heap.as_mut_ptr() as usize;
+        let held_base = held.as_mut_ptr() as usize;
+        let manager = MemoryManager::new();
+        let blocks = MemoryBlocks {
+            blocks: core::array::from_fn(|i| match i {
+                0 => MemoryBlock::free(heap_base, heap.len()),
+                1 => MemoryBlock {
+                    start: held_base,
+                    size: held.len(),
+                    use_: BlockUse::Held,
+                },
+                _ => MemoryBlock::free(0, 0),
+            }),
+            count: 2,
+        };
+        manager.bootstrap(&blocks);
+        let before = manager.stats();
+        assert_eq!(manager.release_held(), held.len());
+        let after = manager.stats();
+        assert_eq!(after.total_bytes, before.total_bytes);
+        assert_eq!(after.free_bytes, before.free_bytes + held.len());
+        assert_eq!(manager.release_held(), 0, "nothing stays held after the release");
+        assert_eq!(manager.stats(), after);
     }
 }

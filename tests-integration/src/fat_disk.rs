@@ -1,20 +1,18 @@
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use rxpart::mbr::{encode_mbr, parse_mbr, Entry, ENTRY_COUNT};
+use rxpart::mbr::{Entry, ENTRY_COUNT, parse_mbr};
 use x86_runner::chain;
 
 use crate::arch::Arch;
 
 const SECTOR_BYTES: usize = 512;
-const PARTITION_START_LBA: u32 = 63;
 const BOOT_DISK_BYTES: usize = 16 * 1024 * 1024;
 const BOOTABLE: u8 = 0x80;
 const FAT16_TYPE: u8 = 0x06;
-const VOLUME_LABEL: &str = "ROSXBOOT";
 
 pub const CHAIN_KERNEL_VOLUME_NAME: &str = "KERNEL.ELF";
+pub const CHAIN_INITRD_VOLUME_NAME: &str = "INITRD.BIN";
 
 pub struct FatDisk {
     image: PathBuf,
@@ -22,44 +20,6 @@ pub struct FatDisk {
 }
 
 impl FatDisk {
-    pub fn create(dir: &Path, name: &str, image_bytes: usize) -> FatDisk {
-        let image = dir.join(name);
-        let partition_sectors = (image_bytes / SECTOR_BYTES) as u32 - PARTITION_START_LBA;
-        let mut entries: [Option<Entry>; ENTRY_COUNT] = [None; ENTRY_COUNT];
-        entries[0] = Some(Entry {
-            boot: BOOTABLE,
-            type_id: FAT16_TYPE,
-            start_lba: PARTITION_START_LBA,
-            sector_count: partition_sectors,
-        });
-        let mbr = encode_mbr(&entries);
-        let mut file = std::fs::File::create(&image).expect("create the FAT disk image");
-        file.write_all(&mbr).expect("stamp the FAT disk MBR");
-        file.set_len(image_bytes as u64)
-            .expect("size the FAT disk image");
-        let target = format!(
-            "{}@@{}",
-            image.display(),
-            PARTITION_START_LBA as usize * SECTOR_BYTES
-        );
-        host_run(
-            "mformat",
-            &[
-                "-i",
-                &target,
-                "-r",
-                "224",
-                "-c",
-                "1",
-                "-T",
-                &partition_sectors.to_string(),
-                "-v",
-                VOLUME_LABEL,
-            ],
-        );
-        FatDisk { image, target }
-    }
-
     pub fn path(&self) -> &Path {
         &self.image
     }
@@ -86,6 +46,18 @@ impl FatDisk {
         std::fs::write(&seed, payload).expect("write the seed fixture");
         self.copy(&seed, destination);
         std::fs::remove_file(&seed).expect("drop the seed fixture");
+    }
+
+    pub fn install_initrd(&self) {
+        let rom = user_rom_path();
+        if !rom.is_file() {
+            panic!(
+                "missing ROM image {}; run `cargo xtask build {}` first",
+                rom.display(),
+                Arch::current().name()
+            );
+        }
+        self.copy(&rom, &format!("::{CHAIN_INITRD_VOLUME_NAME}"));
     }
 }
 
@@ -132,12 +104,6 @@ pub fn read_file_from_image(image: &Path, name: &str) -> Vec<u8> {
     output.stdout
 }
 
-pub fn create_boot_disk(dir: &Path) -> FatDisk {
-    let disk = FatDisk::create(dir, "boot-disk.img", BOOT_DISK_BYTES);
-    copy_built_els(&disk);
-    disk
-}
-
 pub fn create_bootable(dir: &Path, name: &str, image_bytes: usize) -> FatDisk {
     let image = dir.join(name);
     let partition_sectors = (image_bytes / SECTOR_BYTES) as u32 - chain::PARTITION_START_LBA;
@@ -148,7 +114,7 @@ pub fn create_bootable(dir: &Path, name: &str, image_bytes: usize) -> FatDisk {
         start_lba: chain::PARTITION_START_LBA,
         sector_count: partition_sectors,
     });
-    let (stage1, stage2) = stage_boot32_bins();
+    let (stage1, stage2) = chain_bins();
     chain::create_sparse(&image, image_bytes as u64);
     chain::write_at(&image, 0, &chain::boot_mbr(&stage1, &entries));
     chain::write_at(
@@ -190,7 +156,7 @@ pub fn stamp_bootable(image: &Path, kernel_elf: &Path) {
         chain::PARTITION_START_LBA
     );
     entries[0] = Some(Entry { boot: BOOTABLE, ..first });
-    let (stage1, stage2) = stage_boot32_bins();
+    let (stage1, stage2) = chain_bins();
     chain::write_at(image, 0, &chain::boot_mbr(&stage1, &entries));
     chain::write_at(
         image,
@@ -208,6 +174,7 @@ pub fn stamp_bootable(image: &Path, kernel_elf: &Path) {
 pub fn create_boot_master(dir: &Path, kernel_elf: &Path) -> FatDisk {
     let disk = create_bootable(dir, "boot-disk.img", BOOT_DISK_BYTES);
     copy_built_els(&disk);
+    disk.install_initrd();
     chain::mcopy_file(
         disk.path(),
         chain::PARTITION_START_LBA,
@@ -217,22 +184,28 @@ pub fn create_boot_master(dir: &Path, kernel_elf: &Path) -> FatDisk {
     disk
 }
 
-fn stage_boot32_bins() -> (Vec<u8>, Vec<u8>) {
+fn chain_bins() -> (Vec<u8>, Vec<u8>) {
+    let (stage_dir, stage2_name) = match Arch::current().boot() {
+        x86_runner::Arch::X86_32 => ("boot32", "stage2-32.bin"),
+        x86_runner::Arch::X86_64 => ("boot64", "stage2-64.bin"),
+    };
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("target")
-        .join("boot32");
+        .join(stage_dir);
     let read = |name: &str| {
         let path = dir.join(name);
         std::fs::read(&path).unwrap_or_else(|err| {
             panic!(
-                "missing staged boot-chain {} ({err}); run `cargo xtask build x86_32` \
-                 or `cargo xtask boot-artifacts x86_32` to stage it",
-                path.display()
+                "missing staged boot-chain {} ({err}); run `cargo xtask build {}` \
+                 or `cargo xtask boot-artifacts {}` to stage it",
+                path.display(),
+                Arch::current().name(),
+                Arch::current().name(),
             )
         })
     };
-    (read("stage1.bin"), read("stage2-32.bin"))
+    (read("stage1.bin"), read(stage2_name))
 }
 
 fn copy_built_els(disk: &FatDisk) {
@@ -274,6 +247,10 @@ fn user_release_dir() -> PathBuf {
         .join("target")
         .join(Arch::current().user_dir_name())
         .join("release")
+}
+
+fn user_rom_path() -> PathBuf {
+    user_release_dir().with_file_name("rom.img")
 }
 
 fn built_els() -> Vec<(String, PathBuf)> {

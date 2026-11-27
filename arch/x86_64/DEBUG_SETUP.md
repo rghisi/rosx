@@ -91,14 +91,14 @@ In RustRover, you can set breakpoints by clicking in the gutter next to line num
 
 In GDB:
 ```gdb
-# Break at kernel entry
+# Break at kernel entry (the stage2-64 handoff lands here)
 b _start
 
 # Break at a function
-b main_thread::run
+b kernel_main
 
 # Break at specific address
-b *0x100000
+b *0xffff800000100000
 ```
 
 ### Inspecting CPU State
@@ -144,8 +144,8 @@ x/10xg 0x100000
 ## Troubleshooting
 
 ### QEMU won't start
-- Check that disk image was created: `ls -l ../../target/rosx/debug/rosx-x86_64.img`
-- Try building manually: `cargo build`
+- Check that the unified boot disk was created: `ls -l ../../target/rosx-boot-disk.img`
+- Try building it: `cargo xtask build x86_64 --debug`
 
 ### Debugger won't connect
 - Ensure QEMU is running with `./debug-qemu.sh`
@@ -153,7 +153,7 @@ x/10xg 0x100000
 - Verify GDB is connecting to correct port: should be `localhost:1234`
 
 ### No symbols loaded
-- Ensure debug build was created: `cargo build` (not `cargo build --release`)
+- Ensure the debug kernel and disk were created: `cargo xtask build x86_64 --debug`
 - Check symbol file exists: `ls -l ../../target/rosx/debug/rosx`
 - In GDB, manually load symbols: `symbol-file ../../target/rosx/debug/rosx`
 
@@ -162,11 +162,10 @@ x/10xg 0x100000
 - Check that symbols match binary: `info sources` in GDB
 - For early kernel code, you may need to set breakpoints by address
 
-## Advanced: Debugging from Bootloader
+## Advanced: Debugging the boot chain
 
-If you need to debug the bootloader itself, you'll need to:
-1. Load bootloader symbols separately
-2. Set architecture to i386 initially (16-bit real mode)
-3. Switch to i386:x86-64 after entering 64-bit mode
-
-This is more complex and usually not necessary for kernel development.
+The machine halts at reset (`-S`), so you can single-step the whole chain:
+SeaBIOS, then the RosX stage1 MBR and stage2-64 (flat assembly under
+`arch/x86-bootloader/`, no ELF symbols — follow the `0xE9` console lines on
+stdio), then the jump to the kernel's higher-half `_start` at
+`0xFFFF800000100000`, where the loaded symbol file takes over.

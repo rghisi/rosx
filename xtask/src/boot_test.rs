@@ -87,8 +87,23 @@ enum ImageSource {
     Elf32OnLongMode,
     OversizedInitrd,
     NoInitrdVolume,
-    BuiltBootDisk,
+    BuiltBootDisk(&'static BuiltDiskSpec),
 }
+
+struct BuiltDiskSpec {
+    arch: &'static str,
+    image: &'static str,
+}
+
+const BUILT_X86_32: BuiltDiskSpec = BuiltDiskSpec {
+    arch: "x86_32",
+    image: "target/rosx-i486-boot-disk.img",
+};
+
+const BUILT_X86_64: BuiltDiskSpec = BuiltDiskSpec {
+    arch: "x86_64",
+    image: "target/rosx-boot-disk.img",
+};
 
 #[derive(Clone, Copy)]
 enum KernelPatch {
@@ -128,7 +143,7 @@ struct BootCheckpoint {
     timeout_seconds: u64,
 }
 
-const CHECKPOINTS: [BootCheckpoint; 25] = [
+const CHECKPOINTS: [BootCheckpoint; 26] = [
     BootCheckpoint {
         name: "harness-pass",
         machine: &BIOS_32,
@@ -420,7 +435,7 @@ const CHECKPOINTS: [BootCheckpoint; 25] = [
         name: "real-kernel-boot32",
         machine: &BIOS_32_128,
         media: BootMedia::Disk,
-        source: ImageSource::BuiltBootDisk,
+        source: ImageSource::BuiltBootDisk(&BUILT_X86_32),
         expected: ExitVerdict::TimedOut,
         console_contains: &[
             "[STAGE1] OK",
@@ -428,9 +443,43 @@ const CHECKPOINTS: [BootCheckpoint; 25] = [
             "[BOOTINFO] regions=",
             "[KERNEL] Bootstrapped",
             "[KERNEL] Initializing",
+            "[ROM] ",
             "[KERNEL] Starting",
         ],
-        console_absent: &["!!! PANIC !!!", "unknown boot magic"],
+        console_absent: &[
+            "!!! PANIC !!!",
+            "unknown boot magic",
+            "no initrd",
+            "initrd refused",
+            "initrd is not a ROM image",
+            "initrd carries no init",
+        ],
+        timeout_seconds: 5,
+    },
+    BootCheckpoint {
+        name: "real-kernel-boot64",
+        machine: &BIOS_64,
+        media: BootMedia::Disk,
+        source: ImageSource::BuiltBootDisk(&BUILT_X86_64),
+        expected: ExitVerdict::TimedOut,
+        console_contains: &[
+            "[STAGE1] OK",
+            "[STAGE2_64] A20=OK THUNK=OK",
+            "[ELF] arch=X86_64",
+            "[BOOTINFO] regions=",
+            "[KERNEL] Bootstrapped",
+            "[KERNEL] Initializing",
+            "[ROM] ",
+            "[KERNEL] Starting",
+        ],
+        console_absent: &[
+            "!!! PANIC !!!",
+            "unknown boot magic",
+            "no initrd",
+            "initrd refused",
+            "initrd is not a ROM image",
+            "initrd carries no init",
+        ],
         timeout_seconds: 5,
     },
 ];
@@ -492,7 +541,7 @@ fn require_host_tools() {
 
 enum Prepared {
     Image(PathBuf),
-    Skipped(&'static str),
+    Skipped(String),
 }
 
 fn prepare_image(source: &ImageSource) -> Prepared {
@@ -505,14 +554,16 @@ fn prepare_image(source: &ImageSource) -> Prepared {
         ImageSource::Elf32OnLongMode => Prepared::Image(pack_elf32_on_long_mode_image()),
         ImageSource::OversizedInitrd => Prepared::Image(pack_oversized_initrd_image()),
         ImageSource::NoInitrdVolume => Prepared::Image(pack_no_initrd_image()),
-        ImageSource::BuiltBootDisk => match built_boot_disk() {
+        ImageSource::BuiltBootDisk(built) => match built_boot_disk(built) {
             BuiltDisk::Chain(image) => Prepared::Image(image),
-            BuiltDisk::Stale => Prepared::Skipped(
-                "target/rosx-i486-boot-disk.img carries no boot chain (cargo caches a pre-chain image); run `cargo xtask build x86_32` first",
-            ),
-            BuiltDisk::Absent => Prepared::Skipped(
-                "no target/rosx-i486-boot-disk.img for the real kernel; run `cargo xtask build x86_32` first",
-            ),
+            BuiltDisk::Stale => Prepared::Skipped(format!(
+                "{} carries no boot chain (cargo caches a pre-chain image); run `cargo xtask build {}` first",
+                built.image, built.arch
+            )),
+            BuiltDisk::Absent => Prepared::Skipped(format!(
+                "no {} for the real kernel; run `cargo xtask build {}` first",
+                built.image, built.arch
+            )),
         },
     }
 }
@@ -523,8 +574,8 @@ enum BuiltDisk {
     Absent,
 }
 
-fn built_boot_disk() -> BuiltDisk {
-    let spec = crate::arch::find("x86_32").expect("x86_32 is a registered arch");
+fn built_boot_disk(built: &BuiltDiskSpec) -> BuiltDisk {
+    let spec = crate::arch::find(built.arch).expect("the checkpoint names a registered arch");
     let disk = crate::boot_disk::boot_disk_path(spec);
     if !disk.is_file() {
         return BuiltDisk::Absent;
@@ -823,12 +874,13 @@ fn verdict_mismatch(checkpoint: &BootCheckpoint, outcome: &BootOutcome) -> Optio
 }
 
 fn verify_initrd(line: &str, console: &str) -> Option<String> {
-    let mut fields = line.split_whitespace();
-    let (_, _) = (fields.next()?, fields.next()?);
-    let (Some(addr), Some(size), Some(printed)) = (
-        parse_hex_field(fields.next()?, "addr="),
-        parse_dec_field(fields.next()?, "size="),
-        parse_hex_field(fields.next()?, "crc32="),
+    let (Some(addr), Some(size)) = (
+        line.split_whitespace()
+            .nth(1)
+            .and_then(|field| parse_hex_field(field, "addr=")),
+        line.split_whitespace()
+            .nth(2)
+            .and_then(|field| parse_dec_field(field, "size=")),
     ) else {
         return Some(format!("malformed [INITRD] line: {line}"));
     };
@@ -858,11 +910,6 @@ fn verify_initrd(line: &str, console: &str) -> Option<String> {
         }
         u64::from(crc32_ieee(&boot_image::initrd_payload()))
     };
-    if printed != host {
-        return Some(format!(
-            "stage2 crc32 {printed:#010x} differs from the host-seeded {host:#010x}"
-        ));
-    }
     let Some(kernel_printed) = console
         .lines()
         .find_map(|candidate| candidate.strip_prefix("initrd_crc32: "))
@@ -872,9 +919,9 @@ fn verify_initrd(line: &str, console: &str) -> Option<String> {
         );
     };
     let kernel_crc = u64::from_str_radix(kernel_printed.trim_start_matches("0x"), 16).ok()?;
-    if kernel_crc != printed {
+    if kernel_crc != host {
         return Some(format!(
-            "kernel-recomputed crc32 {kernel_crc:#010x} differs from the stage2 {printed:#010x}"
+            "kernel-recomputed crc32 {kernel_crc:#010x} differs from the host-seeded {host:#010x}"
         ));
     }
     None

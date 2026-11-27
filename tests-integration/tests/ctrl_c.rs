@@ -1,16 +1,55 @@
 use std::time::Duration;
 use tests_integration::qemu::QemuSession;
+use tests_integration::shared::SharedSession;
 
-const BOOT_TIMEOUT: Duration = Duration::from_secs(90);
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const INTERRUPT_TIMEOUT: Duration = Duration::from_secs(20);
 const FOLLOW_UP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[test]
-fn ctrl_c_kills_the_running_foreground_app() {
-    let mut session = QemuSession::spawn();
-    session.expect_output("rose>", BOOT_TIMEOUT);
+fn ctrl_c_cases_share_one_session() {
+    let mut group = SharedSession::spawn("ctrl_c");
+    group.case(
+        "ctrl_c_at_a_bare_prompt_redraws_and_keeps_the_shell_usable",
+        ctrl_c_at_a_bare_prompt_redraws_and_keeps_the_shell_usable,
+    );
+    group.case(
+        "ctrl_c_after_a_partial_line_discards_the_line",
+        ctrl_c_after_a_partial_line_discards_the_line,
+    );
+    group.case("ctrl_c_kills_the_running_foreground_app", ctrl_c_kills_the_running_foreground_app);
+    group.case("ctrl_c_spares_background_jobs", ctrl_c_spares_background_jobs);
+}
 
+fn ctrl_c_at_a_bare_prompt_redraws_and_keeps_the_shell_usable(session: &mut QemuSession) {
+    let mark = session.mark();
+    session.send_key('\x03');
+    session.expect_output_since(mark, "^C", INTERRUPT_TIMEOUT);
+
+    let after_prompt = session.mark();
+    session.send_line("exiter 3");
+    session.expect_output_since(after_prompt, "exiter exited with code 3", FOLLOW_UP_TIMEOUT);
+    session.expect_output_since(after_prompt, "rose>", FOLLOW_UP_TIMEOUT);
+}
+
+fn ctrl_c_after_a_partial_line_discards_the_line(session: &mut QemuSession) {
+    let mark = session.mark();
+    session.send_text("exiter pan");
+    session.send_key('\x03');
+    session.expect_output_since(mark, "^C", INTERRUPT_TIMEOUT);
+
+    let after_interrupt = session.mark();
+    session.send_line("exiter 4");
+    session.expect_output_since(after_interrupt, "exiter exited with code 4", FOLLOW_UP_TIMEOUT);
+    session.expect_output_since(after_interrupt, "rose>", FOLLOW_UP_TIMEOUT);
+    let window = session.content_since(after_interrupt);
+    assert!(
+        !window.contains("panic"),
+        "the discarded partial line must not execute, got:\n{window}"
+    );
+}
+
+fn ctrl_c_kills_the_running_foreground_app(session: &mut QemuSession) {
     let mark = session.mark();
     session.send_line("spinner");
     session.expect_output_since(mark, "spinner ready", READY_TIMEOUT);
@@ -31,47 +70,7 @@ fn ctrl_c_kills_the_running_foreground_app() {
     session.expect_output_since(after_kill, "rose>", FOLLOW_UP_TIMEOUT);
 }
 
-#[test]
-fn ctrl_c_at_a_bare_prompt_redraws_and_keeps_the_shell_usable() {
-    let mut session = QemuSession::spawn();
-    session.expect_output("rose>", BOOT_TIMEOUT);
-
-    let mark = session.mark();
-    session.send_key('\x03');
-    session.expect_output_since(mark, "^C", INTERRUPT_TIMEOUT);
-
-    let after_prompt = session.mark();
-    session.send_line("exiter 3");
-    session.expect_output_since(after_prompt, "exiter exited with code 3", FOLLOW_UP_TIMEOUT);
-    session.expect_output_since(after_prompt, "rose>", FOLLOW_UP_TIMEOUT);
-}
-
-#[test]
-fn ctrl_c_after_a_partial_line_discards_the_line() {
-    let mut session = QemuSession::spawn();
-    session.expect_output("rose>", BOOT_TIMEOUT);
-
-    let mark = session.mark();
-    session.send_text("exiter pan");
-    session.send_key('\x03');
-    session.expect_output_since(mark, "^C", INTERRUPT_TIMEOUT);
-
-    let after_interrupt = session.mark();
-    session.send_line("exiter 4");
-    session.expect_output_since(after_interrupt, "exiter exited with code 4", FOLLOW_UP_TIMEOUT);
-    session.expect_output_since(after_interrupt, "rose>", FOLLOW_UP_TIMEOUT);
-    let window = session.content_since(after_interrupt);
-    assert!(
-        !window.contains("panic"),
-        "the discarded partial line must not execute, got:\n{window}"
-    );
-}
-
-#[test]
-fn ctrl_c_spares_background_jobs() {
-    let mut session = QemuSession::spawn();
-    session.expect_output("rose>", BOOT_TIMEOUT);
-
+fn ctrl_c_spares_background_jobs(session: &mut QemuSession) {
     let mark = session.mark();
     session.send_line("spinner &");
     session.expect_output_since(mark, "spinner started", READY_TIMEOUT);

@@ -9,6 +9,7 @@
 > - **LD4 — boot roster keeps its existing `include_bytes!` blocks** (`arch/x86_64/src/main.rs:74-83`). The kernel rom module is an opaque blob with no codec dependency; the 5 boot ELFs are therefore embedded twice (kernel image duplicates the ROM copy). This duplication is an accepted cost, not a defect.
 > - **LD5 — the shell receives ZERO changes.** No `run` command, no removal of shell `include_bytes!`. Run-from-ROM via shell is a later theme.
 > - **LD6 — repo law** (AGENTS.md): no comments in any Rust file; commit subjects carry **no prefix**; one commit per step.
+> **Note (2026-11-22):** `plans/rom-as-initrd.md` supersedes the embedding premise and LD4: the ROM image now ships as `INITRD.BIN` on the boot volume and the kernel reads it from `BootInfo`, so no `include_bytes!` remains and the accepted duplication is zero; the kernel parses the image itself (`docs/decisions/kernel-parses-the-initrd-rom.md`).
 > **The plan document itself** is committed separately from all code commits, subject `Add ROM filesystem implementation plan`.
 
 ---

@@ -22,20 +22,18 @@ impl Cpu for X86_64 {
         crate::interrupts::enable_keyboard();
 
         unsafe {
-            // Enable System Call Extension (SCE) in EFER.
-            // Disable No-Execute Enable (NXE): bootloader 0.11 sets NXE and maps the
-            // physical memory region (kernel heap) as non-executable. ELF images are
-            // loaded into heap memory, so clearing NXE makes all pages executable.
+            // Enable System Call Extension (SCE) in EFER. The RosX stage chain
+            // never sets NXE, so kernel pages stay executable without workarounds.
             Efer::update(|flags| {
                 flags.insert(EferFlags::SYSTEM_CALL_EXTENSIONS);
-                flags.remove(EferFlags::NO_EXECUTE_ENABLE);
             });
 
             // Set the entry point for syscalls
             LStar::write(VirtAddr::new(syscall_handler_entry as *const () as u64));
 
             // Configure segments in STAR
-            // Bootloader v0.9 GDT:
+            // The kernel's own GDT (arch/x86_64/src/boot.S) keeps the frozen
+            // chain layout (plans/bootloader/00-boot-abi.md §4):
             // 0: Null
             // 1: Kernel Code (0x08)
             // 2: Kernel Data (0x10)
@@ -138,27 +136,6 @@ impl Cpu for X86_64 {
     fn halt(&self) {
         unsafe {
             asm!("hlt");
-        }
-    }
-}
-
-pub unsafe fn clear_nx_bits(phys_offset: u64) {
-    use x86_64::registers::control::Cr3;
-    let (frame, flags) = Cr3::read();
-    unsafe { walk_page_table(frame.start_address().as_u64(), phys_offset, 4) };
-    unsafe { Cr3::write(frame, flags) };
-}
-
-unsafe fn walk_page_table(table_phys: u64, phys_offset: u64, level: u8) {
-    let table = (table_phys + phys_offset) as *mut u64;
-    for i in 0usize..512 {
-        let entry = unsafe { table.add(i).read() };
-        if entry & 1 == 0 {
-            continue;
-        }
-        unsafe { table.add(i).write(entry & !(1u64 << 63)) };
-        if level > 1 && entry & (1 << 7) == 0 {
-            unsafe { walk_page_table(entry & 0x000f_ffff_ffff_f000, phys_offset, level - 1) };
         }
     }
 }

@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn generation_counter_should_cycle_from_32767_to_0_without_setting_error_bit() {
-        let mut arena: GenerationalArena<u8, 1> = GenerationalArena::new();
+        let mut arena: GenerationalArena<u8> = GenerationalArena::new(1);
         for counter in 0..32768usize {
             let handle = TaskHandle::from(arena.add(0).unwrap());
             assert_eq!(handle.generation(), (counter & 0x7FFF) as u16);
