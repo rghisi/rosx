@@ -6,6 +6,7 @@ use crate::platform::cpu::Cpu;
 use crate::kernel_cell::KernelCell;
 use crate::memory::MemoryBlocks;
 use crate::memory::free_list_allocator::{BlockOwner, FreeListAllocator};
+use crate::memory::slab_heap::{SlabHeap, small_class};
 
 #[cfg_attr(not(test), global_allocator)]
 pub(crate) static MEMORY_MANAGER: MemoryManager = MemoryManager::new();
@@ -25,6 +26,7 @@ pub(crate) struct MemoryStats {
 
 pub struct MemoryManager {
     allocator: KernelCell<Option<FreeListAllocator>>,
+    slab: KernelCell<SlabHeap>,
     is_setup: AtomicBool,
     cpu: KernelCell<Option<&'static dyn Cpu>>,
     memory_blocks: KernelCell<Option<MemoryBlocks>>,
@@ -34,6 +36,7 @@ impl MemoryManager {
     pub const fn new() -> Self {
         MemoryManager {
             allocator: KernelCell::new(None),
+            slab: KernelCell::new(SlabHeap::new()),
             is_setup: AtomicBool::new(false),
             cpu: KernelCell::new(None),
             memory_blocks: KernelCell::new(None),
@@ -120,6 +123,24 @@ impl MemoryManager {
         }
     }
 
+    pub(crate) unsafe fn dealloc_owned(&self, ptr: *mut u8, layout: Layout) {
+        let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
+            && self.cpu.borrow().unwrap().are_interrupts_enabled();
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().disable_interrupts();
+        }
+        unsafe {
+            self.allocator
+                .borrow_mut()
+                .as_mut()
+                .expect("MemoryManager not bootstrapped")
+                .deallocate(ptr, layout.align())
+        };
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().enable_interrupts();
+        }
+    }
+
     pub(crate) fn group_bytes(&self, group_id: usize) -> usize {
         let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
             && self.cpu.borrow().unwrap().are_interrupts_enabled();
@@ -202,7 +223,25 @@ impl MemoryManager {
 
 unsafe impl GlobalAlloc for MemoryManager {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        unsafe { self.alloc_with_owner(layout, BlockOwner::Kernel) }
+        if small_class(&layout).is_none() {
+            return unsafe { self.alloc_with_owner(layout, BlockOwner::Kernel) };
+        }
+        let interrupts_enabled = self.is_setup.load(Ordering::Relaxed)
+            && self.cpu.borrow().unwrap().are_interrupts_enabled();
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().disable_interrupts();
+        }
+        let pointer = {
+            let slot = self.allocator.borrow_mut();
+            let tier0 = slot
+                .as_mut()
+                .expect("MemoryManager not bootstrapped");
+            unsafe { self.slab.borrow_mut().allocate(tier0, layout) }
+        };
+        if interrupts_enabled {
+            self.cpu.borrow().unwrap().enable_interrupts();
+        }
+        pointer
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -211,13 +250,17 @@ unsafe impl GlobalAlloc for MemoryManager {
         if interrupts_enabled {
             self.cpu.borrow().unwrap().disable_interrupts();
         }
-        unsafe {
-            self.allocator
-                .borrow_mut()
-                .as_mut()
-                .expect("MemoryManager not bootstrapped")
-                .deallocate(ptr, layout.align())
-        };
+        if small_class(&layout).is_some() {
+            unsafe { self.slab.borrow_mut().deallocate(ptr, layout) };
+        } else {
+            unsafe {
+                self.allocator
+                    .borrow_mut()
+                    .as_mut()
+                    .expect("MemoryManager not bootstrapped")
+                    .deallocate(ptr, layout.align())
+            };
+        }
         if interrupts_enabled {
             self.cpu.borrow().unwrap().enable_interrupts();
         }
@@ -228,6 +271,7 @@ unsafe impl GlobalAlloc for MemoryManager {
 mod tests {
     use super::*;
     use crate::memory::free_list_allocator::{ALLOC_HDR, BACKREF_BYTES, BLOCK_HDR};
+    use crate::memory::slab_heap;
     use crate::platform::cpu::Cpu;
     use crate::memory::{BlockUse, MemoryBlock};
     use core::alloc::{GlobalAlloc, Layout};
@@ -291,18 +335,21 @@ mod tests {
         let manager = make_manager(&mut memory);
         let layout = Layout::from_size_align(64, 8).unwrap();
         let ptr = unsafe { manager.alloc(layout) };
-        assert_eq!(used(&manager), 64 + ALLOC_HDR);
+        let arena_used = used(&manager);
+        assert!(arena_used >= slab_heap::ARENA_PAGES * slab_heap::PAGE);
+        assert!(arena_used < slab_heap::ARENA_PAGES * slab_heap::PAGE + slab_heap::PAGE);
         unsafe { manager.dealloc(ptr, layout) };
     }
 
     #[test]
-    fn dealloc_decreases_used() {
+    fn dealloc_of_a_small_kernel_block_retains_the_arena() {
         let mut memory = vec![0u8; 1024 * 1024];
         let manager = make_manager(&mut memory);
         let layout = Layout::from_size_align(64, 8).unwrap();
         let ptr = unsafe { manager.alloc(layout) };
+        let with_arena = used(&manager);
         unsafe { manager.dealloc(ptr, layout) };
-        assert_eq!(used(&manager), 0);
+        assert_eq!(used(&manager), with_arena);
     }
 
     #[test]
@@ -323,7 +370,7 @@ mod tests {
         let layout = Layout::from_size_align(64, 8).unwrap();
         let ptr = unsafe { manager.alloc_with_owner(layout, BlockOwner::Group(9)) };
         assert!(!ptr.is_null());
-        unsafe { manager.dealloc(ptr, layout) };
+        unsafe { manager.dealloc_owned(ptr, layout) };
     }
 
     #[test]
@@ -333,7 +380,7 @@ mod tests {
         let layout = Layout::from_size_align(128, 8).unwrap();
         let ptr = unsafe { manager.alloc_with_owner(layout, BlockOwner::Group(4)) };
         assert_eq!(used(&manager), 128 + ALLOC_HDR);
-        unsafe { manager.dealloc(ptr, layout) };
+        unsafe { manager.dealloc_owned(ptr, layout) };
         assert_eq!(used(&manager), 0);
     }
 
@@ -345,7 +392,7 @@ mod tests {
         let layout = Layout::from_size_align(64, 8).unwrap();
         let ptr = unsafe { manager.alloc_with_owner(layout, BlockOwner::Group(1)) };
         assert!(!ptr.is_null());
-        unsafe { manager.dealloc(ptr, layout) };
+        unsafe { manager.dealloc_owned(ptr, layout) };
     }
 
     #[test]
@@ -360,7 +407,7 @@ mod tests {
         let ptr = unsafe { manager.alloc_with_owner(fits, BlockOwner::Group(2)) };
         assert!(!ptr.is_null());
         assert_eq!(used(&manager), 64 + ALLOC_HDR);
-        unsafe { manager.dealloc(ptr, fits) };
+        unsafe { manager.dealloc_owned(ptr, fits) };
         assert_eq!(used(&manager), 0);
     }
 
@@ -368,16 +415,28 @@ mod tests {
     fn overaligned_alloc_returns_aligned_pointer_and_tracks_used() {
         let mut memory = vec![0u8; 1024 * 1024];
         let manager = make_manager(&mut memory);
-        let layout = Layout::from_size_align(64, 16).unwrap();
+        let layout = Layout::from_size_align(64, 1024).unwrap();
         let ptr = unsafe { manager.alloc(layout) };
         assert!(!ptr.is_null());
-        assert_eq!(ptr as usize % 16, 0);
+        assert_eq!(ptr as usize % 1024, 0);
         let charge = 64 + ALLOC_HDR + BACKREF_BYTES;
         let overaligned_used = used(&manager);
         assert!(overaligned_used >= charge);
         assert!(overaligned_used < charge + BLOCK_HDR);
         unsafe { manager.dealloc(ptr, layout) };
         assert_eq!(used(&manager), 0);
+    }
+
+    #[test]
+    fn small_overaligned_alloc_is_served_by_a_wider_slab_class() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let layout = Layout::from_size_align(64, 64).unwrap();
+        let ptr = unsafe { manager.alloc(layout) };
+        assert!(!ptr.is_null());
+        assert_eq!(ptr as usize % 64, 0);
+        assert!(used(&manager) >= slab_heap::ARENA_PAGES * slab_heap::PAGE);
+        unsafe { manager.dealloc(ptr, layout) };
     }
 
     #[test]
@@ -397,14 +456,32 @@ mod tests {
         let mut memory = vec![0u8; 1024 * 1024];
         let manager = make_manager(&mut memory);
         let task_layout = Layout::from_size_align(128, 8).unwrap();
-        let kernel_layout = Layout::from_size_align(64, 8).unwrap();
+        let kernel_layout = Layout::from_size_align(1024, 8).unwrap();
         unsafe { manager.alloc_with_owner(task_layout, BlockOwner::Group(3)) };
         let kernel_ptr = unsafe { manager.alloc(kernel_layout) };
-        assert_eq!(used(&manager), 128 + 64 + 2 * ALLOC_HDR);
+        assert_eq!(used(&manager), 128 + 1024 + 2 * ALLOC_HDR);
         unsafe { manager.release_group_allocations(3) };
-        assert_eq!(used(&manager), 64 + ALLOC_HDR);
+        assert_eq!(used(&manager), 1024 + ALLOC_HDR);
         unsafe { manager.dealloc(kernel_ptr, kernel_layout) };
         assert_eq!(used(&manager), 0);
+    }
+
+    #[test]
+    fn kernel_small_blocks_are_invisible_to_group_accounting_and_sweep() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let kernel_ptr = unsafe { manager.alloc(layout) };
+        unsafe { manager.alloc_with_owner(layout, BlockOwner::Group(3)) };
+        let with_both = used(&manager);
+        assert!(with_both >= slab_heap::ARENA_PAGES * slab_heap::PAGE + 64 + ALLOC_HDR);
+        assert_eq!(manager.group_bytes(3), 64 + ALLOC_HDR);
+        unsafe { manager.release_group_allocations(3) };
+        let arena_only = used(&manager);
+        assert!(arena_only >= slab_heap::ARENA_PAGES * slab_heap::PAGE);
+        assert!(arena_only < slab_heap::ARENA_PAGES * slab_heap::PAGE + slab_heap::PAGE);
+        unsafe { manager.dealloc(kernel_ptr, layout) };
+        assert_eq!(used(&manager), arena_only);
     }
 
     #[test]
@@ -445,7 +522,7 @@ mod tests {
         let ptr = unsafe { manager.alloc_with_owner(layout, BlockOwner::Group(5)) };
         unsafe { manager.release_group_allocations(99) };
         assert_eq!(used(&manager), 64 + ALLOC_HDR);
-        unsafe { manager.dealloc(ptr, layout) };
+        unsafe { manager.dealloc_owned(ptr, layout) };
         assert_eq!(used(&manager), 0);
     }
 
@@ -470,17 +547,15 @@ mod tests {
         let layout = Layout::from_size_align(128, 8).unwrap();
         let ptr = unsafe { manager.alloc(layout) };
         let after = manager.stats();
-        assert_eq!(used(&manager), 128 + ALLOC_HDR);
+        let arena_used = fresh.total_bytes - after.free_bytes;
+        assert!(arena_used >= slab_heap::ARENA_PAGES * slab_heap::PAGE);
         assert_eq!(after.total_bytes, fresh.total_bytes);
-        assert!(after.free_bytes < fresh.free_bytes);
-        assert_eq!(after.free_block_count, fresh.free_block_count);
         assert!(after.largest_free_block < fresh.largest_free_block);
         unsafe { manager.dealloc(ptr, layout) };
-        let restored = manager.stats();
-        assert_eq!(used(&manager), 0);
-        assert_eq!(restored.free_bytes, fresh.free_bytes);
-        assert_eq!(restored.free_block_count, fresh.free_block_count);
-        assert_eq!(restored.largest_free_block, fresh.largest_free_block);
+        let retained = manager.stats();
+        assert_eq!(retained.free_bytes, after.free_bytes);
+        assert_eq!(retained.free_block_count, after.free_block_count);
+        assert_eq!(retained.largest_free_block, after.largest_free_block);
     }
 
     #[test]
@@ -511,7 +586,7 @@ mod tests {
         let manager = make_manager(&mut memory);
         let mut blocks = Vec::new();
         unsafe {
-            for size in [64usize, 4096, 64 * 1024, 196 * 1024] {
+            for size in [4096usize, 64 * 1024, 196 * 1024] {
                 let layout = Layout::from_size_align(size, 1).unwrap();
                 let ptr = manager.alloc(layout);
                 assert!(!ptr.is_null());
@@ -527,6 +602,18 @@ mod tests {
             }
         }
         assert_eq!(used(&manager), 0);
+    }
+
+    #[test]
+    fn small_align_one_allocation_lands_on_its_class_grid() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let layout = Layout::from_size_align(64, 1).unwrap();
+        let ptr = unsafe { manager.alloc(layout) };
+        assert!(!ptr.is_null());
+        assert_eq!(ptr as usize % 64, 0);
+        assert!(used(&manager) >= slab_heap::ARENA_PAGES * slab_heap::PAGE);
+        unsafe { manager.dealloc(ptr, layout) };
     }
 
     #[test]

@@ -163,3 +163,24 @@ and free instead of first-fit-plus-two-walks as the live count grows, and
 the headroom the 10.7 M-op syscall bench and the host saturation run show
 is where Tier 0 bends. K3 re-runs this protocol and decides whether Tier 0
 still needs more.
+
+## K1 — the tree with Tier 1 live (2026-11-27)
+
+- Boot footprint at the prompt, x86_64: used 1,739 KiB / free 127,856 KiB
+  (pre-K1: 1,630 / 127,898 on the same release-boot path). x86_32 release
+  boot: free 128,142 KiB (pre-K1 128,224). The growth is the arenas Tier 1
+  holds (64 KiB each, K1 never returns them) minus the per-block header it
+  no longer pays; `rom_release`'s free pins re-pinned to these values.
+- A full boot-plus-bench session (shell `mem`, `ps`, `bench alloc`,
+  `bench alloc_churn`) is `BAD-FREE`- and `[IRQGUARD]`-silent on x86_64.
+- **Design gap K0 missed**: usrlib's `kernel_box` cells (the `&[u8]`/`&str`
+  fat pointers passed by `LoadElf`, `IpcConnect`, `IpcBind`) are `Alloc`
+  -syscall blocks — owner-tagged Tier 0 memory — but the kernel freed them
+  by dropping `Box::from_raw(...)`, routing a 16 B layout to Tier 1. That
+  printed `BAD-FREE slab outside-arenas` twice per boot step until fixed
+  with a read-then-`dealloc_owned` helper. `Syscall::Dealloc` and
+  `TaskStack::drop` (owner blocks of the same kind) moved to
+  `dealloc_owned` for the same reason. The pure-`GlobalAlloc` paths never
+  mix: allocation and free always route on the same `small_class`.
+- User benches unchanged as expected: `bench alloc` 3,500 ns/op (Tier-0
+  syscall pair), `alloc_churn` 225 ns best (user bins).

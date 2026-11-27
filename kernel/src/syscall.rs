@@ -1,5 +1,5 @@
 #[cfg(not(test))]
-use core::alloc::{GlobalAlloc, Layout};
+use core::alloc::Layout;
 #[cfg(not(test))]
 use alloc::boxed::Box;
 #[cfg(not(test))]
@@ -32,6 +32,17 @@ use crate::ipc::message_future::IpcMessageFuture;
 use crate::task::{first_argument, new_entrypoint_task, validate_arguments_blob};
 #[cfg(not(test))]
 use system::waitset::WaitEvent;
+
+/// usrlib's `kernel_box` cells are `Alloc`-syscall blocks: owner-tagged
+/// Tier 0 memory. Read the value and free the cell through `dealloc_owned`;
+/// dropping it as a `Box` would route a small layout to Tier 1, which never
+/// handed the block out. See docs/rationale/kernel-slab-heap.md.
+#[cfg(not(test))]
+unsafe fn take_kernel_box<T>(addr: usize) -> T {
+    let value = unsafe { (addr as *const T).read() };
+    unsafe { services().memory_manager.dealloc_owned(addr as *mut u8, Layout::new::<T>()) };
+    value
+}
 
 #[cfg(not(test))]
 pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usize {
@@ -112,12 +123,12 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
         }
         Ok(SyscallNum::Dealloc) => {
             let Ok(layout) = Layout::from_size_align(arg2, arg3) else { return 0 };
-            unsafe { services().memory_manager.dealloc(arg1 as *mut u8, layout) };
+            unsafe { services().memory_manager.dealloc_owned(arg1 as *mut u8, layout) };
             0
         }
         Ok(SyscallNum::LoadElf) => {
             if arg1 == 0 { return u64::MAX as usize; }
-            let elf_bytes: &[u8] = unsafe { *Box::from_raw(arg1 as *mut &[u8]) };
+            let elf_bytes: &[u8] = unsafe { take_kernel_box(arg1) };
             if arg3 > system::args::MAX_ARGUMENT_BYTES { return ErrorCode::ElfArgumentLimitExceeded.to_reg(); }
             if arg2 == 0 || arg3 == 0 { return ErrorCode::ElfArgumentBlobMalformed.to_reg(); }
             let blob = unsafe { core::slice::from_raw_parts(arg2 as *const u8, arg3) };
@@ -134,7 +145,7 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             }
         }
         Ok(SyscallNum::IpcConnect) => {
-            let service: &str = unsafe { *Box::from_raw(arg1 as *mut &str) };
+            let service: &str = unsafe { take_kernel_box(arg1) };
             match services().ipc_manager.borrow_mut().connect(service, kernel().execution_state.current_task()) {
                 Ok(handle) => handle.pack(),
                 Err(e) => ErrorCode::from(e).to_reg(),
@@ -147,7 +158,7 @@ pub fn handle_syscall(num: usize, arg1: usize, arg2: usize, arg3: usize) -> usiz
             0usize
         }
         Ok(SyscallNum::IpcBind) => {
-            let service: &str = unsafe { *Box::from_raw(arg1 as *mut &str) };
+            let service: &str = unsafe { take_kernel_box(arg1) };
             match services().ipc_manager.borrow_mut().bind_service(service) {
                 Ok(handle) => handle.pack(),
                 Err(e) => ErrorCode::from(e).to_reg(),

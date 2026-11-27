@@ -1,4 +1,4 @@
-use core::alloc::{GlobalAlloc, Layout};
+use core::alloc::Layout;
 use core::ptr::NonNull;
 
 use crate::memory::free_list_allocator::BlockOwner;
@@ -96,7 +96,7 @@ impl TaskStack {
 
 impl Drop for TaskStack {
     fn drop(&mut self) {
-        unsafe { MEMORY_MANAGER.dealloc(self.pointer.as_ptr() as *mut u8, Self::layout()) };
+        unsafe { MEMORY_MANAGER.dealloc_owned(self.pointer.as_ptr() as *mut u8, Self::layout()) };
     }
 }
 
