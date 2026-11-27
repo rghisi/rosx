@@ -281,4 +281,6 @@ K2 | `check-style` first run: the new trim/realloc functions counted unsafe 395 
 K2 | realloc unit tests first drafted used wrong class boundaries (treated 32→40 as same-class and 512 as Tier 0; 32 is its own class and 512 is still Tier 1); corrected against `small_class` before running | TASK | 0
 K3 | the saved K0 harness no longer applied after K1 (`mod.rs` context) and its `k0traffic` module failed dead-code under `cargo test` until gated `#![cfg(not(test))]`; applied with `--exclude` plus two one-line fixes | ENV-TRAP | 1 round
 K3 | serial capture dropped the `[K0] tier1` line in two of three dumps (same truncation quirk K0 saw on `tier0` lines); post-busy arena count inferred from the absence of a 64 KiB step in Tier 0 free | ENV-TRAP | 0
+Policy | `check-style` run before `git add kernel_allocator.rs` reported "unsafe dropped 389→386"; the new file was invisible to `git ls-files`, so after staging the same change needed `--allow-increase` (389→391) and a decision record | ENV-TRAP | 1 round
+Policy | making `MemoryManager` generic broke the two `MemoryManager::ensure_test_memory()` expression paths (default type params do not apply there); qualified as `<MemoryManager>::` | TASK | 1 compile round
 
