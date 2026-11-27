@@ -279,4 +279,6 @@ K1 | `rom_release` free-at-prompt pins failed on Tier 1 arena retention (x86_64 
 K1 | `check-style` first run: doc comment on `take_kernel_box` needed its rationale link and the plain `//` re-pin note in `rom_release.rs` was not allowed; the unsafe baseline was then raised twice, and `--update-baseline` writes one decision file per run, so two records had to be merged by hand | TASK | 1 round
 K2 | `check-style` first run: the new trim/realloc functions counted unsafe 395 > baseline 361; consolidated scattered inline `unsafe {}` blocks to 389 and recorded the raise in its own decision file | TASK | 1 round
 K2 | realloc unit tests first drafted used wrong class boundaries (treated 32→40 as same-class and 512 as Tier 0; 32 is its own class and 512 is still Tier 1); corrected against `small_class` before running | TASK | 0
+K3 | the saved K0 harness no longer applied after K1 (`mod.rs` context) and its `k0traffic` module failed dead-code under `cargo test` until gated `#![cfg(not(test))]`; applied with `--exclude` plus two one-line fixes | ENV-TRAP | 1 round
+K3 | serial capture dropped the `[K0] tier1` line in two of three dumps (same truncation quirk K0 saw on `tier0` lines); post-busy arena count inferred from the absence of a 64 KiB step in Tier 0 free | ENV-TRAP | 0
 
