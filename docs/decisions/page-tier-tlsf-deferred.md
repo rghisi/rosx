@@ -1,7 +1,7 @@
 ---
-status: open
+status: decided
 date: 2026-11-22
-revisit-when: K3 of plans/memory-tiers.md shows Tier 0 allocate/free cost or fragmentation is still material for stacks, program memory or user Alloc blocks
+revisit-when: K3 of plans/memory-tiers.md shows Tier 0 allocate/free cost or fragmentation is still material for stacks, program memory or user Alloc blocks — met 2026-11-27, it is not; no follow-up plan opens
 ---
 
 # Page tier under the kernel allocator (TLSF, out-of-band descriptors) deferred
@@ -40,3 +40,12 @@ reports. Work continues on that default; K3 of the plan re-measures and decides.
 - Ownership stays per block (`BlockOwner`), `group_bytes` stays exact, `mem` is unchanged.
 - If K3 reopens the question, the TLSF-with-descriptors design above is the starting point, and the
   `Alloc` semantic change must be approved before it lands.
+
+## Resolution (K3, 2026-11-27)
+
+K3 re-measured on the final head (`plans/memory-tiers-results.md`). Kernel Tier 0 live blocks fell
+from 165 to 5 at the shell prompt; the total Tier 0 live is ~71 (peak ~170 under the user churn
+bench), putting the O(live) free walk under ~200 ns — an order of magnitude below the `Alloc`/
+`Dealloc` syscall pair (2 441–9 179 ns) that frames every user free — and fragmentation stays 0.99+
+through the bench on both arches. None of the triggers for a page tier fired. `FreeListAllocator`
+remains the lowest tier, Tier 1 absorbs all small-object churn, and no follow-up plan opens.

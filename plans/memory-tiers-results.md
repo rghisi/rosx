@@ -200,3 +200,59 @@ still needs more.
   127,920 relative to K1 and above the S3 release-boot floor; the
   `rom_release` pin (a floor) is unchanged and passes. x86_32 verified in
   the integration suite below.
+
+## K3 — the same protocol on the final head (2026-11-27)
+
+Same harness, same host discipline (idle `pgrep`, load < 1 on 4 cores).
+
+### Kernel traffic at the prompt and after BUSY (Tier 0 view)
+
+| Owner | arch | requests | live | peak | live vs K0 |
+|---|---|---:|---:|---:|---|
+| Kernel | x86_64 | 232 → 310 | **5** | 8 | 165 → 5 |
+| Kernel | x86_32 | 224 → 302 | **5** | 8 | 165 → 5 |
+| Group | x86_64 | 271 → 14 257 553 | 52 → 53 | 103 | unchanged |
+| Group | x86_32 | 270 → 3 677 836 | 53 → 53 | 103 | unchanged |
+| Stack | both | 18 → 23 | 14 | 15 | unchanged |
+
+Kernel Tier 0 live fell from 165 to **5** — everything else the kernel
+holds in Tier 0 is the arena, the initrd-era held block region and a few
+over-aligned or > 512 B blocks. Tier 0 total live at the prompt is ~71
+blocks (was ~231). `fails=0`, `bad_free=0`, `BAD-FREE`/`[IRQGUARD]` silent
+throughout on both arches.
+
+Tier 1 at the prompt: **one arena** on both arches (15 classes on x86_64,
+13 on x86_32 share its 15 slab pages); the post-busy `tier0` free moves by
+8 KiB on x86_64 and 0 B on x86_32, never a 64 KiB step, so the arena count
+stayed 1 through both benches.
+
+### Tier 0 host cost and fragmentation (K3 re-run)
+
+Free in random order over N live 64 B blocks: 89 ns (N=10), 158 ns (N=100),
+1 712 ns (N=1 000), 46 946 ns (N=10 000) — the same curve as K0 (Tier 0
+code is untouched). Churn after 200k ops: `frag` 0.994 small-only, 0.989
+mixed-64k, unchanged. Boot-side fragmentation: largest free = 99.5%
+(x86_64) / 99.4% (x86_32) of free bytes at the prompt and unchanged
+post-busy (x86_64 free blocks 46 → 47).
+
+### Boot footprint
+
+| arch | used at prompt | free at prompt | vs K0 |
+|---|---:|---:|---|
+| x86_64 | 1 675 KiB | 127 912 KiB | +45 KiB used |
+| x86_32 | 1 457 KiB | 128 202 KiB | +51 KiB used |
+
+The growth is the single retained arena (64 KiB) minus the ≈ 13–19 KiB of
+Tier 0 headers the ~165 small kernel blocks no longer pay.
+
+### Reading
+
+The O(live) free walk now runs over ~71 live nodes at the prompt and ~170
+at churn peak, between the host table's N=10 and N=100 marks: under ~200 ns
+per Tier 0 free, while the `Alloc`/`Dealloc` syscall pair that frames every
+user free measures 2 441–9 179 ns. Small kernel churn no longer touches
+Tier 0 at all. Fragmentation is 0.99+ through the bench on both arches.
+None of the three things that would justify a page tier — O(live) free on
+stacks/program memory/user blocks, fragmentation, or allocation failure —
+is material. `docs/decisions/page-tier-tlsf-deferred.md` is marked decided:
+`FreeListAllocator` stays the lowest tier and no follow-up plan opens.
