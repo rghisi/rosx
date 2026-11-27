@@ -184,3 +184,19 @@ still needs more.
   mix: allocation and free always route on the same `small_class`.
 - User benches unchanged as expected: `bench alloc` 3,500 ns/op (Tier-0
   syscall pair), `alloc_churn` 225 ns best (user bins).
+
+## K2 — trim, hysteresis and realloc (2026-11-27)
+
+- Same-class `realloc` keeps the pointer (`realloc_same_class` mirrors the
+  usrlib bins trick); every other size change routes an inline
+  alloc-copy-free across the tiers. Boot exercises it (every `Vec` grow is
+  a `realloc`) and stays `BAD-FREE`/`[IRQGUARD]`-silent.
+- Trim returns a fully-free slab page to its arena (magic cleared so a stale
+  free lands on `bad-magic`) and a fully-free arena to Tier 0, keeping one
+  spare. The class and `SMALL_MAX` were **not** changed from K0 — K1's live
+  picture did not move them.
+- Boot footprint at the prompt, x86_64: used 1,675 KiB / free 127,920 KiB —
+  trim returned one 64 KiB arena that K1 had held, so free rose 127,856 →
+  127,920 relative to K1 and above the S3 release-boot floor; the
+  `rom_release` pin (a floor) is unchanged and passes. x86_32 verified in
+  the integration suite below.

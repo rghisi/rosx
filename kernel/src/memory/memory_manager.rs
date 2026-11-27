@@ -6,7 +6,7 @@ use crate::platform::cpu::Cpu;
 use crate::kernel_cell::KernelCell;
 use crate::memory::MemoryBlocks;
 use crate::memory::free_list_allocator::{BlockOwner, FreeListAllocator};
-use crate::memory::slab_heap::{SlabHeap, small_class};
+use crate::memory::slab_heap::{SlabHeap, realloc_same_class, small_class};
 
 #[cfg_attr(not(test), global_allocator)]
 pub(crate) static MEMORY_MANAGER: MemoryManager = MemoryManager::new();
@@ -251,7 +251,11 @@ unsafe impl GlobalAlloc for MemoryManager {
             self.cpu.borrow().unwrap().disable_interrupts();
         }
         if small_class(&layout).is_some() {
-            unsafe { self.slab.borrow_mut().deallocate(ptr, layout) };
+            let slot = self.allocator.borrow_mut();
+            let tier0 = slot
+                .as_mut()
+                .expect("MemoryManager not bootstrapped");
+            unsafe { self.slab.borrow_mut().deallocate(tier0, ptr, layout) };
         } else {
             unsafe {
                 self.allocator
@@ -264,6 +268,25 @@ unsafe impl GlobalAlloc for MemoryManager {
         if interrupts_enabled {
             self.cpu.borrow().unwrap().enable_interrupts();
         }
+    }
+
+    /// Same-class growth keeps the pointer; every other case inlines the
+    /// default alloc-copy-free, routed by the new layout. Never delegate
+    /// through the trait: path calls resolve to this override.
+    /// See docs/rationale/kernel-slab-heap.md.
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        if realloc_same_class(&layout, new_size) {
+            return ptr;
+        }
+        let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
+            return core::ptr::null_mut();
+        };
+        let new_ptr = unsafe { self.alloc(new_layout) };
+        if !new_ptr.is_null() {
+            unsafe { core::ptr::copy_nonoverlapping(ptr, new_ptr, layout.size().min(new_size)) };
+            unsafe { self.dealloc(ptr, layout) };
+        }
+        new_ptr
     }
 }
 
@@ -614,6 +637,52 @@ mod tests {
         assert_eq!(ptr as usize % 64, 0);
         assert!(used(&manager) >= slab_heap::ARENA_PAGES * slab_heap::PAGE);
         unsafe { manager.dealloc(ptr, layout) };
+    }
+
+    #[test]
+    fn realloc_within_a_class_keeps_the_pointer() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let layout = Layout::from_size_align(40, 8).unwrap();
+        let ptr = unsafe { manager.alloc(layout) };
+        let shrunk = unsafe { manager.realloc(ptr, layout, 36) };
+        assert_eq!(shrunk, ptr);
+        let grown = unsafe { manager.realloc(ptr, Layout::from_size_align(36, 8).unwrap(), 40) };
+        assert_eq!(grown, ptr);
+        unsafe { manager.dealloc(grown, Layout::from_size_align(40, 8).unwrap()) };
+    }
+
+    #[test]
+    fn realloc_across_a_class_moves_the_block_and_keeps_the_content() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let layout = Layout::from_size_align(24, 8).unwrap();
+        let ptr = unsafe { manager.alloc(layout) };
+        unsafe { core::ptr::write_bytes(ptr, 0xA5, 24) };
+        let grown = unsafe { manager.realloc(ptr, layout, 64) };
+        assert!(!grown.is_null() && grown != ptr);
+        let content = unsafe { core::slice::from_raw_parts(grown, 24) };
+        assert!(content.iter().all(|byte| *byte == 0xA5));
+        unsafe { manager.dealloc(grown, Layout::from_size_align(64, 8).unwrap()) };
+    }
+
+    #[test]
+    fn realloc_crosses_the_tier_boundary_in_both_directions() {
+        let mut memory = vec![0u8; 1024 * 1024];
+        let manager = make_manager(&mut memory);
+        let large = Layout::from_size_align(1024, 8).unwrap();
+        let ptr = unsafe { manager.alloc(large) };
+        unsafe { core::ptr::write_bytes(ptr, 0x5C, 1024) };
+        let small = unsafe { manager.realloc(ptr, large, 64) };
+        assert!(!small.is_null());
+        let in_slab = unsafe { core::slice::from_raw_parts(small, 64) };
+        assert!(in_slab.iter().all(|byte| *byte == 0x5C));
+        let small_layout = Layout::from_size_align(64, 8).unwrap();
+        let back = unsafe { manager.realloc(small, small_layout, 1024) };
+        assert!(!back.is_null());
+        let wide = unsafe { core::slice::from_raw_parts(back, 64) };
+        assert!(wide.iter().all(|byte| *byte == 0x5C));
+        unsafe { manager.dealloc(back, Layout::from_size_align(1024, 8).unwrap()) };
     }
 
     #[test]

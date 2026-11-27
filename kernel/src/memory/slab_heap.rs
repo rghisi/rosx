@@ -5,6 +5,7 @@ use crate::memory::free_list_allocator::{BlockOwner, FreeListAllocator};
 pub(crate) const PAGE: usize = 4096;
 pub(crate) const ARENA_PAGES: usize = 16;
 const SMALL_MAX: usize = 512;
+const SPARE_ARENAS: usize = 1;
 
 const CLASS_COUNT: usize = 19;
 const CLASS_SIZES: [usize; CLASS_COUNT] = [
@@ -61,6 +62,16 @@ const fn slab_capacity(class: usize) -> usize {
     (PAGE - core::mem::size_of::<SlabHeader>()) / class
 }
 
+pub(crate) fn realloc_same_class(layout: &Layout, new_size: usize) -> bool {
+    match Layout::from_size_align(new_size, layout.align()) {
+        Ok(new_layout) => match (small_class(layout), small_class(&new_layout)) {
+            (Some(current), Some(candidate)) => current == candidate,
+            _ => false,
+        },
+        Err(_) => false,
+    }
+}
+
 const fn slab_header(page: usize) -> usize {
     page + PAGE - core::mem::size_of::<SlabHeader>()
 }
@@ -113,17 +124,23 @@ impl SlabHeap {
 
     /// Free routes only by the layout's class and validates magic, class,
     /// slot offset, capacity and the bitmap bit; failures log and leak the
-    /// slot. See docs/rationale/kernel-slab-heap.md.
-    pub(crate) unsafe fn deallocate(&mut self, ptr: *mut u8, layout: Layout) {
+    /// slot. A page that ends up with every slot free is retired back to
+    /// its arena. See docs/rationale/kernel-slab-heap.md.
+    pub(crate) unsafe fn deallocate(
+        &mut self,
+        tier0: &mut FreeListAllocator,
+        ptr: *mut u8,
+        layout: Layout,
+    ) {
         let addr = ptr as usize;
         let Some(index) = small_class(&layout) else {
             self.bad_free("wrong-tier", addr);
             return;
         };
-        if !self.arena_contains(addr) {
+        let Some(arena) = self.arena_of(addr) else {
             self.bad_free("outside-arenas", addr);
             return;
-        }
+        };
         let class = CLASS_SIZES[index];
         let page = addr & !(PAGE - 1);
         let header = slab_header(page) as *mut SlabHeader;
@@ -152,7 +169,9 @@ impl SlabHeap {
             (*header).free_head = addr;
             (*header).free_count += 1;
         }
-        if was_full {
+        if unsafe { (*header).free_count } == slab_capacity(class) {
+            unsafe { self.retire_page(tier0, index, page, arena) };
+        } else if was_full {
             self.push_partial(index, page);
         }
     }
@@ -239,15 +258,76 @@ impl SlabHeap {
         Some(arena)
     }
 
-    fn arena_contains(&self, addr: usize) -> bool {
+    fn arena_of(&self, addr: usize) -> Option<usize> {
         let mut arena = self.arenas;
-        while arena != 0 {
-            if addr >= arena && addr < arena + ARENA_PAGES * PAGE {
-                return true;
+        unsafe {
+            while arena != 0 {
+                if addr >= arena && addr < arena + ARENA_PAGES * PAGE {
+                    return Some(arena);
+                }
+                arena = (*(arena as *const ArenaHeader)).next;
             }
-            arena = unsafe { (*(arena as *const ArenaHeader)).next };
         }
-        false
+        None
+    }
+
+    /// Unlinks a page whose every slot is free, clears its magic so stale
+    /// frees land in `bad-magic`, returns the page to its arena, and gives
+    /// the arena back to Tier 0 when more than the spare arenas sit empty.
+    /// See docs/rationale/kernel-slab-heap.md.
+    unsafe fn retire_page(
+        &mut self,
+        tier0: &mut FreeListAllocator,
+        index: usize,
+        page: usize,
+        arena: usize,
+    ) {
+        self.unlink_partial(index, page);
+        let a = arena as *mut ArenaHeader;
+        let bit = (page - arena) / PAGE;
+        let empty = unsafe {
+            (*(slab_header(page) as *mut SlabHeader)).magic = 0;
+            (*a).used_pages &= !(1 << bit);
+            (*a).pages_free += 1;
+            (*a).pages_free == ARENA_PAGES - 1
+        };
+        if empty && self.empty_arenas() > SPARE_ARENAS {
+            unsafe { self.release_arena(tier0, arena) };
+        }
+    }
+
+    fn empty_arenas(&self) -> usize {
+        let mut count = 0;
+        let mut arena = self.arenas;
+        unsafe {
+            while arena != 0 {
+                let a = arena as *const ArenaHeader;
+                if (*a).magic == ARENA_MAGIC && (*a).pages_free == ARENA_PAGES - 1 {
+                    count += 1;
+                }
+                arena = (*a).next;
+            }
+        }
+        count
+    }
+
+    /// Unlinks the arena and hands its one Tier 0 block back; the caller
+    /// proved it holds no slab. See docs/rationale/kernel-slab-heap.md.
+    unsafe fn release_arena(&mut self, tier0: &mut FreeListAllocator, arena: usize) {
+        unsafe {
+            if self.arenas == arena {
+                self.arenas = (*(arena as *const ArenaHeader)).next;
+            } else {
+                let mut prev = self.arenas;
+                while prev != 0 && (*(prev as *const ArenaHeader)).next != arena {
+                    prev = (*(prev as *const ArenaHeader)).next;
+                }
+                if prev != 0 {
+                    (*(prev as *mut ArenaHeader)).next = (*(arena as *const ArenaHeader)).next;
+                }
+            }
+        }
+        unsafe { tier0.deallocate(arena as *mut u8, PAGE) };
     }
 
     fn push_partial(&mut self, index: usize, page: usize) {
@@ -365,7 +445,7 @@ mod tests {
 
         fn dealloc(&mut self, ptr: *mut u8, size: usize, align: usize) {
             let layout = Layout::from_size_align(size, align).unwrap();
-            unsafe { self.heap.deallocate(ptr, layout) };
+            unsafe { self.heap.deallocate(&mut self.tier0, ptr, layout) };
         }
     }
 
@@ -520,6 +600,77 @@ mod tests {
     }
 
     #[test]
+    fn a_retired_page_returns_to_the_arena_and_is_reused() {
+        let mut fixture = Fixture::new(REGION_BYTES);
+        let capacity = slab_capacity(512);
+        let mut slots = Vec::new();
+        for _ in 0..capacity {
+            slots.push(fixture.alloc(512, 8));
+        }
+        let page = slots[0] as usize & !(PAGE - 1);
+        let spill = fixture.alloc(512, 8);
+        assert_ne!(spill as usize & !(PAGE - 1), page);
+        for slot in slots {
+            fixture.dealloc(slot, 512, 8);
+        }
+        fixture.dealloc(spill, 512, 8);
+        let free_before = fixture.tier0.stats().free_bytes;
+        let reuse = fixture.alloc(512, 8);
+        assert_eq!(reuse as usize & !(PAGE - 1), page);
+        assert_eq!(
+            fixture.tier0.stats().free_bytes,
+            free_before,
+            "the reused page comes from the arena, not from Tier 0"
+        );
+        fixture.dealloc(reuse, 512, 8);
+        assert_eq!(fixture.heap.bad_free, 0);
+    }
+
+    #[test]
+    fn empty_arenas_shrink_to_the_single_spare() {
+        let region = 2 * ARENA_WORST_CHARGE;
+        let mut fixture = Fixture::new(region);
+        let slots_per_arena = slab_capacity(512) * (ARENA_PAGES - 1);
+        let mut slots = Vec::new();
+        for _ in 0..2 * slots_per_arena {
+            slots.push(fixture.alloc(512, 8));
+        }
+        assert_eq!(fixture.heap.arena_count(), 2);
+        for slot in slots {
+            fixture.dealloc(slot, 512, 8);
+        }
+        assert_eq!(fixture.heap.arena_count(), SPARE_ARENAS);
+        assert_eq!(fixture.heap.bad_free, 0);
+        let free_before = fixture.tier0.stats().free_bytes;
+        let slot = fixture.alloc(512, 8);
+        assert!(!slot.is_null());
+        assert_eq!(fixture.heap.arena_count(), SPARE_ARENAS);
+        assert_eq!(
+            fixture.tier0.stats().free_bytes,
+            free_before,
+            "the spare arena serves the request without a Tier 0 fetch"
+        );
+    }
+
+    #[test]
+    fn a_stale_free_into_a_released_arena_is_rejected() {
+        let region = 2 * ARENA_WORST_CHARGE;
+        let mut fixture = Fixture::new(region);
+        let slots_per_arena = slab_capacity(512) * (ARENA_PAGES - 1);
+        let mut slots = Vec::new();
+        for _ in 0..2 * slots_per_arena {
+            slots.push(fixture.alloc(512, 8));
+        }
+        let stale = slots[slots_per_arena];
+        for slot in slots {
+            fixture.dealloc(slot, 512, 8);
+        }
+        assert_eq!(fixture.heap.arena_count(), SPARE_ARENAS);
+        fixture.dealloc(stale, 512, 8);
+        assert_eq!(fixture.heap.bad_free, 1);
+    }
+
+    #[test]
     fn double_free_is_rejected() {
         let mut fixture = Fixture::new(REGION_BYTES);
         let ptr = fixture.alloc(32, 8);
@@ -579,6 +730,7 @@ mod tests {
         let baseline_free = fixture.tier0.stats().free_bytes;
         let mut rng = XorShift(0xDEAD_BEEF_0BAD_F00D);
         let mut live: Vec<(*mut u8, usize, u8)> = Vec::new();
+        let mut peak_arenas = 0usize;
         for op in 0..20_000usize {
             if !live.is_empty() && rng.below(100) < 45 {
                 let idx = rng.below(live.len());
@@ -600,6 +752,7 @@ mod tests {
                 let pattern = (op % 251) as u8;
                 unsafe { core::ptr::write_bytes(ptr, pattern, size) };
                 live.push((ptr, size, pattern));
+                peak_arenas = peak_arenas.max(fixture.heap.arena_count());
             }
         }
         let mut ordered: Vec<(usize, usize)> = live
@@ -618,27 +771,20 @@ mod tests {
         for (ptr, size, _) in live {
             fixture.dealloc(ptr, size, 8);
         }
-        let arenas = fixture.heap.arena_count();
-        assert!(arenas >= 2);
-        let retained = fixture.tier0.stats().free_bytes;
+        assert!(peak_arenas >= 2);
+        assert_eq!(fixture.heap.arena_count(), SPARE_ARENAS);
         let charge_min = ARENA_PAGES * PAGE + ALLOC_HDR + BACKREF_BYTES;
         let charge_max = charge_min + 4 * core::mem::size_of::<usize>();
+        let retained = fixture.tier0.stats().free_bytes;
         assert!(
-            retained >= baseline_free - arenas * charge_max
-                && retained <= baseline_free - arenas * charge_min,
-            "retained {} baseline {} arenas {}",
+            retained >= baseline_free - charge_max && retained <= baseline_free - charge_min,
+            "retained {} baseline {}",
             retained,
-            baseline_free,
-            arenas
+            baseline_free
         );
         assert_eq!(fixture.heap.bad_free, 0);
         for index in 0..CLASS_COUNT {
-            let mut page = fixture.heap.partial[index];
-            while page != 0 {
-                let header = unsafe { &*(slab_header(page) as *const SlabHeader) };
-                assert_eq!(header.free_count, slab_capacity(CLASS_SIZES[index]));
-                page = header.next;
-            }
+            assert_eq!(fixture.heap.partial[index], 0, "no page stays on a class list");
         }
     }
 }

@@ -40,9 +40,18 @@ narrows the window by not consulting any per-allocation table. Failures log
   cells through `dealloc_owned` for the same reason: user space allocated
   them with the `Alloc` syscall, so a `Box::from_raw` drop would free a
   Tier 0 block through the Tier 1 route.
-- A slab page is on its class partial list exactly while `free_count > 0`;
-  the transition `0 → 1` links it, `→ 0` unlinks it. Empty slabs stay on
-  the list (trim is K2); arenas are never returned.
+- A slab page is on its class partial list exactly while it has free slots
+  and is not fully free: `free_count` `0 → 1` links it, `→ 0` unlinks it,
+  and reaching full capacity retires it to its arena. A retired page gets
+  its magic cleared, so a stale free into it lands on `bad-magic`. An arena
+  whose last slab page retires is given back to Tier 0 unless it is the
+  single spare; `SPARE_ARENAS = 1` gives the hysteresis that stops a
+  boundary workload from thrashing Tier 0 with fetch-and-return cycles.
+- `realloc` returns the same pointer when `realloc_same_class` says the new
+  size maps to the same class (the slot is already wide enough); any other
+  case routes an inline alloc-copy-free through the two tiers. The trait
+  default is never called by path — a path call would resolve back to this
+  override (see `docs/todo/allocator-realloc-tail-extension.md`).
 - Single core, kernel runs allocator calls with IF=0 (`MemoryManager`
   guards), so no locking and no atomics in Tier 1.
 
