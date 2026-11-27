@@ -274,4 +274,7 @@ Preconditions for every timing run: `uptime` load against `nproc`, and
 K0 | traffic harness first compile failed: a `static` of `UnsafeCell<Counters>` needs a `Sync` wrapper, kernel build exit 101 | TASK | 1 round
 K0 | host cost test first run freed the batch in LIFO order, so the deallocate live-list walk stayed flat and the O(live) scaling was masked; re-run with random-order frees | TASK | 1 round
 K0 | plan's "Slab header … at most 64 B" is too tight: class 16 needs a 32 B slot bitmap plus fields; K1 budget is ≤ 96 B, recorded in `plans/memory-tiers-results.md` | PLAN-DEFECT | 0
+K1 | `cargo xtask test` first run: `rom_release` failed with `BAD-FREE slab outside-arenas` — the plan routed `GlobalAlloc` but left owner-block frees (`Syscall::Dealloc`, `TaskStack::drop`, the `kernel_box` cells of `LoadElf`/`IpcConnect`/`IpcBind`) going through the routed `dealloc`; fixed with `dealloc_owned` and `take_kernel_box` | PLAN-DEFECT | 1 round + ≈1 h boot-log debug
+K1 | `rom_release` free-at-prompt pins failed on Tier 1 arena retention (x86_64 127898→127856, x86_32 128224→128142 KiB); the plan anticipated retention but not that the pins would need re-measuring on both arches | MISSING-FACT | 1 round
+K1 | `check-style` first run: doc comment on `take_kernel_box` needed its rationale link and the plain `//` re-pin note in `rom_release.rs` was not allowed; the unsafe baseline was then raised twice, and `--update-baseline` writes one decision file per run, so two records had to be merged by hand | TASK | 1 round
 
